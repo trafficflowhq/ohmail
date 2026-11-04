@@ -2,7 +2,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
   rules, recordRuleDelta, claimIdempotencyKey, RESTORABLE_PROVENANCE, restoredProvenanceSql, ruleMatchKeySql,
   ruleCreatePayload, reconcileRuleCreate, convergeRuleKey, lockAccountRuleKeys, endGraduationOfRule, endOwedWalk,
-  ruleKeyIsOwnAddress, owesWholeWalk, pendingRefileFrom, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
+  ruleKeyIsOwnAddress, owesWholeWalk, pendingRefileFrom, clearRuleRemovals, recordRuleRemovals, type FoundRule, type OrganizedBy, type RuleKey, type Tx,
 } from "@trafficflow/db";
 import type { Destination } from "@trafficflow/core/mail";
 import { canonicalDestination } from "@trafficflow/core/mail";
@@ -281,6 +281,15 @@ const RULE_KEY_FIELDS = ["kind", "match", "subjectContains", "bodyContains"] as 
 /** The four-field key as `findRulesByKey` compares it. */
 function keyFields(r: { kind: string; match: string; subjectContains: string | null; bodyContains: string | null }): RuleKey {
   return { kind: r.kind, match: ruleMatchKey(r.match), subjectContains: r.subjectContains, bodyContains: r.bodyContains };
+}
+
+/** Every row under a key whose `match` is already folded (`ruleMatchKeySql`'s spelling), terms equal. */
+function underKey(accountId: string, before: RuleKey) {
+  return and(
+    eq(rules.accountId, accountId), eq(rules.kind, before.kind), sql`${ruleMatchKeySql(rules.match)} = ${before.match}`,
+    before.subjectContains === null ? isNull(rules.subjectContains) : eq(rules.subjectContains, before.subjectContains),
+    before.bodyContains === null ? isNull(rules.bodyContains) : eq(rules.bodyContains, before.bodyContains),
+  );
 }
 
 function sameRuleKey(a: RuleKey, b: RuleKey): boolean {
@@ -881,6 +890,12 @@ export class RulesService {
         .where(and(eq(rules.id, id), eq(rules.accountId, ctx.accountId)))
         .returning({ id: rules.id });
       if (updated.length === 0) throw new ServiceError("not_found", 404, "rule not found");
+      // A key moved off its last row is that rule removed: recorded, so the settings copy says so.
+      if (keyMoved && (await tx.select({ id: rules.id }).from(rules).where(underKey(ctx.accountId, oldKey)).limit(1)).length === 0) {
+        await recordRuleRemovals(bridgeTx(tx), ctx.accountId, [keyFields(before)], at);
+      }
+      // The key it moved onto has its rule again: that key's recorded removal ends.
+      if (keyMoved) await clearRuleRemovals(bridgeTx(tx), ctx.accountId, [newKey]);
       const seq = (await recordRuleDelta(tx, ctx.accountId, [id], "update"))[0]!;
       if (paused) {
         await endLearnedRoutes(bridgeTx(tx), ctx.accountId, oldKey);
@@ -987,13 +1002,11 @@ export class RulesService {
          one row per key, so a twin left here would be a rule nobody can see still filing mail. */
       if (!before) throw new ServiceError("not_found", 404, "rule not found");
       // One statement over the key, no id list: the row's twins are named by what makes them one.
-      const deleted = await tx.delete(rules).where(and(
-        eq(rules.accountId, ctx.accountId), eq(rules.kind, before.kind),
-        sql`${ruleMatchKeySql(rules.match)} = ${before.matchKey}`,
-        before.subjectContains === null ? isNull(rules.subjectContains) : eq(rules.subjectContains, before.subjectContains),
-        before.bodyContains === null ? isNull(rules.bodyContains) : eq(rules.bodyContains, before.bodyContains),
-      )).returning({ id: rules.id });
+      const deleted = await tx.delete(rules).where(underKey(ctx.accountId, { ...before, match: before.matchKey }))
+        .returning({ id: rules.id });
       if (deleted.length === 0) throw new ServiceError("not_found", 404, "rule not found");
+      // The person removed this rule: recorded, so an Import elsewhere removes it there too.
+      await recordRuleRemovals(bridgeTx(tx), ctx.accountId, [before], at);
       const seqs = await recordRuleDelta(tx, ctx.accountId, deleted.map((d) => d.id), "delete");
       const emitted = seqs[seqs.length - 1]!;
       await endLearnedRoutes(bridgeTx(tx), ctx.accountId, {

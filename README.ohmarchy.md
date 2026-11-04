@@ -208,7 +208,7 @@ ohmail/
 └── _meta                a small bookkeeping folder; some mail apps show it
 ```
 
-There is no folder called "Spam": "Spam" is only a label the app shows. The desktop app, ohmail Cloud and a server you run share no database, so what travels between them is the mailbox: your mail in these folders, and your settings (the senders you've screened in, your rules, notification choices, away reply, signature and tag names) as one small versioned-JSON message in `ohmail/_meta`, in a [published format](docs/organizer-profile.md). Connect the same mailbox from another of them and ohmail finds those settings and asks before using them. Triage piles, Resurface timers, learned patterns, notes and snippets stay where they were made. [How it works →](docs/how-it-works.md)
+There is no folder called "Spam": "Spam" is only a label the app shows. The desktop app, ohmail Cloud and a server you run share no database, so what travels between them is the mailbox: your mail in these folders, and your settings (the senders you've screened in, your rules and which ones you removed, notification choices, away reply, signature and tag names) as one small versioned-JSON message in `ohmail/_meta`, in a [published format](docs/organizer-profile.md). Connect the same mailbox from another of them and ohmail finds those settings and asks before using them. Triage piles, Resurface timers, learned patterns, notes and snippets stay where they were made. [How it works →](docs/how-it-works.md)
 
 ## Privacy
 

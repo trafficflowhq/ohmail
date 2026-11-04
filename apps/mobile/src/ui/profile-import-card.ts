@@ -77,8 +77,8 @@ export function savedRows(rows: readonly MailboxQuestion[]): MailboxQuestion[] {
 /**
  * The counts in words, joined by the deck. Zero-count parts vanish. Not `Intl.ListFormat`: Hermes
  * has none, so the phone would read a bare comma list where node reads the conjunction. The
- * signature says it replaces this mailbox's when the offer names one, except with `replacing: false`
- * (the Replace note speaks of the copy in the mailbox).
+ * signature says it replaces this mailbox's when the offer names one, and the copy's rule removals are
+ * said, except with `replacing: false` (the Replace note speaks of the copy's settings alone).
  */
 export function countsSaid(counts: ProfileImportCounts, opts: { replacing?: boolean } = {}): string {
   const parts: string[] = [];
@@ -90,6 +90,7 @@ export function countsSaid(counts: ProfileImportCounts, opts: { replacing?: bool
   if (counts.signature === true) {
     parts.push(opts.replacing !== false && counts.signatureReplaces !== undefined ? Copy.pfiSignatureReplacingPart : Copy.pfiSignaturePart);
   }
+  if (opts.replacing !== false && (counts.removedRules ?? 0) > 0) parts.push(Copy.pfiRemovedPart(counts.removedRules!));
   if (parts.length <= 1) return parts.join("");
   if (parts.length === 2) return Copy.pfiListPair(parts[0]!, parts[1]!);
   return Copy.pfiListMany(parts.slice(0, -1).join(", "), parts[parts.length - 1]!);
@@ -107,6 +108,11 @@ export function importSubject(q: { fingerprint: string; counts: ProfileImportCou
 /** The done line's word when the signature typed on this mailbox stayed, or null. */
 export function keptSaid(imported: ProfileImportCounts | null): string | null {
   return imported?.signatureKept === true ? Copy.pfiDoneSignatureKept : null;
+}
+
+/** The done line's word for the rules the Import removed here, or null when it removed none. */
+export function retiredSaid(retiredRules: number): string | null {
+  return retiredRules > 0 ? Copy.pfiDoneRetired(retiredRules) : null;
 }
 
 /** Who saved it and when. Nothing where the stamp does not parse — a date is never invented. */
@@ -129,7 +135,7 @@ export type CardPhase =
   /** Handed to the organizer (202); the result replaces it when the status read has one. */
   | { kind: "importing"; fingerprint: string; reason: "slow" | "unreachable" | null }
   | { kind: "failed"; message: string | null }
-  | { kind: "imported"; details: string; skippedRules: number; kept: string | null };
+  | { kind: "imported"; details: string; skippedRules: number; kept: string | null; retired: string | null };
 
 /** How often a press the organizer is finishing is asked about when the doorbell rings nothing. */
 export const IMPORT_STATUS_BEAT_MS = 15 * 1000;

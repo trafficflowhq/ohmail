@@ -68,6 +68,8 @@ const EXAMPLE_PAYLOAD: OrganizerProfilePayload = {
 const EXAMPLE_META = {
   updatedAt: new Date("2026-08-27T09:30:00.000Z"),
   producer: { kind: "local", version: "0.11.1" },
+  // A rule removed on this install, so the example shows how a removal travels.
+  removedRules: [{ kind: "sender" as const, match: "offers@ninefold-press.example", removedAt: "2026-08-20T14:05:00.000Z", by: "0f4c7d1e-2b6a-4a51-9c3e-7d8f1a2b3c4d" }],
 };
 const EXAMPLE_INSTALL_ID = "0f4c7d1e-2b6a-4a51-9c3e-7d8f1a2b3c4d";
 

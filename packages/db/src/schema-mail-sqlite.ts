@@ -2421,6 +2421,18 @@ export const outboundSentCopies = sqliteTable("outbound_sent_copies", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.sendId, t.seq] }) }));
 
+/** Mail 0178: the rules a person removed, one row per rule key — the pg table's twin. */
+export const ruleRemovals = sqliteTable("rule_removals", {
+  accountId: text("account_id").notNull(),
+  ruleKey: text("rule_key").notNull(),
+  kind: text("kind").notNull(),
+  match: text("match").notNull(),
+  subjectContains: text("subject_contains"),
+  bodyContains: text("body_contains"),
+  removedAt: integer("removed_at", { mode: "timestamp_ms" }).notNull(),
+  removedBy: text("removed_by"),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.ruleKey] }) }));
+
 /**
  * The mail-domain half as one object, for `drizzle(client, { schema })`.
  *

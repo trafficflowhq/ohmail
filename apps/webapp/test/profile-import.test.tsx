@@ -268,6 +268,25 @@ describe("the restore card", () => {
     expect(card()).toBeNull();
   });
 
+  /* THE COPY'S REMOVALS ARE SAID BEFORE THE PRESS, and the done line counts the rules they removed here. */
+  it("a copy that records removed rules says so and says what Import does with them; the done line counts what it removed", async () => {
+    candidate = { ...candidate, counts: { screener: 0, rules: 0, notifyRules: 0, tags: 0, awayResponder: false, removedRules: 2 } };
+    applied = { ...applied, imported: { screener: 0, rules: 0, notifyRules: 0, tags: 0, awayResponder: false }, retiredRules: 1 };
+    await mount({ active: true });
+    expect(card()!.textContent).toContain("They hold 2 rule removals.");
+    expect(card()!.textContent).toContain("keeps every rule made only here; a rule removed there after this ohmail last organized the mailbox is removed here too.");
+    await click(button("Import settings"));
+    expect(card()!.textContent).toContain("1 rule removed there was removed here too.");
+  });
+
+  it("a removal count that is no count is no removal, and none removed says nothing", async () => {
+    candidate = { ...candidate, counts: { ...(candidate.counts as object), removedRules: "two" } };
+    await mount({ active: true });
+    expect(card()!.textContent).not.toContain("removal");
+    await click(button("Import settings"));
+    expect(card()!.textContent).not.toContain("removed here too");
+  });
+
   it("skipped rules are disclosed on the confirmation, never silently dropped", async () => {
     applied = { ...applied, skippedRules: 2 };
     await mount({ active: true });
@@ -574,6 +593,17 @@ describe("Settings → Mailboxes: a declined document, with Import and Replace",
     expect(text).toContain("within a few minutes");
     expect(button("Import settings")).toBeTruthy();
     expect(button("Save this ohmail's settings to the mailbox")).toBeTruthy();
+  });
+
+  it("a row whose copy records removals says so, its Replace note names the settings alone, and its Import counts what it removed", async () => {
+    candidate = { ...candidate, counts: { ...(candidate.counts as object), removedRules: 3 } };
+    applied = { ...applied, retiredRules: 2 };
+    await mountRow();
+    const text = host!.textContent ?? "";
+    expect(text).toContain("They hold 142 screener decisions, 8 rules, 3 tags, and 3 rule removals.");
+    expect(text).toContain("Saving replaces 142 screener decisions, 8 rules, and 3 tags in the mailbox");
+    await click(button("Import settings"));
+    expect(host!.textContent).toContain("2 rules removed there were removed here too.");
   });
 
   it("Replace posts the exact fingerprint and says when it lands; the buttons go", async () => {

@@ -2341,6 +2341,21 @@ export const outboundSentCopies = pgTable("outbound_sent_copies", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.sendId, t.seq] }) }));
 
+// Mail 0178 — THE RULES A PERSON REMOVED, one row per rule key (`rule-removals.ts#ruleRemovalKey`), so
+// the settings copy can say which rules were removed and an Import elsewhere retires only those.
+// `removed_by` NULL is this store; an adopted removal keeps the install and instant it came with.
+// No foreign key: the record outlives the rule. Pruned after a year; erased with the account.
+export const ruleRemovals = pgTable("rule_removals", {
+  accountId: uuid("account_id").notNull(),
+  ruleKey: text("rule_key").notNull(),
+  kind: text("kind").notNull(),
+  match: text("match").notNull(),
+  subjectContains: text("subject_contains"),
+  bodyContains: text("body_contains"),
+  removedAt: timestamp("removed_at", { withTimezone: true }).notNull(),
+  removedBy: text("removed_by"),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.ruleKey] }) }));
+
 // Migration 0014 — workflow automation storage. Two additive, account-scoped, REST-only tables:
 // neither writes `change_log` nor grows `EntityType` — clients refetch; the workflow EFFECTS (a
 // `file_message` move, a `draft_reply` draft) still sync as their own changes. `workflows` is a

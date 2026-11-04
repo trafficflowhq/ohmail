@@ -14,8 +14,11 @@ import {
   readOrganizerProfile,
   writeOrganizerProfile,
   isMalformedProfile,
+  readProfileRemovedRules,
+  PROFILE_REMOVED_MAX,
   type OrganizerProfilePayload,
   type ProfileIo,
+  type ProfileRemovedRule,
   type RawProfileMessage,
 } from "../../src/adapters/organizer-profile.js";
 import { formatClaim, parseClaim } from "../../src/adapters/organizer-lease.js";
@@ -895,6 +898,61 @@ describe("the requests an organizer applied travel in the envelope", () => {
     const parsed = read(raw);
     expect(parsed.doc!.applied).toBeUndefined();
     expect(parsed.doc!.rules.length).toBe(richPayload().rules.length);
+  });
+});
+
+describe("the rules a person removed travel in the envelope", () => {
+  const AGO = (days: number): string => new Date(AT.getTime() - days * 86_400_000).toISOString();
+  const GONE: ProfileRemovedRule = { kind: "sender", match: "Zorbelt@quindle.test", removedAt: AGO(1), by: "w-old" };
+  const NARROW: ProfileRemovedRule = { kind: "header", match: "list-id", subjectContains: "Quarvex", bodyContains: "plimsoll", removedAt: AGO(2), by: "w-new" };
+  const read = (raw: string) => {
+    const parsed = parseProfileMessage(raw);
+    if (parsed === null || isMalformedProfile(parsed) || parsed.status !== "ok") throw new Error("expected a readable document");
+    return parsed;
+  };
+  const write = (removedRules: ProfileRemovedRule[]) =>
+    formatProfileMessage(makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, applied: [], removedRules }), { installId: "a" });
+
+  it("round-trips newest first after `applied`, kind, instant and install plain, a person's words escaped, read as written", () => {
+    const raw = write([NARROW, GONE]);
+    const parsed = read(raw);
+    expect(parsed.doc!.removedRules).toEqual([GONE, NARROW]);
+    expect(Object.keys(parsed.doc!).slice(0, 7)).toEqual(["v", "updatedAt", "producer", "applied", "removedRules", "screener", "rules"]);
+    expect(parsed.encoded).toBe(true);
+    for (const plain of [`"kind": "header"`, `"removedAt": "${AGO(1)}"`, `"by": "w-new"`]) expect(raw).toContain(plain);
+    for (const word of ["zorbelt", "quindle", "quarvex", "plimsoll", "list-id"]) expect(raw.toLowerCase()).not.toContain(word);
+  });
+
+  it("the fingerprint is the same with and without removals, and none is written when there are none", () => {
+    const parsed = read(write([GONE, NARROW]));
+    expect(profileFingerprint(parsed.doc!)).toBe(profileFingerprint(richPayload()));
+    expect(profileFingerprint(read(write([])).doc!)).toBe(profileFingerprint(richPayload()));
+    expect(write([])).not.toContain("removedRules");
+  });
+
+  it("an entry that cannot be read, or one removed after the copy, is dropped alone, and a list read only to its cap", () => {
+    const bad = [
+      { kind: "folder", match: "a@b.test", removedAt: AGO(1), by: "w" }, { kind: "sender", match: " ", removedAt: AGO(1), by: "w" },
+      { kind: "sender", match: "a@b.test", subjectContains: 7, removedAt: AGO(1), by: "w" },
+      { kind: "sender", match: "a\u0000b", removedAt: AGO(1), by: "w" }, { kind: "sender", match: "a@b.test", removedAt: "yesterday", by: "w" },
+      { kind: "sender", match: "a@b.test", removedAt: new Date(AT.getTime() + 1000).toISOString(), by: "w" },
+      { kind: "sender", match: "a@b.test", removedAt: AGO(1), by: "x\ny" }, "nonsense", GONE,
+    ];
+    expect(readProfileRemovedRules(bad, AT.toISOString())).toEqual([GONE]);
+    expect(readProfileRemovedRules({ list: [GONE] }, AT.toISOString())).toBeUndefined();
+    const many = Array.from({ length: PROFILE_REMOVED_MAX + 3 }, (_, i) => ({ ...GONE, match: `m${i}@x.test` }));
+    expect(readProfileRemovedRules(many, AT.toISOString())!.length).toBe(PROFILE_REMOVED_MAX);
+    const raw = write([GONE]).replace(`"removedAt": "${AGO(1)}"`, `"removedAt": 12`);
+    expect(read(raw).doc!.removedRules).toEqual([]);
+    expect(read(raw).doc!.rules.length).toBe(richPayload().rules.length);
+  });
+
+  it("a copy carries at most the cap, the newest, none older than a year", () => {
+    const many = Array.from({ length: PROFILE_REMOVED_MAX + 2 }, (_, i) => ({ ...GONE, match: `m${i}@x.test`, removedAt: AGO(i % 300) }));
+    const doc = makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER, removedRules: [...many, { ...GONE, removedAt: AGO(366) }] });
+    expect(doc.removedRules!.length).toBe(PROFILE_REMOVED_MAX);
+    expect(doc.removedRules!.some((r) => r.removedAt === AGO(366))).toBe(false);
+    expect(doc.removedRules![0]!.removedAt).toBe(AGO(0));
   });
 });
 

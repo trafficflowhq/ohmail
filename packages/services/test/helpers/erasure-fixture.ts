@@ -60,6 +60,8 @@ import {
   pairingTokens,
   refreshTokens,
   routingDecisions,
+  ruleRemovalKey,
+  ruleRemovals,
   rules,
   SCREENER_SUGGESTION_PROVENANCE,
   SCREENER_SUGGESTION_STATUS,
@@ -407,6 +409,10 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
 
   await db.insert(rules).values({
     accountId, kind: "sender", match: "giulia@example.test", destination: "INBOX",
+  });
+  // A removed rule's record names the sender it filed: erased with the account like the rule.
+  await db.insert(ruleRemovals).values({
+    accountId, ruleKey: ruleRemovalKey({ kind: "sender", match: "marco@example.test" }), kind: "sender", match: "marco@example.test", removedAt: NOW,
   });
   await db.insert(graduations).values({ accountId, patternKey: "sender:giulia@example.test" });
   await db.insert(learningSignals).values({

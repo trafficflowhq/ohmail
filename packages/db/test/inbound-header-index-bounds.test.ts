@@ -144,6 +144,8 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "folder_state.desired_folder": { server: "folderPath" }, // a listed folder, or a pile ohmail names
   "rules.match": { not: "typed by the account's own person" },
   "tags.name": { not: "typed by the account's own person" },
+  // A rule key the person removed, or one adopted from the account's own settings copy; over its byte bound it is not recorded.
+  "rule_removals.rule_key": { not: "a removed rule's key, bounded by RULE_REMOVAL_KEY_MAX_BYTES where it is recorded" },
   "mailboxes.address": { not: "the mailbox the person connects" },
   "users.email": { not: "an account's sign-in address" },
   "invites.email": { not: "an address an operator invites" },

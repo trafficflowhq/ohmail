@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, changeLog, rules as rulesTbl } from "@trafficflow/db";
+import { accounts, changeLog, readRuleRemovals, rules as rulesTbl, type Tx } from "@trafficflow/db";
 import { asc, eq } from "drizzle-orm";
 import { DEFAULT_OHBOX_POLICY, evaluateRules, type NormalizedMessage } from "@trafficflow/core";
 import { compareTwins, effectForDestination } from "@trafficflow/core/rule-order";
@@ -54,6 +54,10 @@ async function page(ctx: ServiceContext) {
   return { rows: list.map((r) => r.destination).sort(), shows: shown?.destination ?? null };
 }
 
+/** The removals this store recorded, as `[match, removedAt, removedBy]`. */
+const removals = async (ctx: ServiceContext) =>
+  (await readRuleRemovals(ctx.db as unknown as Tx, ctx.accountId)).map((r) => [r.match, r.removedAt.toISOString(), r.removedBy]);
+
 /** The twins: a manual Ohbox row and a promoted Screened row, ids chosen so the tie order is known. */
 async function twins(ctx: ServiceContext, ids: { inbox: string; screened: string }) {
   const row = { accountId: ctx.accountId, kind: "sender", match: ADDR, priority: 0, enabled: true };
@@ -77,6 +81,7 @@ describe("PATCH /rules/:id over a key with a twin", () => {
     const out = mutated(await rulesService.update(ctx, HIGH, { destination: "ohmail/News" }));
     const reading = { answer: out.rule.destination, nextFiles: await nextFiles(ctx), ...(await page(ctx)) };
     expect(reading).toEqual({ answer: "ohmail/News", nextFiles: "ohmail/News", rows: ["ohmail/News"], shows: "ohmail/News" });
+    expect(await removals(ctx), "a collapsed twin is no rule removed: the key stays").toEqual([]);
   });
 
   it("the same press with the tie the other way round (the twins' ids swapped)", async () => {
@@ -148,6 +153,12 @@ describe("PATCH /rules/:id over a key with a twin", () => {
     const rows = (await rulesService.list(ctx)).map((r) => `${r.id}:${r.match}`).sort();
     expect(out.rule.id).toBe(HIGH);
     expect(rows, "the old key's other row stays; the new key holds the moved row alone").toEqual([`${LOW}:${ADDR}`, `${HIGH}:${OTHER}`]);
+    expect(await removals(ctx), "the old key still has a row").toEqual([]);
+    mutated(await rulesService.update(ctx, LOW, { match: "Nina@atelier.example" }));
+    expect(await removals(ctx), "moved off its last row, the old key is a rule removed").toEqual([[ADDR, NOW.toISOString(), null]]);
+    mutated(await rulesService.update(ctx, HIGH, { match: ADDR }));
+    expect(await removals(ctx), "a rule moved back onto the removed key ends its removal; the key it left is removed now")
+      .toEqual([[OTHER, NOW.toISOString(), null]]);
   });
 
   it("a key differing only in its subject term, and another account's same key, are untouched", async () => {
@@ -174,6 +185,7 @@ describe("PATCH /rules/:id over a key with a twin", () => {
     await twins(ctx, { inbox: LOW, screened: HIGH });
     await rulesService.remove(ctx, HIGH);
     expect((await page(ctx)).rows).toEqual([]);
+    expect(await removals(ctx), "the person's removal, once, at this clock, by this store").toEqual([[ADDR, NOW.toISOString(), null]]);
   });
 
   it("a match the store folds differently from JS is still found and converged", async () => {

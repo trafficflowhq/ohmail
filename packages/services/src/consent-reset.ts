@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertAccountOrganizes,
   accountSettings, contacts, folderState, forgetListConsents, learningSignals, lockAccountRuleKeys, messages,
-  recordChanges, recordRuleDelta, routingDecisions, rules, type Tx,
+  recordChanges, recordRuleDelta, routingDecisions, ruleRemovals, rules, type Tx,
 } from "@trafficflow/db";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
@@ -79,7 +79,8 @@ export async function unmovedReport(ctx: ServiceContext): Promise<UnmovedPile[]>
 }
 
 /**
- * Wipe rules, contacts, screener suggestions and screener learning. Keep every message.
+ * Wipe rules, the rule removals recorded for the settings copy, contacts, screener suggestions and
+ * screener learning. Keep every message.
  *
  * Idempotent: running it twice deletes nothing the second time and reports zeroes.
  */
@@ -136,6 +137,9 @@ export async function resetScreeningState(ctx: ServiceContext): Promise<ResetRes
     const seqs = await recordRuleDelta(tx, ctx.accountId, doomed.map((r) => r.id), "delete");
     const lastSeq: bigint | null = seqs[seqs.length - 1] ?? null;
     if (doomed.length > 0) await tx.delete(rules).where(eq(rules.accountId, ctx.accountId));
+    /* The removals the person recorded go with the rules (mail 0178): a start-over is local by nature, and one
+       left would travel once its key had no row, retiring elsewhere a rule this install made again since. */
+    await tx.delete(ruleRemovals).where(eq(ruleRemovals.accountId, ctx.accountId));
 
     const contactRows = await tx.delete(contacts)
       .where(eq(contacts.accountId, ctx.accountId)).returning({ id: contacts.id });

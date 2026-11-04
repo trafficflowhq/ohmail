@@ -157,7 +157,8 @@ export interface SettingsChoiceProps<T extends string = string> {
   name: string;
   ariaLabel: string;
   options: SettingsChoiceOption<T>[];
-  value: T;
+  /** `null`: nothing is picked yet, and no radio is checked. */
+  value: T | null;
   onChange: (id: T) => void;
   disabled?: boolean;
 }

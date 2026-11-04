@@ -39,6 +39,7 @@ import {
   organizerRequests,
   outboundSends,
   outboundSentCopies,
+  ruleRemovals,
   pairingTokens,
   refreshTokens,
   routingDecisions,
@@ -1723,6 +1724,11 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     sendId: stuck!.id, accountId, mailboxId, rawB64: Buffer.from(`owed copy ${tag}`).toString("base64"),
   });
 
+  // A rule the person removed (mail 0178): its key is their words, seeded and swept as mail.
+  await db.insert(ruleRemovals).values({
+    accountId, ruleKey: `["sender","removed-${tag}@example.com","",""]`, kind: "sender", match: `removed-${tag}@example.com`,
+    subjectContains: `subject ${tag}`, bodyContains: `body ${tag}`, removedAt: FIXED_NOW, removedBy: `install-${tag}`,
+  });
   await db.insert(kbEntries).values({ accountId, title: `kb ${tag}`, content: `kb content ${tag}` });
   await db.insert(snippets).values({ accountId, title: `snip ${tag}`, body: `snip body ${tag}` });
   await db.insert(awayResponders).values({

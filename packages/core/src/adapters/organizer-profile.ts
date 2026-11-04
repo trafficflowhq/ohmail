@@ -66,6 +66,13 @@ export const PROFILE_LIST_MAX = {
  */
 export const PROFILE_APPLIED_MAX = 1000;
 
+/**
+ * THE LONGEST `removedRules` LIST ONE DOCUMENT CARRIES — the rules list's own bound — and the age a
+ * copy carries a removal to: only the removals of the year before the copy was written.
+ */
+export const PROFILE_REMOVED_MAX = PROFILE_LIST_MAX.rules;
+export const PROFILE_REMOVED_MAX_AGE_MS = 365 * 24 * 60 * 60 * 1000;
+
 /** The canonical forms this build can take a fingerprint in. */
 export type ProfileCanonicalVersion = 1 | 2;
 
@@ -280,6 +287,26 @@ export interface OrganizerProfileDoc extends OrganizerProfilePayload {
    * this copy. An ENVELOPE key, out of the fingerprint; absent = unstated (an older organizer).
    */
   applied?: string[];
+  /**
+   * THE RULES A PERSON REMOVED, by key, with when and on which install ({@link ProfileRemovedRule}):
+   * an Import retires a rule this copy leaves out only when it records the rule's removal. An
+   * ENVELOPE key, out of the fingerprint; absent = none recorded (an older organizer records none).
+   */
+  removedRules?: ProfileRemovedRule[];
+}
+
+/**
+ * ONE REMOVED RULE — its natural key, the instant a person removed it (`toISOString`'s form) and
+ * the install that removed it (or adopted the removal from a copy it imported). Newest first, at
+ * most {@link PROFILE_REMOVED_MAX}, none older than {@link PROFILE_REMOVED_MAX_AGE_MS}.
+ */
+export interface ProfileRemovedRule {
+  kind: "sender" | "domain" | "header";
+  match: string;
+  subjectContains?: string;
+  bodyContains?: string;
+  removedAt: string;
+  by: string;
 }
 
 /** A payload with nothing in it — what a mailbox with no configuration serializes to. */
@@ -735,11 +762,12 @@ export function makeProfileDoc(
   payload: OrganizerProfilePayload,
   meta: {
     updatedAt: Date; producer: { kind: string; version: string }; screening?: ProfileScreening; gap?: ProfileGap;
-    applied?: readonly string[];
+    applied?: readonly string[]; removedRules?: readonly ProfileRemovedRule[];
   },
   version: number = PROFILE_VERSION,
 ): OrganizerProfileDoc {
   const canonical = canonicalizeProfilePayload(payload, version);
+  const removedRules = removalsAsWritten(meta.removedRules ?? [], meta.updatedAt);
   return {
     v: version,
     updatedAt: meta.updatedAt.toISOString(),
@@ -753,6 +781,8 @@ export function makeProfileDoc(
     ...(meta.gap === undefined ? {} : { gap: { since: meta.gap.since, by: meta.gap.by, at: meta.gap.at } }),
     // ENVELOPE, after `gap`: the organizer's own bookkeeping, never the person's configuration.
     ...(meta.applied === undefined ? {} : { applied: meta.applied.slice(0, PROFILE_APPLIED_MAX) }),
+    // ENVELOPE, after `applied`: absent when there is none to record.
+    ...(removedRules.length === 0 ? {} : { removedRules }),
     screener: canonical.screener,
     rules: withRuleAges(canonical.rules, payload.rules),
     notifyRules: canonical.notifyRules,
@@ -765,6 +795,26 @@ export function makeProfileDoc(
        carrying what the canonicaliser answered, and nothing else. */
     ...(canonical.signatureHtml === undefined ? {} : { signatureHtml: canonical.signatureHtml }),
   };
+}
+
+/** A removal's order among same-instant ties: its rule key as the import spells it. */
+const removalTie = (r: ProfileRemovedRule): string =>
+  JSON.stringify([r.kind, ruleMatchKey(r.match), (r.subjectContains ?? "").toLowerCase(), (r.bodyContains ?? "").toLowerCase()]);
+
+/** The removals as a copy written at `at` carries them: within a year of it, newest first (ties by key), within the cap. */
+function removalsAsWritten(list: readonly ProfileRemovedRule[], at: Date): ProfileRemovedRule[] {
+  const oldest = at.getTime() - PROFILE_REMOVED_MAX_AGE_MS;
+  return list
+    .filter((r) => Date.parse(r.removedAt) >= oldest)
+    .map((r) => ({ r, key: removalTie(r), t: Date.parse(r.removedAt) }))
+    .sort((a, b) => b.t - a.t || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    .slice(0, PROFILE_REMOVED_MAX)
+    .map(({ r }) => ({
+      kind: r.kind, match: r.match,
+      ...(r.subjectContains === undefined ? {} : { subjectContains: r.subjectContains }),
+      ...(r.bodyContains === undefined ? {} : { bodyContains: r.bodyContains }),
+      removedAt: r.removedAt, by: r.by,
+    }));
 }
 
 /**
@@ -800,10 +850,11 @@ function headerSafe(v: string): string {
  */
 const PREAMBLE = [
   "This message stores your ohmail settings for this mailbox: which senders",
-  "you have screened in, your filing rules, notification choices, away reply",
-  "and tag names. Keeping them here means they live in YOUR mailbox: they",
-  "travel with it to any computer or service you connect it from, and they",
-  "remain yours even if you stop using ohmail.",
+  "you have screened in, your filing rules, the rules you removed in the year",
+  "before this copy was written, notification choices, away reply and tag",
+  "names. Keeping them here means they live in YOUR mailbox: they travel with",
+  "it to any computer or service you connect it from, and they remain yours",
+  "even if you stop using ohmail.",
   "",
   "Names and addresses below are written as JSON escapes; any JSON tool",
   "shows them as text.",
@@ -835,6 +886,8 @@ const PLAIN_STRING_VALUES: ReadonlySet<string> = new Set([
   "gap.since", "gap.by", "gap.at",
   // Request ids the organizer applied: opaque ids, never a person's words.
   "applied[]",
+  // A removed rule's kind, instant and install id; its match and terms are a person's words, escaped.
+  "removedRules[].kind", "removedRules[].removedAt", "removedRules[].by",
 ]);
 
 const hex4 = (unit: number): string => `\\u${unit.toString(16).padStart(4, "0")}`;
@@ -1018,6 +1071,39 @@ const APPLIED_ID = /^[A-Za-z0-9._-]{1,128}$/;
 export function readProfileApplied(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw) || raw.length > PROFILE_APPLIED_MAX) return undefined;
   return raw.every((x) => typeof x === "string" && APPLIED_ID.test(x)) ? [...raw as string[]] : undefined;
+}
+
+const REMOVED_KINDS: ReadonlySet<string> = new Set(["sender", "domain", "header"]);
+
+/**
+ * THE ENVELOPE'S `removedRules` KEY, entry by entry: absent or not a list ⇒ `undefined`; an entry with
+ * a bad kind, match, term, instant or install id, or one removed after the copy's own `updatedAt`, is
+ * dropped alone; only the first {@link PROFILE_REMOVED_MAX} are read. It never refuses the copy.
+ */
+export function readProfileRemovedRules(raw: unknown, updatedAt: string): ProfileRemovedRule[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const copyAt = Date.parse(updatedAt);
+  const out: ProfileRemovedRule[] = [];
+  for (const e of raw.slice(0, PROFILE_REMOVED_MAX)) {
+    if (typeof e !== "object" || e === null || Array.isArray(e)) continue;
+    const o = e as Record<string, unknown>;
+    if (typeof o.kind !== "string" || !REMOVED_KINDS.has(o.kind)) continue;
+    if (typeof o.match !== "string" || ruleMatchKey(o.match).length === 0 || hasNul(o.match)) continue;
+    const term = (v: unknown): string | null | undefined => (v === undefined || v === null ? null : typeof v === "string" && !hasNul(v) ? v : undefined);
+    const subjectContains = term(o.subjectContains);
+    const bodyContains = term(o.bodyContains);
+    if (subjectContains === undefined || bodyContains === undefined) continue;
+    if (typeof o.removedAt !== "string" || !isWrittenInstant(o.removedAt) || !(Date.parse(o.removedAt) <= copyAt)) continue;
+    // eslint-disable-next-line no-control-regex
+    if (typeof o.by !== "string" || o.by.length === 0 || o.by.length > GAP_BY_MAX || /[\u0000-\u001f\u007f]/.test(o.by)) continue;
+    out.push({
+      kind: o.kind as ProfileRemovedRule["kind"], match: o.match,
+      ...(subjectContains === null ? {} : { subjectContains }),
+      ...(bodyContains === null ? {} : { bodyContains }),
+      removedAt: o.removedAt, by: o.by,
+    });
+  }
+  return out;
 }
 
 /** The tolerant reader of one section entry. Drops entries missing their natural key. */
@@ -1280,6 +1366,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
   const gap = readProfileGap(rawDoc.gap, installId);
   const gapRefused = gap !== undefined && "refused" in gap ? gap.refused : undefined;
   const applied = readProfileApplied(rawDoc.applied);
+  const removedRules = readProfileRemovedRules(rawDoc.removedRules, updatedAt);
   const producerRaw = typeof rawDoc.producer === "object" && rawDoc.producer !== null
     ? rawDoc.producer as Record<string, unknown> : {};
   const doc: OrganizerProfileDoc = {
@@ -1294,6 +1381,7 @@ export function parseProfileMessage(raw: string, ref?: unknown): ProfileRecord |
     ...(screening === undefined || screeningRefused !== undefined ? {} : { screening: screening as ProfileScreening }),
     ...(gap === undefined || gapRefused !== undefined ? {} : { gap: gap as ProfileGap }),
     ...(applied === undefined ? {} : { applied }),
+    ...(removedRules === undefined ? {} : { removedRules }),
     ...payload,
   };
   return {

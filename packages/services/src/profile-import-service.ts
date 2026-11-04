@@ -99,7 +99,7 @@ type ProfileImportStatusRefusal = ImportAskRefusal | "superseded";
 /** Where a handed-over press stands, as `GET …/profile-import/status` answers it. */
 export type ProfileImportStatusDTO =
   | { state: "importing"; fingerprint: string }
-  | { state: "imported"; imported: ProfileImportCounts | null; skippedRules: number }
+  | { state: "imported"; imported: ProfileImportCounts | null; skippedRules: number; retiredRules: number }
   | { state: "refused"; reason: ProfileImportStatusRefusal; message: string };
 
 export { PROFILE_IMPORT_LOCK_CLASS, type ProfileImportApplied, type ProfileImportCounts };
@@ -166,6 +166,7 @@ function declinedFrom(
       awayResponder: c.awayResponder > 0,
       signature: (c.signature ?? 0) > 0,
       ...(signatureReplaces === null ? {} : { signatureReplaces }),
+      ...(typeof c.removedRules === "number" && c.removedRules > 0 ? { removedRules: c.removedRules } : {}),
     },
   };
 }
@@ -373,7 +374,10 @@ export class ProfileImportService {
     if (row === null || row.fingerprint !== fingerprint) return refused("superseded");
     if (row.outcome === "imported") {
       const result = await profileImportResult(asTx(ctx), { accountId: ctx.accountId, mailboxId, fingerprint });
-      return { state: "imported", imported: result ? arrived(result.imported) : null, skippedRules: result?.skippedRules ?? 0 };
+      return {
+        state: "imported", imported: result ? arrived(result.imported) : null, skippedRules: result?.skippedRules ?? 0,
+        retiredRules: result?.retiredRules ?? 0,
+      };
     }
     if (row.outcome === "refused") return refused(row.reason ?? "unreadable");
     if (row.organizerRole !== "organizer") return refused("not_organizer");

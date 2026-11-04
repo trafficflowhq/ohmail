@@ -16,6 +16,7 @@ import { endGraduationOfRule } from "./learning-signal.js";
 import { ruleMatchKeySql, sharedProviderAllowRefusal, SharedProviderDomainError } from "./rule-match-sql.js";
 import { convergeRuleKey, endOwedWalk, findRulesByKey, owesWholeWalk, pendingRefileFrom, type FoundRule, type RuleKey } from "./rule-key.js";
 import { ruleKeyIsOwnAddress, type OwnAddressesPerPass } from "./own-mail.js";
+import { clearRuleRemovals, recordRuleRemovals } from "./rule-removals.js";
 
 /** The one bound, pinned beside the decide's lift in `screener-apply.ts` and re-exported here. */
 export { RULE_PRIORITY_MAX };
@@ -1019,6 +1020,8 @@ export async function reconcileRuleCreate(
     // The writer's clock: the reader's belt compares a press's `decidedAt` against it.
     updatedAt: now,
   }).returning({ id: rulesTbl.id });
+  // Made again under its key: the key's recorded removal ends here.
+  await clearRuleRemovals(tx, accountId, [key]);
   const lastSeq = (await recordRuleDelta(ledger(tx), accountId, [row!.id], "create"))[0]!;
   return { created: true, ruleId: row!.id, lastSeq, collapsed: [] };
 }
@@ -1077,6 +1080,8 @@ export async function applyRuleRequest(
     const ids = [found.id, ...twins.map((t) => t.id)];
     await tx.delete(rulesTbl).where(and(eq(rulesTbl.accountId, accountId), inArray(rulesTbl.id, ids)));
     const seqs = await recordRuleDelta(ledger(tx), accountId, ids, "delete");
+    // A person's removal, travelled here: recorded at the press's instant, so the settings copy says so.
+    await recordRuleRemovals(tx, accountId, [key], now);
     await endsLearning();
     return { applied: true, op: "delete", ruleId: found.id, lastSeq: seqs[seqs.length - 1]! };
   }
@@ -1284,12 +1289,21 @@ export async function settleReaderRuleRows(
  * payload the belt cannot read is left out: the belt settles nothing on it.
  */
 export async function createPressKeysSince(tx: Tx, accountId: string, since: Date): Promise<RuleKey[]> {
-  const rows = await tx.select({ kind: organizerRequests.kind, payload: organizerRequests.payload }).from(organizerRequests)
+  return (await createPressesSince(tx, accountId, since)).map((p) => p.key);
+}
+
+/** {@link createPressKeysSince}, each key with the instant its create was pressed. */
+export async function createPressesSince(tx: Tx, accountId: string, since: Date): Promise<Array<{ key: RuleKey; at: Date }>> {
+  const rows = await tx.select({ kind: organizerRequests.kind, payload: organizerRequests.payload, decidedAt: organizerRequests.decidedAt })
+    .from(organizerRequests)
     .where(and(
       eq(organizerRequests.accountId, accountId), eq(organizerRequests.kind, "rule.create"),
       gte(organizerRequests.decidedAt, since),
     ));
-  return rows.flatMap((r) => { const v = validateRulePayload(r.kind, r.payload); return v === null ? [] : [v.key]; });
+  return rows.flatMap((r) => {
+    const v = validateRulePayload(r.kind, r.payload);
+    return v === null ? [] : [{ key: v.key, at: new Date(r.decidedAt as unknown as string | number | Date) }];
+  });
 }
 
 /** What one leave asked of the belt: distinct presses asked, settled, the last delta's seq, the skips. */

@@ -25,8 +25,8 @@ ohmail/
 ```
 
 `_meta` also holds your ohmail settings for this mailbox — the senders you've
-screened in, your rules, notification choices, away reply, signature and tag
-names — as a small versioned-JSON message, so they live in your mailbox rather
+screened in, your rules and which ones you removed, notification choices, away
+reply, signature and tag names — as a small versioned-JSON message, so they live in your mailbox rather
 than in any ohmail database and move with it (see "Your mailbox stays the source of truth"
 above). The format is specified in
 [docs/organizer-profile.md](organizer-profile.md) and implemented in

@@ -5,7 +5,7 @@ import { and, eq } from "drizzle-orm";
 import {
   accounts, accountSettings, auditLog, awayResponders, changeLog, contacts, folderState, idempotencyKeys, latestProfileFoundMarker,
   mailboxCredentials, mailboxes, messages, notifyRules, profileImportResolutionExists,
-  recordProfileImportResolution, rules, tags,
+  recordProfileImportResolution, ruleRemovals, rules, tags,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { StaticKeyProvider, createLogger } from "@trafficflow/core";
@@ -2737,6 +2737,11 @@ describe("the serialized document carries configuration and NOTHING else", () =>
        fingerprint: a reader knows its own applied press is in this copy. Opaque ids, written plain
        (`applied[]`). The fixture claims one, so a dropped key is red here too. */
     "applied",
+    /* The rules a person removed here (mail 0178), an ENVELOPE key out of the fingerprint: an Import
+       elsewhere retires only a rule whose removal it records. Kind, instant and install plain; the
+       match and terms escaped. The fixture records one with both terms, so a dropped key is red too. */
+    "removedRules", "removedRules[].kind", "removedRules[].match", "removedRules[].subjectContains",
+    "removedRules[].bodyContains", "removedRules[].removedAt", "removedRules[].by",
   ]);
 
   it("key census exact, and sentinels planted in every non-config table stay out of the message", async () => {
@@ -2798,12 +2803,29 @@ describe("the serialized document carries configuration and NOTHING else", () =>
       { ...key(randomUUID(), true, later), key: "some-post-key" },
     ]);
 
-    const { payload, screening, applied } = await serializeOrganizerProfileCounted(db, accountId, mb!.id, { applied: true, now: at });
+    // The rules removed here: one this store removed, one adopted from another install, one whose key has a
+    // live row again, and one removed more than a year ago.
+    const removal = (match: string, removedAt: Date, removedBy: string | null, terms = false) => ({
+      accountId, ruleKey: JSON.stringify(["sender", match, terms ? "quote" : "", terms ? "total" : ""]), kind: "sender", match,
+      subjectContains: terms ? "Quote" : null, bodyContains: terms ? "Total" : null, removedAt, removedBy,
+    });
+    const day = 86_400_000;
+    await db.insert(ruleRemovals).values([
+      removal("gone@x.example", new Date(at.getTime() - day), null, true), removal("theirs@x.example", new Date(at.getTime() - 2 * day), "w-other"),
+      { ...removal("shop.example", new Date(at.getTime() - day), null), kind: "domain", ruleKey: JSON.stringify(["domain", "shop.example", "order", "invoice"]) },
+      removal("ages@x.example", new Date(at.getTime() - 366 * day), null),
+    ]);
+
+    const { payload, screening, applied, removedRules } = await serializeOrganizerProfileCounted(db, accountId, mb!.id, {
+      applied: true, removed: { by: INSTALL }, now: at,
+    });
     expect(applied, "only applied, unexpired, unerased meta-request ids").toEqual([APPLIED]);
+    expect(removedRules!.map((r) => [r.match, r.by]), "no live key, nothing a year old, this store's id for its own")
+      .toEqual([["gone@x.example", INSTALL], ["theirs@x.example", "w-other"]]);
     expect(payload.signature, "the serializer did not reach the mailbox's own signature")
       .toBe("-- \nMila Brunner");
     expect(screening).toEqual({ baselineAt: "2026-07-01T00:00:00.000Z", dormancyDays: 30, scope: "window" });
-    const doc = makeProfileDoc(payload, { updatedAt: new Date(), producer: { kind: "cloud", version: "dev" }, screening, applied });
+    const doc = makeProfileDoc(payload, { updatedAt: at, producer: { kind: "cloud", version: "dev" }, screening, applied, removedRules });
     const raw = formatProfileMessage(doc, { installId: INSTALL });
 
     // The census, TWICE, and the first one is the sharper tripwire: `makeProfileDoc`
@@ -2813,6 +2835,7 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     const ENVELOPE = new Set([
       "v", "updatedAt", "producer", "producer.kind", "producer.version", "producer.stamped",
       "screening", "screening.baselineAt", "screening.dormancyDays", "screening.scope", "applied",
+      ...[...V1_KEY_PATHS].filter((k) => k.startsWith("removedRules")),
     ]);
     expect([...keyPaths(payload)].sort(), "the serializer reached a column v1 never admitted")
       .toEqual([...V1_KEY_PATHS].filter((k) => !ENVELOPE.has(k)).sort());
@@ -2831,7 +2854,27 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     expect(profileFingerprint(parsed.doc!)).toBe(profileFingerprint(payload));
     expect(parsed.doc!.screening).toEqual(screening);
     expect(parsed.doc!.applied).toEqual([APPLIED]);
+    expect(parsed.doc!.removedRules).toEqual(removedRules);
   }, 30_000);
+
+  it("a rules list cut by its bound publishes no removal: a rule left out could be the one it names", async () => {
+    const db = makeDb(DB);
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: "bound" });
+    const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "bound@trafficflow.test" }).returning();
+    const at = new Date();
+    await db.insert(ruleRemovals).values({
+      accountId, ruleKey: JSON.stringify(["sender", "gone@x.example", "", ""]), kind: "sender", match: "gone@x.example", removedAt: at,
+    });
+    const read = async () => (await serializeOrganizerProfileCounted(db, accountId, mb!.id, { removed: { by: INSTALL }, now: at })).removedRules;
+    const rows = (n: number, from: number) => Array.from({ length: n }, (_, i) => ({
+      accountId, kind: "sender", match: `r${from + i}@x.example`, destination: "INBOX", provenance: "manual",
+    }));
+    await db.insert(rules).values(rows(PROFILE_LIST_MAX.rules, 0));
+    expect((await read())!.map((r) => r.match), "at the bound").toEqual(["gone@x.example"]);
+    await db.insert(rules).values(rows(1, PROFILE_LIST_MAX.rules));
+    expect(await read(), "one past it").toBeUndefined();
+  }, 60_000);
 });
 
 /**
