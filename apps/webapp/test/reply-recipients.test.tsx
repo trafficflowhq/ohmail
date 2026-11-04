@@ -197,6 +197,18 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 
 const reply = (): HTMLElement => host!.querySelector<HTMLElement>(".read-col .reply")!;
 
+/** The reply's rich editor, waited for by real time: its cold lazy import outlasts any tick count under load. */
+async function replyEditor(): Promise<HTMLElement> {
+  const deadline = Date.now() + 10_000;
+  let editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
+  while (!editor && Date.now() <= deadline) {
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
+  }
+  expect(editor, "the reply's rich editor never mounted").not.toBeNull();
+  return editor!;
+}
+
 /** The recipient row input labelled `label` inside the opened editor. */
 function rowInput(label: string): HTMLInputElement {
   const l = [...reply().querySelectorAll<HTMLLabelElement>(".reply-rcpt label")]
@@ -342,13 +354,8 @@ describe("the reply's subject edits in place — and threading never depends on 
     // Write the body FIRST — it settles the rich editor (its deferred init focuses itself
     // once, exactly as it does for a person who opens a reply and starts typing). The surface
     // mounts deferred (`immediatelyRender: false`), so wait for it within a bounded loop.
-    let editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
-    for (let i = 0; i < 20 && !editor; i++) {
-      await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-      editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
-    }
-    expect(editor, "the reply's rich editor never mounted").not.toBeNull();
-    await act(async () => { typeInto(editor!, "Passt."); });
+    const editor = await replyEditor();
+    await act(async () => { typeInto(editor, "Passt."); });
     await settle();
 
     // Calm plain text: a button, not an input, and no input on screen yet.
@@ -392,12 +399,8 @@ describe("the reply's subject edits in place — and threading never depends on 
     // (`replyMetaKey`) on the body scratch's lifecycle: reopen restores it, a settled send
     // spends it.
     await mountShell();
-    let editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
-    for (let i = 0; i < 20 && !editor; i++) {
-      await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
-      editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface");
-    }
-    await act(async () => { typeInto(editor!, "Passt."); });
+    const editor = await replyEditor();
+    await act(async () => { typeInto(editor, "Passt."); });
     await settle();
 
     const input = await openSubjectInput();
@@ -429,7 +432,7 @@ describe("the reply's subject edits in place — and threading never depends on 
 
     await mountShell();
     const shown = reply().querySelector(".reply-subject-text")!.textContent!;
-    const editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface")!;
+    const editor = await replyEditor();
     await act(async () => { typeInto(editor, "Passt."); });
     await act(async () => { sendButton().click(); });
     await settle();
@@ -501,7 +504,7 @@ describe("the reply head opens into editable recipients", () => {
     await typeRecipient("To", "extra@example.test");
     await typeRecipient("Bcc", "blind@example.test");
 
-    const editor = host!.querySelector<HTMLElement>(".read-col .msg .rte-surface")!;
+    const editor = await replyEditor();
     await act(async () => { typeInto(editor, "Donnerstag passt."); });
     await act(async () => { sendButton().click(); });
     await settle();

@@ -74,10 +74,11 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function waitFor(cond: () => boolean, what: string): Promise<void> {
-  for (let i = 0; i < 40; i += 1) {
-    if (cond()) return;
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+/** Bounded by real time, not a tick count: the editor's lazy import outlasts any count under load. */
+async function waitFor(cond: () => boolean, what: string, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!cond() && Date.now() <= deadline) {
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
   }
   expect(cond(), what).toBe(true);
 }
