@@ -1,6 +1,6 @@
-import { and, eq, exists, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, eq, exists, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import {
-  fencedAccountWrite, goneEverywhereWhere, mailboxes, messageBodies, messages, messageSearch, routingDecisions,
+  accounts, fencedAccountWrite, goneEverywhereWhere, mailboxes, messageBodies, messages, messageSearch, routingDecisions,
   trackerEvents, WHOLE_BLOCK_HEADER_KEYS, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -73,6 +73,22 @@ async function leftWithWords(db: Tx, accountId: string, limit: number): Promise<
       ),
     ))
     .limit(limit);
+  return rows.map((r) => r.id);
+}
+
+/**
+ * The accounts the worker's tail tidies besides the ones it serves: every account not erased with a
+ * mailbox not erased, whatever its status, so a parked account and one whose mailboxes are all
+ * disconnected are reached too. `shard` is the caller's predicate over `accounts.id`.
+ */
+export async function goneLetterTidyAccounts(db: Tx, opts: { shard?: SQL } = {}): Promise<string[]> {
+  const rows = await db.select({ id: accounts.id }).from(accounts)
+    .where(and(
+      isNull(accounts.erasedAt),
+      exists(db.select({ one: sql`1` }).from(mailboxes).where(and(eq(mailboxes.accountId, accounts.id), isNull(mailboxes.erasedAt)))),
+      opts.shard,
+    ))
+    .orderBy(accounts.id);
   return rows.map((r) => r.id);
 }
 
