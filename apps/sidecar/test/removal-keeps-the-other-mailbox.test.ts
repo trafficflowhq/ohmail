@@ -114,7 +114,7 @@ describe("removing a mailbox from this computer", () => {
     const s = await createSidecar({
       dataDir,
       imap: {
-        host: seed.host, port: 993, secure: true, auth: { user: seed.user, pass: "not-dialled-password-password" },
+        host: seed.host, port: 993, secure: true, auth: { user: seed.user, pass: "mailbox-unreached-password" },
         smtp: { host: "smtp-a.invalid", port: 587, secure: false },
       },
       address: seed.user, machineName: "this machine", pollIntervalMs: 60 * HOUR, leaseStaleAfterMs: 60_000,

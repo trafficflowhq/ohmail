@@ -273,7 +273,7 @@ describe("one install, two mailboxes", () => {
       dataDir,
       imap: {
         host: seed.host, port: 993, secure: true,
-        auth: { user: seed.user, pass: "not-dialled-password-password" },
+        auth: { user: seed.user, pass: "mailbox-unreached-password" },
         smtp: { host: "smtp-a.invalid", port: 587, secure: false },
       },
       address: seed.user,
@@ -300,7 +300,7 @@ describe("one install, two mailboxes", () => {
       dataDir,
       imap: {
         host: seed.host, port: 993, secure: true,
-        auth: { user: seed.user, pass: "not-dialled-password-password" },
+        auth: { user: seed.user, pass: "mailbox-unreached-password" },
         smtp: { host: smtpHost, port: 587, secure: false },
       },
       address: seed.user,

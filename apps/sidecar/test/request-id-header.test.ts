@@ -76,7 +76,7 @@ async function standUp(): Promise<Sidecar> {
     address: ADDRESS,
     imap: {
       host: "imap.invalid", port: 993, secure: true,
-      auth: { user: ADDRESS, pass: "not-dialled-password-password" },
+      auth: { user: ADDRESS, pass: "mailbox-unreached-password" },
     },
     // Long enough that no timer of the engine's own reads the clock while a case is armed.
     pollIntervalMs: 60 * 60 * 1000,

@@ -108,7 +108,7 @@ describe("an edit during and after a takeover reaches the mailbox beside the hel
     const dataDir = await freshDataDir("ohmail-takeover-publish-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the new laptop",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
       // The stored credential the import card's route asks for.
@@ -182,7 +182,7 @@ describe("a desktop restored from a backup", () => {
   const launch = async (meta: MemoryMeta, dir: string, net?: { offline: boolean }) => {
     const sidecar = await createSidecar({
       dataDir: dir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the laptop",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
       keks: { 1: Buffer.alloc(32, 9) }, adapterFactory: factory(meta, net), log: () => {},
@@ -395,7 +395,7 @@ describe("after a takeover, the install that stood down shows the new organizer'
     const dataDir = await freshDataDir("ohmail-takeover-counts-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName,
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
       adapterFactory: factory(meta), log: () => {}, now: () => at(0), dkimKeys: null,
@@ -476,7 +476,7 @@ describe("the install that stood down takes the mailbox back after a relaunch", 
   const launch = async (meta: MemoryMeta, machineName: string, dataDir: string) => {
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName,
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000, profileFlushIntervalMs: 0,
       keks: { 1: Buffer.alloc(32, 9) }, adapterFactory: factory(meta), log: () => {}, now: () => at(0), dkimKeys: null,

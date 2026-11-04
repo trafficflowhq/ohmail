@@ -464,7 +464,7 @@ describe.skipIf(!PG_UP)("DELETE /account against a session writer that audits", 
 interface Parked { label: string; route: string; erasureEnded: string[]; writer: string; writerWaitedOn: string; erased: boolean }
 type ParkWriter = (h: unknown, p: Person, prior: Record<string, string>) => Promise<unknown>;
 type ParkPrior = (p: Person) => Promise<Record<string, string>>;
-const PASSWORD = "pw-correct-horse-battery-password-password";
+const PASSWORD = "long-signin-password";
 const none: ParkPrior = async () => ({});
 
 /**

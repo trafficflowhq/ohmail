@@ -28,7 +28,7 @@ import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 
-const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "typed-secret-password-password" };
+const IMAP = { host: "imap.example.invalid", port: 993, secure: true, user: "u@example.invalid", pass: "user-entered-password" };
 
 const post = (token: string, over: Record<string, unknown> = {}): Request =>
   req("POST", "/mailboxes/probe", {
@@ -106,7 +106,7 @@ describe("the affirmative verdict, which did not exist before", () => {
     const { deps, token } = await session();
     spyDial(ok);
     const wire = await (await H(post(token), deps)).text();
-    expect(wire).not.toContain("typed-secret-password-password");
+    expect(wire).not.toContain("user-entered-password");
   });
 });
 
@@ -375,7 +375,7 @@ describe("the plaintext consent on Test connection", () => {
     });
     vi.spyOn(ImapAdapter.prototype, "listFolders").mockResolvedValue(["INBOX"]);
     vi.spyOn(ImapAdapter.prototype, "close").mockResolvedValue(undefined);
-    const home = { host: "mail.home.example", user: "u@example.invalid", pass: "typed-secret-password-password" };
+    const home = { host: "mail.home.example", user: "u@example.invalid", pass: "user-entered-password" };
 
     const first = await H(post(token, { imap: home }), deps);
     expect(first.status).toBe(400);

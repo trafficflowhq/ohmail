@@ -126,7 +126,7 @@ async function seedMailbox(
     ...(opts.probeCode ? { smtpSizeProbeCode: opts.probeCode } : {}),
   }).returning();
   const id = mb!.id;
-  const imapSecret = await deps.keyProvider.encrypt(opts.oauth ? "a-refresh-token" : "imap-pass-password-password");
+  const imapSecret = await deps.keyProvider.encrypt(opts.oauth ? "a-refresh-token" : "incoming-login-password");
   await db.insert(mailboxCredentials).values({
     mailboxId: id, transport: "imap",
     secretEnc: imapSecret.ciphertext, keyVersion: imapSecret.keyVersion,
@@ -144,7 +144,7 @@ async function seedMailbox(
   });
   if (opts.smtp !== null && !opts.oauth) {
     const smtp = opts.smtp ?? { host: "smtp.example.net", port: 587, secure: false, user: "u@example.net" };
-    const enc = await deps.keyProvider.encrypt("smtp-pass-password-password");
+    const enc = await deps.keyProvider.encrypt("outgoing-login-password");
     await db.insert(mailboxCredentials).values({
       mailboxId: id, transport: "smtp",
       secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
@@ -192,7 +192,7 @@ describe("learnMissingSmtpSizes — which rows, which coordinates, and what gets
     // that dialled a different endpoint from the send would record an announcement about the
     // wrong server.
     expect(dial.calls).toEqual([{
-      host: "smtp.example.net", port: 587, secure: false, user: "u@example.net", pass: "smtp-pass-password-password",
+      host: "smtp.example.net", port: 587, secure: false, user: "u@example.net", pass: "outgoing-login-password",
     }]);
   });
 
@@ -204,7 +204,7 @@ describe("learnMissingSmtpSizes — which rows, which coordinates, and what gets
     await learnMissingSmtpSizes(deps, { dial });
 
     expect(dial.calls).toEqual([{
-      host: "imap.example.net", port: 587, secure: false, user: "u@example.net", pass: "imap-pass-password-password",
+      host: "imap.example.net", port: 587, secure: false, user: "u@example.net", pass: "incoming-login-password",
     }]);
   });
 

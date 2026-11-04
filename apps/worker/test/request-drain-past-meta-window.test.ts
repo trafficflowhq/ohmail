@@ -47,7 +47,7 @@ async function world(strays: number) {
     messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
-  const requestKey = deriveRequestKey({ auth: { user: "shared@x.example", pass: "pw-fixture-password-password" }, address: "shared@x.example" })!;
+  const requestKey = deriveRequestKey({ auth: { user: "shared@x.example", pass: "basic-account-password" }, address: "shared@x.example" })!;
   return { server, reader, organizer, db, accountId, mailboxId, msgId: msg!.id, requestKey };
 }
 

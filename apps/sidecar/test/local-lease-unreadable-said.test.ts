@@ -82,7 +82,7 @@ describe("the local mailbox list says what the runtime knows about the lease", (
     const dataDir = await freshDataDir("ohmail-lease-unreadable-");
     const sidecar: Sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the laptop",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
       adapterFactory: adapterOver(meta), log: () => {},

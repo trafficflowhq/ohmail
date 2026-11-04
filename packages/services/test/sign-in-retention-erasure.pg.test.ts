@@ -42,14 +42,14 @@ async function person(svc: AuthService): Promise<Person> {
     ({ db, accountId: "", userId: null, now: () => t, requestId: `sir-${randomUUID()}`, ip, ...over });
   const totp = (secret: string): string => generateSync({ secret, epoch: Math.floor(t.getTime() / 1000) });
   const email = `sir-${randomUUID()}@trafficflow.test`;
-  const reg = await svc.register(at(), { email, password: "pw-correct-horse-password-password", displayName: "S", inviteCode: "INVITE-OK" });
+  const reg = await svc.register(at(), { email, password: "account-signin-password", displayName: "S", inviteCode: "INVITE-OK" });
   if (reg.status !== "enrollment") throw new Error(`expected enrolment, got ${reg.status}`);
   const [enrolling] = await db.select({ id: sessions.id }).from(sessions).where(eq(sessions.userId, reg.user.userId)).limit(1);
   const enrollCtx = at({ userId: reg.user.userId, accountId: reg.user.accountId, sessionId: enrolling!.id });
   const { secret } = await svc.totpEnroll(enrollCtx);
   await svc.totpActivate(enrollCtx, { code: totp(secret) });
   t = new Date(t.getTime() + 60_000);
-  const ch = await svc.login(at(), { email, password: "pw-correct-horse-password-password" });
+  const ch = await svc.login(at(), { email, password: "account-signin-password" });
   if (ch.status !== "twofa_required") throw new Error(`expected 2FA, got ${ch.status}`);
   const est = await svc.totpVerify(at(), { loginToken: ch.loginToken, code: totp(secret), kind: "desktop-linux" });
   const refresh = est.tokens!.refreshToken;

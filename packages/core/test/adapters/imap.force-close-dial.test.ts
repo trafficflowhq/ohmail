@@ -13,7 +13,7 @@ import { ImapAdapter } from "../../src/adapters/imap.js";
  * timeout is far above the test's own, so a rejection can only come from the close.
  */
 
-const AUTH = { user: "someone", pass: "fixture-not-a-secret-password-password" };
+const AUTH = { user: "someone", pass: "inert-label-password" };
 const SLOW = { connectionMs: 120_000, greetingMs: 120_000, socketMs: 120_000 };
 const closers: Array<() => Promise<void> | void> = [];
 afterEach(async () => { while (closers.length > 0) await closers.pop()!(); });

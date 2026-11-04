@@ -112,7 +112,7 @@ describe("the engine runs the blank repair in the mode its configuration names",
     const dataDir = await freshDataDir("ohmail-blank-repair-mode-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       machineName: "blank repair host",
       pollIntervalMs: 60 * 60 * 1000,

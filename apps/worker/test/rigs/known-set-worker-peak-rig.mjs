@@ -63,7 +63,7 @@ const db = makeDb(url);
 
 /** One mailbox's login. Its password never leaves this function and is never printed. */
 function login() {
-  return { user: `rig-${randomUUID()}@trafficflow.test`, pass: "rig-fixture-password-password" };
+  return { user: `rig-${randomUUID()}@trafficflow.test`, pass: "rig-worker-password" };
 }
 
 function eml(from, subject, messageId) {

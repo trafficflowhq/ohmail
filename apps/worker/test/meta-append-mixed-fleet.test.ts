@@ -62,7 +62,7 @@ async function world(o: { strays: number; strayBytes?: number; pending: number }
     {
       mailboxId: mb!.id, accountId: ACCT, installId: "reader-install",
       adapter: { requestReaderIo: () => makeRequestReaderIo(server as unknown as LeaseImapClient, toServer) } as unknown as MailboxAdapter,
-      requestKey: deriveRequestKey({ auth: { user: "u@x.example", pass: "pw-fixture-password-password" }, address: "u@x.example" })!,
+      requestKey: deriveRequestKey({ auth: { user: "u@x.example", pass: "basic-account-password" }, address: "u@x.example" })!,
     },
     { installId: "reader-install", kind: "local" }, NOW,
     (event, detail) => { lines.push({ event, detail }); },

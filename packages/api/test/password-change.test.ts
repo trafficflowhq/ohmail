@@ -15,7 +15,7 @@ import { makeDeps, seedSessionFor, req, type TestClock } from "./helpers.js";
 
 const app = createApp(authRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
-const PW = "pw-correct-horse-password";
+const PW = "account-login-password";
 const NEXT = "new-battery-staple-password";
 
 /** Register over HTTP (a real credential row), then seed the full session the test speaks as. */
@@ -67,7 +67,7 @@ describe("POST /auth/password", () => {
     const { db, deps, clock } = await makeDeps();
     const me = await account(deps, db, clock, clock.now());
 
-    const res = await H(change(me, { currentPassword: "wrong-guess-password", newPassword: NEXT }), deps);
+    const res = await H(change(me, { currentPassword: "mismatched-entry-password", newPassword: NEXT }), deps);
 
     expect(res.status).toBe(401);
     expect((await res.json() as { error: { code: string } }).error.code).toBe("credential_refused");

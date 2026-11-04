@@ -21,7 +21,7 @@ describe("the local engine hands its dial the stored Sent, Junk and Trash", () =
     let captured: ImapConfig | null = null;
     const sidecar = await createSidecar({
       dataDir: dir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test",
       machineName: "the stored-folders machine",
       pollIntervalMs: 60 * HOUR,

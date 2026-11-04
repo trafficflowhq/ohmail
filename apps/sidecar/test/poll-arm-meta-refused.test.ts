@@ -53,7 +53,7 @@ describe("the poll arm over a folder that fills while this install organizes", (
     const dataDir = await freshDataDir("ohmail-poll-arm-");
     const sidecar = await createSidecar({
       dataDir, installId: INSTALL,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the phone",
       pollIntervalMs: 200, idlePollCeilingMs: 200, leaseStaleAfterMs: 600_000,
       adapterFactory: adapterOver(server), log: (event, detail) => { lines.push({ event, detail }); },

@@ -14,7 +14,7 @@ import {
  * it slows the address (429) and owes the holder a notice, and the holder's known devices are
  * exempt from it.
  */
-const PASSWORD = "pw-correct-horse-password-password";
+const PASSWORD = "account-signin-password";
 const START = new Date("2026-10-03T10:00:00.000Z");
 
 async function harness() {

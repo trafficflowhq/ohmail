@@ -151,7 +151,7 @@ async function phone(file: string, meta = new MemoryMetaFolder()): Promise<{
   const lines: Line[] = [];
   const engine = await startPhoneEngine({
     exec,
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: "ohmail on a phone",
     installId: INSTALL,
     adapterFactory: quietMailbox(meta),

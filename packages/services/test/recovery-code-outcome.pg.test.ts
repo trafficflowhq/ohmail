@@ -68,7 +68,7 @@ async function personWithCodes(leave: number): Promise<{
   user: SessionUser; codes: string[]; password: string; email: string;
 }> {
   const email = `rec-${randomUUID()}@lichtgrat.example`;
-  const password = "pw-correct-horse-password-password";
+  const password = "account-signin-password";
   // Narrowed on `status`, not asserted away: both results are unions, and a fixture that got the
   // other arm has not built the person this file is about — say so rather than read `undefined`.
   const reg = await svc.register(ctxFor(), {

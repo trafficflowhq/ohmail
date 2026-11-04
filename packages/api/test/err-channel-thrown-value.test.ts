@@ -99,11 +99,11 @@ function probeDeps(logger: Logger, thrown: unknown): ApiDeps {
 
 const IMAP_IN = {
   accountId: "acct", address: "u@vanity.example",
-  imap: { host: "imap.vanity.example", user: "u@vanity.example", pass: "typed-secret-password-password" },
+  imap: { host: "imap.vanity.example", user: "u@vanity.example", pass: "user-entered-password" },
 };
 const SMTP_IN = {
   accountId: "acct", address: "u@vanity.example",
-  smtp: { host: "smtp.vanity.example", user: "u@vanity.example", pass: "typed-secret-password-password" },
+  smtp: { host: "smtp.vanity.example", user: "u@vanity.example", pass: "user-entered-password" },
 };
 
 /** A dialer whose connect refuses, so the ladder ends and the `finally` runs. */

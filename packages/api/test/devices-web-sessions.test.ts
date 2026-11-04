@@ -34,7 +34,7 @@ import {
  */
 
 const app = createApp(authRoutes);
-const PW = "pw-correct-horse-password";
+const PW = "account-login-password";
 const CSRF = csrfTokenFor;
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
 

@@ -412,7 +412,7 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
    * the revoke. In the other order the revoke voided the grant first and holds it: the burn waits on
    * that row, and then finds the grant spent.
    */
-  const PW = "pw-correct-horse-battery-password-password";
+  const PW = "long-signin-password";
   const deps = makeTestAuthDeps();
   type Auth = ReturnType<typeof makeAuthService>;
   type Signer = Person & { secret: string; passkey: SoftwareAuthenticator | null };

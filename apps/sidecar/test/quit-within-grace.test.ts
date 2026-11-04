@@ -195,7 +195,7 @@ describe("a quit on the plan", () => {
     const sidecar = await createSidecar({
       dataDir,
       imap: {
-        host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
         ...(knobs.smtpMs !== undefined ? { smtp: { host: "smtp.invalid", port: 465, secure: true } } : {}),
       },
       ...(knobs.smtpMs !== undefined ? { keks: { 1: Buffer.alloc(32, 7) } } : {}),

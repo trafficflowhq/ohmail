@@ -138,7 +138,7 @@ describe("the local action doors' receipt", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: ADDRESS, pass: "not-dialled-password-password" },
+        auth: { user: ADDRESS, pass: "mailbox-unreached-password" },
       },
       address: ADDRESS,
       machineName: "receipt host",
@@ -313,7 +313,7 @@ describe("a launch bearer that has expired", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: ADDRESS, pass: "not-dialled-password-password" },
+        auth: { user: ADDRESS, pass: "mailbox-unreached-password" },
       },
       address: ADDRESS,
       machineName: "the machine left open for a day",
@@ -497,7 +497,7 @@ describe("the sender name door", () => {
     const inner = quietMailbox();
     const s = await createSidecar({
       dataDir: dir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: "mailbox-unreached-password" } },
       address: ADDRESS,
       machineName: "sender name host",
       pollIntervalMs: 60 * 60 * 1000,

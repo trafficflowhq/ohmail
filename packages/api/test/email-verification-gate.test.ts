@@ -27,7 +27,7 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> =>
   app.handle(r, { ...d, session: null, idempotency: null });
 
-const PW = "pw-correct-horse-battery-password";
+const PW = "long-login-password";
 const IP = "198.51.100.7";
 const IMAP = { host: "imap.example", port: 993, secure: true, user: "mila", pass: "mailbox-imap-password" };
 

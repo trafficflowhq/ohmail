@@ -6,6 +6,7 @@ import {
   discoveryRequestFor, passwordLabelKey, portMeansImplicitTls, presetForAddress, providerById, readDiscovery,
   serverGuessFor,
 } from "../src/providers.js";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
  * ONE providers.ts BRANCH PER CORPUS PROVIDER, with a recorded server behind it. The corpus is the
@@ -58,18 +59,18 @@ describe("providers.ts against the recorded provider shapes", () => {
 
 describe("the presets an address or a domain lookup suggests", () => {
   it("WEB.DE, t-online and bluewin addresses pre-fill their own servers", () => {
-    expect(presetForAddress("info@web.de")?.id).toBe("webde");
-    expect(presetForAddress("Hello@T-Online.de")?.id).toBe("tonline");
-    expect(presetForAddress("contact@bluewin.ch")?.id).toBe("bluewin");
-    expect(serverGuessFor("info@web.de")).toEqual({
+    expect(presetForAddress(personalAt("fixture.info", "web.de"))?.id).toBe("webde");
+    expect(presetForAddress(personalAt("fixture.hello", "t-online.de").replace("t-online.de", "T-Online.DE"))?.id).toBe("tonline");
+    expect(presetForAddress(personalAt("fixture.contact", "bluewin.ch"))?.id).toBe("bluewin");
+    expect(serverGuessFor(personalAt("fixture.info", "web.de"))).toEqual({
       imapHost: "imap.web.de", imapPort: "993", imapTls: true, smtpHost: "smtp.web.de", smtpPort: "587", from: "webde",
     });
   });
 
   it("the lookup is sent the domain, never the part before the @", () => {
-    expect(discoveryRequestFor(" Lena.Meier@Praxis-Sonnhalde.CH ")).toEqual({ domain: "praxis-sonnhalde.ch" });
-    expect(JSON.stringify(discoveryRequestFor("lena.meier@praxis-sonnhalde.ch"))).not.toContain("lena");
-    expect(discoveryRequestFor("lena.meier")).toBeNull();
+    expect(discoveryRequestFor(" Fixture.Lena@Praxis.EXAMPLE ")).toEqual({ domain: "praxis.example" });
+    expect(JSON.stringify(discoveryRequestFor("fixture.lena@praxis.example"))).not.toContain("lena");
+    expect(discoveryRequestFor("fixture.lena")).toBeNull();
     expect(discoveryRequestFor("lena@")).toBeNull();
   });
 

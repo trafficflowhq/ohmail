@@ -99,12 +99,12 @@ describe("the connect flow records what the submission server said it will accep
     );
     expect(dto.smtpMaxSizeBytes).toBe(20 * 1024 * 1024);
 
-    const smaller = await svc.update(ctx, dto.id, { smtp: { ...SMTP, pass: "new-secret-password-password" } }, {
+    const smaller = await svc.update(ctx, dto.id, { smtp: { ...SMTP, pass: "next-entry-password" } }, {
       ...PROBE_OK, smtpProbe: smtpProbeSaying(2 * 1024 * 1024),
     });
     expect(smaller.smtpMaxSizeBytes).toBe(2 * 1024 * 1024);
 
-    const silent = await svc.update(ctx, dto.id, { smtp: { ...SMTP, pass: "newer-secret-password-password" } }, {
+    const silent = await svc.update(ctx, dto.id, { smtp: { ...SMTP, pass: "latest-entry-password" } }, {
       ...PROBE_OK, smtpProbe: smtpProbeSaying(null),
     });
     expect(silent.smtpMaxSizeBytes).toBeNull();

@@ -278,7 +278,7 @@ async function organizingPhone(o: {
     exec: gated,
     imap: {
       host: "imap.invalid", port: 993, secure: true,
-      auth: { user: "a@b.test", pass: "pw-not-used-password-password" },
+      auth: { user: "a@b.test", pass: "idle-fixture-password" },
     },
     machineName: "ohmail on a phone",
     installId: OUR_INSTALL,
@@ -834,7 +834,7 @@ async function pressedReader(meta: StampedMeta): Promise<{
     exec,
     imap: {
       host: "imap.invalid", port: 993, secure: true,
-      auth: { user: "a@b.test", pass: "pw-not-used-password-password" },
+      auth: { user: "a@b.test", pass: "idle-fixture-password" },
     },
     machineName: "ohmail on a phone",
     installId: OUR_INSTALL,

@@ -68,7 +68,7 @@ beforeAll(async () => {
   local = await createSidecar({
     dataDir: dir,
     address: "owner@trafficflow.test",
-    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+    imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
     pollIntervalMs: 3_600_000,
     vitalsIntervalMs: 3_600_000,
     profileFlushIntervalMs: 3_600_000,

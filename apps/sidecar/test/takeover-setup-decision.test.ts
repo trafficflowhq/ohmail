@@ -144,7 +144,7 @@ describe("the takeover path's first decision is kept", () => {
     const dataDir = await freshDataDir("ohmail-takeover-decide-");
     const sidecar: Sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the new laptop",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
       adapterFactory: mailbox(meta, moves, { leaseGate }), log: () => {},
@@ -323,7 +323,7 @@ describe("the organize door takes a live holder's mailbox only by name", () => {
     const dataDir = await freshDataDir("ohmail-organize-door-");
     const sidecar: Sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the second computer",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
       adapterFactory: mailbox(meta, [], view), log: () => {},
@@ -446,7 +446,7 @@ describe("adding a mailbox a self-hosted server organizes", () => {
       dataDir,
       imap: {
         host: "127.0.0.1", port: 993, secure: true,
-        auth: { user: "desk@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "desk@trafficflow.test", pass: "mailbox-unreached-password" },
         smtp: { host: "smtp-a.invalid", port: 587, secure: false },
       },
       address: "desk@trafficflow.test", machineName: "the desktop",
@@ -533,7 +533,7 @@ describe("two installs agree on one mailbox nobody organizes", () => {
       const dataDir = await freshDataDir("ohmail-two-agree-");
       const sidecar: Sidecar = await createSidecar({
         dataDir,
-        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
         address: "owner@trafficflow.test", machineName: name,
         pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
         adapterFactory: mailbox(meta, [], { afterFirstLeaseRead }), log: () => {},
@@ -567,7 +567,7 @@ describe("two installs agree on one mailbox nobody organizes", () => {
       const dataDir = await freshDataDir("ohmail-two-agree-");
       const sidecar: Sidecar = await createSidecar({
         dataDir,
-        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
         address: "owner@trafficflow.test", machineName: name,
         pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
         adapterFactory: mailbox(meta, [], view), log: (event: string) => { if (event === "lease_permit_granted") granted.add(name); },
@@ -619,7 +619,7 @@ describe("an older press still unspent on another computer", () => {
       const dataDir = await freshDataDir("ohmail-older-press-");
       const sidecar: Sidecar = await createSidecar({
         dataDir,
-        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
         address: "owner@trafficflow.test", machineName: name,
         pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
         adapterFactory: mailbox(meta, [], view), log: () => {},

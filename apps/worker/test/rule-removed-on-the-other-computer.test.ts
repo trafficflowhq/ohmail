@@ -22,7 +22,7 @@ const t0 = new Date("2026-10-03T08:00:00.000Z");
 const at = (m: number): Date => new Date(t0.getTime() + m * 60_000);
 const HELD = "held@mailbox.example";
 const OWN = "own@mailbox.example";
-const keyOf = (a: string) => deriveRequestKey({ auth: { user: a, pass: "pw-fixture-password-password" }, address: a })!;
+const keyOf = (a: string) => deriveRequestKey({ auth: { user: a, pass: "basic-account-password" }, address: a })!;
 const svc = new RulesService();
 
 function meta() {

@@ -31,7 +31,7 @@ const NOW = new Date("2026-09-16T09:00:00.000Z");
 const KP = StaticKeyProvider.fromSecret(Buffer.alloc(32, 9), 1);
 const UNMETERED_READER = { accessOf: async (): Promise<AccessVerdict> => UNMETERED_ACCESS };
 const PROBE_OK = { probe: async () => ({ verdict: "ok" as const }) };
-const IMAP = { host: "imap.erased.test", port: 993, secure: true, user: "u", pass: "first-pass-password-password" };
+const IMAP = { host: "imap.erased.test", port: 993, secure: true, user: "u", pass: "earlier-attempt-password" };
 
 let sqlA: ReturnType<typeof postgres>;
 let sqlB: ReturnType<typeof postgres>;
@@ -104,7 +104,7 @@ describe.skipIf(!PG_UP)("an erased mailbox stays erased", () => {
     await stampErased(s.mailboxId);
 
     const refused = await svc.update(ctxOn(dbA, s.accountId), s.mailboxId, {
-      imap: { ...IMAP, pass: "second-pass-password-password" },
+      imap: { ...IMAP, pass: "later-attempt-password" },
     }, PROBE_OK).then(() => null, (e: unknown) => e);
 
     expect(refused, "the PATCH was admitted").toBeInstanceOf(ServiceError);
@@ -125,7 +125,7 @@ describe.skipIf(!PG_UP)("an erased mailbox stays erased", () => {
     const before = await dbA.select().from(mailboxCredentials)
       .where(eq(mailboxCredentials.mailboxId, s.mailboxId));
     await svc.update(ctxOn(dbA, s.accountId), s.mailboxId, {
-      imap: { ...IMAP, pass: "second-pass-password-password" },
+      imap: { ...IMAP, pass: "later-attempt-password" },
     }, PROBE_OK);
     const after = await dbA.select().from(mailboxCredentials)
       .where(eq(mailboxCredentials.mailboxId, s.mailboxId));
@@ -176,7 +176,7 @@ describe.skipIf(!PG_UP)("an erased mailbox stays erased", () => {
     const s = await seeded();
     const [patch, erase] = await Promise.allSettled([
       svc.update(ctxOn(dbA, s.accountId), s.mailboxId, {
-        imap: { ...IMAP, pass: "second-pass-password-password" },
+        imap: { ...IMAP, pass: "later-attempt-password" },
       }, PROBE_OK),
       svc.delete(ctxOn(dbB, s.accountId), s.mailboxId, { erase: { confirmAddress: s.address } }),
     ]);

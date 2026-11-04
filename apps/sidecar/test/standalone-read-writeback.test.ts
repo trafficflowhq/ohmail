@@ -138,7 +138,7 @@ describe("the standalone door writes read-state back to the mailbox", () => {
         host: "imap.invalid", port: 993, secure: true,
         // A password is what makes `start()` take the connected path — see the engine's
         // "NO PASSWORD, NO CONNECTION" branch.
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "seen host",

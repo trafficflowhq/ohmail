@@ -210,8 +210,8 @@ async function install(meta: MemoryMetaFolder, installId: string, o: { rule?: bo
   const engine = await startPhoneEngine({
     exec,
     imap: o.sealed
-      ? { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } }
-      : { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+      ? { host: "127.0.0.1", port: 1, secure: false, auth: { user: "a@b.test", pass: "idle-fixture-password" } }
+      : { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
     machineName: `ohmail ${installId}`, installId, adapterFactory: server.factory,
     log: (event: string, detail: Record<string, unknown>) => { lines.push({ event, detail }); },
     now: () => new Date(Date.now() + clock.skewMs),
@@ -759,7 +759,7 @@ describe.skipIf(ON_DEVICE_STORE)("the gap travels across installs, on the deskto
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
     const s: Sidecar = await createSidecar({
       dataDir, installId, machineName: `ohmail ${installId}`,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "pw-not-used-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "a@b.test", pass: "idle-fixture-password" } },
       address: "a@b.test", pollIntervalMs: 60 * 60 * 1000, adapterFactory: server.factory, log: () => {},
       now: () => new Date(Date.now() + clock.skewMs),
     });

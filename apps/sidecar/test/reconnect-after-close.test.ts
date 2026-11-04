@@ -698,7 +698,7 @@ describe("the engine re-dials a connection that died under it", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "the machine that was left open",
@@ -1095,7 +1095,7 @@ describe("the engine re-dials a connection that died under it", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "the machine being measured",
@@ -1840,7 +1840,7 @@ describe("the engine re-dials a connection that died under it", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "the machine whose first dial failed",
@@ -1888,7 +1888,7 @@ describe("the engine re-dials a connection that died under it", () => {
       dataDir: dir,
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "the machine whose clock was corrected",
@@ -3188,7 +3188,7 @@ describe("the engine re-dials a connection that died under it", () => {
       dataDir: await dataDir(),
       imap: {
         host: "imap.invalid", port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       pollIntervalMs: 60 * HOUR,

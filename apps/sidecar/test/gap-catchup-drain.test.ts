@@ -119,7 +119,7 @@ describe("letters from a gap are counted for the person and filed only on their 
     cleanups.push(() => rmSync(dataDir, { recursive: true, force: true }));
     const s = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "the phone", pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000, adapterFactory: server(meta, pending, moves, settings), log: () => {},
       ...extra,

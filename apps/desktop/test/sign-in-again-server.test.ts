@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   askFor, incomingFromAsk, knownIncoming, readServerUnknown,
 } from "../src/sign-in-again-server.js";
+import { personalAt } from "../../../test/support/fixture-credentials.js";
 
 /**
  * WHERE "SIGN IN AGAIN" DIALS FOR A MAILBOX AN EARLIER VERSION SIGNED OUT WITH NOTHING KEPT. A
@@ -36,11 +37,11 @@ describe("the server a signed-out mailbox is placed by", () => {
        read as a fact here. */
     expect(knownIncoming(hint({ provider: "no-such-provider" }), "me@example.test")).toBeNull();
     expect(knownIncoming(hint({ outgoingHost: "smtp.example.test" }), "me@example.test")).toBeNull();
-    expect(knownIncoming(hint({}), "me@gmail.com"), "the address's domain dialled a server").toBeNull();
+    expect(knownIncoming(hint({}), personalAt("fixture.me", "gmail.com")), "the address's domain dialled a server").toBeNull();
   });
 
   it("the ask starts from the address's guess and the kept login, and says the outgoing server", () => {
-    expect(askFor(hint({ login: "the-login", outgoingHost: "mail.example.test" }), "me@gmail.com"))
+    expect(askFor(hint({ login: "the-login", outgoingHost: "mail.example.test" }), personalAt("fixture.me", "gmail.com")))
       .toEqual({ host: "imap.gmail.com", port: "993", user: "the-login", outgoingHost: "mail.example.test" });
     expect(askFor(hint({}), " me@example.test "))
       .toEqual({ host: "", port: "993", user: "me@example.test", outgoingHost: null });

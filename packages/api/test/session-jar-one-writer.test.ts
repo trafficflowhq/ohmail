@@ -21,7 +21,7 @@ import { makeDeps, seedSession, seedSessionFor, seedStaffSession, req, setCookie
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
-const PW = "pw-correct-horse-password";
+const PW = "account-login-password";
 const ACCESS_LAPSED_MS = 16 * 60_000;
 
 async function codeOf(res: Response): Promise<string | null> {

@@ -391,7 +391,7 @@ export async function seedStaffSession(
   // and `resolveStaffSession` judges only the SESSION row — activation gates sign-in, which
   // is not what this fixture fabricates.
   const [staff] = await db.insert(staffUsers)
-    .values({ email, passwordHash: "unused-fixture-hash-password-hash-password-hash" })
+    .values({ email, passwordHash: "placeholder-row-password-hash" })
     .returning();
   await db.insert(staffSessions).values({
     staffUserId: staff!.id,

@@ -128,7 +128,7 @@ describe("a hand-back that runs on a dropped socket releases over a fresh one", 
     const dataDir = await freshDataDir("ohmail-hand-back-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "phone-shaped host",
       pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 60_000,
       adapterFactory: box.factory, log: () => {},
@@ -236,7 +236,7 @@ describe("a hand-back asked mid-drain goes out at the next cycle edge", () => {
     const dataDir = await freshDataDir("ohmail-hand-back-edge-");
     const sidecar = await createSidecar({
       dataDir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "phone-shaped host",
       pollIntervalMs, leaseStaleAfterMs: 60_000,
       adapterFactory: box.factory, log: (event, detail) => { lines.push({ event, detail }); },

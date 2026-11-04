@@ -169,7 +169,7 @@ function connect(file: string, o: { dial: Dial; incomingDown?: boolean; dialled?
     exec: nodeExecutor(file),
     imap: {
       host: "imap.invalid", port: 993, secure: true,
-      auth: { user: "someone@example.test", pass: "pw-submission-case-password-password" },
+      auth: { user: "someone@example.test", pass: "submitted-form-password" },
       smtp: { host: "smtp.invalid", port: 587, secure: false },
     },
     ...IDENTITY,

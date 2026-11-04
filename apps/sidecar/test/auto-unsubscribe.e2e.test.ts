@@ -151,7 +151,7 @@ describe("auto-unsubscribe on the standalone door", () => {
       dataDir,
       imap: {
         host, port: 993, secure: true,
-        auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" },
+        auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" },
       },
       address: "owner@trafficflow.test",
       machineName: "auto-unsubscribe host",

@@ -222,7 +222,7 @@ describe("the drain's statements", () => {
     dirs.push(dataDir);
     let handle: OpenLocalDb | null = null;
     const sidecar = await createSidecar({
-      dataDir, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      dataDir, imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "plans host", pollIntervalMs: 60 * 60 * 1000,
       adapterFactory: mailbox(450, 150), log: () => {},
       store: async (d: string, o: unknown) => (handle = await openLocalDb(d, o as never)),

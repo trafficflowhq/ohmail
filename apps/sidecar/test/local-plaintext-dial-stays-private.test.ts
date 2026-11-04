@@ -24,7 +24,7 @@ async function launch(imap: PlainServer): Promise<Sidecar> {
   const dataDir = await freshDataDir("ohmail-plaintext-");
   const s = await createSidecar({
     dataDir,
-    imap: { host: HOME_NAME, port: imap.port, secure: false, allowInsecure: true, auth: { user: USER, pass: "imap-fixture-password-password" } },
+    imap: { host: HOME_NAME, port: imap.port, secure: false, allowInsecure: true, auth: { user: USER, pass: "incoming-rig-password" } },
     address: USER,
     machineName: "this machine",
     pollIntervalMs: 60 * 60 * 1000,

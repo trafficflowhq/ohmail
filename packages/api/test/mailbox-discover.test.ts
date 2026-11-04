@@ -269,15 +269,15 @@ describe("what it refuses before any lookup", () => {
     const dns = fakeDns({ mx: [[1, "aspmx.l.google.com"]] });
     const h = await harness(dns);
 
-    const whole = await ask(h, { domain: "lena.meier@praxis-sonnhalde.ch" });
+    const whole = await ask(h, { domain: "fixture.lena@praxis.example" });
     expect(whole.status).toBe(400);
-    expect(await whole.text()).not.toContain("lena.meier");
+    expect(await whole.text()).not.toContain("fixture.lena");
 
-    expect((await ask(h, { domain: "praxis-sonnhalde.ch", address: "lena.meier@praxis-sonnhalde.ch" })).status).toBe(400);
+    expect((await ask(h, { domain: "praxis-sonnhalde.ch", address: "fixture.lena@praxis.example" })).status).toBe(400);
     expect((await ask(h, ["praxis-sonnhalde.ch"])).status).toBe(400);
     expect((await ask(h, "praxis-sonnhalde.ch")).status).toBe(400);
     expect(dns.asked).toEqual([]);
-    expect(h.log.seen()).not.toContain("lena.meier");
+    expect(h.log.seen()).not.toContain("fixture.lena");
     expect(h.log.seen()).not.toContain("praxis-sonnhalde");
   });
 });

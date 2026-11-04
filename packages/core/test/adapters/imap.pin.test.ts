@@ -38,7 +38,7 @@ const CLEARED = ["93.184.216.34", "2606:2800:220:1:248:1893:25c8:1946"] as const
 
 const cfg = (over: Partial<ImapConfig> = {}): ImapConfig => ({
   host: NAME, port: 993, secure: true,
-  auth: { user: "u@vanity.example", pass: "typed-secret-password-password" },
+  auth: { user: "u@vanity.example", pass: "user-entered-password" },
   ...over,
 });
 
@@ -141,7 +141,7 @@ describe("smtpTransportOptions — the submission leg pins by dial host, because
   const smtpCfg = (pin?: readonly string[]): ImapConfig => cfg({
     smtp: {
       host: "smtp.vanity.example", port: 465, secure: true,
-      auth: { user: "u@vanity.example", pass: "typed-secret-password-password" },
+      auth: { user: "u@vanity.example", pass: "user-entered-password" },
       ...(pin ? { pin } : {}),
     },
   });
@@ -175,7 +175,7 @@ describe("smtpTransportOptions — the submission leg pins by dial host, because
     const options = smtpTransportOptions(cfg({
       smtp: {
         host: "smtp.vanity.example", port: 587, secure: false,
-        auth: { user: "u@vanity.example", pass: "typed-secret-password-password" }, pin: CLEARED,
+        auth: { user: "u@vanity.example", pass: "user-entered-password" }, pin: CLEARED,
       },
     })) as Record<string, unknown>;
     expect(options.host).toBe(CLEARED[0]);

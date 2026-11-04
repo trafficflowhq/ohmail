@@ -291,8 +291,8 @@ describe("the local engine survives a restart", () => {
       const cfg = greenmail();
       const dataDir = freshDataDir();
       const keks = { 1: aKek() };
-      const storedPass = "the-one-the-user-typed-password-password";
-      const stalePass = "the-stale-one-from-a-launch-script-password-password";
+      const storedPass = "keyed-in-password";
+      const stalePass = "stale-launcher-password";
 
       const first = await launch({ dataDir, cfg, keks, pass: storedPass });
       expect((await enterCredential(first, { ...cfg, auth: { ...cfg.auth, pass: storedPass } })).status).toBe(200);

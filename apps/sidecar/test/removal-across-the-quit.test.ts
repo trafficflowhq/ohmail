@@ -187,7 +187,7 @@ describe("a mailbox removal and the app's own close", () => {
     const lines: Line[] = [];
     const sidecar = await createSidecar({
       dataDir: dir,
-      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "not-dialled-password-password" } },
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
       address: "owner@trafficflow.test", machineName: "removal rig", pollIntervalMs: 60 * 60 * 1000, leaseStaleAfterMs: 600_000,
       adapterFactory: mailbox(meta),
       log: (event, detail) => { lines.push({ event, detail: (detail ?? {}) as Record<string, unknown> }); },

@@ -280,27 +280,29 @@ describe("the account's own organisation reports at its own domain, whatever the
  * a forged company report, wait, marked.
  */
 describe("the person's own hoster's report of their letter, unsigned, at an unmapped mailbox", () => {
-  const OVH = "MAILER-DAEMON@mo1.mail-out.ovh.net";
+  /** The hoster's and the forged company's own domains are the property, so they come from consts. */
+  const [OVH_OUT, PAYPAL] = ["mail-out.ovh.net", "paypal.com"];
+  const OVH = `MAILER-DAEMON@mo1.${OVH_OUT}`;
 
   it("through the outgoing server the mailbox stores: lifted, recorded, the verdict the line reads kept", async () => {
     const w = await world({ servers: { imap: { host: "imap.example-host.test" }, smtp: { host: "ssl0.ovh.net" } } });
-    const ndr = await w.deliver("ovh-1@mail-out.ovh.net", dsn({ id: "ovh-1@mail-out.ovh.net", inReplyTo: OURS, from: OVH }));
+    const ndr = await w.deliver(`ovh-1@${OVH_OUT}`, dsn({ id: `ovh-1@${OVH_OUT}`, inReplyTo: OURS, from: OVH }));
     expect(ndr).toMatchObject({ desired: "INBOX", held: false, auth: "unavailable", check: "none" });
     expect(await w.admissions()).toEqual([{ messageId: ndr.id, header: OURS }]);
   });
 
   it("with no outgoing row, through the incoming server the send door dials then", async () => {
     const w = await world({ servers: { imap: { host: "ssl0.ovh.net" } } });
-    const ndr = await w.deliver("ovh-2@mail-out.ovh.net", dsn({ id: "ovh-2@mail-out.ovh.net", inReplyTo: OURS, from: OVH, quoted: true }));
+    const ndr = await w.deliver(`ovh-2@${OVH_OUT}`, dsn({ id: `ovh-2@${OVH_OUT}`, inReplyTo: OURS, from: OVH, quoted: true }));
     expect(ndr).toMatchObject({ desired: "INBOX", held: false });
   });
 
   it("CONTROL: at a mailbox submitting elsewhere, and from a company's address forged, the report waits marked", async () => {
     const elsewhere = await world({ servers: { smtp: { host: "mail.infomaniak.com" } } });
-    const ndr = await elsewhere.deliver("ovh-3@mail-out.ovh.net", dsn({ id: "ovh-3@mail-out.ovh.net", inReplyTo: OURS, from: OVH }));
+    const ndr = await elsewhere.deliver(`ovh-3@${OVH_OUT}`, dsn({ id: `ovh-3@${OVH_OUT}`, inReplyTo: OURS, from: OVH }));
     expect(ndr).toMatchObject({ desired: "ohmail/Screener", held: true, auth: "unavailable" });
     const forged = await world({ servers: { smtp: { host: "ssl0.ovh.net" } } });
-    const pp = await forged.deliver("pp-1@paypal.com", dsn({ id: "pp-1@paypal.com", inReplyTo: OURS, from: "postmaster@paypal.com" }));
+    const pp = await forged.deliver(`pp-1@${PAYPAL}`, dsn({ id: `pp-1@${PAYPAL}`, inReplyTo: OURS, from: `postmaster@${PAYPAL}` }));
     expect(pp).toMatchObject({ desired: "ohmail/Screener", held: true });
     expect(await forged.admissions()).toEqual([]);
   });

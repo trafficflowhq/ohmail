@@ -244,11 +244,11 @@ describe("a query's operands, as both stores read its structure", () => {
   });
 
   it("keeps a typed operand's part-words together in one part; one operand is read per part", () => {
-    expect(partOperandsOf("anna@club.ch"), "an address is one operand").toBeNull();
+    expect(partOperandsOf("anna@club.example"), "an address is one operand").toBeNull();
     expect(partOperandsOf("re-enter")).toBeNull();
     expect(partOperandsOf("the lantern"), "a stopword-only operand is dropped").toBeNull();
     expect(partOperandsOf("lantern kai")).toEqual([[0], [1]]);
-    expect(partOperandsOf("anna@club.ch dinner")).toEqual([[0, 1, 2], [3]]);
+    expect(partOperandsOf("anna@club.example dinner")).toEqual([[0, 1, 2], [3]]);
     expect(partOperandsOf("kai samples or food"), "`or` keeps no word").toEqual([[0], [1], [3]]);
   });
 });
