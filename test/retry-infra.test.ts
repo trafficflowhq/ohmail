@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { publicPath } from "./support/public-root.mjs";
 
@@ -9,8 +9,9 @@ import { publicPath } from "./support/public-root.mjs";
  * ONE VISIBLE RETRY, ON A NAMED INFRASTRUCTURE CLASS, AND NOTHING ELSE.
  *
  * `.github/scripts/retry-infra.sh CLASS -- COMMAND...` runs a non-test CI step and runs it once more
- * only when it failed AND its output carries the class's signature: a registry reset for npm, a build
- * script the kernel would not execute for cargo, a busy disk for hdiutil. Every other failure keeps its
+ * only when it failed AND its output carries the class's signature: a registry reset or a stale cache
+ * temp file (removed first) for npm, a build script the kernel would not execute for cargo, a busy
+ * disk for hdiutil. Every other failure keeps its
  * status and runs once. A retry prints a `::warning::` and leaves a marker in $GITHUB_ENV, so the job
  * reads green but says so, and a timing read after it is never widened.
  *
@@ -50,6 +51,10 @@ function fixture(name: string, attempts: Attempt[]): { dir: string; bin: string 
 
 function run(cls: string, name: string, attempts: Attempt[], args: string[] = ["ci", "--ignore-scripts"]): Ran {
   const { dir, bin } = fixture(name, attempts);
+  return runBin(cls, dir, bin, args);
+}
+
+function runBin(cls: string, dir: string, bin: string, args: string[] = ["ci", "--ignore-scripts"]): Ran {
   const envFile = join(dir, "github-env");
   writeFileSync(envFile, "");
   const r = spawnSync("bash", [SCRIPT, cls, "--", bin, ...args], {
@@ -66,6 +71,18 @@ const warnings = (out: string) => out.split("\n").filter((l) => l.startsWith("::
 const runs = (r: Ran) => r.calls.filter((c) => c.startsWith("run")).length;
 
 const NPM_RESET = "npm error code ECONNRESET\nnpm error syscall read\nnpm error errno -104\n";
+const eexist = (path: string) =>
+  [
+    "npm error code EEXIST",
+    "npm error syscall open",
+    `npm error path ${path}`,
+    "npm error errno -17",
+    `npm error EEXIST: file already exists, open '${path}'`,
+    `npm error File exists: ${path}`,
+    "npm error Remove the existing file and try again, or run npm",
+    "npm error with --force to overwrite files recklessly.",
+    "",
+  ].join("\n");
 const CARGO_126 = [
   "   Compiling libc v0.2.189",
   "error: failed to run custom build command for `libc v0.2.189`",
@@ -116,6 +133,39 @@ describe("retry-infra.sh: npm-network", () => {
     expect(runs(r)).toBe(1);
     expect(warnings(r.stdout)).toEqual([]);
     expect(r.envFile).toBe("");
+  });
+
+  it("EEXIST on an npm cache temp file clears that entry and runs once more", () => {
+    const { dir, bin } = fixture("npm", [{ out: "", code: 0 }]);
+    const stale = join(dir, ".npm", "_cacache", "tmp", "57287914");
+    mkdirSync(dirname(stale), { recursive: true });
+    writeFileSync(stale, "half-written");
+    const out = eexist(stale);
+    writeFileSync(join(dir, "out1"), out);
+    writeFileSync(join(dir, "code1"), "254");
+    writeFileSync(join(dir, "out2"), "added 952 packages\n");
+    writeFileSync(join(dir, "code2"), "0");
+    const r = runBin("npm-network", dir, bin);
+    expect(r.status).toBe(0);
+    expect(runs(r)).toBe(2);
+    expect(existsSync(stale), "the stale temp entry").toBe(false);
+    expect(existsSync(dirname(stale)), "the cache's tmp folder itself").toBe(true);
+    expect(warnings(r.stdout)).toEqual([`::warning title=Retried once%3A npm-network::npm error path ${stale} (exit 254); running it once more`]);
+  });
+
+  it.each([
+    ["in node_modules", ["node_modules", ".bin", "vitest"], ["node_modules", ".bin", "vitest"]],
+    ["named as the cache's tmp/..", [".npm", "_cacache", "tmp", ".."], [".npm", "_cacache", "tmp"]],
+  ])("EEXIST %s runs once, keeps its status and removes nothing", (_where, named, kept) => {
+    const { dir, bin } = fixture("npm", [{ out: "", code: 0 }]);
+    mkdirSync(join(dir, ...kept), { recursive: true });
+    writeFileSync(join(dir, "out1"), eexist(`${dir}/${named.join("/")}`));
+    writeFileSync(join(dir, "code1"), "254");
+    const r = runBin("npm-network", dir, bin);
+    expect(r.status).toBe(254);
+    expect(runs(r)).toBe(1);
+    expect(existsSync(join(dir, ...kept))).toBe(true);
+    expect(warnings(r.stdout)).toEqual([]);
   });
 
   it("a plain failure keeps its own status, not the pipe's", () => {

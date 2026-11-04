@@ -84,6 +84,17 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   has the format.
 - Match the surrounding style. There is no formatter config to fight with.
 
+### Migrations
+
+A migration takes the next number on its journal: `packages/db-mail/drizzle` (every server)
+and `packages/db-mail/drizzle-sqlite` (the store a device carries) count one sequence, a
+device-only entry included, and `packages/db/drizzle-cloud` counts its own. Two open pull
+requests that each take the same next number pass on their own and in either merge order, and
+the merged journal applies one of them out of order. Before you cut a migration, run
+`node scripts/migration-numbers.mjs --open-prs` (it reads the open pull requests with `gh`): it
+prints the next number no open pull request holds, and any number two of them already share.
+`test/migration-number-census.test.ts` refuses two entries with one number on a journal.
+
 ## Running the tests
 
 Node 22 (CI runs 22.23.4), and stable Rust for the desktop app's native half.
