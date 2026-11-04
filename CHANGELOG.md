@@ -21,6 +21,57 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.34] — 2026-11-04
+
+### Contributors: migration numbers are checked across open pull requests, and a stale npm cache file no longer fails CI
+
+Two entries with one number on a migration journal now fail the test suite, and
+`node scripts/migration-numbers.mjs --open-prs` prints the next number no open pull request holds; the
+migration section of [CONTRIBUTING.md](CONTRIBUTING.md) says when to run it. A CI install that fails on a
+temp file left in npm's cache by an earlier install removes that file and runs once more.
+
+### Older deleted letters lose their words on accounts that no longer sync too
+
+On Cloud and your own server, the background tidy that empties letters deleted on the mail server before
+0.30.31 reached only accounts with a mailbox that syncs. An account whose mailboxes were all disconnected with
+their mail kept, or a closed account on Cloud, kept those letters' preview, search words, summary, tracker
+address and the rest of their header. The tidy now reaches every account that still holds mail.
+
+### A search for with, over or your alone no longer lists every letter holding it
+
+A search for a single common word that every search leaves out, such as `with`, `over`, `from` or `your`,
+listed every letter holding that word, or a longer such word it starts (`yours`, `yourself`), on the phone,
+and in the first results every app shows while the full answer loads. Both now answer as the full search does:
+the letters whose subject or people hold the word, and the letters holding a longer word it starts, such as
+`withdrawal` or `overview`. Close matches no longer list the letters holding such a word either: `yours` and
+`against` stopped reaching every letter with `your` or `again`.
+
+### An idle phone asks the server far less often
+
+A paired phone left open on any screen asked the server about 37 times a minute: every 8 seconds it
+read the Screener twice, the mailboxes and the settings, whether or not anything had changed. It now
+reads the Screener once per round, reads the settings only when the sync brought a change, the app
+comes back to the front, or a few minutes have passed, reads the mailboxes about once a minute so the
+Ohbox's "Checked" line stays, and spaces its rounds out from 8 seconds to a minute while nothing
+changes. A touch, a pull, a push wake or a change brings the 8-second pace back at once, so new mail
+still shows within one round of using the phone. A phone without Cloud keeps its 8-second pace. Phone.
+
+### A screen-out of a forged claim keeps a list you let in by its domain, a named contact or an approval
+
+When a letter at a mailing list's address claimed to come from a company and you screened it out, ohmail set
+that letter aside alone only if you had let the list in by a rule for its address or a contact you added. A
+list you let in another way (a rule for its whole domain, a contact you named or wrote a note on, or an AI
+filing of its letters you approved) was screened out as a whole: its earlier letters left News, its next ones
+went to Screened, and an unsubscribe was sent. Each of these now counts as letting the list in, so the
+Screener says it will set aside only the claiming letters and does just that. On every app and on Cloud.
+
+### A mailbox left on screen in another window closes when you sign out
+
+On the web app and ohmail Cloud, in a browser whose tabs cannot pass each other the news of a sign-out, a
+mailbox open in a second window that stayed on screen kept showing the mail after Sign out in another
+window, until it was clicked or hidden. It now notices within a second that the browser no longer names
+its account and closes the mail, without asking the server.
+
 ## [0.30.33] — 2026-11-04
 
 ### A phone search for ines, ones or willing no longer lists every letter holding in, on or will
@@ -16575,7 +16626,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.33...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.34...HEAD
+[0.30.34]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.34
 [0.30.33]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.33
 [0.30.32]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.32
 [0.30.31]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.31

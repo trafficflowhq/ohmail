@@ -78,6 +78,18 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.34" date="2026-11-04">
+      <description>
+        <ul>
+          <li>Contributors: migration numbers are checked across open pull requests, and a stale npm cache file no longer fails CI</li>
+          <li>Older deleted letters lose their words on accounts that no longer sync too</li>
+          <li>A search for with, over or your alone no longer lists every letter holding it</li>
+          <li>An idle phone asks the server far less often</li>
+          <li>A screen-out of a forged claim keeps a list you let in by its domain, a named contact or an approval</li>
+          <li>A mailbox left on screen in another window closes when you sign out</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.33" date="2026-11-04">
       <description>
         <ul>
@@ -130,17 +142,6 @@
           <li>Coloured answers keep their colour, and five reading and sending fixes</li>
           <li>Found settings keep their answers and stay out of the way</li>
           <li>Six small fixes on the web and the desktop</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.29" date="2026-11-02">
-      <description>
-        <ul>
-          <li>Connecting a mailbox says which server failed, and why</li>
-          <li>A letter deleted on the server leaves no preview behind, and a delete whose answer was lost stays in Trash</li>
-          <li>Desktop downloads always find a folder, Windows updates go in at the next start</li>
-          <li>The sender's address line keeps the name before the @ whole, and the proxy reads OHMAIL_TLS_TERMINATOR only as addresses</li>
-          <li>Sending says what happened, and Microsoft mailboxes keep one Sent copy</li>
         </ul>
       </description>
     </release>
