@@ -135,7 +135,22 @@ describe("the page reads what it is about to confirm", () => {
     expect(elsewhere.network).toBe("different");
     expect(JSON.stringify(elsewhere)).not.toContain("198.51");
     expect((await readFrom("203.0.5.6")).network).toBe("different");
+    // A browser on the other address family never reads as the request's network, nor as unknown.
+    expect((await readFrom("2001:db8:aa::1")).network).toBe("different");
     expect((await readFrom(IP)).network).toBe("same");
+  });
+
+  it("a computer that asked over IPv6 reads as a different network from an IPv4 browser", async () => {
+    const { db, deps } = await makeDeps();
+    const asked = await ask(deps, { challenge: pkce().challenge, kind: "desktop-linux", label: "studio-mac" }, "2001:db8:aa:1::5");
+    const { approvalId } = (await asked.json()) as { approvalId: string };
+    const me = await signedIn({ db });
+    const readFrom = async (ip: string) => ((await (await H(req("GET", `/auth/desktop-approval/${approvalId}`, {
+      bearer: me.token, headers: { "x-vercel-forwarded-for": ip },
+    }), deps)).json()) as { network: string }).network;
+    expect(await readFrom(IP)).toBe("different");
+    expect(await readFrom("2001:db8:aa:2::5"), "another /64 under the same /48").toBe("different");
+    expect(await readFrom("2001:db8:aa:1::9"), "CONTROL: the request's own /64").toBe("same");
   });
 
   it("TTL at read: past five minutes the page says it expired", async () => {
