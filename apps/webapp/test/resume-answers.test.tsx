@@ -942,11 +942,14 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   }
   const account = (f: string): Array<[string, string]> => [[`#${f}-email`, "m@example.test"], [`#${f}-name`, "M"], [`#${f}-pw`, PASSWORD]];
   const register = (el: HTMLElement): Promise<void> => sent(el, "#join-email", account("join"));
+  /** /join/invite opened from its link (or without its fragment), nothing pressed. */
+  async function inviteOpened(hash = "#tok"): Promise<HTMLElement> {
+    Object.assign(window.location, { hash, pathname: "/join/invite", search: "" });
+    return page(async () => (await import("../app/(product)/join/invite/InviteScreen.js")).InviteScreen, {})();
+  }
   /** /join/invite opened from its link, its form filled and sent. */
   async function invite(): Promise<void> {
-    Object.assign(window.location, { hash: "#tok", pathname: "/join/invite", search: "" });
-    await sent(await page(async () => (await import("../app/(product)/join/invite/InviteScreen.js")).InviteScreen, {})(),
-      "#invite-email", account("invite"));
+    await sent(await inviteOpened(), "#invite-email", account("invite"));
   }
   /** The wipe a revoke starts waits at its module load until `release`; each sweep it then starts is kept. */
   function holdWipe(): void {
@@ -1062,6 +1065,8 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   const PAGES: Array<[string, () => Promise<HTMLElement>, (el: HTMLElement) => boolean, ((el: HTMLElement) => Promise<void>)?]> = [
     ["/join", page(async () => (await import("../app/(product)/join/JoinScreen.js")).JoinScreen,
       { initialCode: "", publicSignup: true, signedIn: true }), () => wire.some((w) => w.startsWith("register")), register],
+    ["/join/invite", () => inviteOpened(), () => wire.some((w) => w.startsWith("redeem")),
+      (el) => sent(el, "#invite-email", account("invite"))],
     ["/approve", page(async () => (await import("../app/(product)/approve/ApproveScreen.js")).ApproveScreen, { request: REQUEST }),
       () => router.replace.mock.calls.length > 0],
     ["/link-desktop", page(async () => (await import("../app/(product)/link-desktop/LinkDesktopScreen.js")).LinkDesktopScreen, {}), linkUp],
@@ -1232,25 +1237,47 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     expect(wire).toEqual(["session", "session:aborted", "verify-email, copy kept"]);
   });
 
-  // The token is spent first: the check's refusal holds the session ended, and only the account's own request still leaves.
+  // The session is asked on arrival, before the token is spent: its refusal takes the copy, then the redeem and the account leave.
   it.each([["naming an account", "acct_A"], ["naming nobody", null]] as const)(
     "/join/invite, the jar %s: the account is made once the session is asked and the revoked copy is gone", async (_, name) => {
       if (name === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
       await invite();
       expect(await until(() => wire.some((w) => w.startsWith("register"))), "the account was never made").toBe(true);
-      expect(wire).toEqual(["redeem, copy kept", "session", "refresh", "register, copy gone"]);
+      expect(wire).toEqual(["session", "refresh", "redeem, copy gone", "register, copy gone"]);
     });
 
-  it("/join/invite: a session check never answered holds the account no longer than the bound, and is stopped", async () => {
+  it("/join/invite: an arrival check never answered holds the token no longer than the bound, and is stopped", async () => {
     holdSession = true;
     await invite();
     expect(await until(() => wire.includes("session")), "no session check").toBe(true);
     const { SETTLE_DEADLINE_MS } = await import("../app/session-refresh.js");
     await tick(SETTLE_DEADLINE_MS - 1_000);
-    expect(wire, "the account was made beside its check").toEqual(["redeem, copy kept", "session"]);
+    expect(wire, "the token was spent beside its check").toEqual(["session"]);
     await tick(2_000);
     expect(await until(() => wire.some((w) => w.startsWith("register"))), "the account was never made").toBe(true);
-    expect(wire).toEqual(["redeem, copy kept", "session", "session:aborted", "register, copy kept"]);
+    expect(wire).toEqual(["session", "session:aborted", "redeem, copy kept", "register, copy kept"]);
+  });
+
+  // Opened from its link over a copy revoked elsewhere, and left: the check on arrival takes the copy.
+  it.each([
+    ["naming an account", "acct_A", "#tok"],
+    ["naming nobody", null, "#tok"],
+    ["naming an account, opened without its fragment", "acct_A", ""],
+  ] as const)("/join/invite, the jar %s: the revoked copy goes with nothing pressed, and the page stays", async (_, name, hash) => {
+    if (name === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    const el = await inviteOpened(hash);
+    expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the page stood over the revoked copy").toBe(true);
+    expect(wire).toEqual(["session", "refresh"]);
+    expect(el.querySelector(hash === "" ? "[role=alert]" : "#invite-email"), "the page went").not.toBeNull();
+    expect(router.replace, "the page sent the person on").not.toHaveBeenCalled();
+  });
+
+  it("CONTROL — /join/invite opened over a lapse and left keeps the copy", async () => {
+    script = [refusedClearing("refresh_expired")];
+    await inviteOpened();
+    expect(await until(() => wire.includes("refresh")), "no session check").toBe(true);
+    await wipesEnded([await import("../app/revoked-door.js")]);
+    expect(engine.holdsMirrorOf("acct_A"), "a lapse took the copy").toBe(true);
   });
 
   it.each([

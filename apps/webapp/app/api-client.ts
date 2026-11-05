@@ -213,6 +213,8 @@ const OWNER_FREE_EXACT = [
   // management and stay gated; see the header.
   "/auth/2fa/totp/verify",
   "/auth/2fa/recovery-codes/verify",
+  // The invitation's redeem: it spends the token in its body and writes no cookie. Never `/pair`'s family.
+  "/pair/redeem",
 ] as const;
 
 /**
@@ -334,7 +336,7 @@ export function apiOwnerVerdict(
    * the previous person's cookies, and an account request from here answers for them: `/join`, one link
    * from the sign-in page that finishes such a sign-out, read their session and mailboxes and generated
    * their recovery codes. Under the reserved word only the two lists above (the sign-out door, sign-in,
-   * registration, the address confirmation) and the front door's ceremony still leave.
+   * registration, the address confirmation, an invitation's redeem) and the front door's ceremony still leave.
    */
   if (binding.kind === "public") return readOwnerMarker().kind === "signed-out" ? "signed-out" : "holds";
   // The binding's own name for a sign-out the server did not confirm — the same state the

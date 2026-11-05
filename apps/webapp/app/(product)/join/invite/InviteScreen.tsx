@@ -35,6 +35,8 @@ import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf, pair } from "../../../api-client";
 import { checkAnswered, revokedWipeSettled } from "../../../revoked-door";
+import { readOwnerMarker } from "../../../shell/owner-cookie";
+import { PendingSignOutSaid, usePendingSignOut } from "../../login/pending-sign-out";
 
 /** What this page knows, in order of discovery. `reading` is the mount tick before the hash is read. */
 type Phase = "reading" | "form" | "missing" | "unconfigured";
@@ -92,14 +94,43 @@ export function InviteScreen() {
     setPhase("form");
   }, []);
 
+  /**
+   * As the page opens, link or no link: a sign-out this browser asked for and the server never confirmed
+   * (`login/pending-sign-out.tsx`) is finished at its door, never read; every other jar is asked, as /join
+   * does, so a revoke it carries starts its wipe now. The press stops either through `stopFinish`/`stopCheck`.
+   */
+  const pending = usePendingSignOut();
+  const stopFinish = useRef<(() => void) | null>(null);
+  const checkOut = useRef<Promise<unknown> | null>(null);
+  const stopCheck = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!apiConfigured()) return;
+    if (readOwnerMarker().kind !== "signed-out") {
+      const abort = new AbortController();
+      stopCheck.current = () => abort.abort();
+      checkOut.current = auth.session({ signal: abort.signal }).catch(() => undefined);
+      return () => abort.abort();
+    }
+    let cancelled = false;
+    stopFinish.current = () => { cancelled = true; };
+    void pending.finish(() => cancelled);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `pending.finish` is the page's for its life
+  }, []);
+
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     void (async () => {
       setBusy(true);
       setError(null);
       try {
-        // A revoke's wipe this browser still owes is done before the token is spent.
+        stopFinish.current?.();
+        // The session is asked within one bound before the token is spent (under a pending sign-out it is
+        // refused here, unsent); a revoke it meets, or one a closed page left owed, is wiped first.
+        await checkAnswered(checkOut.current, (signal) => auth.session({ signal }));
+        stopCheck.current?.();
         await revokedWipeSettled();
+        if (!await pending.settle()) return;
         const address = email.trim();
         // The redeem answers the server's NORMALIZED recipient (trimmed, lowercased — the
         // mail port's rule), and `minted.email` stores that answer verbatim. So the "same
@@ -127,10 +158,9 @@ export function InviteScreen() {
             return;
           }
         }
-        // The session is asked, within one bound, before the account is made: a revoke it meets is wiped first.
-        // Not before the redeem: any refusal holds this tab's session ended, and the redeem would be refused here.
-        await checkAnswered(null, (signal) => auth.session({ signal }));
+        // A wipe whose renewal answered past the bound, and a sign-out pressed in another tab during the redeem.
         await revokedWipeSettled();
+        if (!await pending.settle()) return;
         await auth.register({
           email: address, password, displayName: displayName.trim(), inviteCode: code,
         });
@@ -177,6 +207,7 @@ export function InviteScreen() {
                 mount effect). The remedy is human and one sentence long. */}
             <h1>{t("missingTitle")}</h1>
             <p className="sub" role="alert">{t("missingBody")}</p>
+            <PendingSignOutSaid pending={pending} busy={busy} />
           </>
         )}
 
@@ -186,6 +217,8 @@ export function InviteScreen() {
             <p className="sub">{t("lead")}</p>
 
             {error && <p className="join-error" role="alert">{error}</p>}
+            {/* A sign-out this browser asked for that ended unconfirmed here, and Sign out to ask again. */}
+            <PendingSignOutSaid pending={pending} busy={busy} />
 
             <form onSubmit={submit}>
               <label className="join-label" htmlFor="invite-email">{t("emailLabel")}</label>
@@ -209,7 +242,7 @@ export function InviteScreen() {
               <p className="join-hint">{t("passwordHint")}</p>
 
               <div className="join-actions">
-                <Button variant="primary" type="submit" disabled={busy}>
+                <Button variant="primary" type="submit" disabled={busy || pending.signingOut}>
                   {busy ? t("working") : t("createAccount")}
                 </Button>
               </div>

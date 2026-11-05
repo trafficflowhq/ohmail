@@ -132,14 +132,15 @@ describe("a browser whose session is confirmed dead stops asking", () => {
     seen.paths = [];
 
     // Every path `apiOwnerVerdict` already exempts — the same census, so neither can drift alone.
-    for (const path of ["/hello", "/auth/login", "/auth/refresh", "/auth/2fa/totp/verify"]) {
+    // The invitation's redeem too: an ended tab may still begin a new account from its link.
+    for (const path of ["/hello", "/auth/login", "/auth/refresh", "/auth/2fa/totp/verify", "/pair/redeem"]) {
       await api(path, { method: "POST", body: {} }).catch(() => undefined);
     }
     await api("/auth/session", { ceremony: true }).catch(() => undefined);
 
     // Every one reached the wire. (The count is the paths asked for, never `seen.paths.length`:
     // `/auth/session` recovers through a refresh, which is a request this case did not make.)
-    for (const path of ["/hello", "/auth/login", "/auth/refresh", "/auth/2fa/totp/verify", "/auth/session"]) {
+    for (const path of ["/hello", "/auth/login", "/auth/refresh", "/auth/2fa/totp/verify", "/pair/redeem", "/auth/session"]) {
       expect(seen.paths.some((p) => p.endsWith(path)), `${path} was gated shut`).toBe(true);
     }
   });
