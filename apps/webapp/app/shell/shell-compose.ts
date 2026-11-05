@@ -194,6 +194,17 @@ function keptNotSent(e: UnshownEnding): boolean {
   return e.ended.phase === "failed" && e.left !== undefined;
 }
 
+/**
+ * A LANE'S WORDS ONCE THE ROW IT LAST WROTE WENT (deleted or sent elsewhere): the row's own (`spent`),
+ * a save of them that waited unseen (`pending`), or words no row held (`own`). One rule for the reopen
+ * and the promotion.
+ */
+function laneWordsAfterRow(row: { holds?: string; pending?: string }, words: RichValue): "spent" | "pending" | "own" {
+  const sig = sigOf(words.text.trim());
+  if (isRichEmpty(words) || row.holds === sig) return "spent";
+  return row.pending === sig ? "pending" : "own";
+}
+
 /** A send from the row its lane's refused send left (`replyRows`), or the send as built. */
 function withLaneRow(row: string | null, base: string | null, m: MailSendMutation): MailSendMutation {
   return row === null ? m : { ...m, draftId: row, ...(base !== null ? { ifContentRevision: base } : {}) };
@@ -542,6 +553,14 @@ export function useShellCompose({
     const sentElsewhere = hold !== null && hold.kind === "parked" && hold.by === "status" && hold.status === "sent";
     return sentElsewhere;
   });
+  /** The row a lane last wrote and this mirror does not hold as a draft: `gone` (sent or deleted), or the server's word. */
+  const namedRowFate = useStableCallback((lane: string, id: string): Promise<"held" | "gone" | "unknown"> =>
+    sentElsewhereOf(lane, id) || engine.store?.isTombstoned?.("draft", id) === true
+      ? Promise.resolve("gone" as const)
+      : engine.draftOnServer(id));
+  /** The row the lane last wrote, when this mirror no longer holds it as a draft the lane may write. */
+  const namedRowAway = useStableCallback((lane: string, id: string): boolean =>
+    sentElsewhereOf(lane, id) || engine.read().get("draft", id) == null);
   /* `shown`: the words of an editor open on the lane now, ended where it stands, which says so. */
   const resumeLane = useStableCallback((lane: string, open: (body: RichValue) => void, all: boolean, shown?: RichValue) => {
     const fwd = lane.startsWith("fwd:");
@@ -558,25 +577,22 @@ export function useShellCompose({
     const named = row === null && laneRowOf(lane) === null ? meta.row : undefined;
     // Sent from another device (no record of this browser's names it): ended as a delete ends it.
     const sentElsewhere = sentElsewhereOf(lane, named?.id);
-    if (row === null && named !== undefined && (sentElsewhere || engine.read().get("draft", named.id) == null)) {
+    if (row === null && named !== undefined && namedRowAway(lane, named.id)) {
       /* THE ROW THIS LANE LAST WROTE IS NOT IN THE MIRROR: deleted elsewhere while ohmail was closed,
          its words are not saved again; words it never held are kept as a new draft, and said. */
-      void (sentElsewhere || engine.store?.isTombstoned?.("draft", named.id) === true
-        ? Promise.resolve("gone" as const)
-        : engine.draftOnServer(named.id)
-      ).then((answer) => {
+      void namedRowFate(lane, named.id).then((answer) => {
         if (answer !== "gone") { open(scratch); return; }
-        const copy = sigOf(scratch.text.trim());
+        const words = laneWordsAfterRow(named, scratch);
         replyAutosave.forget(lane);
         replyRows.current.delete(lane);
         const went = sentElsewhere && shown !== undefined;
-        if (isRichEmpty(scratch) || named.holds === copy) {
+        if (words === "spent") {
           clearReplyLane(lane);
           if (went) toast(t(fwd ? "reply.forwardSentElsewhere" : "reply.sentElsewhere"));
           open(EMPTY_RICH);
           return;
         }
-        if (named.pending === copy) {
+        if (words === "pending") {
           /* A SAVE OF THESE WORDS WAITED UNSEEN when the row went: they may be the row's, so they are
              shown and not saved again until they change. The meta stays, so a reload does the same. */
           replyAutosave.asSaved(lane, scratch.text);
@@ -826,15 +842,32 @@ export function useShellCompose({
           clearReplyLane(lane, owner);
           continue;
         }
-        void promoteOrphanedReplyLane(
-          lane, id, promotionPlanFor(lane, id, parent),
-          (m) => engine.mutate(m as EngineMutation), owner,
-        ).then((outcome) => {
-          if (outcome !== "promoted" || !wasOpen) return;
-          // The editor's host is already unmounting; what is owed is the sentence saying where
-          // the words went, and `replyTo` released so it does not keep naming a dead message.
-          setReplyTo(null);
-          toast(t("reply.toastSavedAsDraft"));
+        // Read now: after this page the parent is a tombstone.
+        const plan = promotionPlanFor(lane, id, parent);
+        const promote = (): void => {
+          void promoteOrphanedReplyLane(
+            lane, id, plan,
+            (m) => engine.mutate(m as EngineMutation), owner,
+          ).then((outcome) => {
+            if (outcome !== "promoted" || !wasOpen) return;
+            // The editor's host is already unmounting; what is owed is the sentence saying where
+            // the words went, and `replyTo` released so it does not keep naming a dead message.
+            setReplyTo(null);
+            toast(t("reply.toastSavedAsDraft"));
+          });
+        };
+        /* THE ROW THIS LANE LAST WROTE WENT (discarded or sent elsewhere): its words went with it and are
+           never written again; words it never held are promoted; an unanswered question leaves the lane. */
+        const named = laneRowOf(lane) === null ? readReplyMeta(lane, owner).row : undefined;
+        const away = named !== undefined && namedRowAway(lane, named.id);
+        if (named === undefined || (!away && plan?.rowId === named.id)) { promote(); continue; }
+        // Still mirrored but not written into: its delete may ride this same page, so the server is asked.
+        void namedRowFate(lane, named.id).then((fate) => {
+          if (fate === "held" && !away) { promote(); return; }
+          if (fate !== "gone") return;
+          const words = laneWordsAfterRow(named, readReplyDraft(lane, owner));
+          if (words === "spent") clearReplyLane(lane, owner);
+          else if (words === "own") promote();
         });
       }
     }
