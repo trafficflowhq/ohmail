@@ -106,6 +106,13 @@ export async function handleWindowSyncFailure(req: Request, deps: WindowReportDe
 }
 
 /**
+ * `POST /local/window/attention` — a person's input at the window, which asks the door nothing else
+ * (`apps/desktop/src/window-attention.ts`). Empty; `attention.ts` counts it as a person's request,
+ * so the Cloud door's poll starts over. Answered 204 once the bearer is read.
+ */
+export const WINDOW_ATTENTION_ROUTE = "/local/window/attention";
+
+/**
  * `POST /local/window/search-phases` — one Search's timings as the window measured them, so the
  * split sits in THIS log beside the relay's own line (`search_relayed`): the debounce, the send,
  * the round trip, the paint, the account's `ms`, and the two instants that join the lines across
