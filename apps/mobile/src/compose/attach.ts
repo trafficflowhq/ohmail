@@ -12,6 +12,7 @@ import {
   type ComposeAttachment, type ImageQualityLevel, type ImageQualityRule,
 } from "@ohmail/client-engine";
 import { Copy } from "../copy";
+import { pictureTypeOf, previewKindOf, type PreviewKind } from "../mail/attachment-preview";
 import type { PhoneMailbox } from "../net/mailboxes";
 
 /* The level vocabulary, for the setting and the sheet — this module is the phone's door to it. */
@@ -289,6 +290,32 @@ export function photoName(
     const next = `${stem} (${n})${tail}`;
     if (!taken.has(next)) return next;
   }
+}
+
+/** What an attached file's row shows before its name: the picture itself, or a mark of its type. */
+export type AttachThumb = { kind: "picture"; uri: string } | { kind: "mark"; label: string | null };
+
+/**
+ * A picture is drawn from where the picker left it, or from its bytes when it has no such file (a
+ * kept draft's, in a type the phone draws); anything else wears its short extension, or its type's
+ * short name ("PDF" for a nameless `application/pdf`).
+ * `drawable: false` is a picture the phone could not draw: its mark.
+ */
+export function attachThumb(file: PhoneComposeAttachment, drawable = true): AttachThumb {
+  const type = file.contentType.split(";")[0]!.trim().toLowerCase();
+  if (drawable && type.startsWith("image/") && file.uri) return { kind: "picture", uri: file.uri };
+  const picture = pictureTypeOf(type);
+  if (drawable && picture !== null) return { kind: "picture", uri: `data:${picture};base64,${file.contentBase64}` };
+  const short = /\.([a-z0-9]{1,4})$/i.exec(file.filename)?.[1] ?? /^[a-z]+\/([a-z0-9]{1,4})$/.exec(type)?.[1];
+  return { kind: "mark", label: short ? short.toUpperCase() : null };
+}
+
+/** The app's own preview of an attached file, on its bytes; `null` is a type it hands to another app. */
+export function attachPreview(
+  file: PhoneComposeAttachment,
+): { base64: string; mime: string; filename: string; preview: PreviewKind } | null {
+  const preview = previewKindOf(file.contentType, file.contentType);
+  return preview === null ? null : { base64: file.contentBase64, mime: file.contentType, filename: file.filename, preview };
 }
 
 /** Decoded byte length of a base64 string, without decoding it — the adapter's own accounting. */

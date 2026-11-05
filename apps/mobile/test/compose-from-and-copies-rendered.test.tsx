@@ -17,6 +17,10 @@ vi.mock("react-native", async () => {
     Keyboard: { dismiss: () => undefined, addListener: () => ({ remove: () => undefined }) },
     AppState: { addEventListener: () => ({ remove: () => undefined }), currentState: "active" },
     useWindowDimensions: () => ({ width: 400, height: 800, scale: 2, fontScale: 1 }),
+    Image: (p: { source?: { uri?: string }; resizeMethod?: string; onError?: () => void }) => {
+      drawn.sources.push(p.source);
+      return React.createElement("img", { "data-uri": p.source?.uri, "data-resize": p.resizeMethod, onError: p.onError });
+    },
     TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; onChangeText?: (v: string) => void; onFocus?: () => void; onBlur?: () => void }>(
       (p, ref) => React.createElement("input", {
         ref, value: p.value, "data-label": p.accessibilityLabel, onFocus: p.onFocus, onBlur: p.onBlur,
@@ -58,7 +62,20 @@ vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: Re
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "online" }));
 vi.mock("../src/state/store", () => ({ usePrefs: () => ({ pictureQuality: "medium" }) }));
-vi.mock("../src/compose/attach-native", () => ({ nativeAttachPicker: () => ({}), nativeImageShrink: async () => null }));
+const drawn = vi.hoisted(() => ({ sources: [] as unknown[] }));
+const picker = vi.hoisted(() => ({ files: [] as unknown[] }));
+vi.mock("../src/compose/attach-native", () => ({
+  nativeAttachPicker: () => ({ pickFiles: async () => ({ kind: "picked", files: picker.files, unreadable: 0 }) }),
+  nativeImageShrink: async () => null,
+}));
+const shared = vi.hoisted(() => ({ calls: [] as string[], ok: true }));
+vi.mock("../src/mail/open-attachment-native", () => ({
+  shareAttachmentBytes: async (_b: string, mime: string, name: string) => { shared.calls.push(`${name} ${mime}`); return shared.ok; },
+}));
+vi.mock("../src/ui/AttachmentPreview", () => ({
+  AttachmentPreview: (p: { file: { filename: string; preview: string; base64: string }; onClose: () => void }) =>
+    h("div", { "data-preview": `${p.file.preview} ${p.file.filename} ${p.file.base64}` }, h("button", { "data-button": "close-preview", onClick: p.onClose })),
+}));
 const scene = vi.hoisted(() => ({ world: null as unknown }));
 vi.mock("../src/state/world", () => ({ useWorld: () => scene.world, useWorldToast: () => ({ say: () => undefined }) }));
 
@@ -203,5 +220,79 @@ describe("a reply's send is said to the reader under the sheet", () => {
     expect(ear.said).toEqual(["m1:pressed"]);
     ear.off();
     r.unmount();
+  });
+});
+
+/* THE OWNER'S ASK: an attached file shows a thumbnail, and a press on it or its name opens a preview
+   of the file; closing comes back to the composer with nothing lost, and the remove control stays. */
+describe("an attached file in the composer", () => {
+  const file = (filename: string, contentType: string, uri?: string) =>
+    ({ filename, contentType, contentBase64: "AAAA", sizeBytes: 3, ...(uri ? { uri } : {}) });
+  const attach = async (c: ReturnType<typeof composer>, ...files: unknown[]) => {
+    picker.files = files;
+    await act(async () => { c.q(`button[data-button="${Copy.attachFile}"]`)!.click(); });
+    for (let i = 0; i < 5; i++) await act(async () => { await Promise.resolve(); });
+  };
+  afterEach(() => { shared.calls = []; shared.ok = true; });
+
+  it("a picture shows itself; a PDF and another file show a type mark", async () => {
+    const c = open = composer();
+    await attach(c, file("beach.jpg", "image/jpeg", "file:///cache/beach.jpg"), file("plan.pdf", "application/pdf"), file("notes.docx", "application/octet-stream"));
+    expect([...c.el.querySelectorAll("img")].map((i) => i.getAttribute("data-uri"))).toEqual(["file:///cache/beach.jpg"]);
+    expect(c.el.textContent).toContain("PDF");
+    expect(c.el.textContent).toContain("DOCX");
+  });
+
+  it("a kept draft's picture (bytes, no file) decodes at the box's size, built once while the letter is typed", async () => {
+    const c = open = composer();
+    await attach(c, file("big.webp", "image/webp"));
+    const img = c.el.querySelector("img")!;
+    expect(img.getAttribute("data-uri")).toBe("data:image/webp;base64,AAAA");
+    expect(img.getAttribute("data-resize"), "Android resizes a data: URI only when asked").toBe("resize");
+    drawn.sources = [];
+    c.type(Copy.composeBodyPlaceholder, "H");
+    c.type(Copy.composeBodyPlaceholder, "Hi");
+    expect(drawn.sources.length).toBeGreaterThan(0);
+    expect(new Set(drawn.sources).size, "one source for every keystroke's render").toBe(1);
+  });
+
+  it("a picture that cannot be drawn falls back to its type mark", async () => {
+    const c = open = composer();
+    await attach(c, file("IMG_1.HEIC", "image/heic", "file:///cache/IMG_1.HEIC"));
+    act(() => { c.el.querySelector("img")!.dispatchEvent(new Event("error")); });
+    expect(c.el.querySelector("img")).toBeNull();
+    expect(c.el.textContent).toContain("HEIC");
+  });
+
+  it("pressing the name opens the preview on the file's bytes; closing keeps the letter and the file", async () => {
+    const c = open = composer();
+    c.type(Copy.composeBodyPlaceholder, "See the plan");
+    await attach(c, file("plan.pdf", "application/pdf"));
+    expect(c.q("[data-preview]")).toBeNull();
+    c.press(`[data-role="button"][data-label="plan.pdf"]`);
+    expect(c.q("[data-preview]")!.getAttribute("data-preview")).toBe("pdf plan.pdf AAAA");
+    c.press(`button[data-button="close-preview"]`);
+    expect(c.q("[data-preview]")).toBeNull();
+    expect((c.q(`input[data-label="${Copy.composeBodyPlaceholder}"]`) as HTMLInputElement).value).toBe("See the plan");
+    expect(c.q(`[data-label="${Copy.attachRemove("plan.pdf")}"]`)).not.toBeNull();
+    expect(shared.calls).toEqual([]);
+  });
+
+  it("a file the app cannot show opens in another app; a refusal is said on its row", async () => {
+    const c = open = composer();
+    shared.ok = false;
+    await attach(c, file("notes.docx", "application/octet-stream"));
+    await act(async () => { c.q(`[data-role="button"][data-label="notes.docx"]`)!.click(); });
+    expect(shared.calls).toEqual(["notes.docx application/octet-stream"]);
+    expect(c.q("[data-preview]")).toBeNull();
+    expect(c.el.textContent).toContain(Copy.attachmentShareRefused);
+  });
+
+  it("the remove control still takes the file off", async () => {
+    const c = open = composer();
+    await attach(c, file("beach.jpg", "image/jpeg", "file:///cache/beach.jpg"));
+    c.press(`[data-label="${Copy.attachRemove("beach.jpg")}"]`);
+    expect(c.el.querySelector("img")).toBeNull();
+    expect(c.q(`[data-label="beach.jpg"]`)).toBeNull();
   });
 });

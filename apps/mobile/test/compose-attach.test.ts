@@ -48,6 +48,8 @@ import {
 import {
   PHONE_SEND_MAX_TOTAL_BYTES,
   admitPicked,
+  attachPreview,
+  attachThumb,
   base64SizeBytes,
   forwardCaps,
   phoneAttachCap,
@@ -261,6 +263,33 @@ describe("a picked photo keeps a real name, never the picker's media number", ()
   it("the native twin marks a photo it named, so the re-pick check can read it", () => {
     const native = readFileSync(join(APP, "src/compose/attach-native.ts"), "utf8");
     expect(native).toContain("pickerGaveNoName(asset.fileName) ? { ...row, nameFromPick: true } : row");
+  });
+});
+
+describe("an attached file's row: its thumbnail, and what a press opens", () => {
+  const file = (filename: string, contentType: string, uri?: string): PhoneComposeAttachment =>
+    ({ filename, contentType, contentBase64: "AAAA", sizeBytes: 3, ...(uri ? { uri } : {}) });
+
+  it("a picture is drawn from its local file, or from its bytes when it has none (a kept draft)", () => {
+    expect(attachThumb(file("beach.jpg", "image/jpeg", "file:///cache/beach.jpg"))).toEqual({ kind: "picture", uri: "file:///cache/beach.jpg" });
+    expect(attachThumb(file("IMG_1.HEIC", "image/heic", "file:///cache/IMG_1.HEIC"))).toEqual({ kind: "picture", uri: "file:///cache/IMG_1.HEIC" });
+    expect(attachThumb(file("beach.png", "image/png"))).toEqual({ kind: "picture", uri: "data:image/png;base64,AAAA" });
+  });
+
+  it("anything else wears a type mark: PDF, the extension, or none; a nameless HEIC with no file too", () => {
+    expect(attachThumb(file("plan.pdf", "application/pdf", "file:///cache/plan.pdf"))).toEqual({ kind: "mark", label: "PDF" });
+    expect(attachThumb(file("scan", "application/pdf"))).toEqual({ kind: "mark", label: "PDF" });
+    expect(attachThumb(file("notes.docx", "application/octet-stream"))).toEqual({ kind: "mark", label: "DOCX" });
+    expect(attachThumb(file("README", "text/plain"))).toEqual({ kind: "mark", label: null });
+    expect(attachThumb(file("x.verylongext", "text/plain"))).toEqual({ kind: "mark", label: null });
+    expect(attachThumb(file("IMG_1.HEIC", "image/heic"))).toEqual({ kind: "mark", label: "HEIC" });
+  });
+
+  it("a picture or a PDF opens the app's own preview on the file's bytes; anything else is shared", () => {
+    expect(attachPreview(file("beach.png", "image/png"))).toEqual({ base64: "AAAA", mime: "image/png", filename: "beach.png", preview: "image" });
+    expect(attachPreview(file("plan.pdf", "application/pdf"))).toEqual({ base64: "AAAA", mime: "application/pdf", filename: "plan.pdf", preview: "pdf" });
+    expect(attachPreview(file("notes.docx", "application/octet-stream"))).toBeNull();
+    expect(attachPreview(file("logo.svg", "image/svg+xml"))).toBeNull();
   });
 });
 
