@@ -1069,6 +1069,8 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
       .AuthorizeDesktopScreen, { request: REQUEST }), linkUp],
     ["/setup", page(async () => (await import("../app/(product)/setup/SetupScreen.js")).SetupScreen, {}), linkUp],
     ["/subscribed", page(async () => (await import("../app/(product)/subscribed/SubscribedScreen.js")).SubscribedScreen, {}), linkUp],
+    ["/verify-email", page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
+      { initialToken: "tok" }), () => wire.some((w) => w.startsWith("verify-email")), (el) => submit(el, "form", [["#verify-pw", PASSWORD]])],
   ];
 
   it.each(PAGES)("%s: its first action waits until the revoked copy is gone", async (_, mount, acted, press) => {
@@ -1191,16 +1193,44 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     expect(wire).toEqual(["session:503", "session", "refresh", "register, copy gone"]);
   });
 
+  // Opened from the mail over a copy revoked elsewhere, and left alone: the check on arrival takes the copy.
+  it.each([
+    ["naming an account", "acct_A", "tok"],
+    ["naming nobody", null, "tok"],
+    ["naming an account, opened without a token", "acct_A", ""],
+  ] as const)("/verify-email, the jar %s: the revoked copy goes with nothing pressed, and the form stays", async (_, name, token) => {
+    if (name === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    const el = await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
+      { initialToken: token })();
+    expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the page stood over the revoked copy").toBe(true);
+    expect(wire).toEqual(["session", "refresh"]);
+    expect(el.querySelector("#verify-pw"), "the form went").not.toBeNull();
+  });
+
   // Nobody: Safari keeps the script-written name seven days, the session cookie longer.
   it.each([["naming an account", "acct_A"], ["naming nobody", null]] as const)(
-    "/verify-email, the jar %s: the session is asked first, and the confirmation leaves once the copy is gone", async (_, name) => {
+    "/verify-email, the jar %s: the session is asked on arrival and again on Confirm, which leaves once the copy is gone", async (_, name) => {
       if (name === null) document.cookie = "tf_owner=; Path=/; Max-Age=0";
       const el = await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
         { initialToken: "tok" })();
       await submit(el, "form", [["#verify-pw", PASSWORD]]);
       expect(await until(() => wire.some((w) => w.startsWith("verify-email"))), "the confirmation never left").toBe(true);
-      expect(wire).toEqual(["session", "refresh", "verify-email, copy gone"]);
+      expect(wire).toEqual(["session", "refresh", "session", "refresh", "verify-email, copy gone"]);
     });
+
+  it("/verify-email: an arrival check never answered holds the confirmation no longer than the bound, and is stopped", async () => {
+    holdSession = true;
+    const el = await page(async () => (await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen,
+      { initialToken: "tok" })();
+    expect(await until(() => wire.includes("session")), "no session check").toBe(true);
+    await submit(el, "form", [["#verify-pw", PASSWORD]]);
+    const { SETTLE_DEADLINE_MS } = await import("../app/session-refresh.js");
+    await tick(SETTLE_DEADLINE_MS - 1_000);
+    expect(wire, "the confirmation left beside its check").toEqual(["session"]);
+    await tick(2_000);
+    expect(await until(() => wire.some((w) => w.startsWith("verify-email"))), "the confirmation never left").toBe(true);
+    expect(wire).toEqual(["session", "session:aborted", "verify-email, copy kept"]);
+  });
 
   // The token is spent first: the check's refusal holds the session ended, and only the account's own request still leaves.
   it.each([["naming an account", "acct_A"], ["naming nobody", null]] as const)(
