@@ -568,10 +568,56 @@ describe("native links — one gate, the sender's label, the honest host", () =>
       html: `<p><a href="https://click.trk.example/r/9">bank.example/secure</a></p>`,
     });
     const a = el.querySelector<HTMLAnchorElement>("a.msg-link")!;
-    expect(a.getAttribute("href")).toBe("https://click.trk.example/r/9");
+    expect(a.getAttribute("title")).toBe("Goes to click.trk.example");
     const host = a.querySelector(".msg-link-host");
     expect(host, "a disagreeing label rendered with no disclosure").not.toBeNull();
     expect(host!.textContent).toContain("click.trk.example");
+  });
+
+  /**
+   * Tester A's letter: the label is an address on another site. On the web the marked link opens
+   * the ask page designed letters use, never the address; the honest one stays one press. Mutations:
+   * BodyText ignoring `askPage` → the address is the href; every link asked → the honest row;
+   * a page per link → three pages; no release on unmount → nothing revoked.
+   */
+  it("on the web, a marked link opens the ask page first and an honest one opens at once", async () => {
+    const made: string[] = [];
+    const blobs: Blob[] = [];
+    const revoked: string[] = [];
+    const urlStatics = URL as unknown as Record<string, unknown>;
+    const had = { create: urlStatics.createObjectURL, revoke: urlStatics.revokeObjectURL };
+    urlStatics.createObjectURL = (blob: Blob): string => {
+      expect(blob.type).toBe("text/html;charset=utf-8");
+      made.push(`blob:https://app.example.test/${made.length}`);
+      blobs.push(blob);
+      return made.at(-1)!;
+    };
+    urlStatics.revokeObjectURL = (url: string): void => { revoked.push(url); };
+    try {
+      const el = await render({
+        text: "fallback",
+        html: `<p>Your session ended. Sign in again at <a href="https://example.net/r/a1?u=7">https://example.com/account/login</a> ` +
+          `or <a href="https://example.net/r/a1?u=7">https://example.com/account/login</a>, ` +
+          `or read <a href="https://example.net/help">our help pages</a>.</p>`,
+      });
+      expect(el.querySelector("iframe"), "this letter must render in the app's type").toBeNull();
+      const hrefs = [...el.querySelectorAll<HTMLAnchorElement>("a.msg-link")].map((a) => a.getAttribute("href"));
+      expect(hrefs).toEqual([made[0], made[0], "https://example.net/help"]);
+      expect(made).toHaveLength(1);
+      const text = await new Promise<string>((done) => {
+        const reader = new FileReader();
+        reader.onload = () => done(String(reader.result));
+        reader.readAsText(blobs[0]!);
+      });
+      const page = new DOMParser().parseFromString(text, "text/html");
+      expect(page.body.textContent).toContain(COPY.linkAskGoes("example.net"));
+      expect([...page.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual(["https://example.net/r/a1?u=7"]);
+      await unmount();
+      expect(revoked).toEqual(made);
+    } finally {
+      urlStatics.createObjectURL = had.create;
+      urlStatics.revokeObjectURL = had.revoke;
+    }
   });
 
   /**
@@ -957,7 +1003,8 @@ describe("the sink invariant, under fire", () => {
     // it, because the label (`www.bank.example`) names a host the link does not go to.
     const anchors = [...el.querySelectorAll<HTMLAnchorElement>("a")];
     expect(anchors).toHaveLength(1);
-    expect(anchors[0]!.getAttribute("href")).toBe(`https://${HOSTILE_HOST}/login`);
+    // On the web it opens the ask page first, so the address waits beside it.
+    expect(anchors[0]!.getAttribute("data-ohmail-ask")).toBe(`https://${HOSTILE_HOST}/login`);
     expect(anchors[0]!.querySelector(".msg-link-host")!.textContent).toContain(HOSTILE_HOST);
     // The privacy disclosure is still made: the fixture names remote images and a remote
     // sheet, and the bar is the only place the product says it refused them.

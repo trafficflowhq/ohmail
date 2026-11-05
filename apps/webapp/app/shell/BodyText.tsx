@@ -34,6 +34,7 @@ import { BODY_PAGE_CHARS, pageEnd, pageEnds, type TagHueName } from "@ohmail/ui"
 import { QUOTED_HISTORY_LIMITS, quotedHistoryOfText, type QuotedAt, type QuotedVerdict } from "@ohmail/client-engine";
 import { liveCopy } from "./locale";
 import { RenderedLinks } from "./rendered-links";
+import { ASK_ATTR, useAskPage } from "../components/link-ask";
 
 /**
  * Leading email quote markers — up to a little indent, then one or more `>` each optionally
@@ -386,9 +387,22 @@ export function anchorFor(candidate: string): { href: string; label: string } | 
 /**
  * What a body's nodes draw, which it reports as on screen (`rendered-links.ts`): every href, and the
  * marked ones among them ({@link LinkRun.elsewhere}), which the desktop shell asks about before it
- * opens one.
+ * opens one. `askPage`: on a page that asks in a tab of its own (the web), the ask page a marked
+ * link opens instead of its address (`link-ask.ts`).
  */
-interface DrawnLinks { hrefs: string[]; asks: string[] }
+interface DrawnLinks { hrefs: string[]; asks: string[]; askPage?: (url: string) => string }
+
+/** A marked link on the web: it opens the ask page, never its address, and has no href until that exists. */
+function AskedLink({ url, page, title, children }: {
+  url: string; page: (url: string) => string; title: string; children: ReactNode;
+}) {
+  const href = useAskPage(url, page);
+  return (
+    <a className="msg-link" href={href ?? undefined} {...{ [ASK_ATTR]: url }} target="_blank" rel="noopener noreferrer" title={title}>
+      {children}
+    </a>
+  );
+}
 
 /**
  * One paragraph's worth of text, with its safe URLs turned into anchors. Every href drawn goes into
@@ -460,8 +474,16 @@ function renderInline(nodes: InlineNode[], keyBase: string, own: ReadonlySet<str
       case "code": return <code className="msg-code" key={key}>{renderInline(node.children, key, own, links)}</code>;
       case "link":
         links.hrefs.push(node.href);
-        // Marked: the desktop shell asks before it opens it, as it does a frame's.
+        // Marked: the desktop shell asks before it opens it, as it does a frame's; the web asks in a tab.
         if (node.elsewhere) links.asks.push(node.href);
+        if (node.elsewhere && links.askPage) {
+          return (
+            <AskedLink key={key} url={node.href} page={links.askPage} title={COPY.linkTitle(node.host)}>
+              {renderInline(node.children, key, own, links)}
+              <bdi className="msg-link-host" dir="ltr"> ({node.host})</bdi>
+            </AskedLink>
+          );
+        }
         return (
           <a
             key={key}
@@ -680,7 +702,7 @@ function plainPart(text: string, key: string, links: DrawnLinks, ownEnd: boolean
  * text part folds only where it folds; absent when there is no html part. `subject`: the message's,
  * whose forward prefix keeps the forwarded message open.
  */
-export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, foldKey, htmlFold, subject }: {
+export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, foldKey, htmlFold, subject, askPage }: {
   text: string;
   rich?: BodyNode[] | null;
   richHistory?: RichFold | null;
@@ -688,6 +710,8 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
   foldKey?: string;
   htmlFold?: QuotedVerdict;
   subject?: string | null;
+  /** The ask page a marked link of `rich` opens instead of its address; absent where the shell asks. */
+  askPage?: (url: string) => string;
 }) {
   /**
    * The fold's state keys on the MESSAGE, not on the component instance: `open` is only true while
@@ -709,7 +733,7 @@ export function BodyText({ text, rich, richHistory, ownImages = NO_OWN_IMAGES, f
   const open = openedFor === key;
   // Every href drawn below, reported as on screen (`rendered-links.ts`): a folded history draws
   // nothing, so it reports nothing until it is open.
-  const links: DrawnLinks = { hrefs: [], asks: [] };
+  const links: DrawnLinks = { hrefs: [], asks: [], askPage };
   const toggle = (
     <HistoryToggle key="t" open={open} controls={region} onToggle={() => setOpenedFor(open ? null : key)} />
   );
