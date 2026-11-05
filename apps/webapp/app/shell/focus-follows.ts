@@ -5,10 +5,12 @@
  * or itself when it has none. When it closes — by Escape, a verb or a finished action — focus goes
  * back to what opened it; when that is gone, to the row after it in the list, then the list itself.
  * An `aria-modal` surface keeps Tab and Shift+Tab inside. A focused control the page takes away
- * (a row's Done) lands the same way, so focus does not fall to the page body while a list stands.
+ * (a row's Done) lands the same way, so focus does not fall to the page body while a list stands;
+ * one taken away inside a writing surface (the inline reply) lands back where one writes in it.
  * Surfaces call {@link useFocusFollows}; the shell mounts {@link FocusFollows} once.
  */
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
+import { KEY_WRITING } from "./keymap";
 import { pageModal } from "./modal-gate";
 import { queryAllVisible, queryVisible } from "./visible-dom";
 
@@ -37,6 +39,8 @@ interface Place {
   list: HTMLElement | null;
   /** The layer it stood in, and that surface's own opener when the layer is one of ours. */
   layer: HTMLElement | null;
+  /** The writing surface it stood in (`keymap.KEY_WRITING`). */
+  writing: HTMLElement | null;
   parent: Place | null;
 }
 
@@ -129,6 +133,7 @@ function placeOf(target: Element | null): Place {
     nextId: next?.dataset.id ?? null,
     prevId: prev?.dataset.id ?? null,
     layer: el?.closest<HTMLElement>(LAYER) ?? null,
+    writing: el?.closest<HTMLElement>(`[${KEY_WRITING}]`) ?? null,
     parent: holderOf(el)?.opener ?? null,
   };
 }
@@ -159,6 +164,11 @@ function land(p: Place, returnTo: boolean): boolean {
       if (q.el !== null && q.el === q.row && cursor !== null && cursor !== q.el && take(cursor)) return true;
       if (take(q.el) || take(rowById(q.id))) return true;
     }
+  } else if (p.writing?.isConnected
+    && take(p.writing.querySelector<HTMLElement>('[contenteditable="true"]') ?? p.writing)) {
+    /* A CONTROL TAKEN AWAY WHILE WRITING (a file's remove): the list's row would turn the next
+       letter into a mailbox verb on the message being answered. */
+    return true;
   } else if (p.layer?.isConnected && (modal === null || modal.contains(p.layer))) {
     return enterInto(p.layer);
   } else if (p.el !== null && p.el === p.row && p.el.hasAttribute("tabindex")) {
