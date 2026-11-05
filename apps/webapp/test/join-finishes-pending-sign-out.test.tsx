@@ -2,7 +2,7 @@
 /**
  * THE SIGN-UP AND CONFIRMATION PAGES UNDER A SIGN-OUT THE SERVER NEVER CONFIRMED. `/login` finishes such a
  * sign-out behind its form and links to `/join`; an invitation mail links to `/join` and `/verify-email`
- * from another site. Neither page may read the session the jar still carries (`tf_owner=signed_out_pending`
+ * from another site, an invitation link to `/join/invite`. No page may read the session the jar still carries (`tf_owner=signed_out_pending`
  * beside the previous person's cookies): its answer is that person's account, and its 401 path refreshes,
  * which resumes the family they ended. So each finishes the sign-out at the door instead, as `/login` does,
  * says so when it cannot, and asks the door once more before a registration or a confirmation mints a
@@ -49,6 +49,8 @@ let doorScript: Array<() => Response | null> = [];
 let accessLive = false;
 let refreshable = true;
 let refreshed = false;
+/** Run while the invite's redeem is on the wire: another tab's Sign out, pressed meanwhile. */
+let duringRedeem = (): void => {};
 let wire: string[] = [];
 let roots: Root[] = [];
 let originalFetch: typeof globalThis.fetch;
@@ -68,6 +70,7 @@ beforeEach(() => {
   accessLive = false;
   refreshable = true;
   refreshed = false;
+  duringRedeem = () => {};
   wire = [];
   sessionStorage.clear();
   localStorage.clear();
@@ -105,6 +108,11 @@ beforeEach(() => {
     }
     if (url.includes("/auth/register")) { wire.push("register"); return json({ status: "ok" }, 202); }
     if (url.includes("/auth/verify-email")) { wire.push("verify"); return json({ status: "verified" }, 200); }
+    if (url.includes("/pair/redeem")) {
+      wire.push("redeem");
+      duringRedeem();
+      return json({ grant: "invite", invite: { code: "OHMAIL-TEST", email: "new-person@example.invalid", expiresAt: "2026-10-18T14:15:00.000Z" } }, 200);
+    }
     wire.push(`other ${url}`);
     return json({}, 200);
   }) as unknown as typeof globalThis.fetch;
@@ -117,14 +125,17 @@ afterEach(async () => {
   roots = [];
   document.body.innerHTML = "";
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  window.history.replaceState(null, "", "/");
   globalThis.fetch = originalFetch;
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-async function mount(which: "join" | "verify"): Promise<HTMLElement> {
+async function mount(which: "join" | "verify" | "invite"): Promise<HTMLElement> {
+  if (which === "invite") window.history.replaceState(null, "", "/join/invite#tok_1");
   const child = which === "join"
     ? h((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true })
+    : which === "invite" ? h((await import("../app/(product)/join/invite/InviteScreen.js")).InviteScreen)
     : h((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok_1" });
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -184,6 +195,14 @@ async function createAccount(el: HTMLElement): Promise<void> {
 /** The confirmation form, its password typed and sent. */
 async function confirmAddress(el: HTMLElement): Promise<void> {
   await fill(el, "#verify-pw", fixturePassword("join-finishes-pending-sign-out"));
+  await submit(el);
+}
+
+/** The invitation's form, filled and sent. */
+async function acceptInvite(el: HTMLElement): Promise<void> {
+  await fill(el, "#invite-email", "new-person@example.invalid");
+  await fill(el, "#invite-name", "New Person");
+  await fill(el, "#invite-pw", fixturePassword("join-finishes-pending-sign-out"));
   await submit(el);
 }
 
@@ -314,6 +333,48 @@ describe("/verify-email finishes a pending sign-out before it confirms", () => {
   });
 });
 
+describe("/join/invite finishes a pending sign-out before the token is spent", () => {
+  it("the door on arrival; while it refuses, neither the redeem nor the registration leaves, and the refusal is said", async () => {
+    doorScript = [db503];
+    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    const el = await mount("invite");
+    expect(count("door"), "the unfinished sign-out was not presented at the sign-out door").toBe(1);
+    await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
+    expect(troubleText(el)).toBe(refusedSaying("busy"));
+    expect(signOutButton(el), "the sentence says to press Sign out, and nothing offers it").not.toBeNull();
+    await acceptInvite(el);
+    await tick(2_000);
+    expect(count("door"), "the press did not ask the door first").toBe(CONFIRM_ATTEMPTS + 1);
+    expect([count("redeem"), count("register")], "the token was spent beside a family the server never ended").toEqual([0, 0]);
+    expect(wire.filter((w) => ACCOUNT_READS.includes(w)), "the previous person's session was read").toEqual([]);
+  });
+
+  it("…and once the door answers, the same press finishes the sign-out, then redeems, then registers", async () => {
+    doorScript = [db503, db503, db503, db503, noContent];
+    document.cookie = `tf_owner=${PENDING}; Path=/`;
+    const el = await mount("invite");
+    await tick(CONFIRM_CAP_MS * CONFIRM_ATTEMPTS);
+    await acceptInvite(el);
+    await tick(2_000);
+    expect([count("redeem"), count("register")]).toEqual([1, 1]);
+    expect(wire.lastIndexOf("door")).toBeLessThan(wire.indexOf("redeem"));
+    expect(wire.indexOf("redeem")).toBeLessThan(wire.indexOf("register"));
+    expect(document.cookie).not.toContain(PENDING);
+    expect(wire.filter((w) => ACCOUNT_READS.includes(w))).toEqual([]);
+  });
+
+  it("a sign-out pressed elsewhere while the redeem is out: the door is asked before the registration, which waits", async () => {
+    doorScript = [db503];
+    duringRedeem = () => { document.cookie = `tf_owner=${PENDING}; Path=/`; };
+    const el = await mount("invite");
+    await tick(1_000);
+    await acceptInvite(el);
+    await tick(2_000);
+    expect([count("redeem"), count("door"), count("register")]).toEqual([1, 1, 0]);
+    expect(troubleText(el)).toBe(refusedSaying("busy"));
+  });
+});
+
 describe("THE CONTROL — no pending sign-out, both pages as before", () => {
   it("/join reads the session and resumes where the server says; the door is never asked", async () => {
     accessLive = true;
@@ -342,5 +403,14 @@ describe("THE CONTROL — no pending sign-out, both pages as before", () => {
     expect(count("verify")).toBe(1);
     expect(count("door")).toBe(0);
     expect(text(el)).toContain(V.doneTitle);
+  });
+
+  it("/join/invite reads the session on arrival; the door is never asked", async () => {
+    refreshable = false;
+    const el = await mount("invite");
+    await tick(1_000);
+    expect(wire.filter((w) => ACCOUNT_READS.includes(w))).toEqual(["session", "refresh"]);
+    expect(count("door")).toBe(0);
+    expect(el.querySelector("#invite-email")).not.toBeNull();
   });
 });

@@ -6,7 +6,7 @@
  * (`tf_owner=signed_out_pending` beside the previous person's cookies) `/join` read that person's session,
  * their mailboxes and their access, and generated their recovery codes. Now a public client refuses every
  * path but the ones a browser with no account may ask (the sign-out door, sign-in, registration, the address
- * confirmation, the sign-in's second factor, `/hello`) and the front door's own ceremony, with the sign-out's
+ * confirmation, the sign-in's second factor, an invitation's redeem, `/hello`) and the front door's own ceremony, with the sign-out's
  * refusal, before anything leaves.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -27,13 +27,15 @@ const ACCOUNT_REQUESTS: Array<[string, "GET" | "POST"]> = [
   ["/auth/2fa/recovery-codes", "POST"],
   ["/auth/2fa/webauthn/register/options", "POST"],
   ["/auth/verify-email/resend", "POST"],
+  // The pairing mint: only its invitation's redeem is free, never the path's family.
+  ["/pair", "POST"],
 ];
 
 /** What a browser with no account of its own may ask: these finish the sign-out or begin a new identity. */
 const OWNER_FREE = [
   "/auth/refresh/logout", "/auth/login", "/auth/register", "/auth/verify-email", "/auth/2fa/totp/verify",
   "/auth/2fa/recovery-codes/verify", "/auth/2fa/webauthn/assert/options", "/auth/2fa/webauthn/assert/verify",
-  "/hello",
+  "/hello", "/pair/redeem",
 ];
 
 beforeEach(() => {
@@ -72,8 +74,10 @@ describe("a public client under a pending sign-out", () => {
     for (const path of OWNER_FREE) expect(apiOwnerVerdict(path), path).toBe("holds");
     expect(apiOwnerVerdict("/auth/session", { ceremony: true })).toBe("holds");
     await api("/auth/register", { method: "POST", body: {} });
+    await api("/pair/redeem", { method: "POST", body: {} });
     await api("/auth/session", { ceremony: true });
-    expect(asked.map((u) => new URL(u, "http://localhost").pathname)).toEqual(["/api/auth/register", "/api/auth/session"]);
+    expect(asked.map((u) => new URL(u, "http://localhost").pathname))
+      .toEqual(["/api/auth/register", "/api/pair/redeem", "/api/auth/session"]);
   });
 });
 
