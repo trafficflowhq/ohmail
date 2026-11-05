@@ -11,7 +11,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadRead } from "./reader-seen";
 import {
-  AppState, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
+  AppState, Image, Keyboard, KeyboardAvoidingView, Modal, Platform, ScrollView, StyleSheet, TextInput, useWindowDimensions, View,
   type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent,
 } from "react-native";
 import { FadeOut } from "./FadeOut";
@@ -86,6 +86,8 @@ import { useNetworkNow } from "../net/network-door";
 import { queuedCaptionKey } from "../engine/send-waits";
 import {
   admitPicked,
+  attachPreview,
+  attachThumb,
   forwardCaps,
   shrinkPicked,
   phoneAttachCap,
@@ -96,6 +98,8 @@ import {
 } from "../compose/attach";
 /* The expo pickers — a `*-native.ts` twin the suite never imports; every rule is in attach.ts. */
 import { nativeAttachPicker, nativeImageShrink } from "../compose/attach-native";
+import { shareAttachmentBytes } from "../mail/open-attachment-native";
+import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
 import { letterSession, openLetterKeeper, type LetterKeeper } from "../compose/letter-keeper";
 import { KEPT_FILES_MAX_BYTES } from "../compose/letter-store";
 import { forwardFilesPlan } from "../compose/forward-files";
@@ -1408,6 +1412,19 @@ export function ComposeSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [to, subject, body, copies.cc, copies.bcc, mailboxId]);
   const { pictureQuality } = usePrefs();
+  /* AN ATTACHED FILE OPENS from its bytes in hand: a picture or a PDF in the reader's own preview, over
+     this sheet; anything else in another app, as the reader's tiles do. */
+  const [previewed, setPreviewed] = useState<PreviewFile | null>(null);
+  const [openRefused, setOpenRefused] = useState<PhoneComposeAttachment | null>(null);
+  const openAttached = async (file: PhoneComposeAttachment) => {
+    setOpenRefused(null);
+    const shown = attachPreview(file);
+    if (shown !== null) {
+      setPreviewed(shown);
+      return;
+    }
+    if (!(await shareAttachmentBytes(file.contentBase64, file.contentType, file.filename))) setOpenRefused(file);
+  };
   const pick = async (which: "files" | "photos") => {
     if (phase !== "idle") return;
     const picker = nativeAttachPicker();
@@ -2291,40 +2308,55 @@ export function ComposeSheet({
                 </View>
               ) : null}
               {attachments.map((file) => (
-                <View
-                  key={`${file.filename}:${file.sizeBytes}`}
-                  style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 8,
-                    backgroundColor: t.c.tint2,
-                    borderRadius: t.radius.card,
-                    paddingHorizontal: 14,
-                    paddingVertical: 8,
-                  }}
-                >
-                  <Icon name="clip" size={13} color={t.c.ink3} />
-                  <Txt variant="caption" tone="ink2" numberOfLines={1} style={{ flex: 1 }}>
-                    {file.filename}
-                  </Txt>
-                  <Txt variant="caption" tone="ink3">
-                    {sizeLabel(file.sizeBytes)}
-                  </Txt>
-                  <Tap
-                    onPress={() => {
-                      if (phase !== "idle") return;
-                      setAttachments((list) => list.filter((a) => a !== file));
-                      if (file.fileId !== undefined) keeper?.removeFile(file.fileId);
+                <Fragment key={`${file.filename}:${file.sizeBytes}`}>
+                  <View
+                    style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 8,
+                      backgroundColor: t.c.tint2,
+                      borderRadius: t.radius.card,
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
                     }}
-                    accessibilityRole="button"
-                    accessibilityState={{ disabled: phase !== "idle" }}
-                    accessibilityLabel={Copy.attachRemove(file.filename)}
-                    style={{ padding: 8, marginRight: -8 }}
                   >
-                    <Icon name="x" size={13} color={t.c.ink3} />
-                  </Tap>
-                </View>
+                    {/* The thumbnail and the name open the file: the app's own preview, or another app. */}
+                    <Tap
+                      onPress={() => void openAttached(file)}
+                      accessibilityRole="button"
+                      accessibilityLabel={file.filename}
+                      style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10 }}
+                    >
+                      <AttachThumbView file={file} />
+                      <Txt variant="caption" tone="ink2" numberOfLines={1} ellipsizeMode="middle" style={{ flex: 1 }}>
+                        {file.filename}
+                      </Txt>
+                      <Txt variant="caption" tone="ink3">
+                        {sizeLabel(file.sizeBytes)}
+                      </Txt>
+                    </Tap>
+                    <Tap
+                      onPress={() => {
+                        if (phase !== "idle") return;
+                        setAttachments((list) => list.filter((a) => a !== file));
+                        if (file.fileId !== undefined) keeper?.removeFile(file.fileId);
+                      }}
+                      accessibilityRole="button"
+                      accessibilityState={{ disabled: phase !== "idle" }}
+                      accessibilityLabel={Copy.attachRemove(file.filename)}
+                      style={{ padding: 8, marginRight: -8 }}
+                    >
+                      <Icon name="x" size={13} color={t.c.ink3} />
+                    </Tap>
+                  </View>
+                  {openRefused === file ? (
+                    <Txt variant="caption" tone="ink3" accessibilityRole="alert" style={{ marginTop: 4, paddingHorizontal: 14 }}>
+                      {Copy.attachmentShareRefused}
+                    </Txt>
+                  ) : null}
+                </Fragment>
               ))}
+              {previewed !== null ? <AttachmentPreview file={previewed} onClose={() => setPreviewed(null)} /> : null}
               <View
                 style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "center", columnGap: ATTACH_ROW_GAP, rowGap: 4 }}
                 onLayout={(e) => measureAttach("row", e.nativeEvent.layout.width)}
@@ -2576,6 +2608,34 @@ export function ComposeSheet({
 }
 
 
+
+/** An attached file's thumbnail (`attachThumb`): a picture the phone cannot draw wears its type mark. */
+function AttachThumbView({ file }: { file: PhoneComposeAttachment }) {
+  const t = useTheme();
+  const [drawable, setDrawable] = useState(true);
+  // Once per file: a kept picture's data: URI is its whole bytes, and the sheet re-renders per keystroke.
+  const thumb = useMemo(() => {
+    const made = attachThumb(file, drawable);
+    return made.kind === "picture" ? { ...made, source: { uri: made.uri } } : made;
+  }, [file, drawable]);
+  const box = {
+    width: 36, height: 36, borderRadius: t.radius.item, backgroundColor: t.c.panel,
+    alignItems: "center", justifyContent: "center", overflow: "hidden",
+  } as const;
+  if (thumb.kind === "picture") {
+    // "resize": Android decodes a data: URI at full size otherwise (only file:/content: auto-resize).
+    return <Image source={thumb.source} resizeMethod="resize" resizeMode="cover" onError={() => setDrawable(false)} style={box} />;
+  }
+  return (
+    <View style={box}>
+      {thumb.label === null ? <Icon name="clip" size={13} color={t.c.ink3} /> : (
+        <Txt variant="tagchip" tone="ink2" numberOfLines={1} adjustsFontSizeToFit>
+          {thumb.label}
+        </Txt>
+      )}
+    </View>
+  );
+}
 
 /* ── primitives ────────────────────────────────────────────────────────────────────────────── */
 
