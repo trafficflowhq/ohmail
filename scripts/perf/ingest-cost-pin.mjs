@@ -22,6 +22,9 @@ export const INGEST_TRANSACTIONS_CEILING = 2.1;
  */
 export const INGEST_RUN_STATEMENTS_PER_MESSAGE = 1.1;
 export const INGEST_RUN_STATEMENTS_CEILING = 1.6;
+/** The same import past the storage cap, the window replayed inside each run: measured, and its bound. */
+export const INGEST_RUN_AT_CAP_STATEMENTS_PER_MESSAGE = 1.12;
+export const INGEST_RUN_AT_CAP_STATEMENTS_CEILING = 1.62;
 /** One transaction per run of a hundred letters, and its bound. */
 export const INGEST_RUN_TRANSACTIONS_CEILING = 0.05;
 /**

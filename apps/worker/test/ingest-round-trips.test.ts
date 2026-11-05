@@ -1,14 +1,15 @@
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mailboxes, messages, rules, type Tx } from "@trafficflow/db";
+import { accountStorage, mailboxes, messages, rules, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { runSyncCycle } from "../src/sync.js";
 import { ingestRunRepository } from "../src/ingest-run.js";
 import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import {
-  INGEST_RUN_STATEMENTS_CEILING, INGEST_RUN_TRANSACTIONS_CEILING, INGEST_STATEMENTS_CEILING, INGEST_TRANSACTIONS_CEILING,
+  INGEST_RUN_AT_CAP_STATEMENTS_CEILING, INGEST_RUN_STATEMENTS_CEILING, INGEST_RUN_TRANSACTIONS_CEILING,
+  INGEST_STATEMENTS_CEILING, INGEST_TRANSACTIONS_CEILING,
 } from "../../../scripts/perf/ingest-cost-pin.mjs";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
@@ -56,7 +57,7 @@ interface Client extends Doors {
   transaction: (cb: (tx: Doors) => Promise<unknown>) => Promise<unknown>;
 }
 
-interface Counted { statements: number; transactions: number; byTable: Map<string, number> }
+interface Counted { statements: number; transactions: number; byTable: Map<string, number>; emptied?: number }
 
 /** The table a statement names first — what the per-table breakdown is keyed on. */
 function tableOf(text: unknown): string {
@@ -69,7 +70,7 @@ function tableOf(text: unknown): string {
 }
 
 /** Ingest `n` delivered messages in ONE cycle and count what the store was asked. */
-async function ingest(n: number, opts: { admitAll?: boolean; runs?: boolean } = {}): Promise<Counted> {
+async function ingest(n: number, opts: { admitAll?: boolean; runs?: boolean; capBytes?: number } = {}): Promise<Counted> {
   const db = (await makeTestDb()) as unknown as Tx;
   const client = (db as unknown as { $client: Client }).$client;
   const seen: Counted = { statements: 0, transactions: 0, byTable: new Map() };
@@ -125,7 +126,7 @@ async function ingest(n: number, opts: { admitAll?: boolean; runs?: boolean } = 
     repo: opts.runs === true ? ingestRunRepository(makeDrizzleRepo(db as never)) : makeDrizzleRepo(db as never),
     ...(opts.runs === true ? { ingestRuns: INGEST_RUN_BOUNDS } : {}),
     adapter, accountId: ACCOUNT,
-    mailboxId: mb!.id, storageCap: UNMETERED_STORAGE_CAP,
+    mailboxId: mb!.id, storageCap: opts.capBytes ?? UNMETERED_STORAGE_CAP,
     // Both REQUIRED in `SyncDeps`, because for both the absent default is the dangerous branch.
     // The organizer role is the one the cost is measured under; an empty trusted set means every
     // `Authentication-Results` verdict reads "unavailable", which is this fixture's own mail.
@@ -138,7 +139,8 @@ async function ingest(n: number, opts: { admitAll?: boolean; runs?: boolean } = 
   expect(out.hasBacklog, "the fixture did not hand over the whole batch in one cycle").toBe(false);
   const rows = await db.select({ id: messages.id }).from(messages);
   expect(rows, `ingest wrote ${rows.length} rows for ${n} delivered messages`).toHaveLength(n);
-  return seen;
+  const [counter] = await db.select({ husked: accountStorage.huskedForSpace }).from(accountStorage);
+  return { ...seen, emptied: counter?.husked ?? 0 };
 }
 
 /** The marginal statements per letter, by table, between two cycle sizes. */
@@ -214,6 +216,27 @@ describe("the ingest's per-message database cost", () => {
       .toBeLessThanOrEqual(INGEST_RUN_STATEMENTS_CEILING);
     expect(txPerMessage, `the import now opens ${txPerMessage.toFixed(2)} transactions per letter`)
       .toBeLessThanOrEqual(INGEST_RUN_TRANSACTIONS_CEILING);
+    expect(large.statements, "nothing was counted").toBeGreaterThan(200);
+  }, 300_000);
+
+  it("the import's shape past the storage cap: the window rolls inside each run", async () => {
+    // A few letters' worth of storage: every letter after them empties the oldest to fit.
+    const small = await ingest(40, { admitAll: true, runs: true, capBytes: 200 });
+    const large = await ingest(200, { admitAll: true, runs: true, capBytes: 200 });
+    const span = 200 - 40;
+    const perMessage = (large.statements - small.statements) / span;
+    const txPerMessage = (large.transactions - small.transactions) / span;
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({
+      shape: "import at the cap", statementsPerMessage: Number(perMessage.toFixed(2)),
+      transactionsPerMessage: Number(txPerMessage.toFixed(2)), byTable: perTable(small, large, span),
+    }));
+    // The control: the window emptied nearly every letter to make room for the next.
+    expect(large.emptied).toBeGreaterThan(150);
+    // MEASURED 1.12 statements per letter: the window's read and writes, once a run.
+    expect(perMessage, `the import at the cap now costs ${perMessage.toFixed(2)} statements per letter`)
+      .toBeLessThanOrEqual(INGEST_RUN_AT_CAP_STATEMENTS_CEILING);
+    expect(txPerMessage).toBeLessThanOrEqual(INGEST_RUN_TRANSACTIONS_CEILING);
     expect(large.statements, "nothing was counted").toBeGreaterThan(200);
   }, 300_000);
 });

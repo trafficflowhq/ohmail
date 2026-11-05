@@ -2,14 +2,14 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { eq, inArray, asc } from "drizzle-orm";
+import { eq, inArray, asc, sql } from "drizzle-orm";
 import { runMigrations } from "../src/admin.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import { brandDialect, dialect } from "../src/dialect/index.js";
 import { accounts, accountStorage, mailboxes, messages, messageBodies } from "../src/schema-mail.js";
 import {
-  bodyBytesOf, evictOldestBodies, recomputeAccountStorage, recordRefilledForSpace, recordWithheldForSpace,
-  reserveBodyBytes, reserveBodyBytesEvicting, storageUsageOf,
+  bodyBytesOf, evictOldestBodies, lockStorageCounter, oldestStoredBodies, recomputeAccountStorage, recordRefilledForSpace,
+  recordWithheldForSpace, replayReserveEvicting, reserveBodyBytes, reserveBodyBytesEvicting, storageUsageOf,
   EVICT_BATCH_BODIES, EVICT_INLINE_MAX_BODIES, EVICT_LOW_WATER_RATIO,
 } from "../src/storage.js";
 import type { Tx } from "../src/change-log.js";
@@ -336,4 +336,80 @@ describe.skipIf(!PG_UP)("reserveBodyBytesEvicting — new mail lands at cap", ()
     // the stored octets PLUS that one reservation — exact, not approximate.
     expect(counted).toBe(octets + 1_000);
   });
+});
+
+describe.skipIf(!PG_UP)("replayReserveEvicting — the window for a run of letters, in memory", () => {
+  it("decides each letter, empties the same bodies and leaves the same counter as the window letter by letter", async () => {
+    /* Two accounts seeded alike: one takes the run's letters through `reserveBodyBytesEvicting` one
+       transaction each (the oracle), the other is only read, for the replay. More small bodies than
+       one trim may empty, the counter far past a cap that was lowered, and letters newest first with
+       mixed sizes, an empty one and undated ones: they become the window's oldest once stored. */
+    // The first two are withheld on arrival: one dated after the month the trim keeps text from, one before it.
+    const sizes = [60_000, 60_000, 50, 900, 2_400, 0, 120, 700, 700, 3_000, 300, 60_000, 80];
+    const dates = [new Date(Date.UTC(2040, 0, 1)), ...sizes.slice(1).map((_, i) => (i % 4 === 3 ? null : new Date(Date.UTC(2020, 11, 28 - i))))];
+    const run = async (oracle: boolean) => {
+      const { accountId } = await seed(150, 200, (i) => new Date(Date.UTC(2031, 0, 1 + i)));
+      const [mb] = await db.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, accountId));
+      const cap = 150 * 200 - 28_000;
+      const letters = [];
+      for (let i = 0; i < sizes.length; i++) {
+        const [m] = await db.insert(messages).values({
+          accountId, mailboxId: mb!.id, bodyHash: `r${i}`, dedupKey: `${accountId}:r${i}`, subject: `r${i}`, date: dates[i] ?? null,
+        }).returning();
+        letters.push(m!);
+      }
+      if (oracle) {
+        for (let i = 0; i < letters.length; i++) {
+          const text = "y".repeat(sizes[i]!);
+          await db.transaction(async (tx) => {
+            const t = tx as unknown as Tx;
+            const stored = await reserveBodyBytesEvicting(t, dialect(db), accountId, bodyBytesOf({ text, html: null }), cap);
+            await tx.insert(messageBodies).values({
+              messageId: letters[i]!.id, text: stored ? text : "", html: null,
+              withheldReason: stored ? null : "storage_cap", headers: {},
+            });
+            if (!stored) await recordWithheldForSpace(t, dialect(db), accountId, letters[i]!.id);
+          });
+        }
+        return { accountId, letters };
+      }
+      const read = await db.transaction(async (tx) => {
+        const t = tx as unknown as Tx;
+        const counter = await lockStorageCounter(t, dialect(db), accountId);
+        const page = await oldestStoredBodies(t, dialect(db), accountId, EVICT_INLINE_MAX_BODIES * sizes.length);
+        const keys = await dialect(db).exec(t, sql`select id, (extract(epoch from coalesce(date, created_at)) * 1000000)::bigint::text
+          from messages where account_id = ${accountId} and subject like 'r%'`);
+        return { counter, page, keys: new Map(keys.map((k) => [String(k[0]), BigInt(String(k[1]))])) };
+      });
+      const replay = replayReserveEvicting(read.counter, cap, letters.map((m, i) => ({
+        messageId: m.id, bytes: sizes[i]!, holdsContent: sizes[i]! > 0, at: m.date ?? m.createdAt, atMicros: read.keys.get(m.id)!,
+      })), read.page);
+      return { accountId, letters, replay };
+    };
+    const truth = await run(true);
+    const model = await run(false);
+    const [counter] = await db.select({
+      bytes: accountStorage.bytes, husked: accountStorage.huskedForSpace, onArrival: accountStorage.withheldOnArrival, keptFrom: accountStorage.keptFrom,
+    }).from(accountStorage).where(eq(accountStorage.accountId, truth.accountId));
+    const replay = model.replay!;
+    // The control: the window emptied old mail, withheld a letter on arrival and moved the month.
+    expect(counter!.onArrival).toBeGreaterThan(0);
+    expect(replay.trimmed).toBe(true);
+    expect({
+      bytes: replay.counter.bytes, husked: replay.counter.huskedForSpace,
+      onArrival: replay.counter.withheldOnArrival, keptFrom: replay.counter.keptFrom,
+    }).toEqual({ ...counter, bytes: Number(counter!.bytes) });
+    // Each letter: holding its text at the end, as the oracle's letters do.
+    const held = await db.select({ id: messageBodies.messageId, reason: messageBodies.withheldReason })
+      .from(messageBodies).where(inArray(messageBodies.messageId, truth.letters.map((l) => l.id)));
+    const holdsTruth = truth.letters.map((l) => held.find((h) => h.id === l.id)!.reason === null);
+    expect(replay.holds).toEqual(holdsTruth);
+    // And the stored mail it emptied: the same letters, by their place among the seeded ones.
+    const emptiedTruth = await db.select({ subject: messages.subject }).from(messageBodies)
+      .innerJoin(messages, eq(messages.id, messageBodies.messageId))
+      .where(sql`${messages.accountId} = ${truth.accountId} and ${messageBodies.withheldReason} = 'storage_cap' and ${messages.subject} not like 'r%'`);
+    const subjectOf = new Map((await db.select({ id: messages.id, subject: messages.subject }).from(messages)
+      .where(eq(messages.accountId, model.accountId))).map((m) => [m.id, m.subject]));
+    expect(replay.emptied.map((id) => subjectOf.get(id)).sort()).toEqual(emptiedTruth.map((e) => e.subject).sort());
+  }, 60_000);
 });
