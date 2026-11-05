@@ -78,6 +78,15 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.40" date="2026-11-05">
+      <description>
+        <ul>
+          <li>Attached files show a picture of themselves while you write</li>
+          <li>Contributors: the search budget is judged in a workflow of its own</li>
+          <li>The phone shows what you attached, and opens it</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.39" date="2026-11-05">
       <description>
         <ul>
@@ -121,22 +130,6 @@
           <li>A word typed part way no longer lists the letters holding a common word it starts</li>
           <li>A phone or computer signed out from another device no longer keeps your mail</li>
           <li>The phone asks each mailbox about saved settings once, with Settings open</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.35" date="2026-11-04">
-      <description>
-        <ul>
-          <li>The desktop app's settings tests use a reserved example address</li>
-          <li>Mail server sign-ins are limited over time, and deleting leaves less behind</li>
-          <li>The test suite's sample passwords no longer echo older values</li>
-          <li>Setup no longer takes over a mailbox another computer organizes on a plain Continue</li>
-          <li>Removing every rule on another computer asks again each time</li>
-          <li>The sign-in page removes the mail of a browser signed out from another device</li>
-          <li>A browser signed out from elsewhere no longer gets new-mail notifications</li>
-          <li>Your own letters in a Sent folder with another name show as sent from the first frame</li>
-          <li>A browser signed out from another device no longer keeps your mail</li>
-          <li>Importing settings from another computer keeps the rules it never had</li>
         </ul>
       </description>
     </release>
