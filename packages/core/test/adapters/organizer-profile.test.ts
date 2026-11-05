@@ -8,6 +8,9 @@ import {
   makeProfileIo,
   parseProfileMessage,
   localSaysWhatAFingerprintSays,
+  PROFILE_COPY_KEY_MAX,
+  contentKeyOf,
+  namesCopy,
   payloadFingerprintOf,
   profileCopyKey,
   profileFingerprint,
@@ -24,7 +27,8 @@ import {
   type ProfileRemovedRule,
   type RawProfileMessage,
 } from "../../src/adapters/organizer-profile.js";
-import { formatClaim, parseClaim } from "../../src/adapters/organizer-lease.js";
+import { DEFAULT_STALE_AFTER_MS, clockSkewBoundMs, formatClaim, parseClaim } from "../../src/adapters/organizer-lease.js";
+import { PROFILE_ANSWER_CONTENT_MARGIN_MS } from "@trafficflow/db";
 import { resetMetaMemos } from "../../src/adapters/meta-memo.js";
 import { memoryImapServer, reencodeBody } from "./_metaworld.js";
 
@@ -956,15 +960,15 @@ describe("the rules a person removed travel in the envelope", () => {
       updatedAt: o.updatedAt ?? AT, producer: PRODUCER, removedRules,
     }, o.v);
     const fp = profileFingerprint(richPayload());
-    expect(profileCopyKey(at([]))).toBe(fp);
+    expect(profileCopyKey(at([]), null)).toBe(fp);
     const both = at([GONE, NARROW]);
-    const key = profileCopyKey(both);
+    const key = profileCopyKey(both, null);
     expect(key).not.toBe(fp);
     expect(key.length).toBeLessThanOrEqual(100);
     expect([payloadFingerprintOf(key), profileFingerprintVersion(key), payloadFingerprintOf(fp)]).toEqual([fp, 2, fp]);
     for (const other of [[GONE], [GONE, NARROW, { ...GONE, match: "x@quindle.test" }], [{ ...GONE, removedAt: AGO(3) }, NARROW],
       [{ ...GONE, by: "w-new" }, NARROW], [GONE, { ...NARROW, subjectContains: "other" }]]) {
-      expect(profileCopyKey(at(other))).not.toBe(key);
+      expect(profileCopyKey(at(other), null)).not.toBe(key);
     }
     const sameCopy = [
       { ...both, removedRules: [...both.removedRules!].reverse() },
@@ -974,11 +978,37 @@ describe("the rules a person removed travel in the envelope", () => {
       }),
       read(write([GONE, NARROW])).doc!,
     ];
-    for (const d of sameCopy) expect(profileCopyKey(d)).toBe(key);
-    const v1 = profileCopyKey(at([GONE], { v: 1 }));
+    for (const d of sameCopy) expect(profileCopyKey(d, null)).toBe(key);
+    const v1 = profileCopyKey(at([GONE], { v: 1 }), null);
     expect([payloadFingerprintOf(v1), profileFingerprintVersion(v1)]).toEqual([profileFingerprint(richPayload(), 1), 1]);
     expect(localSaysWhatAFingerprintSays(richPayload(), key)).toBe(true);
     expect(localSaysWhatAFingerprintSays({ ...richPayload(), tagNames: [] }, key)).toBe(false);
+  });
+
+  /* A COPY'S NAME: its content, then the second it was saved and its writer, so a later copy saying the same asks again. */
+  it("a copy's key names the copy: the same copy read again keeps it, a later save or another writer does not", () => {
+    const doc = (updatedAt: Date, removedRules: ProfileRemovedRule[] = [GONE]) => makeProfileDoc(richPayload(), { updatedAt, producer: PRODUCER, removedRules });
+    const first = doc(AT);
+    const key = profileCopyKey(first, "w-old");
+    const content = profileCopyKey(first, null);
+    expect([contentKeyOf(key), payloadFingerprintOf(key), profileFingerprintVersion(key)]).toEqual([content, profileFingerprint(richPayload()), 2]);
+    expect(key.length).toBeLessThanOrEqual(PROFILE_COPY_KEY_MAX);
+    expect(profileCopyKey(read(write([GONE])).doc!, "w-old")).toBe(profileCopyKey(doc(AT), "w-old"));
+    expect(profileCopyKey(doc(new Date(AT.getTime() + 999)), "w-old")).toBe(key);
+    const later = profileCopyKey(doc(new Date(AT.getTime() + 1000)), "w-old");
+    const other = profileCopyKey(first, "w-new");
+    expect([later === key, other === key, contentKeyOf(later) === content, contentKeyOf(other) === content]).toEqual([false, false, true, true]);
+    const undated = { ...first, updatedAt: "not a date" };
+    expect([profileCopyKey(first, ""), profileCopyKey(undated, "w-old")]).toEqual([content, profileCopyKey(undated, null)]);
+    const far = profileCopyKey(doc(new Date(8.64e15), [GONE, NARROW]), "w-old");
+    expect(far.length).toBeLessThanOrEqual(PROFILE_COPY_KEY_MAX);
+    // A stored name: the copy's own key, or its content alone as answers were named before.
+    expect([namesCopy(key, key), namesCopy(content, key), namesCopy(later, key), namesCopy(other, key), namesCopy(profileFingerprint(richPayload()), key)])
+      .toEqual([true, true, false, false, false]);
+  });
+
+  it("an answer named by content alone covers copies saved up to twice the clock-skew bound after it", () => {
+    expect(PROFILE_ANSWER_CONTENT_MARGIN_MS).toBe(2 * clockSkewBoundMs(DEFAULT_STALE_AFTER_MS));
   });
 
   it("a write that saw one copy refuses a newer foreign copy with its rules and other removals", async () => {
@@ -988,9 +1018,9 @@ describe("the rules a person removed travel in the envelope", () => {
     const later = copy([GONE, NARROW]);
     await io.appendProfile(formatProfileMessage(later, { installId: "other-install" }));
     const mine = makeProfileDoc({ ...richPayload(), tagNames: ["mine"] }, { updatedAt: new Date(AT.getTime() + 120_000), producer: PRODUCER });
-    const refused = await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(seen)] });
+    const refused = await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(seen, null)] });
     expect([refused.written, !refused.written && refused.reason, io.messages.length]).toEqual([false, "foreign", 1]);
-    expect(await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(later)] })).toEqual({ written: true, removed: 1 });
+    expect(await writeOrganizerProfile({ io, doc: mine, installId: "i", replaceable: [profileCopyKey(later, null)] })).toEqual({ written: true, removed: 1 });
   });
 
   it("a copy carries at most the cap, the newest, none older than a year", () => {

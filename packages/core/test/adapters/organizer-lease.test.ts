@@ -663,6 +663,30 @@ describe("runLeaseGate — read, decide, then write", () => {
       "a renewal re-described a join tenure as a takeover").toBe("join");
   });
 
+  /* `continued` says no other install can have organized since this process last did: only a claim this process
+     wrote, still in the folder, earns it. */
+  it("says it continued only when the folder still held a claim this process wrote", async () => {
+    const ours = { authorizedAt: null, capabilities: [], installId: "us", kind: "local" as const, displayName: "This Mac", heartbeat: ago(5_000), claimedAt: ago(600_000) };
+    const gate = (io: FakeIo, s: LeaseSelf) => runLeaseGate({ capabilities: [], io, self: s, now: NOW, newNonce: () => "new" });
+    const held = new FakeIo();
+    held.messages.push({ ref: 1, raw: formatClaim({ ...ours, nonce: "mine" }) });
+    const empty = new FakeIo();
+    const fresh = new FakeIo();
+    fresh.messages.push({ ref: 1, raw: formatClaim({ ...ours, nonce: "before-launch" }) });
+    const pressed = new FakeIo();
+    pressed.messages.push({ ref: 1, raw: formatClaim({ ...ours, nonce: "mine" }) });
+    expect({
+      held: (await gate(held, self({ lastNonce: "mine" }))).continued,
+      handedBack: (await gate(new FakeIo(), self({ lastNonce: null, mintedNonces: ["mine"] }))).continued,
+      empty: (await gate(empty, self({ lastNonce: "mine" }))).continued,
+      fresh: (await gate(fresh, self())).continued,
+      pressed: (await runLeaseGate({
+        capabilities: [], io: pressed, self: self({ lastNonce: "mine" }), now: NOW, newNonce: () => "new",
+        takeover: { authorizedAt: NOW, intent: "takeover" },
+      })).continued,
+    }).toEqual({ held: true, handedBack: undefined, empty: undefined, fresh: undefined, pressed: true });
+  });
+
   /**
    * A stand-down RELEASES. Otherwise the winner waits out the whole staleness window before its
    * own gate is clean, and a released claim is what makes "Cloud lapsed" legible at all.

@@ -24,7 +24,7 @@ import {
 } from "@trafficflow/core/adapters/organizer-profile-store";
 import {
   PROFILE_FOUND_READ_MAX, PROFILE_KEPT_MAX, PROFILE_VERSION, ProfileUnavailableError, isEmptyProfilePayload, makeProfileDoc, oversizedProfileList,
-  listedProfileSeconds, localSaysWhatAFingerprintSays, ownCopy, payloadFingerprintOf, profileCopyKey, profileFingerprint, profileGateView, readFoundCopies, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
+  listedProfileSeconds, localSaysWhatAFingerprintSays, namesCopy, ownCopy, payloadFingerprintOf, profileCopyKey, profileFingerprint, profileGateView, readFoundCopies, readOrganizerProfile, signatureReceipt, tidyOrganizerProfile,
   writeOrganizerProfile,
   type FoundRead, type OrganizerProfileDoc, type OrganizerProfilePayload, type ProfileGateView, type ProfileIo, type ProfileOp,
   type ProfileReadResult, type ProfileTidyMode, type ProfileLocator, profileLocatorOf, type ProfileScreening,
@@ -722,7 +722,7 @@ export class OrganizerProfileSync {
     }
     for (const at of [...open, ...declined]) {
       const read = await readOrganizerProfile(io, { retain: at });
-      if (read.state !== "found" || read.installId !== at.installId || profileCopyKey(read.doc) !== at.fingerprint) {
+      if (read.state !== "found" || read.installId !== at.installId || profileCopyKey(read.doc, read.installId) !== at.fingerprint) {
         this.kept = this.kept.filter((k) => !sameLocator(k, at));
         continue;
       }
@@ -748,8 +748,8 @@ export class OrganizerProfileSync {
        this store's own copies before its row); another install's newer document still does, unless it is
        a kept copy the person answered here (Not now): the question has moved on from it. */
     const retain = this.retained();
-    if (retain === undefined || read.state !== "found" || profileCopyKey(read.doc) === retain.fingerprint) return read;
-    const fp = profileCopyKey(read.doc);
+    if (retain === undefined || read.state !== "found" || profileCopyKey(read.doc, read.installId) === retain.fingerprint) return read;
+    const fp = profileCopyKey(read.doc, read.installId);
     if (read.installId !== this.deps.self.installId && !(this.kept.some((k) => k.fingerprint === fp)
       && await profileImportResolutionExists(this.deps.db, { accountId: this.deps.accountId, mailboxId: this.deps.mailboxId, fingerprint: fp }))) return read;
     return readOrganizerProfile(io, { ...opts, retain });
@@ -780,9 +780,9 @@ export class OrganizerProfileSync {
     if (ownCopy(m.installId, Math.floor(at / 1000), deps.self.installId, await this.ownSince(), await this.owns())) return null;
     if (await profileImportWriteReleased(deps.db, { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: m.fingerprint })) return null;
     const read = await readOrganizerProfile(io, { retain: { installId: m.installId, second: Math.floor(at / 1000), fingerprint: m.fingerprint } });
-    if (read.state !== "found" || read.installId !== m.installId || profileCopyKey(read.doc) !== m.fingerprint) return null;
+    if (read.state !== "found" || read.installId !== m.installId || !namesCopy(m.fingerprint, profileCopyKey(read.doc, read.installId))) return null;
     if (localSaysWhatTheDocumentSays(local, read.doc) || onlyAWindow(read.installId, read.doc, deps.self.installId)) return null;
-    return { doc: read.doc, installId: m.installId, fingerprint: m.fingerprint };
+    return { doc: read.doc, installId: m.installId, fingerprint: profileCopyKey(read.doc, read.installId) };
   }
 
   /**
@@ -1069,7 +1069,7 @@ export class OrganizerProfileSync {
           // organizer OWNS a document (`lastWrittenFingerprint` — its own write, an own/in-sync
           // seed, or a convergence release), a differing foreign document is the overlap's
           // loser writing late — surfaced and superseded, never held.
-          const fp = profileCopyKey(read.doc);
+          const fp = profileCopyKey(read.doc, read.installId);
           // …and neither does one this organizer has already SURFACED for supersede
           // (`seenForeignFingerprints` — the verify pass reopens the dirty check by clearing
           // `lastWrittenFingerprint`, so ownership alone cannot tell "never owned" from
@@ -1166,7 +1166,7 @@ export class OrganizerProfileSync {
         return;
       }
       if (read.state !== "found") { await this.lapseStaleMarker(read, null, log); return; }
-      const fp = profileCopyKey(read.doc);
+      const fp = profileCopyKey(read.doc, read.installId);
       const ours = await this.isOwn(read);
       if (read.installId === deps.self.installId) {
         // Our own document is the newest; a question this install was asking may sit beside it.
@@ -1231,7 +1231,7 @@ export class OrganizerProfileSync {
     // the held record, and a newest-only read would lapse the question a tick after that write.
     const still: ProfileReadResult = await this.readQuestion(io);
     if (still.state === "found" && this.holdFingerprint !== null
-      && profileCopyKey(still.doc) === this.holdFingerprint) return "standing";
+      && profileCopyKey(still.doc, still.installId) === this.holdFingerprint) return "standing";
     if (still.state === "newer" && this.holdNewerV !== null && still.v === this.holdNewerV) return "standing";
     // Decide the NEXT posture while the OLD hold is still armed: every read in the derivation
     // can throw, and a throw must leave the standing hold standing (a swap that
@@ -1246,7 +1246,7 @@ export class OrganizerProfileSync {
   /** A copy the folder now shows that an Import or a Save answered here goes too, once the store's copy says what it says. */
   private async noteAnswered(still: ProfileReadResult): Promise<void> {
     const { deps } = this;
-    if (still.state !== "found" || still.installId === null || profileCopyKey(still.doc) === this.holdFingerprint) return;
+    if (still.state !== "found" || still.installId === null || profileCopyKey(still.doc, still.installId) === this.holdFingerprint) return;
     const at = profileLocatorOf(still.installId, still.doc);
     if (at !== null && !(await this.isOwn(still)) && await profileImportWriteReleased(deps.db, {
       accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: at.fingerprint,
@@ -1270,7 +1270,7 @@ export class OrganizerProfileSync {
   > {
     const { deps } = this;
     if (still.state === "found" && !(await this.isOwn(still))) {
-      const newFp = profileCopyKey(still.doc);
+      const newFp = profileCopyKey(still.doc, still.installId);
       const subject = { accountId: deps.accountId, mailboxId: deps.mailboxId, fingerprint: newFp };
       // The WRITE question: a declined replacement is still held, or the next write prunes it.
       if (!localSaysWhatTheDocumentSays(local, still.doc) && !onlyAWindow(still.installId, still.doc, deps.self.installId)
@@ -1378,7 +1378,7 @@ export class OrganizerProfileSync {
     const foreignRead = read.state === "found" && !(await this.isOwn(read));
     const stillAsks =
       (marker.state === "found" && read.state === "found" && marker.fingerprint !== null
-        && profileCopyKey(read.doc) === marker.fingerprint
+        && namesCopy(marker.fingerprint, profileCopyKey(read.doc, read.installId))
         && foreignRead && !onlyAWindow(read.installId, read.doc, deps.self.installId)
         && (local === null || !localSaysWhatTheDocumentSays(local, read.doc)))
       || (marker.state === "newer" && read.state === "newer" && read.v === marker.v);
@@ -1562,7 +1562,7 @@ export class OrganizerProfileSync {
           // never looked would leave B to surface later as an unheld mid-flight document.
           const stillConverged = await (async (): Promise<boolean> => {
             const still = await this.readQuestion(io);
-            if (still.state === "found" && profileCopyKey(still.doc) === this.holdFingerprint) return true;
+            if (still.state === "found" && profileCopyKey(still.doc, still.installId) === this.holdFingerprint) return true;
             const next = await this.deriveNextHold(io, still, payload);
             await this.commitNextHold(next, log, { leaves: true });
             return false;
@@ -1575,7 +1575,7 @@ export class OrganizerProfileSync {
              under our id that is not ours (a later life's) is the next question, never replaced by what the
              store now says. */
           const newest = await readOrganizerProfile(io, { ownSince: await this.ownSince(), owns: await this.owns() });
-          const beside = newest.state === "found" && profileCopyKey(newest.doc) !== converged ? newest : null;
+          const beside = newest.state === "found" && profileCopyKey(newest.doc, newest.installId) !== converged ? newest : null;
           const ours = beside !== null && (await this.isOwn(beside));
           const next = beside === null || ours || beside.installId !== deps.self.installId ? null : await this.deriveNextHold(io, beside, payload);
           // The kept copies' turn: the newest with no answer here, else the newest answered Not now.
@@ -1786,7 +1786,7 @@ export class OrganizerProfileSync {
             this.holdSince = null;
           }
         } else if (result.reason === "foreign") {
-          const foreignFp = profileCopyKey(result.doc);
+          const foreignFp = profileCopyKey(result.doc, result.installId);
           const underOurId = result.installId === deps.self.installId;
           // A copy a build that records nothing wrote under our id is ours, recorded now: replaced at once.
           if (underOurId && (await this.isOwn(result))) return "again";
@@ -1906,7 +1906,7 @@ export class OrganizerProfileSync {
     let read: ProfileReadResult;
     try {
       // THE DOCUMENT THE PERSON WAS SHOWN, by locator: this install's own may be newer beside it.
-      const at = this.locators.get(fingerprint);
+      const at = this.locators.get(fingerprint) ?? [...this.locators.values()].find((l) => namesCopy(fingerprint, l.fingerprint));
       read = await readOrganizerProfile(io, at === undefined ? undefined : { retain: at });
     } catch (err) {
       log("organizer_profile_import_retry", { mailboxId: deps.mailboxId, accountId: deps.accountId, err });
@@ -2079,7 +2079,7 @@ export class OrganizerProfileSync {
       }
       case "found": {
         // The copy's name (hold, markers, answers, seen) and its payload (the dirty check's baseline).
-        const docFingerprint = profileCopyKey(read.doc);
+        const docFingerprint = profileCopyKey(read.doc, read.installId);
         const docPayload = profileFingerprint(read.doc);
         // Every copy that is not this store's own is kept for the person's answer, whatever its age.
         await this.discoverKept(io, local, true);
@@ -2192,7 +2192,7 @@ export class OrganizerProfileSync {
         }
         return;
       case "found": {
-        const docFingerprint = profileCopyKey(read.doc);
+        const docFingerprint = profileCopyKey(read.doc, read.installId);
         const ours = await this.isOwn(read);
         /* Copies beside the current document are the tidy's to remove. Reopening the dirty check
            to heal them wrote a NEW copy each time, which is how a folder whose removals never
@@ -2267,7 +2267,7 @@ export class OrganizerProfileSync {
       ...(found === undefined ? {} : { found }),
       kept: [...await this.keptElsewhere(), ...this.stillUnpublished()],
       replaceable: [
-        profileCopyKey(read.doc),
+        profileCopyKey(read.doc, read.installId),
         ...(this.lastWrittenFingerprint === null ? [] : [this.lastWrittenFingerprint]),
         ...this.seenForeignFingerprints,
       ],

@@ -145,7 +145,7 @@ const neverReader = (): (() => Promise<ProfileReadResult>) => async () => {
 
 /** Seed the organizer's found-marker exactly as `apps/worker/src/profile.ts#writeMarker` shapes it. */
 async function seedHeldMarker(w: World, d: OrganizerProfileDoc, signature?: number, copyReceipt?: string): Promise<string> {
-  const fingerprint = profileCopyKey(d);
+  const fingerprint = profileCopyKey(d, "someone-elses-install");
   await w.db.insert(auditLog).values({
     accountId: w.accountId,
     action: PROFILE_FOUND_AUDIT_ACTION,
@@ -195,7 +195,7 @@ describe("the import candidate", () => {
     const dto = await profileImportService.candidate(w.ctx, w.mailboxId);
     expect(dto).toEqual({
       state: "found",
-      fingerprint: profileFingerprint(d),
+      fingerprint: profileCopyKey(d, "someone-elses-install"),
       updatedAt: d.updatedAt,
       producer: { kind: "local", version: "0.9.3" },
       counts: { screener: 2, rules: 3, notifyRules: 1, tags: 2, awayResponder: true, signature: false },
@@ -650,6 +650,18 @@ describe("apply — natural keys, one transaction, convergence", () => {
     )).rejects.toMatchObject({ code: "profile_changed", httpStatus: 409 });
     expect(await w.db.select().from(rules).where(eq(rules.accountId, w.accountId))).toHaveLength(0);
     expect(await resolutionRows(w.db, w.accountId)).toHaveLength(0);
+  });
+
+  it("a press naming a copy saved again since with the same settings is 409; one named before copies were named imports", async () => {
+    const w = await world();
+    const shown = doc();
+    const again = { ...shown, updatedAt: "2026-08-10T10:00:00.000Z" };
+    await expect(profileImportService.apply(
+      w.ctx, w.mailboxId, { fingerprint: profileCopyKey(shown, "someone-elses-install") }, { read: foundReader(again).read },
+    )).rejects.toMatchObject({ code: "profile_changed", httpStatus: 409 });
+    expect(await resolutionRows(w.db, w.accountId)).toHaveLength(0);
+    await profileImportService.apply(w.ctx, w.mailboxId, { fingerprint: profileFingerprint(shown) }, { read: foundReader(again).read });
+    expect((await w.db.select().from(rules).where(eq(rules.accountId, w.accountId))).length).toBe(PAYLOAD.rules.length);
   });
 
   it("never partially imports a newer-format document", async () => {
@@ -1111,7 +1123,7 @@ describe("hostile or malformed document content degrades to skips, never to a 50
   });
 });
 
-describe("decline — durable, inert, content-keyed", () => {
+describe("decline — durable, inert, keyed to the copy", () => {
   it("dismisses durably: nothing applied, and the candidate answers `declined` from the marker without a dial", async () => {
     const w = await world();
     const d = doc();
@@ -1152,7 +1164,7 @@ describe("decline — durable, inert, content-keyed", () => {
     const fresh = doc({ ...PAYLOAD, tagNames: ["New-Config"] });
     await seedHeldMarker(w, fresh);
     const dto = await profileImportService.candidate(w.ctx, w.mailboxId);
-    expect(dto).toMatchObject({ state: "found", fingerprint: profileFingerprint(fresh) });
+    expect(dto).toMatchObject({ state: "found", fingerprint: profileCopyKey(fresh, "someone-elses-install") });
   });
 
   it("a retried decline writes one row, not two", async () => {
@@ -1321,10 +1333,10 @@ describe("a document too large to apply in one transaction is refused, and never
 
     expect(dto).toEqual({
       state: "too_large",
-      // The fingerprint is load-bearing, not decoration: `decline` is content-keyed, so without
+      // The fingerprint is load-bearing, not decoration: `decline` is keyed to the copy, so without
       // it a client could never record "keep local" for this document and every poll would
       // re-dial the mailbox for an answer nobody can give.
-      fingerprint: profileFingerprint(d),
+      fingerprint: profileCopyKey(d, "someone-elses-install"),
       list: "screener",
       count: PROFILE_IMPORT_MAX.screener + 1,
       max: PROFILE_IMPORT_MAX.screener,
@@ -1375,7 +1387,7 @@ describe("declining an over-large document stops it being asked about", () => {
     const first = await profileImportService.candidate(w.ctx, w.mailboxId);
     expect((first as { state: string }).state).toBe("too_large");
     const fingerprint = (first as { fingerprint: string }).fingerprint;
-    expect(fingerprint).toBe(profileFingerprint(big));
+    expect(fingerprint).toBe(profileCopyKey(big, "someone-elses-install"));
 
     await profileImportService.decline(w.ctx, w.mailboxId, { fingerprint });
 
@@ -1468,7 +1480,7 @@ describe("a takeover import retires the rule rows the copy records as removed th
     return at;
   };
   const apply = (w: World, d: OrganizerProfileDoc) =>
-    inlineApply(w.ctx, w.mailboxId, { fingerprint: profileCopyKey(d) }, { read: foundReader(d).read });
+    inlineApply(w.ctx, w.mailboxId, { fingerprint: profileCopyKey(d, "someone-elses-install") }, { read: foundReader(d).read });
   const stillThere = async (w: World, id: string) => (await w.db.select().from(rules).where(eq(rules.id, id))).length === 1;
   async function otherMailbox(w: World, role: "organizer" | "reader", status?: string): Promise<string> {
     const [mb] = await w.db.insert(mailboxes).values({
@@ -1629,14 +1641,14 @@ describe("a takeover import retires the rule rows the copy records as removed th
     await profileImportService.decline(w.ctx, w.mailboxId, { fingerprint: await seedHeldMarker(w, doc()) });
     const next = doc(PAYLOAD, { removed: [DEAD.match, "other@example.com"] });
     await seedHeldMarker(w, next);
-    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toMatchObject({ state: "found", fingerprint: profileCopyKey(next) });
+    expect(await profileImportService.candidate(w.ctx, w.mailboxId)).toMatchObject({ state: "found", fingerprint: profileCopyKey(next, "someone-elses-install") });
   });
 
   it("a press naming a copy whose removals changed since the card answers 409 and applies nothing", async () => {
     const w = await world();
     const id = await dead(w);
     await expect(profileImportService.apply(
-      w.ctx, w.mailboxId, { fingerprint: profileCopyKey(doc(PAYLOAD, { removed: [] })) }, { read: foundReader(doc()).read },
+      w.ctx, w.mailboxId, { fingerprint: profileCopyKey(doc(PAYLOAD, { removed: [] }), "someone-elses-install") }, { read: foundReader(doc()).read },
     )).rejects.toMatchObject({ code: "profile_changed", httpStatus: 409 });
     expect(await stillThere(w, id)).toBe(true);
     expect(await resolutionRows(w.db, w.accountId)).toHaveLength(0);

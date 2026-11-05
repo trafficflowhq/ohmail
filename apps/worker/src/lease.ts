@@ -171,6 +171,8 @@ export type MailboxLeaseOutcome =
     stamp: Promise<MetaBaselineReading>;
     /** The server's INTERNALDATE on the claim this gate wrote; null when the server gave none. */
     claimServerAt?: Date | null;
+    /** The gate continued a claim this process still held in the folder (`LeaseGateResult.continued`). */
+    continued?: true;
   }
   | {
     organize: false;
@@ -278,6 +280,7 @@ export async function readMailboxLease(input: MailboxLeaseInput): Promise<Mailbo
       // function's fault rather than the connection's.
       stamp: result.stamp.catch((): MetaBaselineReading => ({ custody: "unproven" })),
       claimServerAt: result.claimServerAt ?? null,
+      ...(result.continued ? { continued: true as const } : {}),
     };
   }
   return {

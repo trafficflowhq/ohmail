@@ -73,7 +73,7 @@ type ProfileImportQuestionDTO =
   /**
    * Too large to apply in one transaction. Nothing is offered, as for `newer`: a partial import
    * is a settings restore that silently omits some. It carries the offending list, both numbers
-   * and the document's `fingerprint`, so the content-keyed `decline` can be recorded — without it
+   * and the copy's `fingerprint`, so the copy's `decline` can be recorded — without it
    * a client could never stop being asked about it. It does NOT
    * yet get a card: the shared reader (`ProfileImportCard#asOffer`) treats any unrecognised state
    * as no offer — safe but silent; the wire half is done, the surface half is not.
@@ -235,7 +235,7 @@ export class ProfileImportService {
     // A press already handed to the organizer: the answer is on its way, so nothing is asked again.
     const asked = await readImportAsk(db, { accountId: ctx.accountId, mailboxId });
     if (askStands(asked, ctx.now())) return { state: "importing", fingerprint: asked.fingerprint };
-    // Answered — about this exact content, whatever the answer was. A decline leaves the document
+    // Answered — about this copy, whatever the answer was. A decline leaves the document
     // standing and the write held, and Settings says so.
     if (await profileImportResolutionExists(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
       if (await profileImportWriteReleased(db, { accountId: ctx.accountId, mailboxId, fingerprint })) {
@@ -387,8 +387,8 @@ export class ProfileImportService {
   /**
    * The user said "Not now". Nothing is applied and nothing in the mailbox is touched: the durable
    * resolution dismisses the prompt and settles routing, and the organizer's write hold STANDS, so
-   * the declined document stays in the mailbox (see {@link replace}). Keyed to the exact content
-   * declined: a DIFFERENT document appearing later legitimately re-asks.
+   * the declined document stays in the mailbox (see {@link replace}). Keyed to the copy declined
+   * (`profileCopyKey`): any later copy that differs from the settings here asks again.
    */
   async decline(
     ctx: ServiceContext, mailboxId: string, body: { fingerprint?: unknown; v?: unknown },

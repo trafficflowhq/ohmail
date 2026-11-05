@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, or, sql } from "drizzle-orm";
 import { auditLog } from "./schema-mail.js";
 import { auditAction } from "./staff-channels.js";
 import type { Tx } from "./change-log.js";
@@ -290,17 +290,11 @@ export async function latestProfileFoundMarker(
   return null;
 }
 
-/** What a resolution names: the exact document content (v1), or the refused version (newer). */
+/** What a resolution names: one copy (`profileCopyKey`), or the refused version (newer). */
 export type ProfileImportSubject =
   | { fingerprint: string }
   | { newerV: number };
 
-/**
- * Has the user already answered for THIS document? Keyed on the content itself — the copy's key
- * (rules and removals) for a readable document, the refused version for a `newer` one — so a document
- * that CHANGES after a decline legitimately re-asks (new content is new information), while the
- * same content never nags twice.
- */
 /**
  * Has the user answered ANY import question for this mailbox since `since`?
  *
@@ -325,11 +319,34 @@ export async function profileImportResolutionSince(
   return rows.length > 0;
 }
 
+/**
+ * How far past an answer recorded under a copy's content alone (before copies were named by their save and their
+ * writer) a copy may have been saved and still be the one answered: twice the lease's clock-skew bound, the margin
+ * the retire guard takes (core pins the two equal).
+ */
+export const PROFILE_ANSWER_CONTENT_MARGIN_MS = 5 * 60 * 1000;
+
+/** The answers that name this copy: its own name, or its content recorded no earlier than the margin before its save. */
+function answersFor(key: string) {
+  const m = /^([^~]+)~(\d+)-[0-9a-f]{16}$/.exec(key);
+  if (m === null) return sql`${auditLog.payload}->>'fingerprint' = ${key}`;
+  const notBefore = new Date(Number(m[2]) * 1000 - PROFILE_ANSWER_CONTENT_MARGIN_MS);
+  return or(
+    sql`${auditLog.payload}->>'fingerprint' = ${key}`,
+    and(sql`${auditLog.payload}->>'fingerprint' = ${m[1]!}`, gte(auditLog.createdAt, notBefore)),
+  )!;
+}
+
+/**
+ * Has the user already answered for THIS copy? Keyed on the copy's name (`profileCopyKey`: its content, the second
+ * it was saved and its writer) for a readable document, the refused version for a `newer` one — so a copy saved
+ * again since, even with the same settings, asks again, while the same copy read again never nags twice.
+ */
 export async function profileImportResolutionExists(
   db: Tx, o: { accountId: string; mailboxId: string } & ProfileImportSubject,
 ): Promise<boolean> {
   const subject = "fingerprint" in o
-    ? sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`
+    ? answersFor(o.fingerprint)
     // TEXT equality on `v`, deliberately: the version is read off a PUBLIC document, so any
     // JavaScript integer can arrive here, and an `::int` cast overflows PostgreSQL's integer at
     // 2^31 — turning a hostile version number into a 500 on every later candidate or dismissal.
@@ -363,7 +380,7 @@ export async function profileImportWriteReleased(
       eq(auditLog.accountId, o.accountId),
       eq(auditLog.action, PROFILE_IMPORT_RESOLVED_AUDIT_ACTION),
       sql`${auditLog.payload}->>'mailboxId' = ${o.mailboxId}`,
-      sql`${auditLog.payload}->>'fingerprint' = ${o.fingerprint}`,
+      answersFor(o.fingerprint),
       sql`${auditLog.payload}->>'decision' in ('imported', 'replaced')`,
     ))
     .limit(1);
