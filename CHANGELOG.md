@@ -21,6 +21,18 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.42] — 2026-11-06
+
+### New mail keeps arriving within seconds while a large mailbox is being added
+
+While a mailbox with a long history was being added, every other mailbox on the same server could wait about a
+minute for its new mail, because the large mailbox's import took long turns and the others waited for them to
+end. The import now works in turns of about two minutes, and the other mailboxes keep being checked while it
+runs, including one that is catching up on a large change of its own. When the account already has other
+mailboxes, the import takes turns of about 25 seconds instead, so those mailboxes get their new mail too; that
+import runs somewhat slower. Otherwise the large mailbox imports about as fast as before. This applies to ohmail
+Cloud and to your own server.
+
 ## [0.30.41] — 2026-11-05
 
 ### Escape in a reply's subject goes back to the reply
@@ -16976,7 +16988,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.41...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.42...HEAD
+[0.30.42]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.42
 [0.30.41]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.41
 [0.30.40]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.40
 [0.30.39]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.39

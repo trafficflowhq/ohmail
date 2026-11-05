@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.42" date="2026-11-06">
+      <description>
+        <ul>
+          <li>New mail keeps arriving within seconds while a large mailbox is being added</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.41" date="2026-11-05">
       <description>
         <ul>
@@ -114,21 +121,6 @@
           <li>A sign-in ended elsewhere takes its unsent replies even while another account is signed in</li>
           <li>A later copy of the same settings is asked about again</li>
           <li>On the web, a link in a plain letter asks before it opens when its text names another site</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.37" date="2026-11-05">
-      <description>
-        <ul>
-          <li>ohmail Cloud no longer holds a connection open for every open window</li>
-          <li>New mail on ohmail Cloud reaches the desktop app within seconds without a held connection</li>
-          <li>Links on Linux open through the desktop portal, and a link that does not open says why</li>
-          <li>The desktop app forgets an ended account's unsent text and pending decisions</li>
-          <li>Every page removes the mail of a browser signed out from another device</li>
-          <li>A rare word, a word nothing matches and a typo answer faster after the server has been idle</li>
-          <li>Search reads _ and % as typed, and a minus word no longer changes the count</li>
-          <li>The reply you send scrolls into view</li>
-          <li>The AI sample row names its invented sender on a reserved domain</li>
         </ul>
       </description>
     </release>
