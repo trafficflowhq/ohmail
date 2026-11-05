@@ -9,7 +9,7 @@
  * explicitly because this dialect's `like` folds ASCII only.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { anyPartArms, assertComparable, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
+import { anyPartArms, assertComparable, containsPattern, assertJsonKey, eszettForms, PART_PREFIX_MIN_CHARS, partOperandsOf, partSidesOf, partWordKept, partWordsOf, ENGLISH_STOPWORDS, operandRuns, queryOperandsOf, straddlesParts, type QueryOperands } from "./index.js";
 import type { Dialect, LockOptions, MailWordArms, SearchArm, SearchCorpus } from "./index.js";
 
 /**
@@ -418,9 +418,9 @@ export function ftsFoldedQueryOf(q: string, mode: "words" | "stems" | "starts" =
 /** The header columns and the recipients' `terms` LIKE every ß/ss form of `q` (`eszettForms`). */
 function headLike(q: string): SQL {
   const one = (f: string): SQL => {
-    const like = `%${f}%`;
-    return sql`lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like})
-                  or lower(coalesce(s.terms, '')) like lower(${like})`;
+    const like = containsPattern(f);
+    return sql`lower(m.subject) like lower(${like}) escape '\\' or lower(m.from_address) like lower(${like}) escape '\\'
+                  or lower(coalesce(s.terms, '')) like lower(${like}) escape '\\'`;
   };
   return sql`(${sql.join(eszettForms(q).map(one), sql` or `)})`;
 }
@@ -432,13 +432,13 @@ function headLike(q: string): SQL {
  */
 function peopleLike(q: string): SQL {
   const one = (f: string): SQL => {
-    const like = `%${f}%`;
-    const listed = (col: SQL): SQL => sql`(lower(coalesce(${col}, '')) like lower(${like})
+    const like = containsPattern(f);
+    const listed = (col: SQL): SQL => sql`(lower(coalesce(${col}, '')) like lower(${like}) escape '\\'
       and exists (select 1 from json_each(case when json_valid(${col}) then ${col} else '[]' end) e
-        where e.type = 'object' and (lower(coalesce(json_extract(e.value, '$.name'), '')) like lower(${like})
-          or lower(coalesce(json_extract(e.value, '$.address'), '')) like lower(${like}))))`;
-    return sql`lower(coalesce(m.subject, '')) like lower(${like}) or lower(coalesce(m.from_name, '')) like lower(${like})
-      or lower(coalesce(m.from_address, '')) like lower(${like}) or ${listed(sql`m.to_addresses`)} or ${listed(sql`m.cc_addresses`)}`;
+        where e.type = 'object' and (lower(coalesce(json_extract(e.value, '$.name'), '')) like lower(${like}) escape '\\'
+          or lower(coalesce(json_extract(e.value, '$.address'), '')) like lower(${like}) escape '\\')))`;
+    return sql`lower(coalesce(m.subject, '')) like lower(${like}) escape '\\' or lower(coalesce(m.from_name, '')) like lower(${like}) escape '\\'
+      or lower(coalesce(m.from_address, '')) like lower(${like}) escape '\\' or ${listed(sql`m.to_addresses`)} or ${listed(sql`m.cc_addresses`)}`;
   };
   return sql`(${sql.join(eszettForms(q).map(one), sql` or `)})`;
 }
@@ -685,16 +685,16 @@ export function sqliteDialect(): Dialect {
       fuzzy: (q: string, corpus: SearchCorpus, _opts): SearchArm => {
         // There is no trigram index to have, so this is the degrade the server also falls back to
         // — one shape on both dialects rather than a device-only third behaviour.
-        const like = `%${q}%`;
+        const like = containsPattern(q);
         if (corpus === "kb") {
           return {
-            pred: sql`(lower(title) like lower(${like}) or lower(content) like lower(${like}))`,
+            pred: sql`(lower(title) like lower(${like}) escape '\\' or lower(content) like lower(${like}) escape '\\')`,
             rank: sql`0`,
           };
         }
         return {
-          pred: sql`(lower(m.subject) like lower(${like}) or lower(m.from_address) like lower(${like})
-                  or lower(coalesce(s.terms, '')) like lower(${like}))`,
+          pred: sql`(lower(m.subject) like lower(${like}) escape '\\' or lower(m.from_address) like lower(${like}) escape '\\'
+                  or lower(coalesce(s.terms, '')) like lower(${like}) escape '\\')`,
           // RECENCY, as the server's degrade ranks. The instant is already a count of
           // milliseconds in this store, so there is no epoch to extract — the column IS the
           // number, and `extract(epoch …)` would not parse here at all.

@@ -528,6 +528,8 @@ interface Branch {
    * check reads the body vector, so never of every index match ({@link SearchService.keeps}).
    */
   readonly after?: SQL;
+  /** The letters `after` refuses, as keyed reads of the word index: their union is the excluded set. */
+  readonly exclude?: readonly SQL[];
   /**
    * A branch of an arm held to an excluded word: its words without the exclusion, over the document,
    * which {@link SearchService.boundedRead} asks of the newest mail to choose a deeper walk or the index.
@@ -758,7 +760,8 @@ export class SearchService {
     // text index answers whole (`alone`), and a group of several operands also as its letter, held.
     const keep = typed.excluded;
     const late = keep !== undefined && d.name === "pg" && documents && !local;
-    const held = (b: Branch): Branch => (keep === undefined ? b : late ? { ...b, after: keep }
+    const exclude = late ? typed.excludedTerms?.map((t) => sql`select s.message_id as id from message_search s where ${wordRead} and ${t}`) : undefined;
+    const held = (b: Branch): Branch => (keep === undefined ? b : late ? { ...b, after: keep, ...(exclude ? { exclude } : {}) }
       : { ...b, pred: sql`(${b.pred} and ${keep})`, ...(b.raw ? { raw: sql`(${b.raw} and ${keep})` } : {}) });
     // A held branch takes no keyed set: the set's read asks no exclusion.
     const sets = (set: readonly SQL[] | null): readonly SQL[] | null => (keep === undefined ? set : null);
@@ -1738,11 +1741,12 @@ export class SearchService {
    * {@link SUMMARY_EXACT_CAP} + 1 of the account's own documents off its keyed index (`sdN`; under a
    * filter, those the filter keeps of at most {@link FILTERED_SCAN} read, `srN`), and none once the
    * documents before it passed the cap. An excluded word, whose check reads the body, is asked once
-   * of each letter the held branches found, only while every branch is within the cap (`kdN`). Their union
-   * is at most that many letters (`ud`), each looked up once under `where`, the newest
+   * of each letter the held branches found while every branch is within the cap (`kdN`); past it, those
+   * letters outside the excluded words' own index reads (`xeN`) are kept while those hold at most the cap.
+   * Their union is at most that many letters (`ud`), each looked up once under `where`, the newest
    * {@link SUMMARY_EXACT_CAP} kept (`ur`: id, date and what the facets count). `over`: the set passed
    * the cap, so `ur` holds the newest of the matches read rather than all of them, and a held branch
-   * adds none. Nothing is read unless `gate` holds.
+   * with no `xeN` adds none. Nothing is read unless `gate` holds.
    */
   private matchSet(where: SQL, branches: readonly Branch[], opts: { gate?: SQL; facets?: boolean } = {}): { named: SQL; over: SQL } {
     const cap = SUMMARY_EXACT_CAP;
@@ -1770,10 +1774,23 @@ export class SearchService {
           left join folder_state fs on fs.message_id = m.id where ${where} limit ${cap + 1})`,
       ] : [sql`${doc(i)} as materialized (${this.docsOf(where, b, cap + 1, room(i))})`])),
       sql`rw as materialized (select ${raw(branches.length)} as v)`,
-      // Each letter the held branches found is asked its exclusion once, whichever of them found it.
-      ...asks.map((after, g) => sql`${kept(g)} as materialized (select d.id from (${sql.join(branches.flatMap((b, i) => (held(b) && b.after === after
-        ? [sql`select id from ${doc(i)}`] : [])), sql` union `)}) d
-        where ${within} and ${this.keeps(after, sql`d.id`)})`),
+      // Each letter the held branches found is asked its exclusion once, whichever of them found it,
+      // while every branch is within the cap. Past it, a letter is kept off the excluded words' own
+      // index reads (`xeN`, read only then, at most cap + 1 rows) while those hold at most the cap.
+      ...asks.flatMap((after, g) => {
+        const found = sql`(${sql.join(branches.flatMap((b, i) => (held(b) && b.after === after ? [sql`select id from ${doc(i)}`] : [])), sql` union `)})`;
+        const ask = sql`select d.id from ${found} d where ${within} and ${this.keeps(after, sql`d.id`)}`;
+        const ex = branches.find((b) => held(b) && b.after === after)?.exclude;
+        if (ex === undefined) return [sql`${kept(g)} as materialized (${ask})`];
+        const xe = sql.raw("xe" + String(g));
+        return [
+          sql`${xe} as materialized (select id from (${sql.join([...ex], sql` union all `)}) e${opts.gate === undefined ? sql`` : sql` where ${opts.gate}`} limit ${cap + 1})`,
+          sql`${kept(g)} as materialized (${ask}
+            union all
+            select d.id from ${found} d where not ${within} and (select count(*) from ${xe}) <= ${cap}
+              and not exists (select 1 from ${xe} e where e.id = d.id))`,
+        ];
+      }),
     ];
     const ids = [...branches.flatMap((b, i) => (held(b) ? [] : [sql`select id from ${doc(i)}`])), ...asks.map((_, g) => sql`select id from ${kept(g)}`)];
     const over = sql`(not ${within} or (select count(*) from ud) > ${cap})`;

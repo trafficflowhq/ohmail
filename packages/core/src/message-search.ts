@@ -16,8 +16,10 @@ import type { EmailAddress } from "./types.js";
 
 /** The body text a document indexes, in characters — the head of a long body is its words. */
 export const SEARCH_BODY_MAX_CHARS = 65_536;
-/** The substring corpus's ceiling, in characters: subject, people and file names fit easily. */
+/** The substring corpus's header text ceiling, in characters: the subject and the people. */
 export const SEARCH_TERMS_MAX_CHARS = 2_048;
+/** The file names' own ceiling after the mark, so a long recipient list never cuts them. */
+export const SEARCH_NAMES_MAX_CHARS = 2_048;
 /**
  * Each header part's ceiling in `head_tsv`, in characters. The display names and file names are
  * sender-written and unbounded, and a tsvector refuses over 1 MiB (`54000`), which failed the
@@ -148,7 +150,7 @@ export function searchDocumentOf(input: MessageSearchInput): { parts: SearchDocu
     .replace(/\s+/g, " ")
     .toLowerCase();
   const named = names.map(unmarked).join(" ").replace(/\s+/g, " ").trim().toLowerCase();
-  const terms = (named === "" ? head : `${head}${SEARCH_NAMES_MARK}${named}`).slice(0, SEARCH_TERMS_MAX_CHARS);
+  const terms = head.slice(0, SEARCH_TERMS_MAX_CHARS) + (named === "" ? "" : SEARCH_NAMES_MARK + named.slice(0, SEARCH_NAMES_MAX_CHARS));
   return { parts, terms };
 }
 

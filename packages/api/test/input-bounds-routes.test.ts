@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
-import { accountSettings, rules as rulesTable, workflowRuns, workflows } from "@trafficflow/db";
+import { accountSettings, contacts, rules as rulesTable, workflowRuns, workflows } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import {
   CONTACTS_QUERY_MAX_CHARS, DRAFT_MAX_RECIPIENTS, DRAFT_SUBJECT_MAX_CHARS, KB_MAX_TAGS,
@@ -288,6 +288,21 @@ describe("GET /contacts — `q` becomes an unanchored ILIKE pattern over every c
     );
 
     expect(res.status).toBe(200);
+  });
+
+  it("reads `_` and `%` in the term as typed, never as wildcards", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    for (const address of ["a_b@site.example", "axb@site.example", "50%off@site.example", "500ff@site.example"]) {
+      await db.insert(contacts).values({ accountId: s.accountId, address });
+    }
+    const listed = async (q: string): Promise<string[]> => {
+      const res = await H(req("GET", `/contacts?q=${encodeURIComponent(q)}`, { bearer: s.token }), deps);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { items: Array<{ addresses: string[] }> }).items.flatMap((c) => c.addresses);
+    };
+    expect({ underscore: await listed("a_b"), percent: await listed("50%o") })
+      .toEqual({ underscore: ["a_b@site.example"], percent: ["50%off@site.example"] });
   });
 });
 

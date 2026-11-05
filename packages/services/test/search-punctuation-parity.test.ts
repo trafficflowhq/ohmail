@@ -24,6 +24,9 @@ const CORPUS: ReadonlyArray<readonly [key: string, subject: string, body: string
   ["time", "Agenda", "The 10:30 meeting moved."], ["report", "Quarterly report attached", "Figures."],
   ["signed", "Please sign here", "Thanks."], ["overview", "Slides", "The project overview is attached."],
   ["decoy", "Holiday plans", "See you soon."],
+  // `_`, `%` and a backslash are typed characters, never a LIKE wildcard or escape.
+  ["uscore", "File xa_bx ready", "Attached."], ["axb", "File xaxbx ready", "Attached."],
+  ["pct", "Code x50%offx", "Sale."], ["fifty", "Code x500offx", "Sale."], ["bslash", "Folder xdir\\subx", "Moved."],
 ];
 
 /** Query → the keys Postgres answers in the exact tier; `[]` is no exact match on this corpus. */
@@ -38,6 +41,7 @@ const POSTGRES: ReadonlyArray<readonly [q: string, keys: readonly string[]]> = [
   // An excluded word only leaves letters out: `-the` is a stopword and leaves out none.
   ["ohmail -the", ["hyph", "joined", "spaced"]], ["--fixture", ["hyph", "spaced"]], ["-fixture ohmail", ["joined"]],
   ["fixture*", ["hyph", "spaced"]], ["+fixture", ["hyph", "spaced"]], ["over", ["overview"]], ["C++", []], ["***", []],
+  ["a_b", ["uscore"]], ["50%", ["pct"]], ["dir\\sub", ["bslash"]],
 ];
 
 /**
