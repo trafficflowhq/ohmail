@@ -102,13 +102,13 @@ async function mountShell(): Promise<void> {
   await waitFor(() => openSubject() !== "", "the Ohbox never opened a message");
 }
 
-/** Poll until `ready()`, draining React between attempts. Throws `why` if it never becomes true. */
-async function waitFor(ready: () => boolean, why: string): Promise<void> {
-  for (let i = 0; i < 60; i++) {
-    if (ready()) return;
-    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+/** Poll until `ready()`, draining React between attempts; bounded by real time, never a tick count. */
+async function waitFor(ready: () => boolean, why: string, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!ready()) {
+    if (Date.now() > deadline) throw new Error(why);
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
   }
-  throw new Error(why);
 }
 
 /** Open the reply editor and wait for it to be on screen. */
@@ -155,12 +155,9 @@ async function settle(): Promise<void> {
  * error, which reads exactly like "the editor never mounted" and is not.
  */
 async function replyEditorSurface(): Promise<HTMLElement> {
-  for (let i = 0; i < 60; i++) {
-    const surface = replySurface();
-    if (surface && (surface as unknown as { editor?: Editor }).editor) return surface;
-    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-  }
-  throw new Error("the reply editor never mounted a ProseMirror handle");
+  const handled = (): boolean => !!(replySurface() as unknown as { editor?: Editor } | null)?.editor;
+  await waitFor(handled, "the reply editor never mounted a ProseMirror handle");
+  return replySurface()!;
 }
 
 // Selector updated by the viewer redesign — the subject lives in the header's `.msg-subject`

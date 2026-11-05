@@ -217,12 +217,13 @@ async function mountShell(facts?: MailboxFacts[]): Promise<void> {
   await waitFor(() => openSubject() !== "", "the Ohbox never opened a message");
 }
 
-async function waitFor(ready: () => boolean, why: string): Promise<void> {
-  for (let i = 0; i < 60; i++) {
-    if (ready()) return;
-    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+/** Bounded by real time, not a tick count: the editor's cold lazy import outlasts any count under load. */
+async function waitFor(ready: () => boolean, why: string, ms = 10_000): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!ready()) {
+    if (Date.now() > deadline) throw new Error(why);
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
   }
-  throw new Error(why);
 }
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
