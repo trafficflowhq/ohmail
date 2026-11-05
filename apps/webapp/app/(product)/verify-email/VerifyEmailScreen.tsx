@@ -83,8 +83,18 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
    */
   const pending = usePendingSignOut();
   const stopFinish = useRef<(() => void) | null>(null);
+  /** The arrival's session check, and how the press stops it once heard. */
+  const checkOut = useRef<Promise<unknown> | null>(null);
+  const stopCheck = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (!apiConfigured() || readOwnerMarker().kind !== "signed-out") return;
+    if (!apiConfigured()) return;
+    if (readOwnerMarker().kind !== "signed-out") {
+      // Every other jar is asked on arrival, as /join and /login do: a revoke it carries starts its wipe now.
+      const abort = new AbortController();
+      stopCheck.current = () => abort.abort();
+      checkOut.current = resolveOwnerOutcome({ signal: abort.signal }).catch(() => undefined);
+      return () => abort.abort();
+    }
     let cancelled = false;
     stopFinish.current = () => { cancelled = true; };
     void pending.finish(() => cancelled);
@@ -102,7 +112,8 @@ export function VerifyEmailScreen({ initialToken }: { initialToken: string }) {
         // Asked first, within the bound, unless a sign-out is pending (its door is asked below): an enrollment
         // answer expires the jar's renewal, after which a revoke of its session could never be heard here. A jar
         // naming nobody too: Safari keeps the script-written name seven days, the session cookie longer.
-        if (readOwnerMarker().kind !== "signed-out") await checkAnswered(null, (signal) => resolveOwnerOutcome({ signal }));
+        if (readOwnerMarker().kind !== "signed-out") await checkAnswered(checkOut.current, (signal) => resolveOwnerOutcome({ signal }));
+        stopCheck.current?.();
         // A revoke's wipe this browser still owes, or the one just heard, is done before a confirmation mints a session.
         await revokedWipeSettled();
         if (!await pending.settle()) return;
