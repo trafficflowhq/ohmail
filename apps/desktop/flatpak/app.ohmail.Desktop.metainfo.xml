@@ -78,6 +78,14 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.39" date="2026-11-05">
+      <description>
+        <ul>
+          <li>The invitation page removes a signed-out browser's mail as it opens</li>
+          <li>The address confirmation page removes a signed-out browser's mail as it opens</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.38" date="2026-11-05">
       <description>
         <ul>
@@ -129,18 +137,6 @@
           <li>Your own letters in a Sent folder with another name show as sent from the first frame</li>
           <li>A browser signed out from another device no longer keeps your mail</li>
           <li>Importing settings from another computer keeps the rules it never had</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.34" date="2026-11-04">
-      <description>
-        <ul>
-          <li>Contributors: migration numbers are checked across open pull requests, and a stale npm cache file no longer fails CI</li>
-          <li>Older deleted letters lose their words on accounts that no longer sync too</li>
-          <li>A search for with, over or your alone no longer lists every letter holding it</li>
-          <li>An idle phone asks the server far less often</li>
-          <li>A screen-out of a forged claim keeps a list you let in by its domain, a named contact or an approval</li>
-          <li>A mailbox left on screen in another window closes when you sign out</li>
         </ul>
       </description>
     </release>

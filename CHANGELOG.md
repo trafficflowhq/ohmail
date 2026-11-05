@@ -21,6 +21,26 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.39] — 2026-11-05
+
+### The invitation page removes a signed-out browser's mail as it opens
+
+On the web app on your own server, the page an invitation link opens asked whether this browser's sign-in still
+held only once Create my account was pressed, so a browser signed out from another device kept its copy of the
+mail while the page was open, and after it was closed without an account made. It now asks as it opens, as the
+sign-in and sign-up pages do, and starts removing that copy at once. Create my account waits up to 15 seconds for
+the removal before the invitation is used; a longer removal finishes in the background, or on the next ohmail page
+the browser opens. A sign-out you asked for that the server never confirmed is now finished before the invitation
+is used, and when the server still does not confirm it, the page says so and offers Sign out again.
+
+### The address confirmation page removes a signed-out browser's mail as it opens
+
+On the web app, on ohmail Cloud and on your own server, the page that confirms an email address asked whether
+this browser's sign-in still held only when Confirm was pressed, so a browser signed out from another device kept
+its copy of the mail while the page was open and after it was closed unconfirmed. It now asks as it opens, as the
+sign-in and sign-up pages do, and starts removing that copy at once. A sign-out you asked for that the server
+never confirmed is still finished first, without reading the session.
+
 ## [0.30.38] — 2026-11-05
 
 ### The desktop app on ohmail Cloud keeps checking every 8 seconds while you read
@@ -16918,7 +16938,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.38...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.39...HEAD
+[0.30.39]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.39
 [0.30.38]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.38
 [0.30.37]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.37
 [0.30.36]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.36
