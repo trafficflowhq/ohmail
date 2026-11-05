@@ -165,6 +165,22 @@ function visitLog(): { logger: ReturnType<typeof createLogger>; visits: Array<Re
   return { logger, visits };
 }
 
+/** `mailbox_visit` lines (at each lane's end) and `backfill_progress` lines (at the end of a pass owing one), in order. */
+type PassLine = { event: string; mailboxId?: string; due?: boolean; woken?: boolean };
+function passLog(): { logger: ReturnType<typeof createLogger>; lines: PassLine[] } {
+  const lines: PassLine[] = [];
+  const logger = createLogger({
+    service: "worker", level: "info",
+    sink: (line) => {
+      const j = JSON.parse(line) as PassLine;
+      if (j.event === "mailbox_visit" || j.event === "backfill_progress") {
+        lines.push({ event: j.event, mailboxId: j.mailboxId, due: j.due, woken: j.woken });
+      }
+    },
+  });
+  return { logger, lines };
+}
+
 /** One turn of a mailbox at a time: its starts and ends alternate, start first. */
 function oneTurnAtATime(fleet: FakeAdapterFleet, mailboxId: string): boolean {
   return fleet.trace
@@ -970,5 +986,265 @@ describe("a heavy mailbox must not hold the rotation against the rest of the sha
     await waitFor(() => fleet.trace.slice(from).some((e) => e.event === "sync_start"), 20_000,
       "the doorbells to be served once the slice returned");
     expect(worker.stats().mailboxes).toBe(2);
+  }, 120_000);
+
+  /*
+   * AN IMPORT'S TURN NEVER HOLDS THE OTHER MAILBOXES. A mailbox owing a large backlog takes the
+   * pass's longest turn; while it runs, every kick (a doorbell, a poll tick, the sync-kick scan)
+   * asks for another pass, and each served mailbox visited before that kick goes again on a free
+   * lane instead of waiting out the import. With a ten-minute poll nothing else makes them due.
+   */
+  async function dueTurnsWhileImportHolds(owes: boolean): Promise<{ due: number[]; inFlight: number; passMoved: boolean }> {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const h = await seedMailbox(db);
+    const six: Array<{ accountId: string; mailboxId: string }> = [];
+    for (let i = 0; i < 6; i++) six.push(await seedMailbox(db));
+    const seeds = [h, ...six];
+    const names = new Map(seeds.map((s, i) => [s.mailboxId, i === 0 ? "IMPORT" : `M${i}`]));
+    // A turn past half a 1 ms target runs long, as an import's does.
+    if (owes) fleet.behave(h.mailboxId, { deliver: mail(400, "imp"), batchSize: 10, syncDelayMs: 5 });
+    const { logger, lines } = passLog();
+    const worker = await warmShard(db, fleet, seeds, { cycleLanes: 3, pollIntervalMs: 600_000, heavyTurnMs: 1, logger });
+    await waitFor(() => fleet.indicesOf(h.mailboxId, "sync_end").length >= 2, 20_000, "the import's second turn");
+    const ring = (): void => fleet.signal.get(h.mailboxId)!();
+    if (!owes) {
+      // Nothing owes a backlog, so the shard goes quiet; a doorbell then starts a pass the import leads.
+      let seen = -1;
+      await waitFor(() => { const quiet = seen === lines.length && fleet.syncInFlight === 0; seen = lines.length; return quiet; },
+        20_000, "the shard to go quiet");
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const quietAt = lines.length;
+    // Every turn of a mailbox owing a backlog is its own and leads its pass.
+    releases.push(parkSync(fleet, h.mailboxId));
+    if (!owes) ring();
+    await waitFor(() => fleet.syncInFlight === 1, 20_000, `the import parked on its own turn — trace: ${fleet.describeTrace(names)}`);
+    const passStamp = worker.stats().lastCycleAt?.getTime() ?? null;
+    // The held pass began after the last pass-end line (none while the shard was quiet): each
+    // mailbox's next line after it is its own turn of the held pass.
+    const passEnd = owes ? lines.map((l) => l.event).lastIndexOf("backfill_progress") : quietAt;
+    const visitsOf = (id: string, upTo = lines.length): number =>
+      lines.slice(0, upTo).filter((l) => l.event === "mailbox_visit" && l.mailboxId === id).length;
+    const ownTurn = six.map((s) => visitsOf(s.mailboxId, passEnd) + 1);
+    await waitFor(() => six.every((s, i) => visitsOf(s.mailboxId) >= ownTurn[i]!), 20_000,
+      `every mailbox's own turn of the held pass — trace: ${fleet.describeTrace(names)}`);
+    const dueOf = (id: string): number => lines.filter((l) => l.mailboxId === id && l.due === true).length;
+    for (let n = 1; n <= 3; n++) {
+      await new Promise((r) => setTimeout(r, 5));
+      ring();
+      if (owes) {
+        await waitFor(() => six.every((s) => dueOf(s.mailboxId) >= n), 20_000,
+          `due turn ${n} for each of the six while the import holds the pass — trace: ${fleet.describeTrace(names)}`);
+      } else {
+        await new Promise((r) => setTimeout(r, 300));
+      }
+    }
+    const result = {
+      due: six.map((s) => dueOf(s.mailboxId)),
+      inFlight: fleet.syncInFlight,
+      passMoved: (worker.stats().lastCycleAt?.getTime() ?? null) !== passStamp,
+    };
+    for (const s of seeds) expect(oneTurnAtATime(fleet, s.mailboxId), `two turns of ${names.get(s.mailboxId)} at once`).toBe(true);
+    return result;
+  }
+
+  it("serves every other mailbox on each kick while an import's turn holds the pass", async () => {
+    const r = await dueTurnsWhileImportHolds(true);
+    expect(r.due.every((n) => n >= 3), `due turns ${r.due}`).toBe(true);
+    expect(r.inFlight, "the import's turn returned, so the turns prove nothing").toBe(1);
+    expect(r.passMoved, "a pass ended, so the turns rode new passes").toBe(false);
+  }, 120_000);
+
+  it("takes no such turn while a turn that owes nothing holds the pass", async () => {
+    const r = await dueTurnsWhileImportHolds(false);
+    expect(r.due, "a kick gave due turns beside a turn that owes no backlog").toEqual([0, 0, 0, 0, 0, 0]);
+    expect(r.inFlight).toBe(1);
+  }, 120_000);
+
+  /*
+   * THE IMPORT'S LIMIT FOLLOWS ITS TURN LENGTH. Every turn asks for `turnMessages`, 50 at attach:
+   * a turn past the target halves it (floor 10), a short one still owing mail doubles it (ceiling
+   * 200). The fake answers in milliseconds, so a 1 ms target only shrinks and a ten-minute one only grows.
+   */
+  async function askedUntilDrained(heavyTurnMs: number, n: number): Promise<Array<number | undefined>> {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const h = await seedMailbox(db);
+    fleet.behave(h.mailboxId, { deliver: mail(n, `t${heavyTurnMs}`) });
+    const worker = await startWorker(cfgFor(fleet, { heavyTurnMs }));
+    closers.push(() => worker.stop());
+    await waitFor(() => ingested(db, h.mailboxId).then((k) => k === n), 60_000, `all ${n} messages`);
+    return fleet.asked.get(h.mailboxId) ?? [];
+  }
+
+  it("shrinks an import's limit from 50 to 10 when its turns run long, and still drains it", async () => {
+    const asked = await askedUntilDrained(1, 120);
+    expect(asked[0], `asked ${asked}`).toBe(50);
+    expect(asked.every((a, i) => a !== undefined && (i === 0 || a <= asked[i - 1]!)), `asked ${asked}`).toBe(true);
+    expect(asked.at(-1), `asked ${asked}`).toBe(10);
+  }, 120_000);
+
+  it("grows an import's limit from 50 to 200 when its turns are short, and never past 200", async () => {
+    const asked = await askedUntilDrained(600_000, 400);
+    expect(asked[0], `asked ${asked}`).toBe(50);
+    expect(asked.every((a) => a !== undefined && a <= 200), `asked ${asked}`).toBe(true);
+    expect(asked, `asked ${asked}`).toContain(200);
+  }, 120_000);
+
+  it("starts every pass with the import, wherever it sits in the roster", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const lights = [await seedMailbox(db), await seedMailbox(db), await seedMailbox(db)];
+    const h = await seedMailbox(db);
+    const names = new Map([...lights.map((s, i) => [s.mailboxId, `L${i + 1}`] as const), [h.mailboxId, "IMPORT"] as const]);
+    fleet.behave(h.mailboxId, { deliver: mail(400, "lead"), batchSize: 10, syncDelayMs: 5 });
+    const { logger, lines } = passLog();
+    await warmShard(db, fleet, [...lights, h], { cycleLanes: 1, heavyTurnMs: 1, logger });
+    // From the import's second turn on it owes a backlog; each pass ends with a `backfill_progress` line.
+    const owingFrom = (): number => lines.flatMap((l, i) => (l.mailboxId === h.mailboxId ? [i] : []))[1] ?? -1;
+    const firstsAfter = (from: number): Array<string | undefined> => lines
+      .map((l, i) => (l.event === "backfill_progress" && i > from ? lines.slice(i + 1).find((m) => m.event === "mailbox_visit") : undefined))
+      .filter((l) => l !== undefined).map((l) => names.get(l!.mailboxId!));
+    await waitFor(() => owingFrom() >= 0 && firstsAfter(owingFrom()).length >= 3, 20_000, "three passes once the import owes a backlog");
+    expect(firstsAfter(owingFrom()).slice(0, 3), `trace: ${fleet.describeTrace(names)}`).toEqual(["IMPORT", "IMPORT", "IMPORT"]);
+  }, 120_000);
+
+  it("gives an import whose doorbell rang during its turn its next turn only in the next pass", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const h = await seedMailbox(db);
+    const lights = [await seedMailbox(db), await seedMailbox(db)];
+    const seeds = [h, ...lights];
+    const names = new Map(seeds.map((s, i) => [s.mailboxId, i === 0 ? "IMPORT" : `L${i}`]));
+    fleet.behave(h.mailboxId, { deliver: mail(400, "bell"), batchSize: 10, syncDelayMs: 5 });
+    const { logger, lines } = passLog();
+    await warmShard(db, fleet, seeds, { heavyTurnMs: 1, logger });
+    await waitFor(() => fleet.indicesOf(h.mailboxId, "sync_end").length >= 2, 20_000, "the import's second turn");
+    releases.push(parkSync(fleet, h.mailboxId));
+    await waitFor(() => fleet.syncInFlight === 1, 20_000, "the import parked on its own turn");
+    const before = lines.filter((l) => l.mailboxId === h.mailboxId).length;
+    fleet.signal.get(h.mailboxId)!();
+    for (const r of releases.splice(0)) r();
+    const hLines = (): number[] => lines.flatMap((l, i) => (l.mailboxId === h.mailboxId && l.event === "mailbox_visit" ? [i] : []));
+    await waitFor(() => hLines().length >= before + 2, 20_000, "the import's next turn");
+    const [parked, next] = [hLines()[before]!, hLines()[before + 1]!];
+    expect(lines.slice(parked, next).some((l) => l.event === "backfill_progress"),
+      `the import went again inside the pass its turn held — trace: ${fleet.describeTrace(names)}`).toBe(true);
+  }, 120_000);
+
+  /*
+   * ONE TURN A PASS IS FOR LONG TURNS ONLY. A mailbox draining a burst (a thousand flag changes,
+   * a hundred new letters) owes a backlog in turns of seconds: its doorbell still earns a revisit
+   * while an import's long turn holds the pass, instead of waiting that turn out. Long is one length
+   * for every mailbox: beside a mailbox of its own account the shorter turn target is no measure of it.
+   */
+  async function owingDoorbellWhileImportHolds(sibling: boolean): Promise<void> {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const account = randomUUID();
+    const h = await seedMailbox(db);
+    const o = await seedMailbox(db, account);
+    const s = await seedMailbox(db, sibling ? account : undefined);
+    const names = new Map([[h.mailboxId, "IMPORT"], [o.mailboxId, "OWING"], [s.mailboxId, sibling ? "SIBLING" : "OTHER"]]);
+    // The import's turns run past half the 4 s target; the owing mailbox's 500 ms stay far below it,
+    // though beside its idle sibling they outrun half the 833 ms target of an account's shared turns.
+    fleet.behave(h.mailboxId, { deliver: mail(400, "long"), batchSize: 10, syncDelayMs: 2_100 });
+    fleet.behave(o.mailboxId, { deliver: mail(300, "short"), batchSize: 10, syncDelayMs: 500 });
+    const { logger, lines } = passLog();
+    const worker = await warmShard(db, fleet, [h, o, s],
+      { cycleLanes: 3, pollIntervalMs: 600_000, heavyTurnMs: 4_000, sharedAccountTurnMs: 833, logger });
+    await waitFor(() => fleet.indicesOf(h.mailboxId, "sync_end").length >= 2, 30_000, "the import's second turn");
+    releases.push(parkSync(fleet, h.mailboxId));
+    await waitFor(() => fleet.syncInFlight === 1, 30_000, `the import parked on its own turn — trace: ${fleet.describeTrace(names)}`);
+    const passStamp = worker.stats().lastCycleAt?.getTime() ?? null;
+    const passEnd = lines.map((l) => l.event).lastIndexOf("backfill_progress");
+    await waitFor(() => lines.slice(passEnd + 1).some((l) => l.mailboxId === o.mailboxId && l.event === "mailbox_visit"),
+      20_000, "the owing mailbox's own turn of the held pass");
+    const wokenOf = (): number => lines.slice(passEnd + 1)
+      .filter((l) => l.mailboxId === o.mailboxId && l.event === "mailbox_visit" && l.woken === true).length;
+    for (let n = 1; n <= 3; n++) {
+      fleet.signal.get(o.mailboxId)!();
+      await waitFor(() => wokenOf() >= n, 20_000, `doorbell ${n} served while the import holds the pass — trace: ${fleet.describeTrace(names)}`);
+    }
+    expect(fleet.syncInFlight, "the import's turn returned, so the turns prove nothing").toBe(1);
+    expect(worker.stats().lastCycleAt?.getTime() ?? null, "a pass ended, so the turns rode new passes").toBe(passStamp);
+    expect(await ingested(db, o.mailboxId), "the mailbox stopped owing, so the case proves nothing").toBeLessThan(300);
+  }
+
+  it("serves the doorbell of a mailbox owing a backlog in short turns while an import holds the pass",
+    () => owingDoorbellWhileImportHolds(false), 120_000);
+
+  it("serves that doorbell beside an idle mailbox of its own account too, while another account's import holds the pass",
+    () => owingDoorbellWhileImportHolds(true), 120_000);
+
+  /*
+   * AN IMPORT BESIDE ITS OWN ACCOUNT'S MAILBOXES TAKES SHORT TURNS. One cycle per account keeps
+   * them out of every lane while its turn runs, so it is steered toward their revisit, not the
+   * two-minute target; a lone import in another account keeps the long one.
+   */
+  it("steers an import toward short turns while another mailbox of its account is attached", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const account = randomUUID();
+    const h = await seedMailbox(db, account);
+    const sibling = await seedMailbox(db, account);
+    const lone = await seedMailbox(db);
+    fleet.behave(h.mailboxId, { deliver: mail(120, "shared"), syncDelayMs: 5 });
+    fleet.behave(lone.mailboxId, { deliver: mail(400, "alone") });
+    const worker = await startWorker(cfgFor(fleet, { heavyTurnMs: 600_000, sharedAccountTurnMs: 1 }));
+    closers.push(() => worker.stop());
+    await waitFor(async () => (await ingested(db, h.mailboxId)) === 120 && (await ingested(db, lone.mailboxId)) === 400,
+      60_000, "both imports");
+    const asked = fleet.asked.get(h.mailboxId) ?? [];
+    expect(asked[0], `asked ${asked}`).toBe(50);
+    expect(asked.every((a, i) => a !== undefined && (i === 0 || a <= asked[i - 1]!)), `asked ${asked}`).toBe(true);
+    expect(asked.at(-1), `asked ${asked}`).toBe(10);
+    expect(fleet.asked.get(lone.mailboxId), "the lone import").toContain(200);
+    expect(fleet.indicesOf(sibling.mailboxId, "sync_end").length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("serves a doorbell in the import's own account right after the import's turn", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const account = randomUUID();
+    const h = await seedMailbox(db, account);
+    const sibling = await seedMailbox(db, account);
+    const names = new Map([[h.mailboxId, "IMPORT"], [sibling.mailboxId, "SIBLING"]]);
+    fleet.behave(h.mailboxId, { deliver: mail(400, "sib"), batchSize: 10, syncDelayMs: 5 });
+    const { logger, lines } = passLog();
+    await warmShard(db, fleet, [h, sibling], { heavyTurnMs: 600_000, sharedAccountTurnMs: 1, logger });
+    await waitFor(() => fleet.indicesOf(h.mailboxId, "sync_end").length >= 2, 20_000, "the import's second turn");
+    releases.push(parkSync(fleet, h.mailboxId));
+    await waitFor(() => fleet.syncInFlight === 1, 20_000, "the import parked on its own turn");
+    const from = lines.length;
+    fleet.signal.get(sibling.mailboxId)!();
+    for (const r of releases.splice(0)) r();
+    const visits = (): PassLine[] => lines.slice(from).filter((l) => l.event === "mailbox_visit");
+    await waitFor(() => visits().filter((l) => l.mailboxId === h.mailboxId).length >= 2, 20_000, "the import's next turn");
+    expect(visits().slice(0, 3).map((l) => names.get(l.mailboxId!)), `trace: ${fleet.describeTrace(names)}`)
+      .toEqual(["IMPORT", "SIBLING", "IMPORT"]);
+  }, 120_000);
+
+  it("resumes an import after a restart from where it stopped, with a small first turn", async () => {
+    const db = makeDb(DB);
+    const fleet = new FakeAdapterFleet();
+    const h = await seedMailbox(db);
+    fleet.behave(h.mailboxId, { deliver: mail(300, "restart"), batchSize: 20 });
+    const first = await startWorker(cfgFor(fleet));
+    closers.push(() => first.stop());
+    await waitFor(() => ingested(db, h.mailboxId).then((k) => k >= 40), 30_000, "the first worker's import under way");
+    await first.stop();
+    expect(await ingested(db, h.mailboxId), "the first worker finished the import, so the restart proves nothing")
+      .toBeLessThan(300);
+    const callsBefore = fleet.asked.get(h.mailboxId)!.length;
+    const second = await startWorker(cfgFor(fleet));
+    closers.push(() => second.stop());
+    await waitFor(() => ingested(db, h.mailboxId).then((k) => k === 300), 60_000, "the import to finish after the restart");
+    expect(fleet.asked.get(h.mailboxId)![callsBefore], "the restarted worker's first turn asked for a full batch")
+      .toBeLessThanOrEqual(50);
+    const served = fleet.served.get(h.mailboxId)!;
+    expect(new Set(served).size, "a message was served twice").toBe(served.length);
+    expect(served.length).toBe(300);
   }, 120_000);
 });

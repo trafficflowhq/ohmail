@@ -260,6 +260,11 @@ export interface SyncDeps {
    */
   census?: CycleCensus;
   /**
+   * How many message bodies this cycle's `changesSince` may fetch, under the adapter's own cap. The
+   * hosted worker steers it by turn length (`nextTurnMessages`); ABSENT ⇒ the adapter's default.
+   */
+  batchMessages?: number;
+  /**
    * WHICH BUILD is running — the second arm of the durable ledger's due predicate.
    *
    * Absent ⇒ resolved from the environment by {@link buildVersionOf}, the same three sources
@@ -1264,7 +1269,9 @@ async function syncCycleWithin(
 
   const persistedFolders = new Map<string, PersistedFolderCursor>();
   const cursor = await buildCursor(repo, mailboxId, deadLetters, deps.census, deps.knownSet, persistedFolders);
-  const batch = await adapter.changesSince(cursor);
+  const batch = deps.batchMessages === undefined
+    ? await adapter.changesSince(cursor)
+    : await adapter.changesSince(cursor, { messages: deps.batchMessages });
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
       + batch.flagChanges.length + batch.deletes.length + (batch.resetGone?.length ?? 0);
