@@ -3412,6 +3412,35 @@ textarea.c-input:read-only {
   background: var(--tint);
   font-size:calc(12px + var(--type-up));
 }
+/* The thumbnail and the name are one control: pressing either opens the preview. It takes the
+   row's slack, so the size and the remove button keep their place beside a long name. */
+.compose-attach-look {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  border-radius:calc(var(--r-ctl) * 6 / 8);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.compose-attach-look:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.compose-attach-item .att-leaf {
+  width: 32px;
+  height: 32px;
+}
+/* A PDF's first page shows its top, where the title is. */
+.compose-attach-item .att-thumb-page {
+  object-position: top;
+}
 /* The name takes the slack and truncates; the size and the remove button keep their intrinsic
    width, so a 90-character filename cannot push the remove control off the panel. */
 .compose-attach-name {
@@ -7134,7 +7163,7 @@ input.set-tag-input {
    rather than eating the editor — the pick button, the size line and the first rows stay in
    reach whatever was attached. */
 .reply .compose-attach-list {
-  max-height: 104px;
+  max-height: 134px; /* three 42px rows and their two gaps */
   overflow-y: auto;
 }
 /* THE HEAD WRAPS RATHER THAN CRUSH. On one line at 320 the name took three lines and the address

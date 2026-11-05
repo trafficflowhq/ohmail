@@ -428,3 +428,167 @@ describe("a draft's files hold a restart", () => {
     expect(restartHold()).toBeNull();
   });
 });
+
+/**
+ * ═══ AN ATTACHED FILE SHOWS ITSELF AND OPENS IN THE PREVIEW, IN BOTH PLACES IT CAN BE ATTACHED ══
+ *
+ * The preview stands over the whole app (a portal on the body), so Escape closes it and nothing
+ * else, and the send chord pressed under it sends nothing.
+ */
+describe("an attached picture shows itself and opens in the preview", () => {
+  beforeEach(() => {
+    let n = 0;
+    (URL as unknown as Record<string, unknown>).createObjectURL = () => `blob:http://localhost/look-${++n}`;
+    (URL as unknown as Record<string, unknown>).revokeObjectURL = () => {};
+  });
+  afterEach(() => {
+    delete (URL as unknown as Record<string, unknown>).createObjectURL;
+    delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
+  });
+
+  const attachPng = async (scope: string): Promise<void> => {
+    const input = host!.querySelector<HTMLInputElement>(`${scope} .compose-attach input[type="file"]`)!;
+    const file = new File([new Uint8Array(512)], "shot.png", { type: "image/png" });
+    Object.defineProperty(input, "files", { value: [file], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    for (let i = 0; i < 8; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+  };
+  const dialog = (): HTMLElement | null => document.querySelector('[role="dialog"][aria-label="Attachment preview"]');
+  /** A key pressed where focus is, as a person presses it. */
+  const press = async (k: string, mods: KeyboardEventInit = {}): Promise<void> => {
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...mods }));
+    });
+  };
+
+  for (const [where, scope, open] of [
+    ["the compose", ".view-compose", goCompose],
+    ["a reply", ".reply", openReply],
+  ] as const) {
+    it(`in ${where}: the row shows the picture, opens the preview, and Escape closes only the preview`, async () => {
+      await mountShell({ size: 25 * MIB });
+      await open();
+      await attachPng(scope);
+      const look = host!.querySelector<HTMLButtonElement>(`${scope} .compose-attach-look`)!;
+      expect(look.querySelector("img.att-thumb")?.getAttribute("src")).toMatch(/^blob:/);
+      await act(async () => { look.click(); });
+      expect(dialog(), "pressing the row opened no preview").not.toBeNull();
+      expect(dialog()!.querySelector("img.ap-img")?.getAttribute("src")).toMatch(/^blob:/);
+      await press("Escape");
+      expect(dialog()).toBeNull();
+      expect(host!.querySelector(scope), "Escape closed the editor with the preview").not.toBeNull();
+      expect(host!.querySelector(`${scope} .compose-attach-item`)).not.toBeNull();
+    });
+  }
+
+  it("the send chord pressed under the preview sends nothing", async () => {
+    await mountShell({ size: 25 * MIB });
+    await openReply();
+    await attachPng(".reply");
+    await act(async () => { host!.querySelector<HTMLButtonElement>(".reply .compose-attach-look")!.click(); });
+    expect(dialog()).not.toBeNull();
+    await press("Enter", { metaKey: true });
+    await press("Enter", { ctrlKey: true });
+    for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(host!.textContent).not.toContain("Sent to Giulia Ferrari");
+    expect(host!.querySelector(".reply .compose-attach-item"), "the reply went while its file was being looked at").not.toBeNull();
+    // The control: with the preview closed the same chord, pressed in the editor, does send.
+    await press("Escape");
+    await act(async () => { host!.querySelector<HTMLElement>(".reply .rte-surface")!.focus(); });
+    await press("Enter", { metaKey: true });
+    await press("Enter", { ctrlKey: true });
+    for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    expect(host!.textContent).toContain("Sent to Giulia Ferrari");
+    expect(host!.querySelector(".reply")).toBeNull();
+  });
+
+  describe("a preview opened by the mouse gives the cursor back to the editor", () => {
+    // jsdom has no isContentEditable; a browser does, and the keymap reads it to tell typing apart.
+    let had: PropertyDescriptor | undefined;
+    beforeEach(() => {
+      had = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "isContentEditable");
+      Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+        configurable: true,
+        get(this: HTMLElement) { return this.closest('[contenteditable="true"],[contenteditable=""]') !== null; },
+      });
+    });
+    afterEach(() => {
+      if (had) Object.defineProperty(HTMLElement.prototype, "isContentEditable", had);
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).isContentEditable;
+    });
+    /** A mouse press as Chrome does it: mousedown focuses the button unless prevented, then click. */
+    const mousePress = async (el: HTMLElement): Promise<void> => {
+      await act(async () => {
+        const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+        if (el.dispatchEvent(down)) el.focus();
+        el.click();
+      });
+    };
+
+    it("in a reply: thumbnail, Escape, then a typed 'e' parks nothing and keeps the file", async () => {
+      await mountShell({ size: 25 * MIB });
+      await openReply();
+      await attachPng(".reply");
+      for (let i = 0; i < 400 && !host!.querySelector(".reply .rte-surface"); i += 1) {
+        await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+      }
+      const editor = host!.querySelector<HTMLElement>(".reply .rte-surface")!;
+      await act(async () => { editor.focus(); });
+      await press("e");
+      expect(host!.querySelector(".reply"), "the control: 'e' typed in the editor closed the reply").not.toBeNull();
+      await mousePress(host!.querySelector<HTMLElement>(".reply .compose-attach-look")!);
+      expect(dialog()).not.toBeNull();
+      await press("Escape");
+      expect(dialog()).toBeNull();
+      expect(document.activeElement, "the cursor did not come back to the editor").toBe(editor);
+      await press("e");
+      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(host!.querySelector(".reply"), "'e' parked the message being answered").not.toBeNull();
+      expect(host!.querySelector(".reply .compose-attach-item"), "the attached file was thrown away").not.toBeNull();
+      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" ");
+      expect(toasts, "a parked toast came up").not.toContain("Parked");
+    });
+
+    it("in a reply whose subject is being edited: thumbnail, Escape, then a typed 'e' goes into the reply", async () => {
+      await mountShell({ size: 25 * MIB });
+      await openReply();
+      await attachPng(".reply");
+      for (let i = 0; i < 400 && !host!.querySelector(".reply .rte-surface"); i += 1) {
+        await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+      }
+      const editor = host!.querySelector<HTMLElement>(".reply .rte-surface")!;
+      // The reply opens with the cursor in its text: the editor focuses itself a frame after it mounts.
+      for (let i = 0; i < 100 && document.activeElement !== editor; i += 1) {
+        await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+      }
+      await act(async () => { host!.querySelector<HTMLButtonElement>(".reply .reply-subject")!.click(); });
+      const subject = host!.querySelector<HTMLInputElement>(".reply .reply-subject-input")!;
+      expect(document.activeElement, "the subject did not open for editing").toBe(subject);
+      await mousePress(host!.querySelector<HTMLElement>(".reply .compose-attach-look")!);
+      expect(dialog()).not.toBeNull();
+      // The subject closes once focus has left it, a check made a tick after the blur.
+      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(subject.isConnected, "the case: the subject stayed open under the preview").toBe(false);
+      await press("Escape");
+      expect(dialog()).toBeNull();
+      await press("e");
+      for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+      expect(host!.querySelector(".reply"), "'e' parked the message being answered").not.toBeNull();
+      expect(host!.querySelector(".reply .compose-attach-item"), "the attached file was thrown away").not.toBeNull();
+      const toasts = [...document.querySelectorAll(".toast")].map((t) => t.textContent ?? "").join(" ");
+      expect(toasts, "a parked toast came up").not.toContain("Parked");
+      expect(document.activeElement, "the 'e' did not go into the reply's text").toBe(editor);
+    });
+
+    it("a preview opened from the keyboard still returns focus to the row", async () => {
+      await mountShell({ size: 25 * MIB });
+      await openReply();
+      await attachPng(".reply");
+      const look = host!.querySelector<HTMLButtonElement>(".reply .compose-attach-look")!;
+      await act(async () => { look.focus(); look.click(); });
+      expect(dialog()).not.toBeNull();
+      await press("Escape");
+      expect(document.activeElement).toBe(look);
+    });
+  });
+});
