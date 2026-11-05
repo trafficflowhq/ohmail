@@ -89,7 +89,7 @@ function engineRefusalOf(err: unknown): MutationRejectedError | null {
 }
 
 /** Base64 to bytes, without a binary string of the whole text. */
-function bytesOf64(text: string): Uint8Array {
+export function bytesOf64(text: string): Uint8Array {
   const bin = atob(text);
   const out = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);

@@ -8,6 +8,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, type EngineAdapter, threadOf } from "@ohmail/client-engine";
 import { useMessageAttachments } from "../app/shell/attachments.js";
 import { AttachmentPreview, isPreviewable, previewKind } from "../app/components/AttachmentPreview.js";
+import { AttachThumb } from "../app/components/compose-attach-look.js";
+import type { AttachmentItem } from "../app/components/AttachmentStrip.js";
+import type { ComposeAttachment } from "@ohmail/client-engine";
 import { KeymapProvider } from "../app/shell/keymap.js";
 
 /**
@@ -37,12 +40,31 @@ const pdfLoads = vi.fn();
 const pdfWorkerOptions = { workerSrc: "" };
 /** A document a case holds back; by default every load resolves. */
 let pdfHeld: Promise<unknown> | null = null;
+/** The page's own size, the pages asked for, a page a case holds back, and every render's viewport. */
+let pageSize = { width: 600, height: 800 };
+const pageAsks: number[] = [];
+let pageHeld: Promise<unknown> | null = null;
+const pageRenders: { width: number; height: number }[] = [];
+
+function pdfDoc() {
+  const page = {
+    getViewport: ({ scale }: { scale: number }) => ({ width: pageSize.width * scale, height: pageSize.height * scale }),
+    render: (p: { viewport: { width: number; height: number } }) => {
+      pageRenders.push(p.viewport);
+      return { promise: Promise.resolve(), cancel: () => {} };
+    },
+  };
+  return {
+    numPages: 2,
+    getPage: async (n: number) => {
+      pageAsks.push(n);
+      if (pageHeld) await pageHeld;
+      return page;
+    },
+  };
+}
 
 vi.mock("pdfjs-dist", () => {
-  const page = {
-    getViewport: () => ({ width: 600, height: 800 }),
-    render: () => ({ promise: Promise.resolve(), cancel: () => {} }),
-  };
   class PDFWorker {
     static create(params: { port: unknown }) {
       return new PDFWorker(params.port);
@@ -60,7 +82,7 @@ vi.mock("pdfjs-dist", () => {
       return {
         // No `destroy` on the document — pdfjs-dist has none, and a mock that grew one would
         // make the regression below unable to fail.
-        promise: pdfHeld ?? Promise.resolve({ numPages: 2, getPage: async () => page }),
+        promise: pdfHeld ?? Promise.resolve(pdfDoc()),
         destroy: pdfDestroy,
       };
     },
@@ -255,6 +277,10 @@ beforeEach(() => {
   pdfLoads.mockClear();
   pdfEvents.length = 0;
   pdfHeld = null;
+  pageSize = { width: 600, height: 800 };
+  pageAsks.length = 0;
+  pageHeld = null;
+  pageRenders.length = 0;
   FakeWorker.built = [];
   FakeWorker.refuse = null;
   (globalThis as unknown as { Worker?: unknown }).Worker = FakeWorker;
@@ -566,5 +592,205 @@ describe("the desktop's staged preview, from the overlay's side", () => {
     await act(async () => root!.unmount());
     root = null;
     expect(released).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the overlay without a Download — the compose preview's own bytes", () => {
+  async function show(items: AttachmentItem[], blobOf: (id: string) => Blob | undefined = () => undefined): Promise<void> {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(h(KeymapProvider, null, h(AttachmentPreview, {
+      items, activeId: items[0]!.id, onActiveIdChange: () => {}, ensure: () => {}, blobOf, onClose: () => {},
+    }))));
+  }
+  const buttonsSaying = (word: string) =>
+    [...host!.querySelectorAll("button")].filter((b) => (b.textContent ?? "").includes(word));
+
+  it("a file it cannot draw says only that, with no Download anywhere", async () => {
+    await show([{ id: "d1", filename: "plan.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", sizeBytes: 9, state: "ready" }]);
+    const card = host!.querySelector(".ap-card")!;
+    expect(card.textContent).toBe("No preview");
+    expect(card.querySelector("button")).toBeNull();
+    expect(buttonsSaying("Download"), "the compose preview offered a Download").toEqual([]);
+  });
+
+  it("a PDF it cannot draw says only that", async () => {
+    FakeWorker.refuse = new Error("refused by worker-src");
+    await show(
+      [{ id: "p1", filename: "r.pdf", mimeType: "application/pdf", sizeBytes: 8, state: "ready" }],
+      () => new Blob(["%PDF-1.4"], { type: "application/pdf" }),
+    );
+    await until(() => pdfCard() !== "");
+    expect(pdfCard()).toBe("Can't show this PDF here");
+    expect(host!.querySelector(".ap-card button")).toBeNull();
+  });
+
+  it("a long text ends by saying it was cut, without sending anyone to download it", async () => {
+    await show(
+      [{ id: "t1", filename: "log.txt", mimeType: "text/plain", sizeBytes: 600_000, state: "ready" }],
+      () => new Blob(["x".repeat(512 * 1024 + 10)], { type: "text/plain" }),
+    );
+    await until(() => host!.querySelector("pre.ap-text") !== null);
+    const text = host!.querySelector("pre.ap-text")!.textContent ?? "";
+    expect(text.endsWith("— preview truncated.")).toBe(true);
+    expect(text).not.toContain("Download");
+  });
+
+  it("closing gives focus to the element named for the file on screen", async () => {
+    const targets = ["a", "b"].map((id) => {
+      const b = document.createElement("button");
+      b.id = `row-${id}`;
+      document.body.appendChild(b);
+      return b;
+    });
+    const asked: string[] = [];
+    function Open() {
+      const [at, setAt] = useState<string | null>("a");
+      if (at === null) return null;
+      return h(AttachmentPreview, {
+        items: ["a", "b"].map((id) => ({ id, filename: `${id}.docx`, mimeType: "application/zip", sizeBytes: 1, state: "ready" as const })),
+        activeId: at, onActiveIdChange: setAt, ensure: () => {}, blobOf: () => undefined, onClose: () => setAt(null),
+        focusOnClose: (id: string) => {
+          asked.push(id);
+          return document.getElementById(`row-${id}`);
+        },
+      });
+    }
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => root!.render(h(KeymapProvider, null, h(Open))));
+    await act(async () => key("ArrowRight"));
+    await act(async () => key("Escape"));
+    expect(host!.querySelector(".ap-panel")).toBeNull();
+    expect(asked).toEqual(["b"]);
+    expect(document.activeElement).toBe(targets[1]);
+    for (const t of targets) t.remove();
+  });
+
+});
+
+describe("a PDF attached to a message being written shows its first page", () => {
+  const getContext = HTMLCanvasElement.prototype.getContext;
+  const toDataURL = HTMLCanvasElement.prototype.toDataURL;
+  beforeEach(() => {
+    (HTMLCanvasElement.prototype as unknown as { getContext: () => object }).getContext = () => ({});
+    (HTMLCanvasElement.prototype as unknown as { toDataURL: () => string }).toDataURL = () => "data:image/png;base64,UEFHRQ==";
+  });
+  afterEach(() => {
+    HTMLCanvasElement.prototype.getContext = getContext;
+    HTMLCanvasElement.prototype.toDataURL = toDataURL;
+    vi.useRealTimers();
+  });
+
+  const pdfAtt = (name: string): ComposeAttachment => ({ filename: name, contentType: "application/pdf", contentBase64: btoa("%PDF-1.4") });
+  async function thumbs(atts: ComposeAttachment[]): Promise<void> {
+    if (!root) {
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+    }
+    await act(async () => root!.render(h("div", null, atts.map((att) => h(AttachThumb, { key: att.filename, att, url: null })))));
+  }
+  const pictures = () => [...host!.querySelectorAll<HTMLImageElement>("img.att-thumb")];
+  function deferred(): { promise: Promise<unknown>; resolve: () => void } {
+    let resolve!: () => void;
+    const promise = new Promise<unknown>((r) => { resolve = () => r(pdfDoc()); });
+    return { promise, resolve };
+  }
+
+  it("draws page 1 only, over the page's own worker, and tears down task, PDFWorker, worker", async () => {
+    await thumbs([pdfAtt("a.pdf")]);
+    await until(() => pictures().length === 1 && pdfEvents.length >= 3);
+    expect(pictures()[0]!.getAttribute("src")).toBe("data:image/png;base64,UEFHRQ==");
+    expect(pageAsks).toEqual([1]);
+    const src = pdfLoads.mock.calls[0]![0] as { worker?: { port?: unknown }; disableAutoFetch?: boolean; disableStream?: boolean };
+    expect(src.worker?.port).toBe(FakeWorker.built[0]);
+    expect(src).toMatchObject({ disableAutoFetch: true, disableStream: true });
+    expect(pdfEvents).toEqual(["task.destroy", "pdfWorker.destroy", "worker.terminate"]);
+  });
+
+  it("a crafted page size cannot ask for a large canvas", async () => {
+    pageSize = { width: 1, height: 100_000 };
+    await thumbs([pdfAtt("tall.pdf")]);
+    await until(() => pictures().length === 1);
+    expect(pageRenders).toHaveLength(1);
+    expect(pageRenders[0]!.width).toBeLessThanOrEqual(64);
+    expect(pageRenders[0]!.height).toBeLessThanOrEqual(256);
+  });
+
+  it("showing the same file again does not load it again", async () => {
+    const att = pdfAtt("once.pdf");
+    await thumbs([att]);
+    await until(() => pictures().length === 1);
+    await thumbs([]);
+    await thumbs([att]);
+    await until(() => pictures().length === 1);
+    expect(pictures()).toHaveLength(1);
+    expect(pdfLoads).toHaveBeenCalledTimes(1);
+  });
+
+  it("two PDFs load one after the other, never side by side", async () => {
+    const first = deferred();
+    pdfHeld = first.promise;
+    await thumbs([pdfAtt("one.pdf"), pdfAtt("two.pdf")]);
+    await until(() => pdfLoads.mock.calls.length > 0);
+    for (let i = 0; i < 10; i += 1) await act(async () => {});
+    expect(pdfLoads, "a second PDF was opened while the first was still loading").toHaveBeenCalledTimes(1);
+    pdfHeld = null;
+    await act(async () => first.resolve());
+    await until(() => pictures().length === 2);
+    expect(pdfLoads).toHaveBeenCalledTimes(2);
+  });
+
+  it("a file removed before its turn is never loaded", async () => {
+    const first = deferred();
+    pdfHeld = first.promise;
+    const keep = pdfAtt("keep.pdf");
+    await thumbs([keep, pdfAtt("gone.pdf")]);
+    await until(() => pdfLoads.mock.calls.length > 0);
+    await thumbs([keep]);
+    pdfHeld = null;
+    await act(async () => first.resolve());
+    for (let i = 0; i < 20; i += 1) await act(async () => {});
+    expect(pdfLoads).toHaveBeenCalledTimes(1);
+    expect(FakeWorker.built).toHaveLength(1);
+  });
+
+  it("a page that never draws is given up after a while, and the file shows its type", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    pageHeld = new Promise(() => {});
+    await thumbs([pdfAtt("stuck.pdf")]);
+    await until(() => pageAsks.length === 1);
+    expect(pdfDestroy).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_000); });
+    await until(() => pdfEvents.length >= 3);
+    expect(pdfDestroy, "a stuck page held its worker open").toHaveBeenCalledTimes(1);
+    expect(pictures()).toEqual([]);
+    expect(host!.querySelector(".att-leaf svg")).not.toBeNull();
+  });
+
+  it("without a Worker pdf.js is never asked to open the file", async () => {
+    delete (globalThis as unknown as { Worker?: unknown }).Worker;
+    await thumbs([pdfAtt("noworker.pdf")]);
+    for (let i = 0; i < 20; i += 1) await act(async () => {});
+    expect(pdfLoads).not.toHaveBeenCalled();
+    expect(pictures()).toEqual([]);
+    expect(host!.querySelector(".att-leaf svg")).not.toBeNull();
+  });
+});
+
+/* LAST in the file: it swaps the library's mock for a fresh copy of the overlay's module. */
+describe("a pdf.js chunk that failed to load", () => {
+  it("is asked for again by the next PDF, not refused for the rest of the session", async () => {
+    vi.resetModules();
+    vi.doMock("pdfjs-dist", () => {
+      throw new Error("the pdf.js chunk did not load");
+    });
+    const fresh = await import("../app/components/AttachmentPreview.js");
+    await expect(fresh.loadPdfjs()).rejects.toThrow();
+    vi.doMock("pdfjs-dist", () => ({ seam: true, getDocument: () => ({}) }));
+    await expect(fresh.loadPdfjs(), "one failed chunk load refused every later PDF").resolves.toBeTypeOf("function");
   });
 });

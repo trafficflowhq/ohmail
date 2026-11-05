@@ -58,6 +58,7 @@ import {
   writeImageQualityLevel,
 } from "./image-quality";
 import { holdFilesForRestart } from "../shell/app-update";
+import { isTypingTarget } from "../shell/keymap";
 import {
   desktopDroppedFilesEnabled,
   isWithheldFileDrop,
@@ -67,6 +68,7 @@ import {
 } from "../shell/dropped-files";
 import { activeFormatLocale } from "../shell/locale";
 import { storageOwner } from "../shell/storage-owner";
+import { AttachThumb, ComposeAttachPreview, useImageUrls, type ComposeLookEntry } from "./compose-attach-look";
 
 /**
  * The dial's own order — the table's, unreversed.
@@ -111,6 +113,25 @@ const ATTACHMENT_SOURCES = new WeakMap<ComposeAttachment, {
       decide whether a pass is owed at all, without re-encoding anything to find out. */
   encodedLevel: ImageQualityLevel;
 }>();
+
+/**
+ * A row's id for its key, its preview and its focus: the picked file's, so a re-encode, a new pick
+ * or a removal beside it never renames it.
+ */
+const ROW_IDS = new WeakMap<object, string>();
+let rowSeq = 0;
+function rowIdOf(a: ComposeAttachment): string {
+  const key: object = ATTACHMENT_SOURCES.get(a)?.blob ?? a;
+  let id = ROW_IDS.get(key);
+  if (id === undefined) {
+    id = `attached-${++rowSeq}`;
+    ROW_IDS.set(key, id);
+  }
+  return id;
+}
+
+/** The surface's editor while it takes input: where a preview's close lands when its field closed. */
+const EDITING_SURFACE = '[contenteditable="true"]';
 
 /** Decoded byte length of a base64 string, without decoding it. */
 function base64Bytes(b64: string): number {
@@ -212,6 +233,7 @@ export function ComposeAttach({
   dropZone?: React.RefObject<HTMLElement | null>;
 }) {
   const t = useTranslations("compose");
+  const ta = useTranslations("attachments");
   // The LEVEL labels come from the Settings catalog, deliberately: one word per level in the
   // whole product, so "Original" here and "Original" there can never drift into synonyms.
   const ts = useTranslations("settings");
@@ -811,6 +833,23 @@ export function ComposeAttach({
 
   const used = totalBytes(attachments);
 
+  /* THE LOOK: a thumbnail per row, and the reader's preview over the attached bytes. */
+  const urls = useImageUrls(attachments);
+  const [lookAt, setLookAt] = useState<string | null>(null);
+  const lookButtons = useRef(new Map<string, HTMLButtonElement>());
+  // Where the person was typing when they opened it (a mouse open): the cursor goes back there.
+  const openedFrom = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (attachments.length === 0) setLookAt(null);
+  }, [attachments.length]);
+  const seenIds = new Set<string>();
+  const entries: ComposeLookEntry[] = attachments.map((att) => {
+    let id = rowIdOf(att);
+    if (seenIds.has(id)) id = `${id}-${seenIds.size}`; // never two rows under one key
+    seenIds.add(id);
+    return { id, att, sizeBytes: base64Bytes(att.contentBase64), url: urls.get(att) ?? null };
+  });
+
   return (
     <div className="compose-attach">
       <input
@@ -882,11 +921,28 @@ export function ComposeAttach({
 
       {attachments.length > 0 ? (
         <ul className="compose-attach-list">
-          {attachments.map((a, i) => (
-            <li key={`${a.filename}-${i}`} className="compose-attach-item">
-              <Icon name="clip" size={12} />
-              <span className="compose-attach-name">{a.filename}</span>
-              <span className="compose-attach-size">{formatSize(base64Bytes(a.contentBase64))}</span>
+          {entries.map(({ id, att: a, sizeBytes, url }, i) => (
+            <li key={id} className="compose-attach-item">
+              {/* Changes nothing, so it stays pressable while a send is in flight. */}
+              <button
+                type="button"
+                className="compose-attach-look"
+                aria-label={ta("preview", { name: a.filename })}
+                ref={(el) => {
+                  if (el) lookButtons.current.set(id, el);
+                  else lookButtons.current.delete(id);
+                }}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => {
+                  const at = document.activeElement;
+                  openedFrom.current = at instanceof HTMLElement && isTypingTarget(at) ? at : null;
+                  setLookAt(id);
+                }}
+              >
+                <AttachThumb att={a} url={url} />
+                <span className="compose-attach-name">{a.filename}</span>
+              </button>
+              <span className="compose-attach-size">{formatSize(sizeBytes)}</span>
               <button
                 type="button"
                 className="compose-attach-remove"
@@ -899,6 +955,22 @@ export function ComposeAttach({
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {lookAt !== null && entries.length > 0 ? (
+        <ComposeAttachPreview
+          entries={entries}
+          activeId={lookAt}
+          onActiveIdChange={setLookAt}
+          onClose={() => setLookAt(null)}
+          focusOnClose={(id) => {
+            const from = openedFrom.current;
+            if (from?.isConnected) return from;
+            // Its field closed when the preview took focus (a reply's subject): back to the text.
+            const text = from ? dropZone?.current?.querySelector<HTMLElement>(EDITING_SURFACE) : null;
+            return text ?? lookButtons.current.get(id) ?? null;
+          }}
+        />
       ) : null}
 
       {/* WHAT WAS DONE TO THE FILES, said quietly and only when it happened. Plain muted text and

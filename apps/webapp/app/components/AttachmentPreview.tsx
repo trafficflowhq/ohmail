@@ -103,6 +103,8 @@ const EN = {
      they do not have. */
   pdfErrorDetail: "Download it to open in another app.",
   textTruncated: "— preview truncated. Download to read the rest.",
+  /* The same end where nothing downloads (a file still being written, in Compose). */
+  textTruncatedHere: "— preview truncated.",
   /* Under `tooLargeTitle`, for a text the desktop shell would not hand over inline (over its cap). */
   textTooLargeDetail: "Save it instead.",
   count: (i: number, n: number) => `${i} of ${n}`,
@@ -164,13 +166,18 @@ const PDF_WORKER_SRC = "/pdf.worker.min.mjs";
  * any path that is not the port throws instead of loading the worker on this thread. A seam (the
  * desktop window's module, the host client's stub) builds its own worker and gets the load as is.
  */
-async function loadPdfjs(): Promise<OpenPdf> {
+export async function loadPdfjs(): Promise<OpenPdf> {
   if (!pdfjsPromise) {
-    pdfjsPromise = (async () => {
+    const loading = (async () => {
       const mod: Pdfjs & { seam?: true } = await import("pdfjs-dist");
       if ("seam" in mod) return mod.getDocument;
       return (src: PdfSource) => openOverPort(async () => mod, () => PDF_WORKER_SRC, { ...src, ...STANDARD_FONTS });
     })();
+    pdfjsPromise = loading;
+    // A chunk that failed to load is asked for again by the next PDF, not refused for the session.
+    loading.catch(() => {
+      if (pdfjsPromise === loading) pdfjsPromise = null;
+    });
   }
   return pdfjsPromise;
 }
@@ -182,7 +189,7 @@ async function loadPdfjs(): Promise<OpenPdf> {
  * such method, so reaching for one there throws — and this is called from an effect cleanup,
  * where a throw is not a logged mistake but React unmounting the application.
  */
-function discard(task: PdfTask | null): void {
+export function discard(task: PdfTask | null): void {
   if (!task) return;
   void task.destroy().catch(() => {
     /* the worker is already gone; that is the state this was asking for */
@@ -208,11 +215,13 @@ export interface AttachmentPreviewProps {
   ensure: (attachmentId: string, opts?: { retry?: boolean }) => void;
   /** The engine's retained typed Blob for a ready item, or `undefined`. */
   blobOf: (attachmentId: string) => Blob | undefined;
-  /** Save one item (fetch if needed) — the overlay's Download and the fallback card. */
-  onDownload: (attachmentId: string) => void;
+  /** Save one item (fetch if needed) — the overlay's Download and the fallback card. Absent: nothing downloads. */
+  onDownload?: (attachmentId: string) => void;
   onClose: () => void;
   /** Called once when the overlay goes: the desktop's staged preview files are removed. */
   onRelease?: () => void;
+  /** Where focus goes on close, for the file on screen then; else back to what held it before. */
+  focusOnClose?: (attachmentId: string) => HTMLElement | null;
 }
 
 export function AttachmentPreview({
@@ -224,6 +233,7 @@ export function AttachmentPreview({
   onDownload,
   onClose,
   onRelease,
+  focusOnClose,
 }: AttachmentPreviewProps) {
   const index = Math.max(0, items.findIndex((i) => i.id === activeId));
   const active: AttachmentItem | undefined = items.find((i) => i.id === activeId) ?? items[0];
@@ -404,13 +414,19 @@ export function AttachmentPreview({
 
   /* ── focus trap: hold focus in the panel, restore it on close ── */
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const closeFocus = useRef({ focusOnClose, id: active?.id });
+  closeFocus.current = { focusOnClose, id: active?.id };
   useEffect(() => {
     const previously = document.activeElement as HTMLElement | null;
     panelRef.current?.focus();
     document.body.classList.add("ap-lock");
     return () => {
       document.body.classList.remove("ap-lock");
-      previously?.focus?.();
+      // WebKit does not focus a pressed button, so "previously" can be the editor or the body.
+      const { focusOnClose: to, id } = closeFocus.current;
+      const target = to && id !== undefined ? to(id) : null;
+      if (target?.isConnected) target.focus();
+      else previously?.focus?.();
     };
   }, []);
 
@@ -484,7 +500,7 @@ export function AttachmentPreview({
                   aria-disabled={page >= numPages || undefined} onClick={() => goPage(1)}>{ARROW_DOWN}</button>
               </span>
             ) : null}
-            {canDownload ? (
+            {canDownload && onDownload ? (
               <button type="button" className="ap-btn" aria-busy={saving || undefined} aria-disabled={saving || undefined}
                 onClick={saving ? undefined : () => active && onDownload(active.id)}>
                 {saving ? <Spinner className="ap-spin" /> : DOWNLOAD_GLYPH}
@@ -546,15 +562,14 @@ function renderContent({
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   text: { id: string; body: string; truncated: boolean } | null;
   ensure: (attachmentId: string, opts?: { retry?: boolean }) => void;
-  onDownload: (attachmentId: string) => void;
+  onDownload: ((attachmentId: string) => void) | undefined;
 }) {
   if (!active) return null;
+  // Where nothing downloads, a card says what it is and offers nothing.
+  const save = onDownload ? { label: COPY.download, onClick: () => onDownload(active.id) } : undefined;
 
   if (!canPreview) {
-    return (
-      <Card title={COPY.noPreviewTitle} detail={COPY.noPreviewDetail}
-        action={{ label: COPY.download, onClick: () => onDownload(active.id) }} />
-    );
+    return <Card title={COPY.noPreviewTitle} detail={save ? COPY.noPreviewDetail : undefined} action={save} />;
   }
   if (active.state === "too_large") {
     return <Card title={COPY.tooLargeTitle} detail={COPY.tooLargeDetail} />;
@@ -578,10 +593,7 @@ function renderContent({
   }
   if (kind === "pdf") {
     if (pdfError) {
-      return (
-        <Card title={COPY.pdfErrorTitle} detail={COPY.pdfErrorDetail}
-          action={{ label: COPY.download, onClick: () => onDownload(active.id) }} />
-      );
+      return <Card title={COPY.pdfErrorTitle} detail={save ? COPY.pdfErrorDetail : undefined} action={save} />;
     }
     if (!pdf || pdf.id !== activeId) return <Busy label={COPY.rendering} />;
     return (
@@ -592,16 +604,13 @@ function renderContent({
   }
   if (kind === "text") {
     if (active.previewTooLarge) {
-      return (
-        <Card title={COPY.tooLargeTitle} detail={COPY.textTooLargeDetail}
-          action={{ label: COPY.download, onClick: () => onDownload(active.id) }} />
-      );
+      return <Card title={COPY.tooLargeTitle} detail={save ? COPY.textTooLargeDetail : undefined} action={save} />;
     }
     if (!text || text.id !== activeId) return <Busy label={COPY.rendering} />;
     return (
       <pre className="ap-text">
         {text.body}
-        {text.truncated ? `\n\n${COPY.textTruncated}` : ""}
+        {text.truncated ? `\n\n${save ? COPY.textTruncated : COPY.textTruncatedHere}` : ""}
       </pre>
     );
   }
