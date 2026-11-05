@@ -21,6 +21,29 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.40] — 2026-11-05
+
+### Attached files show a picture of themselves while you write
+
+In a new message and in a reply, each attached file now shows a small picture of itself: a photo or
+screenshot exactly as it will be sent, the first page of a PDF, and the file type for anything else.
+Press the picture or the name to open the same preview the reader uses; ← and → move between the
+attached files, and Space or Esc closes it. Web and desktop.
+
+### Contributors: the search budget is judged in a workflow of its own
+
+For contributors: the nightly job that judges the 100 ms search budget on a quiet hosted runner moves out of
+`ci.yml` into `.github/workflows/search-budget.yml`, which runs at the same hour and by dispatch with nothing
+else in it. A held or cancelled nightly `ci.yml` run no longer leaves the budget unjudged. `ci.yml`'s
+dispatch loses its `judge_search_budget` input: dispatch `search-budget.yml` instead.
+
+### The phone shows what you attached, and opens it
+
+On Android and iOS, each file you attach to a letter now shows a thumbnail in its row: a picture shows
+itself, a PDF and any other file show their type. Press the thumbnail or the name to open the file: a
+picture or a PDF opens in the app's own preview, any other file in an app on your phone that can read it.
+Closing the preview brings you back to your letter as you left it.
+
 ## [0.30.39] — 2026-11-05
 
 ### The invitation page removes a signed-out browser's mail as it opens
@@ -16938,7 +16961,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.39...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.40...HEAD
+[0.30.40]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.40
 [0.30.39]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.39
 [0.30.38]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.38
 [0.30.37]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.37
