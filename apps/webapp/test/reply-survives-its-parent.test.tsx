@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
   MemoryMirrorStore,
+  MutationRejectedError,
   OhmailEngine,
   mutationEffects,
   type EngineMessage,
@@ -56,6 +57,12 @@ let mobile = false;
 let originalParts: Array<{ id: string; filename: string; contentType: string; sizeBytes: number; inline: boolean }> | null = null;
 /** The original's list never answers. */
 let listHangs = false;
+/** The draft read reaches no server: `draftOnServer` says "unknown". */
+let draftReadFails = false;
+/** A row the server still holds that this mirror has not been given. */
+const serverOnlyRow = "row-held";
+/** Rows the server deleted, whatever this mirror still holds: a write into one is a 404. */
+const serverGone = new Set<string>();
 
 beforeEach(() => {
   window.location.hash = "#/ohbox";
@@ -90,6 +97,8 @@ beforeEach(() => {
   mobile = false;
   originalParts = null;
   listHangs = false;
+  draftReadFails = false;
+  serverGone.clear();
 });
 
 afterEach(async () => {
@@ -155,6 +164,9 @@ function engineOver(s: MirrorStore): OhmailEngine {
       mutate: async (m: EngineMutation) => {
         sent.push(m);
         if (refuseDraftSave && m.kind === "draft_save") throw new Error("the server refused it");
+        if (m.kind === "draft_save" && m.draftId != null && serverGone.has(m.draftId)) {
+          throw new MutationRejectedError("draft not found", { code: "not_found", status: 404, retryable: false });
+        }
         const changes = mutationEffects(s, m, { now: () => NOW, uuid: () => `id-${++seq}` })
           .map((e) => ({
             type: e.type,
@@ -181,6 +193,13 @@ function engineOver(s: MirrorStore): OhmailEngine {
         fetchAttachment: async () => new Blob(["x"]),
         forwardPartsAnnounced: async () => true,
       } : {}),
+      fetchDraftBody: async (id: string) => {
+        if (draftReadFails) throw new MutationRejectedError("unreachable", { code: "offline", status: null, retryable: true });
+        const d = serverGone.has(id) ? undefined
+          : s.get<{ body: string | null }>("draft", id) ?? (id === serverOnlyRow ? { body: "held at the server" } : undefined);
+        if (!d) throw new MutationRejectedError("draft not found", { code: "not_found", status: 404, retryable: false });
+        return d.body ?? "";
+      },
       fetchBody: async () => ({
         text: "body", html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,
@@ -227,10 +246,16 @@ const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")].map((r) => r.dataset.id ?? "");
 
 async function shell(ids: string[] = ["m1"], seed?: (s: MirrorStore) => Promise<void>): Promise<HTMLElement> {
+  const s = await storeWith(ids);
+  if (seed) await seed(s);
+  return shellOver(s);
+}
+
+/** Mount the shell over `s` — a kept store is the desktop's persisted mirror across a relaunch. */
+async function shellOver(s: MirrorStore): Promise<HTMLElement> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  store = await storeWith(ids);
-  if (seed) await seed(store);
+  store = s;
   engine = engineOver(store);
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -581,6 +606,132 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
       expect(held([...old("m1"), ...owned("m1")]), "a promoted lane left a copy").toEqual([null, null, null, null]);
     });
   });
+});
+
+/* A REPLY DRAFT THE PERSON DISCARDED stays discarded: Cancel keeps the dock's words, and when the row
+   they were saved to was deleted elsewhere, the parent's delete must not save them as a new draft. */
+describe("a reply whose draft was deleted elsewhere is not saved again when its parent goes", () => {
+  const cancelButton = (el: HTMLElement): HTMLButtonElement | undefined =>
+    [...el.querySelectorAll<HTMLButtonElement>("button")]
+      .find((b) => b.textContent?.trim() === "Cancel" && b.parentElement?.querySelector(".reply-hint") !== null);
+  const draftGone = (id: string): SyncChange => {
+    serverGone.add(id);
+    return { type: "draft", op: "delete", id, seq: ++seq, updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange;
+  };
+  const settle = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+  };
+  const sig = async (text: string): Promise<string> => (await import("../app/shell/compose-autosave.js")).sigOf(text);
+  /** A lane left by an earlier session: its words, and the row it last wrote. */
+  const laneLeft = (words: string, row: Record<string, unknown>): void => {
+    window.localStorage.setItem("ohmail.ui.reply:m1", words);
+    window.localStorage.setItem("ohmail.ui.replymeta:m1", JSON.stringify({ row: { at: NOW.toISOString(), ...row } }));
+  };
+
+  async function typedSavedCancelled(text: string): Promise<{ container: HTMLElement; rowId: string }> {
+    const container = await replyInProgress(text);
+    await waitFor(() => draftSaves().length === 1, "the reply's own draft on the account", 6000);
+    const rowId = store!.list<{ id: string }>("draft")[0]!.id;
+    const cancel = cancelButton(container);
+    expect(cancel, "no Cancel in the dock").toBeDefined();
+    await act(async () => { cancel!.click(); });
+    await waitFor(() => editorSurface(container) === null, "the dock closed");
+    for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+    return { container, rowId };
+  }
+
+  it("Cancel, the draft deleted elsewhere, then the parent deleted: nothing is created and the lane clears", async () => {
+    const { rowId } = await typedSavedCancelled("the cancelled answer");
+    expect(laneBody(), "Cancel keeps the words").toContain("the cancelled answer");
+    expect(JSON.parse(laneMeta() ?? "{}").row?.id).toBe(rowId);
+    pending = [draftGone(rowId)];
+    await act(async () => { await engine!.syncOnce(); });
+    expect(store!.list("draft"), "the discard reached the mirror").toHaveLength(0);
+    await tombstoneParent();
+    await settle();
+    expect(draftSaves().slice(1), "a deleted draft was created again").toEqual([]);
+    expect(store!.list("draft")).toHaveLength(0);
+    expect([laneBody(), laneMeta()]).toEqual([null, null]);
+  }, 20_000);
+
+  it("the same across a relaunch: the row deleted while closed, the parent's delete arriving after mount", async () => {
+    await typedSavedCancelled("the cancelled answer");
+    for (const root of roots) await act(() => { root.unmount(); });
+    roots = [];
+    document.body.innerHTML = "";
+    sent = [];
+    await shell(["m1", "m2"]);
+    await act(async () => { await engine!.syncOnce(); });
+    await tombstoneParent();
+    await settle();
+    expect(draftSaves(), "the relaunch created the deleted draft again").toEqual([]);
+    expect([laneBody(), laneMeta()]).toEqual([null, null]);
+  }, 20_000);
+
+  it("relaunched over the kept mirror, the row edited elsewhere: its delete and the parent's in one page create nothing", async () => {
+    const { rowId } = await typedSavedCancelled("the cancelled answer");
+    const was = store!.get<Record<string, unknown>>("draft", rowId)!;
+    const at = new Date(NOW.getTime() + 60_000).toISOString();
+    pending = [{ type: "draft", op: "update", id: rowId, seq: ++seq, updatedAt: at,
+      entity: { ...was, body: "edited on the web", html: null, updatedAt: at } } as unknown as SyncChange];
+    await act(async () => { await engine!.syncOnce(); });
+    const kept = store!;
+    for (const root of roots) await act(() => { root.unmount(); });
+    roots = [];
+    document.body.innerHTML = "";
+    sent = [];
+    await shellOver(kept);
+    pending = [draftGone(rowId), { type: "message", op: "delete", id: "m1", seq: ++seq,
+      updatedAt: NOW.toISOString(), entity: null } as unknown as SyncChange];
+    await act(async () => { await engine!.syncOnce(); });
+    await settle();
+    expect(draftSaves().filter((d) => d.draftId === null), "the deleted draft was created again").toEqual([]);
+    expect([laneBody(), laneMeta()]).toEqual([null, null]);
+  }, 20_000);
+
+  it("words the deleted row never held are still kept as a new draft", async () => {
+    laneLeft("newer words never saved", { id: "row-gone", holds: await sig("older words"), made: true });
+    await shell(["m1", "m2"]);
+    await act(async () => { await engine!.syncOnce(); });
+    await tombstoneParent();
+    await waitFor(() => draftSaves().length > 0, "the unsaved words promoted");
+    expect(draftSaves()[0]!.draftId).toBeNull();
+    expect(draftSaves()[0]!.body).toContain("newer words never saved");
+  }, 20_000);
+
+  it("the row sent elsewhere with these words: no draft, and the lane clears", async () => {
+    laneLeft("the answer that went", { id: "d-sent", holds: await sig("the answer that went"), made: true });
+    await shell(["m1", "m2"], async (s) => {
+      await s.applyChanges([{
+        type: "draft", op: "create", id: "d-sent", seq: 8000, updatedAt: NOW.toISOString(),
+        entity: {
+          id: "d-sent", mailboxId: "mb1", threadId: null, inReplyToMessageId: "m1", forwardOfMessageId: null,
+          subject: "Re: Subject m1", body: "the answer that went", to: [], cc: [], bcc: [], rationale: null,
+          status: "sent", createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+        },
+      } as unknown as SyncChange]);
+    });
+    await act(async () => { await engine!.syncOnce(); });
+    await tombstoneParent();
+    await settle();
+    expect(draftSaves(), "a sent reply came back as a draft").toHaveLength(0);
+    expect([laneBody(), laneMeta()]).toEqual([null, null]);
+  }, 20_000);
+
+  it.each([
+    ["the server cannot be asked", "row-gone", "the answer", "the answer", undefined, true],
+    ["a save of these words waited unseen", "row-gone", "the queued words", "older", "the queued words", false],
+    ["the row is held at the server, not mirrored yet", serverOnlyRow, "the answer", "the answer", undefined, false],
+  ] as const)("%s: nothing is created and the lane is kept", async (_, id, words, holds, waiting, unreachable) => {
+    laneLeft(words, { id, holds: await sig(holds), made: true, ...(waiting ? { pending: await sig(waiting) } : {}) });
+    draftReadFails = unreachable;
+    await shell(["m1", "m2"]);
+    await act(async () => { await engine!.syncOnce(); });
+    await tombstoneParent();
+    await settle();
+    expect(draftSaves()).toHaveLength(0);
+    expect(laneBody()).toBe(words);
+  }, 20_000);
 });
 
 describe("a forward kept as a draft is still a forward", () => {

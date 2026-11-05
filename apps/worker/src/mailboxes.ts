@@ -4,7 +4,7 @@ import {
   mailboxes, mailboxCredentials, isOrganizerRole, organizerDisplayName, capabilitiesColumn, type Tx,
   organizerKindColumn, closedSetValue, fenceErased, MailboxErasedError,
   type OrganizerRole, type OrganizerKind, type OrganizerState,
-  rules, recordMailboxProfileChange, type LedgerTx, parkedResumeWhere, parkedResumeSet,
+  rules, recordMailboxProfileChange, type LedgerTx, parkedResumeWhere, parkedResumeSet, mailboxRowsInIdOrder,
 } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { workerHeartbeats, pushSubscriptions } from "@trafficflow/db/cloud";
@@ -15,6 +15,7 @@ import {
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
+import { withIngestRuns } from "./ingest-run.js";
 // The RULE the fence answers with, from the module that owns the refusal it becomes. This
 // direction only: `sync.ts` must never import this file, which reaches `@trafficflow/db/cloud`
 // and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
@@ -958,9 +959,8 @@ export function makeSyncWriteFence(
           // `carryDialect`, not the bare `tx`: the transaction object does not inherit the
           // connection's dialect brand, and a repository built straight from it refuses on its
           // first locking statement — which is every write this fence exists to group.
-          result: await fn(
-            markDatabaseFaults(makeDrizzleRepo(carryDialect(db, tx) as unknown as Tx), "repo"),
-          ),
+          // And the batched ingest's door (`ingest-run.ts`), over the same transaction.
+          result: await fn(markDatabaseFaults(withIngestRuns(makeDrizzleRepo(carryDialect(db, tx) as unknown as Tx)), "repo")),
         };
       }));
     },
@@ -1683,7 +1683,8 @@ export async function stampMailboxSync(
   db: WorkerDb, mailboxIds: string[], now: Date,
 ): Promise<void> {
   if (mailboxIds.length === 0) return;
-  await db.update(mailboxes).set({ lastSyncAt: now }).where(inArray(mailboxes.id, mailboxIds));
+  await db.update(mailboxes).set({ lastSyncAt: now })
+    .where(mailboxRowsInIdOrder(dialect(db), inArray(mailboxes.id, mailboxIds)));
 }
 
 /**
@@ -1712,6 +1713,8 @@ export async function stampMailboxSyncNow(
   // is inlined via sql.raw, NOT bound — drizzle maps a bound parameter through PgTimestamp's
   // `.toISOString()` on a plain number — and is `Math.max(0, Math.round(...))`, a bare integer by construction.
   const candidate = sql`now() - interval '1 millisecond' * ${sql.raw(String(behind))}`;
+  // The rows in id order (`mailboxRowsInIdOrder`): this pass-end batch spans accounts, and in its
+  // scan's order it met a Screener press on the same account crosswise (40P01).
   await db.update(mailboxes)
     .set({
       lastSyncAt: sql`case
@@ -1719,7 +1722,7 @@ export async function stampMailboxSyncNow(
         else greatest(${mailboxes.lastSyncAt}, ${candidate})
       end`,
     })
-    .where(inArray(mailboxes.id, mailboxIds));
+    .where(mailboxRowsInIdOrder(dialect(db), inArray(mailboxes.id, mailboxIds)));
 }
 
 /**

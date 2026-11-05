@@ -3,7 +3,7 @@ import { and, eq, inArray, ne } from "drizzle-orm";
 import {
   insertOrganizerRequest, insertOrganizerRequestSet, readRequestEligibility, readAccountErasedAt,
   AccountErasedError, OrganizedElsewhereError, MailboxNotFoundError, mailboxes,
-  MOVE_DESTINATIONS, messages, fanOutPlace, writesHere,
+  MOVE_DESTINATIONS, messages, fanOutPlace, writesHere, lockAccountMailboxes,
   type OrganizedBy, type RequestRefusalReason, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
@@ -222,6 +222,16 @@ export async function planAccountFanOut(
   }
 
   return { writeLocally, organized, requestTo, refused, awaiting };
+}
+
+/**
+ * THE ROWS OF THE MAILBOXES A FAN-OUT ASKS, FOR SHARE in id order, before the door writes its own
+ * delta: each request row is fenced on its mailbox's row, and a write group holding that row takes
+ * the counter after it, so a door that asked the row after its delta met the group crosswise (40P01).
+ * Right after the door's rule-key lock or settings row; the requests' own fences take them again.
+ */
+export async function lockFanOutTargets(tx: Tx, accountId: string, plan: AccountFanOut): Promise<void> {
+  await lockAccountMailboxes(tx, accountId, plan.requestTo.map((t) => t.mailboxId));
 }
 
 /**

@@ -14,6 +14,8 @@ import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/dr
 import { createLogger } from "@trafficflow/core";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { MailboxRemovedError, runSyncCycle } from "../src/sync.js";
+import { ingestRunRepository } from "../src/ingest-run.js";
+import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
 
@@ -83,7 +85,7 @@ describe.skipIf(!PG_UP)("a removal racing a pending ingest", () => {
     const repo = new Proxy(real, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
-        if (prop !== "findByDedupKey" || typeof value !== "function") return value;
+        if ((prop !== "findByDedupKey" && prop !== "findByDedupKeys") || typeof value !== "function") return value;
         return async (...args: unknown[]): Promise<unknown> => {
           if (!removed) {
             removed = true;
@@ -131,6 +133,41 @@ describe.skipIf(!PG_UP)("a removal racing a pending ingest", () => {
         .where(eq(messageFailures.mailboxId, mailboxId))).length,
     }, "a removed mailbox kept mail, emitted a change, or had a message written off")
       .toEqual({ mail: 0, emitted: 0, writtenOff: 0 });
+  }, 60_000);
+
+  it("REFUSES a RUN's commit the same way: a removal while its letters are planned writes nothing", async () => {
+    const { accountId, mailboxId } = await seed("rmr");
+    const fleet = new FakeAdapterFleet();
+    const adapter = fleet.factory(
+      { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
+      { accountId, mailboxId, onConnectionError: () => { /* nothing dials here */ } },
+    );
+    fleet.behave(mailboxId, {
+      deliver: Array.from({ length: 4 }, (_, i) => ({ from: "s@elsewhere.test", subject: `run ${i}`, messageId: `rmr-${i}-${randomUUID()}@x` })),
+    });
+    const real = ingestRunRepository(makeDrizzleRepo(db as never));
+    let plans = 0;
+    // Removed while the third letter is planned: the first two are in the open run.
+    const repo = new Proxy(real, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== "findByDedupKeys" || typeof value !== "function") return value;
+        return async (...args: unknown[]): Promise<unknown> => {
+          if (++plans === 3) await db.update(mailboxes).set({ status: "disabled" }).where(eq(mailboxes.id, mailboxId));
+          return (value as (...a: unknown[]) => Promise<unknown>).apply(target, args);
+        };
+      },
+    }) as DrizzleRepo;
+    await expect(runSyncCycle({
+      writeAuthority: FIXTURE_LEASE, repo, adapter, accountId, mailboxId, ingestRuns: INGEST_RUN_BOUNDS,
+      storageCap: UNMETERED_STORAGE_CAP, role: "organizer", trustedAuthservIds: new Set<string>(),
+    }), "the run committed into a removed mailbox").rejects.toBeInstanceOf(MailboxRemovedError);
+    expect(plans, "the removal never happened inside the run").toBeGreaterThanOrEqual(3);
+    expect({
+      mail: (await db.select().from(messages).where(eq(messages.mailboxId, mailboxId))).length,
+      emitted: (await db.select().from(changeLog).where(eq(changeLog.accountId, accountId))).length,
+      writtenOff: (await db.select().from(messageFailures).where(eq(messageFailures.mailboxId, mailboxId))).length,
+    }).toEqual({ mail: 0, emitted: 0, writtenOff: 0 });
   }, 60_000);
 
   it("HOLDS the row, so a removal waits for the commit rather than overtaking it", async () => {
@@ -241,7 +278,7 @@ describe.skipIf(!PG_UP)("a removal racing a pending ingest", () => {
     const removing = new Proxy(real, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
-        if (prop !== "findByDedupKey" || typeof value !== "function") return value;
+        if ((prop !== "findByDedupKey" && prop !== "findByDedupKeys") || typeof value !== "function") return value;
         return async (...args: unknown[]): Promise<unknown> => {
           if (!removed) {
             removed = true;
@@ -298,7 +335,7 @@ describe.skipIf(!PG_UP)("a removal racing a pending ingest", () => {
     const removing = new Proxy(real, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
-        if (prop !== "findByDedupKey" || typeof value !== "function") return value;
+        if ((prop !== "findByDedupKey" && prop !== "findByDedupKeys") || typeof value !== "function") return value;
         return async (...args: unknown[]): Promise<unknown> => {
           if (!removed) {
             removed = true;

@@ -375,6 +375,11 @@ export interface MessageIdCandidate { row: StoredMessage; date: Date | null; inS
 export interface RepoPort {
   findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null>;
   /**
+   * {@link findByDedupKey} for several keys in one statement: the rows found, by key. Optional;
+   * without it the dedup lookup asks one key at a time.
+   */
+  findByDedupKeys?(mailboxId: string, dedupKeys: readonly string[]): Promise<Map<string, StoredMessage>>;
+  /**
    * The rows of THIS mailbox carrying this Message-ID (bracket-stripped, case preserved), those
    * with an instance in the mailbox's Sent set first, then oldest first (`created_at, id`), at most
    * a handful. A candidate list, never an answer: the Message-ID is a string a stranger types. One

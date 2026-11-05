@@ -1,6 +1,7 @@
 import {
   planChange, commitChange, adoptExternalPlacement, canonicalDestination, isNewsFolder, isOrganizedFolder, signaturesForCycle, MAX_RAW_MESSAGE_BYTES,
-  LEGACY_NEWS_FOLDER, NEWS_FOLDER,
+  LEGACY_NEWS_FOLDER, NEWS_FOLDER, normalizeMime, dedupKeysOf, newMessageInsertOf, threadKeyOf, dsnVerdict,
+  type NormalizedMessage, type InsertMessageInput,
   type BlankRepairMode, type Change, type ChangePlan, type ClassifierPort, type CommitDeps, type CreditGate,
   type CycleSignatures, type ImportHold, type Logger, type OhboxPolicy, type PlanSignatures, type ProcessResult,
   type StorageCap,
@@ -21,7 +22,7 @@ import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-leas
 // is the half that may not be named here.
 import { MailboxErasedError, OWN_MAIL_RELEASE_BATCH } from "@trafficflow/db";
 import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
-import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState } from "@trafficflow/core/adapters/drizzle-repo";
+import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState, IngestRunContext, IngestRunResult } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, isStoreStatementFault, nextAttemptAfter,
@@ -320,6 +321,21 @@ export interface SyncDeps {
    * behind; tests). The stamp itself is `mailboxes.junk_sweep_requested_at` (mail 0076).
    */
   junkSweep?: JunkSweepCommandPort;
+  /**
+   * STORE RUNS OF NEW LETTERS IN ONE TRANSACTION EACH — the hosted and self-hosted worker's
+   * import, through the repositories `ingest-run.ts` equips. ABSENT ⇒ every letter commits alone,
+   * as on the desktop, the phone and the reconcile backstop.
+   */
+  ingestRuns?: IngestRunBounds;
+}
+
+/** {@link SyncDeps.ingestRuns}: how far one run may grow before it is committed. */
+export interface IngestRunBounds {
+  maxMembers: number;
+  /** Body bytes. */
+  maxBodyBytes: number;
+  /** A run this old is committed, and the rules and known senders it was planned with are re-read. */
+  maxAgeMs: number;
 }
 
 /** See {@link SyncDeps.junkSweep}. */
@@ -825,6 +841,76 @@ function removedMailboxError(status: string | null): MailboxRemovedError {
   );
 }
 
+/** The new letters one transaction will store — see {@link SyncDeps.ingestRuns}. */
+interface OpenRun {
+  members: Array<{ ch: Change; plan: ChangePlan; insert: InsertMessageInput }>;
+  /** Every dedup key a member answers to, and every Message-ID one carries, lower-cased. */
+  keys: Set<string>;
+  ids: Set<string>;
+  bodyBytes: number;
+  openedAt: number;
+  /** A member names list addresses: it is the run's last, so the next plan reads them. */
+  teaches: boolean;
+}
+
+/** A NEW letter `commitChange` writes nothing else for: no AI decision, no contact, no audit row, no away stamp. */
+function runnable(plan: ChangePlan): boolean {
+  const p = plan.outcome === "new" ? plan.new : undefined;
+  return p !== undefined && p.ai === undefined && p.correspondentAdmission === undefined
+    && p.bounceAdmission === undefined && p.awayBounceOf === undefined && p.learnCorrespondents === undefined;
+}
+
+/**
+ * COULD PLANNING THIS LETTER READ A ROW THE RUN WILL WRITE? The plan's reads of what a member
+ * writes are by dedup key, by its own Message-ID and by the ids it cites (thread parents, the
+ * correspondent's reply arm, a delivery report's original): any of them naming a member ends the run first.
+ */
+function runMeets(run: OpenRun, msg: NormalizedMessage, raw: Uint8Array): boolean {
+  const k = dedupKeysOf(msg);
+  if (run.keys.has(k.fp) || run.keys.has(k.legacy) || (k.prior !== null && run.keys.has(k.prior))) return true;
+  const mid = msg.canonical.messageIdHeader;
+  if (mid !== null && run.ids.has(mid.toLowerCase())) return true;
+  const cited = [...threadKeyOf(mid, msg.headers).candidates, ...(dsnVerdict(msg, raw)?.originalMessageIds ?? [])];
+  return cited.some((c) => run.ids.has(c.toLowerCase()));
+}
+
+function joinRun(run: OpenRun, ch: Change, plan: ChangePlan, msg: NormalizedMessage, insert: InsertMessageInput): void {
+  const k = dedupKeysOf(msg);
+  for (const key of [k.fp, k.legacy, k.prior, insert.dedupKey]) if (key !== null) run.keys.add(key);
+  const mid = msg.canonical.messageIdHeader;
+  if (mid !== null) run.ids.add(mid.toLowerCase());
+  run.members.push({ ch, plan, insert });
+  run.bodyBytes += msg.textBody.length + (msg.htmlBody?.length ?? 0);
+  if ((plan.new?.listAddresses.length ?? 0) > 0) run.teaches = true;
+}
+
+/**
+ * THE RULES AND KNOWN SENDERS A RUN'S LETTERS ARE PLANNED WITH, read once rather than per letter.
+ * Nothing in a run writes either; the caller drops them after every commit, so each run reads them
+ * afresh, and they are re-read once older than the run's age bound.
+ */
+function planSnapshot(repo: WorkerRepo, maxAgeMs: number): { repo: WorkerRepo; drop(): void } {
+  let memo = new Map<string, { at: number; value: Promise<unknown> }>();
+  const wrapped = new Proxy(repo, {
+    get(obj, prop): unknown {
+      const value = Reflect.get(obj, prop, obj) as unknown;
+      if (typeof value !== "function") return value;
+      if (prop !== "listRules" && prop !== "knownSenders") return (value as (...a: unknown[]) => unknown).bind(obj);
+      return (accountId: string): Promise<unknown> => {
+        const key = `${prop}\u0000${accountId}`;
+        const hit = memo.get(key);
+        if (hit !== undefined && Date.now() - hit.at < maxAgeMs) return hit.value;
+        const fresh = (value as (a: string) => Promise<unknown>).call(obj, accountId);
+        const entry = { at: Date.now(), value: fresh };
+        memo.set(key, entry);
+        fresh.catch(() => { if (memo.get(key) === entry) memo.delete(key); });
+        return fresh;
+      };
+    },
+  });
+  return { repo: wrapped, drop: () => { memo = new Map(); } };
+}
+
 /** Where held first-contact senders wait — the queue `screener-auto-suggest.ts` reads. */
 const SCREENER_HOLD_FOLDER = "ohmail/Screener";
 
@@ -1295,6 +1381,60 @@ async function syncCycleWithin(
   const deferred = new Set<string>();
   let firstDeferredError: unknown = null;
 
+  // ── RUNS (see {@link SyncDeps.ingestRuns}) ─────────────────────────────────────────────────
+  const runs = deps.ingestRuns;
+  const snapshot = runs === undefined ? null : planSnapshot(repo, runs.maxAgeMs);
+  const planRepo = snapshot?.repo ?? repo;
+  let open: OpenRun | null = null;
+
+  /**
+   * COMMIT THE OPEN RUN — one transaction, in letter order, then each letter's bookkeeping as its
+   * own commit would have done it. A refusal or a fault of ours fails the cycle with nothing of the
+   * run written (the next cycle fetches it again); any other failure commits each letter alone,
+   * the per-letter poison isolation exactly.
+   */
+  async function flushRun(): Promise<void> {
+    const run = open;
+    if (run === null) return;
+    open = null;
+    const members = run.members;
+    let out: IngestRunResult | null;
+    try {
+      out = await fencedIngest(deps, async (txRepo) => {
+        const persist = (txRepo as WorkerRepo).persistNewRun;
+        if (typeof persist !== "function") return null;
+        const input = members.map((m) => ({ plan: m.plan.new!, insert: m.insert }));
+        const ctx: IngestRunContext = { accountId, mailboxId, storageCap, ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}) };
+        if (deps.fence !== undefined) return persist.call(txRepo, input, ctx);
+        // Unfenced, the change-log allocation asks the mailbox, as {@link commitFenced}'s `new` arm.
+        let asked: string | null | undefined;
+        const result = await persist.call(txRepo, input, {
+          ...ctx, mailboxMustBeLive: { mailboxId, answer: (status) => { asked = status; refuseRemovedMailbox(status); } },
+        });
+        if (asked === undefined) await assertMailboxStillHere(txRepo, mailboxId);
+        return result;
+      });
+    } catch (err) {
+      if (err instanceof LeaseUnavailableError) throw err;
+      rethrowRefusal(err);
+      if (classifyIngestFault(err).domain === "infrastructure") {
+        if (isStoreStatementFault(err)) deadLetters.noteStoreFault();
+        throw err;
+      }
+      log?.warn("sync_ingest_run_fell_back", {
+        mailboxId, accountId, letters: members.length, err,
+        reason: "the run could not be stored in one transaction and nothing of it was written; "
+          + "each letter is committed alone",
+      });
+      out = null;
+    }
+    const stored = out?.persisted ?? 0;
+    for (const m of members.slice(0, stored)) noteCommitted(m.ch, m.plan);
+    // The next run is planned from fresh reads: a rule made meanwhile applies from it.
+    snapshot?.drop();
+    for (const m of members.slice(stored)) await attempt(m.ch, () => commitAlone(m.ch, m.plan));
+  }
+
   /**
    * Per-change failure boundary. The three outcomes are the whole fix. `applied` continues. `skip`
    * records the item durably as evidence, declares it consumed, and continues — the batch reaches B.
@@ -1317,7 +1457,9 @@ async function syncCycleWithin(
     try {
       await run();
     } catch (err) {
-      if (err instanceof ClassifierFaultError || err instanceof LeaseUnavailableError) throw err;
+      // The letters planned before this one are stored before the cycle stops on it.
+      if (err instanceof ClassifierFaultError) { await flushRun(); throw err; }
+      if (err instanceof LeaseUnavailableError) throw err;
       // The two REFUSALS leave here too, and `MailboxRemovedError` is one of them: counting an
       // attempt against a lost lease would spend a customer's mail on our own handover, and
       // writing a `message_failures` row for a removed mailbox would leave a record of somebody's
@@ -1336,6 +1478,7 @@ async function syncCycleWithin(
         // folders' cursors. Do not re-add it: it would suggest the cycle continues past this point.
         // The device store's own refusal is the hold's news too: the mail is not arriving, and it is ours.
         if (isStoreStatementFault(err)) deadLetters.noteStoreFault();
+        await flushRun();
         throw err;
       }
       await writeOff(ch.locator, fault, err);
@@ -1350,6 +1493,8 @@ async function syncCycleWithin(
   async function writeOff(
     locator: NativeLocator, fault: { code: MessageFailureCode; deterministic: boolean }, err: unknown,
   ): Promise<void> {
+    // The run before this letter is stored first, so commits stay in the order the letters came.
+    await flushRun();
     const { uidValidity: siteEpoch, uid: siteUid } = parseRef(locator.ref);
     const site = { folder: locator.folder, uidValidity: siteEpoch, uid: siteUid };
     const verdict = deadLetters.record(locator, fault);
@@ -1553,29 +1698,53 @@ async function syncCycleWithin(
   // uses it — so an idle cycle and an inbound-only page pay no statement for it.
   const correspondenceSince = await consentPointFor(deps, readerMode, batch.creates);
   const ownAddresses = await ownAddressesFor(deps, readerMode, batch.creates);
+  /** After a letter's commit settled: the ledger's progress and the Screener's mark. */
+  const noteCommitted = (ch: Change, plan: ChangePlan): void => {
+    // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
+    if (plan.outcome === "new") { deadLetters.noteStored(); deadLetters.noteProgressIn(ch.locator.folder); }
+    // A message RE-LEARNED, which a renumbered folder's re-read does once per message: progress
+    // for a breach in its folder, as a store is.
+    else if (relearnedUnderNewEpoch(plan)) deadLetters.noteProgressIn(ch.locator.folder);
+    // AFTER the commit settles, outside the transaction — a hold that committed owes the
+    // account a suggest visit ({@link SyncDeps.onScreenerHold}); a refused commit threw above.
+    if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);
+  };
+  const commitAlone = async (ch: Change, plan: ChangePlan): Promise<void> => {
+    const committed = await fencedIngest(deps, async (txRepo) =>
+      // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
+      // ran outside any transaction and may have spent a classifier call there, which is exactly
+      // the gap a removal lands in. See {@link commitFenced} for which statement carries the
+      // question and {@link assertMailboxStillHere} for what it is.
+      commitFenced(plan, txRepo, {
+        repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
+        ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}),
+      }, deps.fence !== undefined));
+    await runOwedDemotions(repo, accountId, mailboxId, committed.owedDemotions ?? [], log);
+    noteCommitted(ch, plan);
+    // A letter committed alone may have taught a sender: the next plan reads them afresh.
+    snapshot?.drop();
+  };
   for (const ch of [...batch.creates, ...batch.moves]) {
     await attempt(ch, async () => {
-      const plan = await planChange(ch, { repo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) });
-      const committed = await fencedIngest(deps, async (txRepo) =>
-        // The mailbox is asked about INSIDE this transaction, never before it: `planChange` above
-        // ran outside any transaction and may have spent a classifier call there, which is exactly
-        // the gap a removal lands in. See {@link commitFenced} for which statement carries the
-        // question and {@link assertMailboxStillHere} for what it is.
-        commitFenced(plan, txRepo, {
-          repo: txRepo, routing: txRepo, accountId, mailboxId, storageCap,
-          ...(deps.observedSince !== undefined ? { observedSince: deps.observedSince } : {}),
-        }, deps.fence !== undefined));
-      await runOwedDemotions(repo, accountId, mailboxId, committed.owedDemotions ?? [], log);
-      // A message STORED: the backstop's run of write-offs ends here, and a hold with it.
-      if (plan.outcome === "new") { deadLetters.noteStored(); deadLetters.noteProgressIn(ch.locator.folder); }
-      // A message RE-LEARNED, which a renumbered folder's re-read does once per message: progress
-      // for a breach in its folder, as a store is.
-      else if (relearnedUnderNewEpoch(plan)) deadLetters.noteProgressIn(ch.locator.folder);
-      // AFTER the commit settles, outside the transaction — a hold that committed owes the
-      // account a suggest visit ({@link SyncDeps.onScreenerHold}); a refused commit threw above.
-      if (planHeldAtGate(plan)) deps.onScreenerHold?.(accountId);
+      // With runs on, the letter is parsed first: its keys say whether the open run must commit before it is planned.
+      const raw = ch.raw;
+      const parsed = runs !== undefined && raw !== undefined && raw.length > 0 ? await normalizeMime(raw, { log }) : undefined;
+      // A plan reads what the letters before it stored: a run they are in is committed first.
+      if (open !== null && (parsed === undefined || runMeets(open, parsed, raw!))) await flushRun();
+      const plan = await planChange(ch, { repo: planRepo, accountId, mailboxId, classifier, credits, routing: repo, trustedAuthservIds, signatures, ohboxPolicy, ohboxBar, screeningCutoff, correspondenceSince, importHold, readerMode, log, ...(ownAddresses !== undefined ? { ownAddresses } : {}) }, parsed);
+      if (runs !== undefined && parsed !== undefined && runnable(plan)) {
+        const run = open ??= { members: [], keys: new Set(), ids: new Set(), bodyBytes: 0, openedAt: Date.now(), teaches: false };
+        joinRun(run, ch, plan, parsed, newMessageInsertOf(plan.new!, accountId, mailboxId));
+        // A letter naming list addresses ends its run: the next plan reads them as known.
+        if (run.teaches || run.members.length >= runs.maxMembers || run.bodyBytes >= runs.maxBodyBytes
+          || Date.now() - run.openedAt >= runs.maxAgeMs) await flushRun();
+        return;
+      }
+      await flushRun();
+      await commitAlone(ch, plan);
     });
   }
+  await flushRun();
 
   // Inbound read-state — the inbound half of read-state mirroring. `flagChanges` was produced by the
   // adapter and consumed by nothing, so a message read in another client stayed bold in ohmail for

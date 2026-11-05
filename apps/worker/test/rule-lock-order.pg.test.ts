@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql, type SQL } from "drizzle-orm";
 import { carryDialect } from "@trafficflow/db/dialect";
 import {
-  accounts, accountSettings, accountSyncState, approvals, changeLog, folderState, graduations, learningSignals, mailboxFolders, mailboxes, messageBodies,
+  accounts, accountSettings, accountSyncState, approvals, changeLog, contacts, folderState, graduations, learningSignals, mailboxFolders, mailboxes, messageBodies,
   messageInstances, messages, organizerRequests, routingDecisions, rules, applyScreenerDecision,
   ACCOUNT_RULE_KEY_LOCK_CLASS, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
@@ -14,14 +14,18 @@ import {
 } from "@trafficflow/core/adapters/organizer-lease";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { applyMetaRequests, driveOutstandingRequests } from "../src/request-drain.js";
-import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { makeOwnedDb, workerHeartbeats, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { Logger } from "@trafficflow/core/mail";
-import { ApprovalService, LearningService, MailboxService, MessageService, RulesService, deleteAccount, resetScreeningState, type ServiceContext } from "@trafficflow/services";
+import {
+  ApprovalService, LearningService, MailboxService, MessageService, RulesService, ScreenerService, deleteAccount, releaseHeld,
+  resetScreeningState, setDormancyDays, type ServiceContext,
+} from "@trafficflow/services";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { runSyncCycle } from "../src/sync.js";
+import { makeSyncWriteFence, stampMailboxSyncNow, type LeaderFence } from "../src/mailboxes.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
 import { screenerAutoActPass, type ScreenerActConsent } from "../src/screener-auto-act.js";
@@ -43,18 +47,26 @@ const SCREENER = "ohmail/Screener";
 const SPAM = "ohmail/Quarantine";
 const NEWS = "ohmail/News";
 
-function named(name: string): string {
+function named(name: string, settings: Record<string, string> = {}): string {
   const u = new URL(PG_TEST_URL);
   u.searchParams.set("application_name", name);
+  // Any other parameter is a setting of the session (the driver hands it over at startup).
+  for (const [k, v] of Object.entries(settings)) u.searchParams.set(k, v);
   return u.toString();
 }
+/** A session that plans no index scan: it reads a small table in the heap's order, as a seq scan does. */
+const HEAP_ORDER = { enable_indexscan: "off", enable_bitmapscan: "off" };
 const codeOf = (e: unknown): string | undefined =>
   (e as { code?: string } | null)?.code ?? (e as { cause?: { code?: string } } | null)?.cause?.code;
 
 describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", () => {
   let base: OwnedDb;
   const clients: OwnedDb[] = [];
-  const open = (name: string): OwnedDb => { const o = makeOwnedDb(named(name)); clients.push(o); return o; };
+  const open = (name: string, settings?: Record<string, string>): OwnedDb => {
+    const o = makeOwnedDb(named(name, settings));
+    clients.push(o);
+    return o;
+  };
 
   beforeAll(async () => {
     await runMigrations(PG_TEST_URL);
@@ -412,6 +424,256 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       const settled = await Promise.allSettled([reset, decide]);
       const codes = settled.map((x) => (x.status === "rejected" ? codeOf(x.reason) ?? String(x.reason) : "ok"));
       expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+    }, 60_000);
+  }
+
+  /* ── A PRESS AND A HOSTED WRITE GROUP ON THE SENDER'S MAILBOX ──────────────────────────────
+     A hosted write group opens on its mailbox row FOR UPDATE (`makeSyncWriteFence`) and appends its
+     delta after it; a filing rotation runs them seconds after a press rings the doorbell. A press
+     that took the counter (its rule's delta) before it asked that row was the group's deadlock
+     partner (40P01), and with the group first the press lost: a 500 on `POST /screener/:id`. The
+     held release, which re-arms its rule groups (a delta) before it decides the named senders, met the
+     group the same way. Both doors are the services' own, as the routes call them. */
+  async function pressedMailbox(prefix: string, opts: { twin?: boolean } = {}) {
+    // The pools this case opens close with it (`done`), as the belt's cases close theirs.
+    const mark = clients.length;
+    const accountId = randomUUID();
+    const tag = accountId.slice(0, 8);
+    await base.db.insert(accounts).values({ id: accountId, name: `${prefix}-${tag}` });
+    const box = (id?: string): typeof mailboxes.$inferInsert => ({
+      ...(id === undefined ? {} : { id }), accountId, provider: "imap", address: `${prefix}-${id ?? "one"}-${tag}@example.test`,
+      status: "connected", organizerRole: "organizer", organizeConsentedAt: CONNECT,
+    });
+    // A twin is a second mailbox whose id sorts first, stored after the letters' one.
+    const pair = opts.twin ? await highStoredFirst(box, tag) : null;
+    const [mb] = pair ? [{ id: pair.high }] : await base.db.insert(mailboxes).values(box()).returning();
+    await base.db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
+    await base.db.insert(accountSyncState).values({ accountId, nextSeq: 0n }).onConflictDoNothing();
+    const sender = `new-${tag}@first.test`;
+    // A contact nobody wrote a rule for: the held release offers the sender's line.
+    await base.db.insert(contacts).values({ accountId, address: sender });
+    const letter = async (ref: number, from: string, folder: string, senderCheck: string | null): Promise<string> => {
+      const [m] = await base.db.insert(messages).values({
+        accountId, mailboxId: mb!.id, bodyHash: `${prefix}-${tag}-${ref}`, dedupKey: `${prefix}:${tag}:${ref}`,
+        subject: "hello", fromAddress: from, senderCheck, nativeLocator: { folder, ref: `1:${ref}` },
+      }).returning();
+      await base.db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      return m!.id;
+    };
+    // Not yet checked: the press and the release check it before they move it.
+    const held = await letter(500, sender, SCREENER, null);
+    // What the group's delta is about: the previous press's letter, being filed.
+    const filed = await letter(501, `earlier-${tag}@first.test`, "INBOX", "none");
+    // A rule group with a letter held behind it: the release re-arms its walk (a delta) before it
+    // decides the sender.
+    const ruled = `ruled-${tag}@first.test`;
+    const [group1] = await base.db.insert(rules).values({
+      accountId, kind: "sender", match: ruled, destination: NEWS, priority: 0, enabled: true,
+      retroRequestedAt: CONNECT, retroDoneAt: CONNECT,
+    }).returning({ id: rules.id });
+    await letter(502, ruled, SCREENER, "none");
+    const leader: LeaderFence = { shardIndex: 600_000 + Math.floor(Math.random() * 100_000), instanceId: `lo-fence-${tag}` };
+    await base.db.insert(workerHeartbeats).values({ shardIndex: leader.shardIndex, instanceId: leader.instanceId, leader: true });
+    const ctxOn = (name: string, settings?: Record<string, string>) =>
+      ({ db: open(name, settings).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+    const doors = {
+      press: (name: string) => new ScreenerService({}).decide(ctxOn(name), held, { decision: "yes" }),
+      release: (name: string) => releaseHeld(ctxOn(name), { ruleIds: [group1!.id], senders: [sender] }),
+    };
+    // The statements that lock both of a twin's rows at once, each planned in the heap's order.
+    const both = pair === null ? [] : [pair.high, pair.low];
+    const several = {
+      stamp: (name: string) => stampMailboxSyncNow(open(name, HEAP_ORDER).db, both),
+      pull: (name: string) => pullSvc.requestPull(ctxOn(name, HEAP_ORDER)),
+    };
+    let verdict: unknown = null;
+    const group = (name: string, inside: () => Promise<void> = async () => {}) =>
+      makeSyncWriteFence(open(name).db as never, mb!.id, leader).transaction(async (repo) => {
+        await inside();
+        return repo.recordChange({ accountId, entityType: "message", entityId: filed, op: "update" });
+      }).then((v) => { verdict = v; });
+    const state = async () => ({
+      verdict,
+      held: (await base.db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, held)))[0]?.d,
+      groupDeltas: (await base.db.select({ seq: changeLog.seq }).from(changeLog)
+        .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityId, filed)))).length,
+      rule: (await base.db.select({ destination: rules.destination }).from(rules)
+        .where(and(eq(rules.accountId, accountId), eq(rules.match, sender)))).map((r) => r.destination),
+      rearmed: (await base.db.select({ done: rules.retroDoneAt }).from(rules).where(eq(rules.id, group1!.id)))[0]?.done === null,
+      // How many of the account's mailboxes carry the pass-end stamp, and a pull's doorbell.
+      ...await base.db.select({ stamped: mailboxes.lastSyncAt, pulled: mailboxes.syncRequestedAt }).from(mailboxes)
+        .where(eq(mailboxes.accountId, accountId))
+        .then((rows) => ({ stamped: rows.filter((r) => r.stamped !== null).length, pulled: rows.filter((r) => r.pulled !== null).length })),
+    });
+    const done = async () => {
+      await base.db.delete(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, leader.shardIndex));
+      for (const c of clients.splice(mark)) await c.close().catch(() => {});
+    };
+    return { accountId, tag, doors, several, group, state, done };
+  }
+  /**
+   * Two mailboxes of one account, the HIGH id stored first: a seq scan reads it first, id order the
+   * low one. One insert puts both on one page in that order; a pair a page break stored the other way
+   * round is replaced.
+   */
+  async function highStoredFirst(box: (id: string) => typeof mailboxes.$inferInsert, tag: string) {
+    for (let n = 0; n < 5; n++) {
+      const tail = `${tag}${String(n).padStart(4, "0")}`;
+      const pair = { high: `ffffffff-ffff-4fff-bfff-${tail}`, low: `00000000-0000-4000-8000-${tail}` };
+      await base.db.insert(mailboxes).values([box(pair.high), box(pair.low)]);
+      const read = await base.db.execute(sql`select id from mailboxes where id in (${pair.high}, ${pair.low}) order by ctid`) as unknown as Array<{ id: string }>;
+      if (read[0]?.id === pair.high) return pair;
+      await base.db.delete(mailboxes).where(sql`${mailboxes.id} in (${pair.high}, ${pair.low})`);
+    }
+    throw new Error("the heap never stored the high id first");
+  }
+  const pullSvc = new MailboxService({ signatureChecks: false });
+  const answered = (p: Promise<unknown>): Promise<string> => p.then(() => "ok", (e: unknown) => codeOf(e) ?? String(e));
+  const pressedAndGrouped = { verdict: { fenced: false }, held: "INBOX", groupDeltas: 1, rule: ["INBOX"] };
+
+  for (const [door, named] of [["press", "a Screener press on its held sender"], ["release", "a held release naming its sender"]] as const) {
+    it(`a hosted write group holding the mailbox row and ${named}, the group first: both commit`, async () => {
+      const w = await pressedMailbox(`lo-fg-${door}`);
+      try {
+        let parked!: () => void;
+        const isParked = new Promise<void>((r) => { parked = r; });
+        let resume!: () => void;
+        const resumed = new Promise<void>((r) => { resume = r; });
+        const group = answered(w.group(`lo-fg-group-${w.tag}`, async () => { parked(); await resumed; }));
+        await isParked;
+        const doorName = `lo-fg-${door}-${w.tag}`;
+        const pressed = answered(w.doors[door](doorName));
+        await untilWaiting(doorName);
+        resume();
+        expect(await Promise.all([pressed, group]), "a writer failed").toEqual(["ok", "ok"]);
+        expect(await w.state()).toMatchObject({ ...pressedAndGrouped, rearmed: door === "release" });
+      } finally {
+        await w.done();
+      }
+    }, 60_000);
+
+    it(`${named} and a hosted write group on the mailbox, the ${door} first: both commit`, async () => {
+      const w = await pressedMailbox(`lo-fp-${door}`);
+      try {
+        // The gate holds the counter: the door parks at its first delta, then the group starts.
+        const codes = await race(holdCounter(w.accountId),
+          [`lo-fp-${door}-${w.tag}`, () => w.doors[door](`lo-fp-${door}-${w.tag}`)],
+          [`lo-fp-group-${w.tag}`, () => w.group(`lo-fp-group-${w.tag}`)]);
+        expect(codes, "a writer failed").toEqual(["ok", "ok"]);
+        expect(await w.state()).toMatchObject({ ...pressedAndGrouped, rearmed: door === "release" });
+      } finally {
+        await w.done();
+      }
+    }, 60_000);
+  }
+
+  /* ONE STATEMENT ON SEVERAL OF THE ACCOUNT'S MAILBOX ROWS beside the press, which takes them in id
+     order. The worker's pass-end stamp and a person's pull lock several rows at once, and a plan that
+     reads the small table in the heap's order took them in that order: a group holding the high row
+     (stored first), the stamp or the pull waiting on it, the press holding the low row and waiting
+     too; the group's commit handed the high row to the statement, which then asked the low one the
+     press held (40P01). Their sessions plan no index scan here, so no index can order them by luck. */
+  for (const [door, named] of [["stamp", "the worker's pass-end stamp"], ["pull", "a person's pull"]] as const) {
+    it(`a write group on the high mailbox row, ${named} on both rows and a press under them: all commit`, async () => {
+      const w = await pressedMailbox(`lo-sv-${door}`, { twin: true });
+      try {
+        let parked!: () => void;
+        const isParked = new Promise<void>((r) => { parked = r; });
+        let resume!: () => void;
+        const resumed = new Promise<void>((r) => { resume = r; });
+        const group = answered(w.group(`lo-sv-group-${w.tag}`, async () => { parked(); await resumed; }));
+        await isParked;
+        const statement = answered(w.several[door](`lo-sv-${door}-${w.tag}`));
+        await untilWaiting(`lo-sv-${door}-${w.tag}`);
+        const pressed = answered(w.doors.press(`lo-sv-press-${w.tag}`));
+        await untilWaiting(`lo-sv-press-${w.tag}`);
+        resume();
+        expect(await Promise.all([group, statement, pressed]), "a writer failed").toEqual(["ok", "ok", "ok"]);
+        expect(await w.state()).toMatchObject({ ...pressedAndGrouped, [door === "stamp" ? "stamped" : "pulled"]: 2 });
+      } finally {
+        await w.done();
+      }
+    }, 60_000);
+  }
+
+  /* A PRESS THAT TRAVELS, on an account with one mailbox organized here and one held by another
+     install: a rule's create, pause or removal, or the dormancy window, writes here (its delta takes
+     the counter) and asks the holder (a request row behind the held mailbox's row FOR SHARE). A write
+     group on the held mailbox, holding its row and taking the counter after it, met the press
+     crosswise (40P01) once the press asked the row after its delta. */
+  async function travellingPress(prefix: string) {
+    const mark = clients.length;
+    const accountId = randomUUID();
+    const tag = accountId.slice(0, 8);
+    await base.db.insert(accounts).values({ id: accountId, name: `${prefix}-${tag}` });
+    await base.db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
+    await base.db.insert(accountSyncState).values({ accountId, nextSeq: 0n }).onConflictDoNothing();
+    await base.db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `${prefix}-here-${tag}@example.test`, status: "connected",
+      organizerRole: "organizer", organizeConsentedAt: CONNECT,
+    });
+    const [held] = await base.db.insert(mailboxes).values({
+      accountId, provider: "imap", address: `${prefix}-held-${tag}@example.test`, status: "connected",
+      organizerRole: "reader", organizerState: "held", organizedByCapabilities: "requests,rules,profile",
+      organizedByKind: "local", organizedByName: "laptop",
+    }).returning();
+    const [rule] = await base.db.insert(rules).values({
+      accountId, kind: "sender", match: `ann-${tag}@shop.example`, destination: NEWS, priority: 0, enabled: true,
+      provenance: "manual", updatedAt: WROTE,
+    }).returning({ id: rules.id });
+    const [m] = await base.db.insert(messages).values({
+      accountId, mailboxId: held!.id, bodyHash: `${prefix}-${tag}`, dedupKey: `${prefix}:${tag}`, subject: "hello",
+      fromAddress: `earlier-${tag}@first.test`, nativeLocator: { folder: "INBOX", ref: "1:600" },
+    }).returning();
+    const leader: LeaderFence = { shardIndex: 600_000 + Math.floor(Math.random() * 100_000), instanceId: `lo-tr-${tag}` };
+    await base.db.insert(workerHeartbeats).values({ shardIndex: leader.shardIndex, instanceId: leader.instanceId, leader: true });
+    const ctxOn = (name: string) =>
+      ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;
+    const doors = {
+      "rule's create": (name: string) => new RulesService().create(ctxOn(name), { kind: "sender", match: `bob-${tag}@shop.example`, destination: NEWS }),
+      "rule's pause": (name: string) => new RulesService().update(ctxOn(name), rule!.id, { enabled: false } as never),
+      "rule's removal": (name: string) => new RulesService().remove(ctxOn(name), rule!.id),
+      "dormancy window": (name: string) => setDormancyDays(ctxOn(name), 30),
+    };
+    const group = (name: string, inside: () => Promise<void>) =>
+      makeSyncWriteFence(open(name).db as never, held!.id, leader).transaction(async (repo) => {
+        await inside();
+        return repo.recordChange({ accountId, entityType: "message", entityId: m!.id, op: "update" });
+      });
+    const state = async () => ({
+      asked: (await base.db.select({ id: organizerRequests.id }).from(organizerRequests)
+        .where(and(eq(organizerRequests.accountId, accountId), eq(organizerRequests.mailboxId, held!.id)))).length,
+      groupDeltas: (await base.db.select({ seq: changeLog.seq }).from(changeLog)
+        .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityId, m!.id)))).length,
+    });
+    const done = async () => {
+      await base.db.delete(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, leader.shardIndex));
+      for (const c of clients.splice(mark)) await c.close().catch(() => {});
+    };
+    return { tag, doors, group, state, done };
+  }
+
+  for (const door of ["rule's create", "rule's pause", "rule's removal", "dormancy window"] as const) {
+    it(`a write group on the held mailbox and a ${door} that travels to it: both commit`, async () => {
+      const w = await travellingPress("lo-tr");
+      try {
+        let parked!: () => void;
+        const isParked = new Promise<void>((r) => { parked = r; });
+        let resume!: () => void;
+        const resumed = new Promise<void>((r) => { resume = r; });
+        const group = answered(w.group(`lo-tr-group-${w.tag}`, async () => { parked(); await resumed; }));
+        await isParked;
+        const doorName = `lo-tr-door-${w.tag}`;
+        const pressed = answered(w.doors[door](doorName));
+        await untilWaiting(doorName);
+        resume();
+        expect(await Promise.all([group, pressed]), "a writer failed").toEqual(["ok", "ok"]);
+        expect(await w.state(), "the holder was not asked, or the group's delta is missing").toEqual({ asked: 1, groupDeltas: 1 });
+      } finally {
+        await w.done();
+      }
     }, 60_000);
   }
 

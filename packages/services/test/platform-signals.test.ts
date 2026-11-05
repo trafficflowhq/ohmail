@@ -9,7 +9,7 @@ import { CLOUD_JOURNAL } from "@trafficflow/db/admin";
 import {
   makePlatformSignalPort, runPlatformSignalPass, SAMPLE_CAUSES,
   VERCEL_REQUEST_LOGS_URL, SIGNAL_WINDOW_MS, SSE_DISABLED_REFUSAL,
-  type PlatformSignalPort,
+  type PlatformSignalFetch, type PlatformSignalPort,
 } from "@trafficflow/db/cloud";
 
 
@@ -615,20 +615,23 @@ describe("runPlatformSignalPass — the window", () => {
     expect(rows[0]!.errors5xx).toBe(3);
   });
 
-  it("prunes past retention on EVERY pass, including an unconfigured one", async () => {
-    // A deployment that had a token and lost it must not keep a week of rows for ever.
-    const db = await makeTestDb();
-    await db.insert(platformSignals).values({
-      provider: "vercel", project: "ohmail-api",
-      windowStart: new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
-      requests: 5, errors5xx: 0, truncated: false,
-      fetchedAt: new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000),
-    });
-    const report = await runPlatformSignalPass(db, {
-      port: fakePort({ unconfigured: true }), now: () => NOW,
-    });
-    expect(report.pruned).toBe(1);
-    expect(await db.select().from(platformSignals)).toEqual([]);
+  it("prunes past retention on a written or failed pass, never on an unconfigured one", async () => {
+    // Only the worker runs the pass, and only with half its credential pair does it answer
+    // unconfigured. Pruning then emptied the table, and an empty table resolves signal_source_dark.
+    const aged = new Date(NOW.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const answers: Array<[PlatformSignalFetch, number, number]> = [
+      [{ unconfigured: true }, 0, 1], [{ failed: "http_403" }, 1, 0], [{ rows: [] }, 1, 0],
+    ];
+    for (const [answer, pruned, left] of answers) {
+      const db = await makeTestDb();
+      await db.insert(platformSignals).values({
+        provider: "vercel", project: "ohmail-api", windowStart: aged,
+        requests: 5, errors5xx: 0, truncated: false, fetchedAt: aged,
+      });
+      const report = await runPlatformSignalPass(db, { port: fakePort(answer), now: () => NOW });
+      expect(report.pruned, JSON.stringify(answer)).toBe(pruned);
+      expect(await db.select().from(platformSignals), JSON.stringify(answer)).toHaveLength(left);
+    }
   });
 });
 
