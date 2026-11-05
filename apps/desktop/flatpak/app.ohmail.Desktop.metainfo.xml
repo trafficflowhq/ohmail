@@ -78,6 +78,14 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.41" date="2026-11-05">
+      <description>
+        <ul>
+          <li>Escape in a reply's subject goes back to the reply</li>
+          <li>Searching a common word answers faster again</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.40" date="2026-11-05">
       <description>
         <ul>
@@ -121,15 +129,6 @@
           <li>Search reads _ and % as typed, and a minus word no longer changes the count</li>
           <li>The reply you send scrolls into view</li>
           <li>The AI sample row names its invented sender on a reserved domain</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.36" date="2026-11-04">
-      <description>
-        <ul>
-          <li>A word typed part way no longer lists the letters holding a common word it starts</li>
-          <li>A phone or computer signed out from another device no longer keeps your mail</li>
-          <li>The phone asks each mailbox about saved settings once, with Settings open</li>
         </ul>
       </description>
     </release>

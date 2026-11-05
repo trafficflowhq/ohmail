@@ -21,6 +21,21 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.41] — 2026-11-05
+
+### Escape in a reply's subject goes back to the reply
+
+On the desktop app and the web app, pressing Escape while changing the subject of a reply under a message moved
+the keyboard to the message list, so the next letter you typed ran a mailbox shortcut: an e parked the message you
+were answering, closed the reply and dropped the files you had attached to it. Escape (and Enter) in the subject
+now take you back to the reply's text, and so does removing an attached file from the keyboard. A letter typed
+anywhere inside an open reply, on its buttons too, never runs a mailbox shortcut.
+
+### Searching a common word answers faster again
+
+Searching a common word, or a word beside a minus word, answers faster again on ohmail Cloud, your own
+server and the web app. The results are the same as before.
+
 ## [0.30.40] — 2026-11-05
 
 ### Attached files show a picture of themselves while you write
@@ -16961,7 +16976,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.40...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.41...HEAD
+[0.30.41]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.41
 [0.30.40]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.40
 [0.30.39]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.39
 [0.30.38]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.38
