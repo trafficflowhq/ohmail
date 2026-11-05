@@ -369,9 +369,15 @@ function Leaf({ item }: { item: AttachmentItem }) {
       </span>
     );
   }
+  return <FileMark filename={item.filename} mimeType={item.mimeType} />;
+}
+
+/** The leaf with no picture: the type's glyph, or an unknown file's extension. Compose rows wear it too. */
+export function FileMark({ filename, mimeType }: { filename: string; mimeType: string }) {
+  const kind = kindOf(mimeType);
   /* An unknown binary shows its extension rather than a dressed-up icon — honest about
      being "a file", specific about which kind, in the keycap's own monospace. */
-  const [, ext] = splitName(item.filename);
+  const [, ext] = splitName(filename);
   const badge = kind === "other" && ext.length > 1 ? ext.slice(1).toUpperCase() : null;
   return (
     <span className="att-leaf" aria-hidden="true">

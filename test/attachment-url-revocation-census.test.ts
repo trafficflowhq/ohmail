@@ -71,6 +71,8 @@ const PINNED: Record<string, Role> = {
   // label names another site (`link-ask.ts`), a few kilobytes of its own text per address and at
   // most 256 per frame, revoked when the frame's next document loads and when the reader unmounts.
   "apps/webapp/app/components/link-ask.ts": { mints: true, asks: false, releases: true },
+  // The compose rows' pictures: one URL per attached raster image, revoked when its row leaves or the form closes.
+  "apps/webapp/app/components/compose-attach-look.tsx": { mints: true, asks: false, releases: true },
 };
 
 describe("every reader that materialises an attachment URL is accounted for", () => {

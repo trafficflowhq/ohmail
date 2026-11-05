@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -14,6 +14,13 @@ import {
 import type { ComposeAttachment } from "@ohmail/client-engine";
 import { enableDesktopDroppedFiles } from "../app/shell/dropped-files";
 import { restartHold } from "../app/shell/app-update";
+import { KeymapProvider } from "../app/shell/keymap";
+
+/* The compose preview's PDF opens through pdf.js, which jsdom cannot run: a load that fails. */
+vi.mock("pdfjs-dist", () => ({
+  seam: true,
+  getDocument: () => ({ promise: Promise.reject(new Error("no pdf.js here")), destroy: async () => {} }),
+}));
 
 /**
  * THE SHRINK DIAL, IN THE COMPOSE ATTACH ROW.
@@ -29,6 +36,18 @@ import { restartHold } from "../app/shell/app-update";
  * quality it was asked for and answers something smaller. The decisions — whether to decode at
  * all, at which quality, and whether the cap still refuses — are the module's own.
  */
+
+// jsdom's Blob has no `text()`; the preview reads a text file with it, as every browser can.
+if (typeof (Blob.prototype as { text?: unknown }).text !== "function") {
+  (Blob.prototype as unknown as { text: () => Promise<string> }).text = function (this: Blob) {
+    return new Promise<string>((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result));
+      fr.onerror = () => reject(fr.error);
+      fr.readAsText(this);
+    });
+  };
+}
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;
@@ -261,7 +280,7 @@ async function startPick(files: File[]): Promise<void> {
 }
 
 async function mount(
-  o: { maxTotalBytes?: number; disabled?: boolean; locale?: "en" | "de"; onAttaching?: (files: readonly string[]) => void } = {},
+  o: { maxTotalBytes?: number; disabled?: boolean; locale?: "en" | "de"; onAttaching?: (files: readonly string[]) => void; keys?: boolean } = {},
 ): Promise<void> {
   handed = [];
   handedHistory = [];
@@ -280,7 +299,9 @@ async function mount(
         messages: o.locale === "de" ? de : messages,
         timeZone: "UTC",
         now: new Date("2026-08-11T09:00:00.000Z"),
-        children: h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }),
+        children: o.keys
+          ? h(KeymapProvider, null, h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }))
+          : h(Wrap, { maxTotalBytes: o.maxTotalBytes, disabled: o.disabled, onAttaching: o.onAttaching }),
       }),
     );
   });
@@ -1707,5 +1728,161 @@ describe("the review round — async commits against a live form", () => {
       "the same file rides the message twice after the convergence",
     ).toBe(1);
     expect(attachmentBytes(handed[0]!)).toBe(shrunkSizeFor(IMAGE_QUALITY_RULES.low!.quality));
+  });
+});
+
+describe("each attached file shows itself, and opens in the preview", () => {
+  /** Every URL minted, with the Blob it was minted for, and every one revoked. */
+  let minted: Map<string, Blob>;
+  let revoked: string[];
+  let seq = 0;
+  beforeEach(() => {
+    minted = new Map();
+    revoked = [];
+    (URL as unknown as Mutable).createObjectURL = (b: Blob) => {
+      const u = `blob:http://localhost/${++seq}`;
+      minted.set(u, b);
+      return u;
+    };
+    (URL as unknown as Mutable).revokeObjectURL = (u: string) => { revoked.push(u); };
+  });
+  afterEach(() => {
+    delete (URL as unknown as Mutable).createObjectURL;
+    delete (URL as unknown as Mutable).revokeObjectURL;
+  });
+
+  const live = (): string[] => [...minted.keys()].filter((u) => !revoked.includes(u));
+  const bytesOf = (b: Blob): Promise<Uint8Array> => new Promise((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(new Uint8Array(fr.result as ArrayBuffer));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsArrayBuffer(b);
+  });
+  const decoded = (b64: string): Uint8Array => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const thumbOf = (name: string): HTMLImageElement | null => {
+    const row = [...host!.querySelectorAll(".compose-attach-item")].find((li) => li.textContent?.includes(name));
+    return row?.querySelector<HTMLImageElement>("img.att-thumb") ?? null;
+  };
+  const file = (name: string, type: string, text = name): File => new File([text], name, { type });
+  const dialog = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="dialog"][aria-label="Attachment preview"]');
+  const looks = (): HTMLButtonElement[] => [...host!.querySelectorAll<HTMLButtonElement>(".compose-attach-look")];
+  const docKey = async (k: string): Promise<void> => {
+    await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
+  };
+
+  it("a picture is drawn from the bytes that will be sent, and again after the dial moves", async () => {
+    await mount({ maxTotalBytes: 8 * MIB });
+    await pickFiles([photo()]);
+    const first = thumbOf("photo.jpg")!;
+    expect(first, "the attached photo shows no picture of itself").not.toBeNull();
+    const blob = minted.get(first.getAttribute("src")!)!;
+    expect(blob.type).toBe("image/jpeg");
+    expect(await bytesOf(blob)).toEqual(decoded(handed[0]!.contentBase64));
+
+    await setLevel("low");
+    await drain();
+    const second = thumbOf("photo.jpg")!;
+    expect(second.getAttribute("src")).not.toBe(first.getAttribute("src"));
+    expect(revoked).toEqual([first.getAttribute("src")]);
+    expect(await bytesOf(minted.get(second.getAttribute("src")!)!), "the picture is not the encode the send carries")
+      .toEqual(decoded(handed[0]!.contentBase64));
+  });
+
+  it("only the raster pictures the reader draws get a URL", async () => {
+    await mount({ maxTotalBytes: 8 * MIB });
+    await pickFiles([
+      file("logo.svg", "image/svg+xml", "<svg/>"),
+      file("page.html", "text/html", "<p>hi</p>"),
+      pdf(),
+      file("notes.txt", "text/plain", "hello"),
+    ]);
+    expect(handed).toHaveLength(4);
+    expect([...minted.keys()], "a file that is not a raster picture was given a URL").toEqual([]);
+    expect(host!.querySelectorAll(".compose-attach-item .att-leaf")).toHaveLength(4);
+    expect(host!.querySelectorAll(".compose-attach-item img")).toHaveLength(0);
+  });
+
+  it("removing a row revokes its URL alone; emptying the list or leaving releases the rest", async () => {
+    await mount({ maxTotalBytes: 8 * MIB });
+    await pickFiles([photo(), photo2()]);
+    const [one, two] = [thumbOf("photo.jpg")!.getAttribute("src")!, thumbOf("photo2.jpg")!.getAttribute("src")!];
+    await act(async () => { host!.querySelector<HTMLButtonElement>(".compose-attach-remove")!.click(); });
+    expect(revoked, "removing one row revoked the wrong URL").toEqual([one]);
+    expect(live()).toEqual([two]);
+    await act(async () => { host!.querySelector<HTMLButtonElement>(".compose-attach-remove")!.click(); });
+    expect(live()).toEqual([]);
+
+    await pickFiles([photo()]);
+    expect(live()).toHaveLength(1);
+    await act(async () => root!.unmount());
+    root = null;
+    expect(live(), "leaving the form kept a picture pinned").toEqual([]);
+  });
+
+  it("pressing a row opens the preview on that file; arrows walk all, Esc and Space close back to the row", async () => {
+    await mount({ maxTotalBytes: 8 * MIB, keys: true });
+    await pickFiles([photo(), file("plan.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"), photo2()]);
+    expect(looks()[1]!.getAttribute("aria-label")).toBe("Preview plan.docx");
+    // Opened from the keyboard: focus is on the row, so it comes back to a row.
+    await act(async () => { looks()[1]!.focus(); looks()[1]!.click(); });
+    expect(dialog(), "pressing the row opened nothing").not.toBeNull();
+    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("2 of 3");
+    expect(dialog()!.querySelector(".ap-card")!.textContent).toBe("No preview");
+    expect([...dialog()!.querySelectorAll("button")].some((b) => b.textContent?.includes("Download")), "the compose preview offered a Download").toBe(false);
+    await docKey("ArrowRight");
+    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("3 of 3");
+    await docKey("ArrowRight");
+    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("1 of 3");
+    await docKey("ArrowLeft");
+    expect(dialog()!.querySelector(".ap-meta")!.textContent).toContain("3 of 3");
+    expect(dialog()!.querySelector("img.ap-img")!.getAttribute("src")).toBe(thumbOf("photo2.jpg")!.getAttribute("src"));
+    await docKey("Escape");
+    expect(dialog()).toBeNull();
+    expect(document.activeElement, "focus did not come back to the row on screen").toBe(looks()[2]);
+
+    await act(async () => { looks()[0]!.click(); });
+    const panel = dialog()!;
+    await act(async () => { panel.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })); });
+    expect(dialog()).toBeNull();
+    expect(document.activeElement).toBe(looks()[0]);
+    expect(handed).toHaveLength(3);
+  });
+
+  it("a file pasted or dropped on the open preview attaches nothing", async () => {
+    await mount({ maxTotalBytes: 8 * MIB, keys: true });
+    await pickFiles([photo()]);
+    await act(async () => { looks()[0]!.click(); });
+    const at = dialog()!;
+    const carrying = (type: string): Event => {
+      const e = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(e, type === "paste" ? "clipboardData" : "dataTransfer", {
+        value: { files: [photo2()], types: ["Files"], getData: () => "", dropEffect: "copy" },
+      });
+      return e;
+    };
+    const over = carrying("dragover");
+    const drop = carrying("drop");
+    await act(async () => { at.dispatchEvent(carrying("paste")); at.dispatchEvent(over); at.dispatchEvent(drop); });
+    await drain();
+    expect(handed, "a file landed on the message from under the preview").toHaveLength(1);
+    expect(over.defaultPrevented && drop.defaultPrevented, "the browser was left to open the dropped file").toBe(true);
+    expect((over as unknown as { dataTransfer: { dropEffect: string } }).dataTransfer.dropEffect).toBe("none");
+  });
+
+  it("an image, a PDF and a text are each shown without a frame, an embed, an object or a blob: link", async () => {
+    await mount({ maxTotalBytes: 8 * MIB, keys: true });
+    await pickFiles([photo(), pdf(), file("notes.txt", "text/plain", "hello <b>there</b>")]);
+    await act(async () => { looks()[0]!.click(); });
+    const unsafe = () => document.querySelector("iframe, embed, object, a[href^='blob:']");
+    expect(dialog()!.querySelector("img.ap-img")).not.toBeNull();
+    expect(unsafe()).toBeNull();
+    await docKey("ArrowRight");
+    await drain();
+    expect(dialog()!.querySelector(".ap-card")?.textContent).toBe("Can't show this PDF here");
+    expect(unsafe()).toBeNull();
+    await docKey("ArrowRight");
+    await drain();
+    expect(dialog()!.querySelector("pre.ap-text")?.textContent).toBe("hello <b>there</b>");
+    expect(unsafe()).toBeNull();
   });
 });
