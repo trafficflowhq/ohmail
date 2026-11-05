@@ -161,6 +161,9 @@ function askCopy(): AskCopy {
   };
 }
 
+/** The ask page for one address, in the active language: what a marked prose link opens on the web. */
+const proseAskPage = (url: string): string => askPage(url, askCopy());
+
 
 // ── the allow-lists ────────────────────────────────────────────────────────────────────
 
@@ -5358,10 +5361,10 @@ export function MessageBody({
            mail had no structure worth keeping — the text part renders exactly as it always has.
            See `proseView` above. */
         mail.fold?.rich
-          ? <BodyText text={text} rich={mail.rich} richHistory={mail.fold.rich} ownImages={ownImages} foldKey={foldId} />
+          ? <BodyText text={text} rich={mail.rich} richHistory={mail.fold.rich} ownImages={ownImages} foldKey={foldId} askPage={askInPage ? proseAskPage : undefined} />
           : mail.fold
             ? <BodyText text={text} foldKey={foldId} htmlFold={mail.fold.at} subject={subject} />
-            : <BodyText text={text} rich={mail.rich} ownImages={ownImages} htmlFold={mail.historyAt} subject={subject} />
+            : <BodyText text={text} rich={mail.rich} ownImages={ownImages} htmlFold={mail.historyAt} subject={subject} askPage={askInPage ? proseAskPage : undefined} />
       ) : (
         /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
            the transform inside the frame, so a short mail's surround does not read as a light
