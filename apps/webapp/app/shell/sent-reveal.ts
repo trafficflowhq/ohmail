@@ -148,6 +148,25 @@ function scrollerOf(el: Element | null): HTMLElement | null {
   return null;
 }
 
+/** A pane mounted this soon after the one holding the press left takes it up: a remount, not a reader closed and opened again. */
+export const REVEAL_REMOUNT_MS = 1000;
+
+type Press = { visit: string; at: number; known: Set<string>; leftAt: number | null };
+/** The last press, kept outside the pane so a remount of it picks the press up again. */
+let lastPress: Press | null = null;
+/** `lastPress` while it still owes its reveal. */
+let owed: Press | null = null;
+
+const within = (t: number, ms: number): boolean => {
+  const d = revealClock.now() - t;
+  return d >= 0 && d <= ms;
+};
+/** The last press, when a pane of `visit` takes over from the one that held it, inside the window. */
+function carried(visit: string): Press | null {
+  const p = lastPress;
+  return p && p.visit === visit && within(p.at, REVEAL_WINDOW_MS) && (p.leftAt === null || within(p.leftAt, REVEAL_REMOUNT_MS)) ? p : null;
+}
+
 export interface SentReveal {
   /** This visit's own reply has joined: the pane's open anchor stands down for it, moved or not. */
   claims: () => boolean;
@@ -156,6 +175,8 @@ export interface SentReveal {
 /**
  * The pane's reveal, armed by {@link noteReplyPress} for a message it draws while its editor is open.
  * `members` is what the pane draws (the conversation, or the lone letter); `pane` the element they are in.
+ * The press holds until a copy is drawn, within {@link REVEAL_WINDOW_MS}: through the provisional copy giving way
+ * to the mirror's row under another id, and through a remount of the pane.
  */
 export function useSentReveal(o: {
   /** The visit: another message shown drops whatever was owed. */
@@ -176,16 +197,25 @@ export function useSentReveal(o: {
   replying.current = o.replying && o.enabled;
   /** The members at the last press, kept for the whole visit: a scroll or the window ends the motion, not the claim. */
   const pressed = useRef<{ visit: string; known: Set<string> } | null>(null);
+  pressed.current ??= carried(o.visit);
   const armed = useRef<{ at: number; off: () => void } | null>(null);
   /** The settle wait or the motion under way. */
   const running = useRef<(() => void) | null>(null);
   const scrollerNow = (): HTMLElement | null => o.scroller?.current ?? scrollerOf(pane.current());
 
-  const disarm = (): void => {
+  const stand = (): void => {
     armed.current?.off();
     armed.current = null;
     running.current?.();
     running.current = null;
+  };
+  const disarm = (): void => {
+    stand();
+    owed = null;
+  };
+  const arm = (at: number): void => {
+    const sc = scrollerNow();
+    armed.current = { at, off: sc ? onHand(sc, disarm) : () => {} };
   };
   const ownReply = (): EngineMessage | null => {
     const a = pressed.current;
@@ -204,11 +234,20 @@ export function useSentReveal(o: {
   useEffect(() => onReplyPress((id) => {
     if (!replying.current || !members.current.some((m) => m.id === id)) return;
     disarm();
-    const sc = scrollerNow();
-    const off = sc ? onHand(sc, disarm) : () => {};
-    pressed.current = { visit: visit.current, known: new Set(members.current.map((m) => m.id)) };
-    armed.current = { at: revealClock.now(), off };
+    owed = lastPress = { visit: visit.current, at: revealClock.now(), known: new Set(members.current.map((m) => m.id)), leftAt: null };
+    pressed.current = owed;
+    arm(owed.at);
   }), []);
+  /* A pane remounted on its visit takes the press up (and the reveal, while owed); any other open drops it. */
+  useEffect(() => {
+    if (!o.enabled) return;
+    const p = carried(o.visit);
+    pressed.current = p;
+    if (!p) { lastPress = owed = null; return; }
+    p.leftAt = null;
+    if (owed === p && !armed.current) arm(p.at);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [o.visit]);
 
   /* After every commit: once the editor is closed and the copy is drawn, wait for the layout to stand. */
   useEffect(() => {
@@ -216,12 +255,16 @@ export function useSentReveal(o: {
     if (!a || running.current) return;
     if (!o.enabled || revealClock.now() - a.at > REVEAL_WINDOW_MS) { disarm(); return; }
     if (o.replying) return;
-    const copy = sentCopy();
-    if (!copy) return;
-    const joined = revealClock.now();
+    if (!sentCopy()) return;
+    let joined = revealClock.now();
+    let copyId: string | null = null;
     let quiet: (() => void) | null = null;
-    const find = (): HTMLElement | null =>
-      [...pane.current()?.querySelectorAll<HTMLElement>("[data-conv-id]") ?? []].find((el) => el.dataset.convId === copy.id) ?? null;
+    // The copy as it stands now: the provisional one gives way to the mirror's row under another id.
+    const find = (): HTMLElement | null => {
+      const id = sentCopy()?.id ?? null;
+      if (id !== copyId) { copyId = id; joined = revealClock.now(); }
+      return [...pane.current()?.querySelectorAll<HTMLElement>("[data-conv-id]") ?? []].find((el) => el.dataset.convId === id) ?? null;
+    };
     // A layout still moving past the cap no longer holds the reveal back.
     const observed = typeof ResizeObserver === "undefined" ? null
       : new ResizeObserver(() => { if (revealClock.now() - joined < REVEAL_SETTLE_CAP_MS) wait(); });
@@ -233,7 +276,8 @@ export function useSentReveal(o: {
         const el = find();
         const late = revealClock.now() - joined >= REVEAL_SETTLE_CAP_MS;
         if (!el || (!el.hasAttribute("data-body-ready") && !late)) {
-          if (late) disarm();
+          // Not drawn: the reveal stays armed, and the next commit that draws a copy starts the wait again.
+          if (!el && (late || copyId === null)) { stopWaiting(); running.current = null; }
           else wait();
           return;
         }
@@ -241,6 +285,7 @@ export function useSentReveal(o: {
         const sc = scrollerNow();
         armed.current?.off();
         armed.current = null;
+        owed = null;
         running.current = sc ? revealIn(sc, el) : null;
       });
     };
@@ -252,6 +297,10 @@ export function useSentReveal(o: {
     wait();
   });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => () => { disarm(); pressed.current = null; }, [o.visit]);
+  useEffect(() => () => {
+    stand();
+    if (lastPress && pressed.current === lastPress) lastPress.leftAt = revealClock.now();
+    pressed.current = null;
+  }, [o.visit]);
   return api.current;
 }

@@ -1627,7 +1627,8 @@ export function MessagePane({
       typeof ResizeObserver === "undefined"
         ? null
         : new ResizeObserver(() => {
-            if (live) anchor();
+            // This visit's own reply joined: the reveal owns the view from here.
+            if (live) { if (sentReveal.claims()) release(); else anchor(); }
           });
     observer?.observe(conv);
     // A ceiling, not a schedule. Sibling bodies are fetched under a concurrency cap and a slow
