@@ -131,8 +131,18 @@ describe("the suite workflow", () => {
     expect(workflowProblems(workflowText, composeText)).toEqual([]);
     // The census has subjects: the jobs it judged really run vitest, and the services are really there.
     const vitestJobs = Object.entries(wf.jobs).filter(([, j]) => j.steps.some((s) => /\bvitest run\b/.test(s.run ?? ""))).map(([id]) => id);
-    expect(vitestJobs.sort()).toEqual(["alone", "desktop", "proxy-e2e", "search-budget", "sqlite", "suite"]);
+    expect(vitestJobs.sort()).toEqual(["alone", "desktop", "proxy-e2e", "sqlite", "suite"]);
     expect(Object.keys(wf.jobs.suite.services ?? {}).sort()).toEqual(["greenmail", "postgres"]);
+  });
+
+  it("the judged search budget, in a workflow of its own, keeps a vitest job's rules", () => {
+    const text = readFileSync(join(ROOT, publicRel("github/workflows/search-budget.yml", ROOT)), "utf8");
+    /* Only the checks that name ci.yml's own jobs, and the RustFS and Dovecot it starts, find nothing to read there. */
+    const absent = (p: string) => /^(IMAGE_TREE (webapp-build|proxy-e2e)|BUILD (suite|alone|sqlite)|TYPECHECK|DESKTOP|(IMAGE|PORTS) (rustfs|dovecot)|DOVECOT_CONF) /.test(p);
+    expect(workflowProblems(text, composeText).filter((p) => !absent(p))).toEqual([]);
+    const loose = text.replace('      TF_REQUIRE_PG: "1"\n', "").replace("image: ghcr.io/trafficflowhq/mirror-postgres:", "image: ghcr.io/x/postgres:");
+    expect(workflowProblems(loose, composeText).filter((p) => !absent(p)).map((p) => p.split(" ").slice(0, 2).join(" ")))
+      .toEqual(["REQUIRE_PG search-budget", "IMAGE search-budget.postgres"]);
   });
 
   it("refuses a vitest job without TF_REQUIRE_PG, a lane database made after the run, and the shared box", () => {

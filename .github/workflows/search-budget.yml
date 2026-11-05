@@ -1,0 +1,71 @@
+name: search budget
+
+# The 100 ms search budget, judged: nightly and by dispatch, alone on a hosted runner with its own Postgres.
+# On a loaded runner ci.yml's alone job reports a figure over the budget with no quiet round as a SKIPPED-LOADED
+# warning; here OHMAIL_BUDGET_MUST_JUDGE=1 makes that a failure (packages/services/test/_budget-clock.ts). It is a
+# workflow of its own so that nothing that holds or cancels ci.yml runs to keep the runner pool free leaves the
+# budget unjudged (test/workflows-cap-their-matrices.test.ts).
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: search-budget-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+
+jobs:
+  search-budget:
+    name: suite · search budget · judged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: ghcr.io/trafficflowhq/mirror-postgres:16.15@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+        env:
+          POSTGRES_USER: tf
+          POSTGRES_PASSWORD: tf
+          POSTGRES_DB: trafficflow_test
+        ports: ["5433:5432"]
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U tf -d trafficflow_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      DATABASE_URL_PG_TEST: postgres://tf:tf@localhost:5433/trafficflow_test
+      TF_REQUIRE_PG: "1"
+      OHMAIL_BUDGET_MUST_JUDGE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.4
+
+      - name: Install the locked dependency tree
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
+      - name: The project build
+        run: npm run build
+
+      - name: This checkout's own database, from empty
+        run: bash scripts/lane-db.sh "$GITHUB_WORKSPACE"
+
+      - name: The search budget, judged
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          npx vitest run --reporter=default --reporter=json --outputFile=build/ci-search-budget.json packages/services/test/search-budget.pg.test.ts
+          node -e 'const n=require("./build/ci-search-budget.json").testResults.length;if(n!==1){console.error("expected the one file, the report holds "+n);process.exit(1)}'
