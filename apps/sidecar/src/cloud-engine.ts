@@ -38,7 +38,7 @@ import { matchReadRoute } from "./cloud-read.js";
 import { answerAccountFirst } from "./cloud-account-first.js";
 import {
   handleWindowConsentReadFailure, handleWindowSearchPhases, handleWindowSyncFailure,
-  WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
+  WINDOW_ATTENTION_ROUTE, WINDOW_CONSENT_READ_FAILED_ROUTE, WINDOW_SEARCH_PHASES_ROUTE, WINDOW_SYNC_FAILED_ROUTE,
 } from "./window-report.js";
 import {
   WINDOW_OUTBOX_ROUTE, adoptLegacyWindowOutbox, createWindowOutbox, windowOutboxFilesOf, windowOutboxOwnerKey,
@@ -1493,6 +1493,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       const core = !token ? null
         : decided === "unknown" ? await resolveSession(db, token, now()) : decided.held;
       if (!core) return json({ error: { code: "unauthorized", message: "authentication required" } }, 401);
+
+      // A PERSON'S INPUT AT THE WINDOW: `queued` already took it as a person's request (`personSeen`).
+      if (req.method === "POST" && path === WINDOW_ATTENTION_ROUTE) return new Response(null, { status: 204 });
 
       // THE WINDOW'S SEARCH TIMINGS, into this log (`window-report.ts`); the bearer was read above.
       if (req.method === "POST" && path === WINDOW_SEARCH_PHASES_ROUTE) {
