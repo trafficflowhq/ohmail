@@ -1302,8 +1302,55 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     }
   });
 
+  /**
+   * A's reply text, face and push id, left by the product's own writers while the jar names A: the reply buffer,
+   * the face mirror through the product door's provider, the push row through its announce.
+   */
+  async function leaveItemsOfA(): Promise<void> {
+    (await import("../app/shell/mail-send.js")).writeReplyDraft("m-of-a", { text: "words of A", html: "" });
+    const { Providers } = await import("../app/(product)/providers.js");
+    const { useTheme } = await import("@ohmail/ui");
+    const Adopt = (): null => {
+      const { adoptAccountFace } = useTheme();
+      React.useEffect(() => { adoptAccountFace("ohmarchy"); }, [adoptAccountFace]);
+      return null;
+    };
+    const faceRoot = createRoot(document.createElement("div"));
+    await act(async () => { faceRoot.render(h(Providers, { children: h(Adopt) })); });
+    await act(async () => { faceRoot.unmount(); });
+    const sub = {
+      endpoint: "https://push.example/ep/a", unsubscribe: async () => true,
+      getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(7).buffer,
+    };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { register: async () => ({ pushManager: { getSubscription: async () => null, subscribe: async () => sub } }) },
+    });
+    try {
+      const { syncWebPush } = await import("../app/shell/notification-settings.js");
+      expect(await syncWebPush(true, {
+        vapidKey: async () => ({ publicKey: "B".repeat(87) }), subscribe: async () => ({ id: "row-of-a" }), unsubscribe: async () => {},
+      })).toBe("subscribed");
+    } finally {
+      Reflect.deleteProperty(navigator as unknown as Record<string, unknown>, "serviceWorker");
+    }
+    expect(itemsOfA(), "the control: A's three are in the jar").toEqual({ reply: true, face: true, push: true });
+  }
+  const itemsOfA = (): Record<"reply" | "face" | "push", boolean> => ({
+    reply: Object.keys(localStorage).some((k) => (localStorage.getItem(k) ?? "").includes("words of A")),
+    face: localStorage.getItem("ohmail.face.account") !== null,
+    push: localStorage.getItem("ohmail.notifications.subscriptionId") !== null,
+  });
+  /** B's reply, typed once B's sign-in holds the jar, as read back by B. */
+  const replyOfB = async (write: boolean): Promise<string> => {
+    const send = await import("../app/shell/mail-send.js");
+    if (write) send.writeReplyDraft("m-of-b", { text: "words of B", html: "" });
+    return send.readReplyDraft("m-of-b").text;
+  };
+
   it("a wipe held past its 15 s, then a sign-in as another account: the revoked copy goes, the new session keeps its own", async () => {
     holdWipe();
+    await leaveItemsOfA();
     const el = await mountLogin();
     expect(await until(() => loading), "no wipe started").toBe(true);
     signInAs = "acct_B";
@@ -1311,11 +1358,27 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
     await tick(16_000);
     await secondFactor(el);
     await holdCopyOf("acct_B");
+    await replyOfB(true);
     release();
     expect(await until(() => forgets.length === 1), "the wipe took nothing").toBe(true);
     await sweepsOver();
     expect(engine.holdsMirrorOf("acct_A"), "the revoked account's copy stayed").toBe(false);
-    expect([engine.holdsMirrorOf("acct_B"), document.cookie.includes("tf_owner=acct_B"), localStorage.getItem(SESSION_MINTED_KEY) !== null],
-      "the wipe took the new session's").toEqual([true, true, true]);
+    expect(itemsOfA(), "the revoked account's reply text, face or push id stayed").toEqual({ reply: false, face: false, push: false });
+    expect([engine.holdsMirrorOf("acct_B"), document.cookie.includes("tf_owner=acct_B"), localStorage.getItem(SESSION_MINTED_KEY) !== null,
+      await replyOfB(false)], "the wipe took the new session's").toEqual([true, true, true, "words of B"]);
+  });
+
+  it("CONTROL — the same over a lapse wipes nothing: A's copy, reply text, face and push id stay beside B's reply", async () => {
+    script = [refusedClearing("refresh_expired")];
+    await leaveItemsOfA();
+    const el = await mountLogin();
+    signInAs = "acct_B";
+    await signIn(el);
+    await secondFactor(el);
+    await replyOfB(true);
+    await tick(16_000);
+    await sweepsOver();
+    expect([engine.holdsMirrorOf("acct_A"), itemsOfA(), await replyOfB(false)], "a lapse took something")
+      .toEqual([true, { reply: true, face: true, push: true }, "words of B"]);
   });
 });

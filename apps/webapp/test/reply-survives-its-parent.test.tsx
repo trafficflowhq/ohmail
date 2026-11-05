@@ -529,6 +529,58 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
     expect(window.localStorage.getItem("ohmail.ui.reply:never-mirrored"))
       .toBe("an answer to older mail");
   });
+
+  /* UNDER A STORAGE OWNER the lanes are `<prefix><owner>:<lane>`, so a one-account wipe can take them. A lane
+     written before that moves into that partition at mount when this mirror names its parent. */
+  describe("under a storage owner", () => {
+    const OWNER = "mailbox-a";
+    const old = (lane: string): [string, string] => [`ohmail.ui.reply:${lane}`, `ohmail.ui.replymeta:${lane}`];
+    const owned = (lane: string): [string, string] => [`ohmail.ui.reply.${OWNER}:${lane}`, `ohmail.ui.replymeta.${OWNER}:${lane}`];
+    const held = (keys: string[]): Array<string | null> => keys.map((k) => window.localStorage.getItem(k));
+    const draftRow = (id: string): SyncChange => ({
+      type: "draft", op: "create", id, seq: 8000, updatedAt: NOW.toISOString(),
+      entity: {
+        id, mailboxId: "mb1", threadId: null, inReplyToMessageId: null, forwardOfMessageId: null,
+        subject: "a draft", body: "", to: [], cc: [], bcc: [], rationale: null, status: "draft",
+        createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
+      },
+    } as unknown as SyncChange);
+    beforeEach(async () => (await import("../app/shell/storage-owner.js")).setStorageOwner(OWNER));
+    afterEach(async () => (await import("../app/shell/storage-owner.js")).resetStorageOwnerForTest());
+
+    it("an old lane on a message or draft in the mirror moves at mount; one it cannot name stays exactly as it is", async () => {
+      for (const lane of ["m1", "fwd:m1", "draft:d1", "never-mirrored", "draft:d-elsewhere"]) {
+        window.localStorage.setItem(old(lane)[0], `words of ${lane}`);
+        window.localStorage.setItem(old(lane)[1], JSON.stringify({ subject: `title of ${lane}` }));
+      }
+      await shell(["m1"], async (s) => { await s.applyChanges([draftRow("d1")]); });
+      await act(async () => { await engine!.syncOnce(); });
+
+      for (const lane of ["m1", "fwd:m1", "draft:d1"]) {
+        expect(held([...old(lane), ...owned(lane)]), `${lane} did not move into its account's partition`)
+          .toEqual([null, null, `words of ${lane}`, JSON.stringify({ subject: `title of ${lane}` })]);
+      }
+      for (const lane of ["never-mirrored", "draft:d-elsewhere"]) {
+        expect(held([...old(lane), ...owned(lane)]), `${lane} was moved by a mirror that cannot name it`)
+          .toEqual([`words of ${lane}`, JSON.stringify({ subject: `title of ${lane}` }), null, null]);
+      }
+      expect(draftSaves(), "a lane was promoted").toHaveLength(0);
+    });
+
+    it("an old lane whose parent died while closed is promoted at mount, and no copy of it is left", async () => {
+      window.localStorage.setItem(old("m1")[0], "yesterday's unsent answer");
+      await shell(["m1", "m2"], async (s) => {
+        await s.applyChanges([{
+          type: "message", op: "delete", id: "m1", seq: 9000,
+          updatedAt: NOW.toISOString(), entity: null,
+        } as unknown as SyncChange]);
+      });
+      await act(async () => { await engine!.syncOnce(); });
+      await waitFor(() => draftSaves().length > 0, "the orphaned lane promoted on mount");
+      expect(draftSaves()[0].body).toContain("yesterday's unsent answer");
+      expect(held([...old("m1"), ...owned("m1")]), "a promoted lane left a copy").toEqual([null, null, null, null]);
+    });
+  });
 });
 
 describe("a forward kept as a draft is still a forward", () => {

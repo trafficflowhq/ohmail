@@ -349,7 +349,7 @@ export async function mountShell(
 ): Promise<HTMLElement> {
   const { AppShell } = await import("../../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const { localStorageDoor } = await import("../../app/shell/durable.js");
+  const { THEME_DOOR } = await import("../../app/shell/face-mirror.js");
 
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -379,7 +379,7 @@ export async function mountShell(
           // appearance persists through the same durable door `(product)/providers.tsx` passes —
           // without it the provider is `unpersisted` and every device pin here is a memory.
           faces: true,
-          storage: localStorageDoor("theme"),
+          storage: THEME_DOOR,
           children: h(ToastHost, { children: (opts.wrap ?? ((s) => s))(h(AppShell, props)) }),
         }),
       }),

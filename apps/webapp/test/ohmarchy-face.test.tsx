@@ -105,6 +105,30 @@ describe("account adoption", () => {
   });
 });
 
+/* THE MIRROR NAMES ITS ACCOUNT beside it, so a revoke of that account while another holds the jar can take it. */
+describe("the account face's mirror names its account", () => {
+  const mirror = (): Array<string | null> =>
+    ["ohmail.face.account", "ohmail.face.account.owner"].map((k) => window.localStorage.getItem(k));
+  beforeEach(() => { document.cookie = "tf_owner=acct_live_1; Path=/"; });
+  afterEach(() => { document.cookie = "tf_owner=; Path=/; Max-Age=0"; });
+
+  it("adopting under A writes the face and names A", async () => {
+    answerConsentWith({ themeFace: "ohmarchy" });
+    await mountShell([mailbox()]);
+    await tick(10);
+    expect(mirror()).toEqual(["ohmarchy", "acct_live_1"]);
+  });
+
+  it("adopting none removes both", async () => {
+    window.localStorage.setItem("ohmail.face.account", "ohmarchy");
+    window.localStorage.setItem("ohmail.face.account.owner", "acct_live_1");
+    answerConsentWith({ themeFace: null });
+    await mountShell([mailbox()]);
+    await tick(10);
+    expect(mirror()).toEqual([null, null]);
+  });
+});
+
 describe("account adoption is LIVE-WIRE only", () => {
   it("a hung consent read leaves the device's mirror standing — the boot cache is not an answer about the face", async () => {
     // review-caught: the boot cache can make `consent.known` true while the face is still the

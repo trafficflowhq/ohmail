@@ -8,6 +8,11 @@ import { triage } from "@ohmail/fixtures";
 import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
+import { replyDraftKey } from "../app/shell/mail-send";
+import { DEMO_STORAGE_OWNER } from "../app/shell/storage-owner";
+
+/** The reply buffer for `id`, in the demo's own partition (this shell mounts in demo mode). */
+const replyBuffer = (id: string): string | null => window.localStorage.getItem(replyDraftKey(id, DEMO_STORAGE_OWNER));
 
 /**
  * REPLYING IN CONTEXT — driven through the WHOLE shell, not a stub.
@@ -477,7 +482,7 @@ describe("sending the reply", () => {
     await key("r");
     await type("Donnerstag passt.");
     const messageId = host!.querySelector<HTMLElement>(".read-col .reply")!.dataset.replyFor!;
-    expect(window.localStorage.getItem(`ohmail.ui.reply:${messageId}`)).toBe("Donnerstag passt.");
+    expect(replyBuffer(messageId)).toBe("Donnerstag passt.");
 
     await act(async () => { sendButton().click(); });
     await settleClosed();
@@ -485,7 +490,7 @@ describe("sending the reply", () => {
     expect(editorsInMessage()).toHaveLength(0);
     expect(host!.textContent).toContain("Reply sent.");
     // The scratch buffer goes with it — reopening must not resurrect a reply already sent.
-    expect(window.localStorage.getItem(`ohmail.ui.reply:${messageId}`)).toBeNull();
+    expect(replyBuffer(messageId)).toBeNull();
     // …and the copy that said sending was not connected is gone from the product.
     expect(host!.textContent).not.toContain("Sending is not connected yet");
   });
@@ -621,8 +626,7 @@ describe("the draft", () => {
     // pins the legacy bare-string write: an envelope here would be a plain reply that a bundle
     // predating the rich editor could no longer read.
     expect(editorOf(editorsInMessage()[0]!).getText()).toBe("half a sentence");
-    expect(window.localStorage.getItem(`ohmail.ui.reply:${openMessageId()}`))
-      .toBe("half a sentence");
+    expect(replyBuffer(openMessageId())).toBe("half a sentence");
   });
 });
 
@@ -683,7 +687,7 @@ describe("reply attachments ride the send, never the account and never the scrat
 
       // The control lists the file, and the scratch buffer holds the BODY and only the body.
       expect(host!.textContent, "the picked file is not listed in the reply").toContain("note.txt");
-      const buffered = window.localStorage.getItem(`ohmail.ui.reply:${messageId}`) ?? "";
+      const buffered = replyBuffer(messageId) ?? "";
       expect(buffered, "the reply buffer lost the body it always held").toContain("Mit Anhang");
       expect(buffered, "attachment bytes leaked into the zero-at-rest reply scratch")
         .not.toContain("note.txt");

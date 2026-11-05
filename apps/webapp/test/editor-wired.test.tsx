@@ -16,6 +16,11 @@ import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
 import { settleFirstPaint } from "./_first-paint.js";
+import { replyDraftKey } from "../app/shell/mail-send";
+import { DEMO_STORAGE_OWNER } from "../app/shell/storage-owner";
+
+/** Where the demo world keeps the reply buffer for `id`: the demo's own partition. */
+const bufferKey = (id: string): string => replyDraftKey(id, DEMO_STORAGE_OWNER);
 
 /**
  * THE EDITOR, WIRED — what reaches the wire, and what a bought draft is allowed to touch.
@@ -362,7 +367,6 @@ describe("a message with no formatting in it leaves exactly as it always did", (
     await key("r");
     const surface = replySurface(el)!;
     const id = openReplyId(el);
-    const bufferKey = `ohmail.ui.reply:${id}`;
     const seen: Array<string | null> = [];
 
     // ONE act(), so React commits nothing between the three transactions — that is the
@@ -370,12 +374,12 @@ describe("a message with no formatting in it leaves exactly as it always did", (
     await act(async () => {
       const ed = editorOf(surface);
       ed.commands.setContent("<p>Donnerstag passt.</p>");
-      seen.push(window.localStorage.getItem(bufferKey));
+      seen.push(window.localStorage.getItem(bufferKey(id)));
       ed.commands.selectAll();
       ed.commands.toggleBold();
-      seen.push(window.localStorage.getItem(bufferKey));
+      seen.push(window.localStorage.getItem(bufferKey(id)));
       ed.chain().selectAll().deleteSelection().run();
-      seen.push(window.localStorage.getItem(bufferKey));
+      seen.push(window.localStorage.getItem(bufferKey(id)));
     });
 
     expect(seen[0], "the plain text was not stored").toBe("Donnerstag passt.");
@@ -390,8 +394,7 @@ describe("a message with no formatting in it leaves exactly as it always did", (
     const el = await shell();
     await key("r");
     await act(async () => { typeInto(replySurface(el)!, "Kurz und gut."); });
-    expect(window.localStorage.getItem(`ohmail.ui.reply:${openReplyId(el)}`))
-      .toBe("Kurz und gut.");
+    expect(window.localStorage.getItem(bufferKey(openReplyId(el)))).toBe("Kurz und gut.");
   });
 });
 
@@ -432,7 +435,7 @@ describe("a reply begun before this editor existed is not reinterpreted", () => 
     await key("r");
     const id = openReplyId(el);
     await key("Escape");
-    window.localStorage.setItem(`ohmail.ui.reply:${id}`, "a <b>literal</b> tag");
+    window.localStorage.setItem(bufferKey(id), "a <b>literal</b> tag");
     await key("r");
     await drain();
 
@@ -454,7 +457,7 @@ describe("a reply begun before this editor existed is not reinterpreted", () => 
     const id = openReplyId(el);
     await key("Escape");
     window.localStorage.setItem(
-      `ohmail.ui.reply:${id}`,
+      bufferKey(id),
       JSON.stringify({ text: "yes", html: "<p><strong>yes</strong></p>" }),
     );
     await key("r");
