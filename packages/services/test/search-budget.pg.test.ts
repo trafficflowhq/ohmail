@@ -209,7 +209,7 @@ const p95Of = (xs: number[]): number => { const s = [...xs].sort((a, b) => a - b
  * both ends, and the inside readings' median and p95, at their limits, the host's load average at most a
  * quarter of its CPUs) reads it over, and is unjudged,
  * a SKIPPED-LOADED warning and never red, when no round was quiet, unless it reads past LOADED_CEILING
- * times the budget, which load alone has never reached; under OHMAIL_BUDGET_MUST_JUDGE=1 (ci.yml's nightly job
+ * times the budget, which load alone has never reached; under OHMAIL_BUDGET_MUST_JUDGE=1 (search-budget.yml's nightly job
  * "suite · search budget · judged", on a hosted runner of its own) it fails instead, the wait before a round is for the
  * host's load average too, and a runner slower than the calibrated one is judged scaled to it (`judgedVerdicts`). Every round prints its figures, the reference
  * at both ends and inside, quiet or loaded, the limits, the wait and the load. The budget never moves.

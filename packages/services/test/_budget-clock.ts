@@ -47,7 +47,7 @@ export const isQuiet = (r: Round, c: Clock): boolean =>
   r.before <= c.limit && r.after <= c.limit && r.during.median <= c.limit && r.during.p95 <= c.spike && r.load <= c.load;
 
 /**
- * OHMAIL_BUDGET_MUST_JUDGE=1 marks a host where the budget is always judged: ci.yml's nightly job "suite · search
+ * OHMAIL_BUDGET_MUST_JUDGE=1 marks a host where the budget is always judged: search-budget.yml's nightly job "suite · search
  * budget · judged" on a hosted runner of its own. There a figure over the budget with no quiet round fails, never skips.
  */
 /**
