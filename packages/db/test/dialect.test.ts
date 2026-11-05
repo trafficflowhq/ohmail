@@ -222,12 +222,14 @@ describe("the two arms answer the same questions differently", () => {
     expect(asPg(WORD_INDEX_SPEC.ddl)).toContain("gin (((account_id)::text), head_tsv, text_tsv)");
     expect(asPg(key)).toMatch(/^\(\(s\.account_id\)::text = \(\$1::uuid\)::text\)$/);
     const terms = pgDialect().search.letterTerms("heron kestrel")!;
+    // The head's people are `simple` words: each operand asked there both ways, once where they agree.
+    const head = (n: number): string => { const p = (i: number): string => `$${n + i}`;
+      return `(case when websearch_to_tsquery(${p(0)}, ${p(1)}) = websearch_to_tsquery('simple', ${p(2)}) then websearch_to_tsquery(${p(3)}, ${p(4)}) else websearch_to_tsquery(${p(5)}, ${p(6)}) || websearch_to_tsquery('simple', ${p(7)}) end)`; };
     expect(terms.map(asPg)).toEqual([
       "(s.text_tsv @@ (websearch_to_tsquery($1, $2) && websearch_to_tsquery($3, $4)))",
-      // The head's people are `simple` words: each operand asked there both ways.
-      "(s.head_tsv @@ ((websearch_to_tsquery($1, $2) || websearch_to_tsquery('simple', $3))) and s.text_tsv @@ (websearch_to_tsquery($4, $5)))",
-      "(s.head_tsv @@ ((websearch_to_tsquery($1, $2) || websearch_to_tsquery('simple', $3))) and s.text_tsv @@ (websearch_to_tsquery($4, $5)))",
-      "(s.head_tsv @@ ((websearch_to_tsquery($1, $2) || websearch_to_tsquery('simple', $3)) && (websearch_to_tsquery($4, $5) || websearch_to_tsquery('simple', $6))))",
+      `(s.head_tsv @@ ((${head(1)})) and s.text_tsv @@ (websearch_to_tsquery($9, $10)))`,
+      `(s.head_tsv @@ ((${head(1)})) and s.text_tsv @@ (websearch_to_tsquery($9, $10)))`,
+      `(s.head_tsv @@ ((${head(1)}) && (${head(9)})))`,
     ]);
     expect(pgDialect().search.letterTerms("heron or kestrel")).toHaveLength(4);
     for (const q of ["heron kestrel plover egret", '"heron" kestrel', "heron -kestrel"]) expect(pgDialect().search.letterTerms(q), q).toBeNull();

@@ -593,6 +593,26 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
   }, 300_000);
 
+  // The unfiltered guesses read asks the typed word as a value the planner cannot price (a `<%` over the
+  // column's statistics is milliseconds of every first page's planning); the trigram index still serves it.
+  it("the unfiltered read of a typo's guesses asks the trigram index for a run-time value, never the typed word", async () => {
+    for (const q of ["egrit", HARNESS.find((h) => h.cls === "typo" && h.k !== undefined)!.q!]) {
+      const { page, session } = await pageOf(q);
+      const conds = (await planNodes(page, session, base, false))
+        .filter((p) => p["Index Name"] === "message_search_terms_trgm_idx").map((p) => String(p["Index Cond"]));
+      expect(conds, q).toHaveLength(1);
+      expect(conds[0], q).not.toContain(q);
+      expect(conds[0], q).toMatch(/InitPlan|\$\d/);
+    }
+  }, 120_000);
+
+  // A word whose english and simple readings agree is asked once of the head: asked twice, the planner
+  // took it for twice as common and walked 20,382 letters (97,289 buffers) for `{1}`'s page.
+  it("a common word's first page reads at most the buffers it read before the head asked each form twice", async () => {
+    const { page, session } = await pageOf(HARNESS.find((h) => h.cls === "common" && h.k === 1)!.q!);
+    expect(await buffersOf(page, session)).toBeLessThanOrEqual(22_700);
+  }, 120_000);
+
   it("no first page reads a term off the word index twice", async () => {
     for (const h of HARNESS) {
       const { page, session } = await pageOf(h.q!);
