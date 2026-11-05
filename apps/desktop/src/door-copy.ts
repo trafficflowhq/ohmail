@@ -197,6 +197,13 @@ const EN = {
      address whichever it is. The shell shortens a long one — see `DesktopGate`. */
   linkNoBrowser: (machine: string, address: string) =>
     `This ${machine} would not open a browser. The address is ${address}.`,
+  /* ohmail's own gate refused it (an address of the wrong shape, one no surface drew, a press the
+     window did not count as the person's): the computer is not to blame, so it is not named. */
+  linkNotOpened: (address: string) => `ohmail could not open this link. The address is ${address}.`,
+  /* Either toast's one action: the whole address, uncut, to the clipboard. */
+  linkCopyAddress: "Copy address",
+  linkAddressCopied: "Address copied.",
+  linkAddressNotCopied: "The address was not copied.",
   browserSignInFailed: "The browser sign-in could not be started.",
   /* The Cloud door's way to an account. The press leads to the purchase step, so a store build
      says the setup sentence instead (`linksOutToBilling`). */
@@ -942,6 +949,7 @@ export const DOOR_COPY: typeof EN = liveCopy("desktopDoor", EN, {
   cloudApproveNotSaved: ["machine"],
   noBrowser: ["machine"],
   linkNoBrowser: ["machine", "address"],
+  linkNotOpened: ["address"],
   cloudJoinNoBrowser: ["machine"],
   mailboxWhyReadsNamed: ["name"],
   credReadyWhy: ["machine"],

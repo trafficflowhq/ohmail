@@ -234,11 +234,12 @@ fn bytes_of(links: &HashSet<String>) -> usize {
     links.iter().map(String::len).sum()
 }
 
-/// The comparison form of an address: [`external_url`]'s shape first, then the URL parser's own
-/// serialisation. Compared, never spawned.
+/// The comparison form of an address: the door's spelling ([`crate::engine::browser_form`]), then
+/// [`external_url`]'s shape, then the URL parser's own serialisation. Compared, never spawned.
 pub fn key_of(raw: &str) -> Option<String> {
-    external_url(raw).ok()?;
-    Url::parse(raw).ok().map(String::from)
+    let raw = crate::engine::browser_form(raw);
+    external_url(&raw).ok()?;
+    Url::parse(&raw).ok().map(String::from)
 }
 
 /// The managed state: the links on screen, behind one lock.
