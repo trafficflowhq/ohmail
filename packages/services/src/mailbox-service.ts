@@ -2368,12 +2368,14 @@ export class MailboxService {
        * has to cover every connected mailbox — a silent prefix would be the same defect wearing
        * a ceiling's name. The `IN` stays: `for update` does not lock against INSERTs, so dropping
        * it for a re-derived predicate would stamp a mailbox connected mid-statement without
-       * reporting it. */
+       * reporting it. IN ID ORDER: a Screener press takes the account's rows so, and in this
+       * scan's order the two met crosswise (40P01). */
       const mine = await dialect(ctx.db).forUpdate(tx.select({
         id: mailboxes.id,
         standing: mailboxes.syncRequestedAt,
       }).from(mailboxes)
         .where(and(eq(mailboxes.accountId, ctx.accountId), eq(mailboxes.status, "connected")))
+        .orderBy(asc(mailboxes.id))
         .limit(accountMailboxesProbe()));
       refuseOverAccountMailboxes(mine, "this account");
       if (mine.length === 0) return [];

@@ -1,4 +1,5 @@
-import { and, desc, eq, gt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, or, sql } from "drizzle-orm";
+import { dialect } from "@trafficflow/db/dialect";
 import { withAccountTx } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { mailboxes, parkedResumeSet, parkedResumeWhere, type Tx } from "@trafficflow/db";
@@ -76,15 +77,17 @@ export async function reopenedCatchUp(
 export async function resumeAfterReopen(deps: ApiDeps, ctx: ServiceContext): Promise<void> {
   const accountId = ctx.accountId;
   try {
-    const [owed] = await deps.db.select({ id: mailboxes.id }).from(mailboxes)
-      .where(and(eq(mailboxes.accountId, accountId), or(
-        eq(mailboxes.syncBlockedReason, "account_closed"),
-        parkedResumeWhere(),
-      )))
-      .limit(1);
+    const owes = and(eq(mailboxes.accountId, accountId), or(
+      eq(mailboxes.syncBlockedReason, "account_closed"),
+      parkedResumeWhere(),
+    ));
+    const [owed] = await deps.db.select({ id: mailboxes.id }).from(mailboxes).where(owes).limit(1);
     if (!owed) return;
     const now = ctx.now();
     await withAccountTx(ctx, async (tx) => {
+      // The rows both writes reach, first and in id order, as a Screener press takes the account's.
+      await dialect(deps.db).forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes).where(owes).orderBy(asc(mailboxes.id)),
+        { mode: "no key update" });
       await tx.update(mailboxes)
         .set({ syncBlockedReason: null, syncBlockedSince: null, syncRequestedAt: now })
         .where(and(eq(mailboxes.accountId, accountId), eq(mailboxes.syncBlockedReason, "account_closed")));

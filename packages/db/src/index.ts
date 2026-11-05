@@ -62,6 +62,7 @@ export {
 // predicate exactly as the pull verb's is. Both the message door and the Screener's verdict ring
 // it, and neither may grow a second answer to how often. Reaches `schema-mail.js` alone.
 export { ringFilingDoorbell, FILING_DOORBELL_MIN_GAP_MS } from "./filing-doorbell.js";
+export { lockAccountMailboxes, mailboxRowsInIdOrder } from "./mailbox-row-order.js";
 
 // The ONE spelling of the read-state intent — see the module header for why it lives here
 // (both the services and the worker write it, and the worker may not import services at

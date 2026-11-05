@@ -3,7 +3,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import {
   assertOrganizerRole, fenceErased,
   contacts, folderState, junkRescues, junkSweepCandidateWhere, mailboxes, messages,
-  lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl,
+  lockAccountRuleKeys, recordRuleDelta, ruleMatchKeySql, rules as rulesTbl, mailboxRowsInIdOrder,
   writeRuleUnderKey, type LedgerTx, type RuleRowWrite, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
@@ -736,8 +736,9 @@ export async function requestJunkSweep(deps: ApiDeps, ctx: ServiceContext): Prom
   for (const id of targets) {
     await assertOrganizerRole(deps.db as unknown as Tx, dialect(deps.db), accountId, id);
   }
+  // In id order, as a Screener press takes the account's rows: in its scan's order this met one crosswise.
   await deps.db.update(mailboxes)
     .set({ junkSweepRequestedAt: ctx.now(), syncRequestedAt: ctx.now() })
-    .where(and(eq(mailboxes.accountId, accountId), inArray(mailboxes.id, targets)));
+    .where(mailboxRowsInIdOrder(dialect(deps.db), and(eq(mailboxes.accountId, accountId), inArray(mailboxes.id, targets))!));
   return junkSweepPreview(deps, accountId);
 }

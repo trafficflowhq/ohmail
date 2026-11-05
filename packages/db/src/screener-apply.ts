@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import { accountSettings, auditLog, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
 import { recordChanges, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
+import { lockAccountMailboxes } from "./mailbox-row-order.js";
 import { upgradeContactsToPerson } from "./contact-source.js";
 import { consentListBrands, lockListAddress, readListAddresses, readListAddressesLetIn } from "./list-addresses.js";
 import { dialect } from "./dialect/index.js";
@@ -711,6 +712,12 @@ export async function applyScreenerDecision(
      mailbox lock the held bag takes below: every rules writer keeps that order. The contact row
      follows it, as on "Not junk, always allow", so the two never wait on each other crosswise. */
   await lockAccountRuleKeys(tx, accountId);
+
+  /* THE ACCOUNT'S MAILBOX ROWS, right after the rule-key lock and before the list row, the first
+     `rules` statement and its delta: a hosted write group takes its mailbox row FOR UPDATE first and
+     the list row, `messages` and the counter after it, so a press holding one of those when it asked
+     the row was that group's deadlock partner (40P01, a 500 on the press). */
+  await lockAccountMailboxes(tx, accountId);
 
   /* A LIST ADDRESS'S ROW (mail 0150) is LOCKED now, after the rule-key lock and before the first delta,
      the order every writer of the table keeps. A yes there consents brands, decided below from what the
