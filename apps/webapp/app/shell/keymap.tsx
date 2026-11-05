@@ -215,6 +215,13 @@ interface Store extends Omit<Registry, "bindings"> {
 
 const KeymapContext = createContext<Store | null>(null);
 
+/**
+ * A writing surface declared on its markup, for a key pressed INSIDE it: the same rule as
+ * {@link Registry.claimWriting}, scoped to the surface (the inline reply, whose `r` from
+ * outside still toggles it).
+ */
+export const KEY_WRITING = "data-key-writing";
+
 /* ── chord matching ─────────────────────────────────────────────────────────────────── */
 
 /** Focus is somewhere that letters mean letters. */
@@ -513,7 +520,8 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
        * the editing keys are refused (`chordBelongsToWriting`); Escape, Enter, Tab and `mod`
        * chords keep working, and a writing surface opts back in with `inWriting`.
        */
-      const writing = writingSurfaces.current > 0;
+      const writing = writingSurfaces.current > 0
+        || (e.target instanceof Element && e.target.closest(`[${KEY_WRITING}]`) !== null);
       /* A PAGE MODAL KEEPS THE KEYS. Asked of the app, never of focus: a step that took its own
          button away left focus on the page root, and ↵ there opened the letter behind setup. */
       const modal = typeof document === "undefined" ? null : pageModal(document);

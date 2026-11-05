@@ -655,6 +655,8 @@ export function InlineReply({
     <div
       className="reply"
       data-reply-for={message.id}
+      /* A key pressed inside the reply is writing (`keymap.KEY_WRITING`); `r` from outside still toggles it. */
+      data-key-writing=""
       ref={box}
       /* Both `height` AND `min-height`, or a drag below the stylesheet's default floor
          silently springs back — see the state's own note. `undefined` leaves the default
@@ -738,6 +740,8 @@ export function InlineReply({
               e.preventDefault();
               e.stopPropagation();
               e.nativeEvent.stopImmediatePropagation();
+              // Back to the body, before the input unmounts and focus falls to the list row.
+              box.current?.querySelector<HTMLElement>(".reply-editor .rte-surface")?.focus({ preventScroll: true });
               setEditingSubject(false);
             }}
           />
