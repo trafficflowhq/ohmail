@@ -21,6 +21,106 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.37] — 2026-11-05
+
+### ohmail Cloud no longer holds a connection open for every open window
+
+On ohmail Cloud, an open web tab or desktop app used to keep a request to the server open around the
+clock to hear about new mail, and every answer kept its server instance awake for 22 seconds after it was
+sent. Cloud's host bills each second an instance is awake, so a handful of open windows kept about ten
+instances busy all day. The Cloud server now holds nothing open: new mail reaches an open web tab on its
+regular check, within about 8 seconds, and the desktop app within 20 seconds. An instance stays awake about
+a second after its last answer. Your own server still pushes new mail at once, as before.
+
+### New mail on ohmail Cloud reaches the desktop app within seconds without a held connection
+
+The desktop app signed in to ohmail Cloud now checks for new mail every 8 seconds while you use it, and
+slows to once a minute while nobody does; opening, searching or writing checks at once. It used to check
+every 20 seconds around the clock. A web tab with notifications on now updates the moment a new-mail
+notice arrives, instead of at its next regular check. Signed in to your own server, both still hear new
+mail at once, as before.
+
+### Links on Linux open through the desktop portal, and a link that does not open says why
+
+On Linux, the desktop app now hands a link to the desktop portal first, the route Wayland desktops such
+as Hyprland and sandboxed installs honour, then to `xdg-open`, then to `gio open`, and says that a link
+was not opened only when every one of them refused. The app's log names what each route answered, never
+the address. macOS and Windows open links as before.
+
+The sentence that says a link was not opened now says whose refusal it was: "ohmail could not open this
+link" when the app itself held it back (an address it does not open, or a press it did not count as
+yours), and that this computer would not open a browser only when the computer's own opener refused. Both
+have a Copy address button, which copies the whole address so it can be pasted into a browser by hand.
+
+On the desktop, a link in a letter set in ohmail's own type whose text names a different site from the one
+it opens now asks before it opens, as it already did in a designed letter; before, it opened with only the
+real site's name beside it. Links whose query or fragment carries a backslash or a backtick now open, and
+so do the links of a view that puts a very large number of messages on screen at once.
+
+### The desktop app forgets an ended account's unsent text and pending decisions
+
+On the desktop app, signing out, a sign-in ended from another device and a deleted ohmail Cloud account each
+left that mailbox's half-written message and replies, and its pending Screener, delete and filing decisions, in
+the app's storage on the computer. They now go with the account, as they do on the web, a decision you could
+still undo included. A deleted account also takes the app's record of its sends, since nothing of it is still
+waiting to go. Signing out and a sign-in ended elsewhere keep that record, which holds no message text: a message
+still waiting goes at the next sign-in, and the record keeps it from going twice. Drafts already saved to the
+mailbox stay there, another mailbox's keep theirs, the app's own settings such as the theme and layout stay, and
+a sign-in that expired keeps everything. When an ohmail Cloud account is deleted while the app is open, the
+window now says so instead of asking you to quit and reopen it to finish a pairing.
+
+### Every page removes the mail of a browser signed out from another device
+
+On the web app, on ohmail Cloud and on your own server, a browser whose sign-in was ended from another device
+kept its copy of the mail when it opened a page other than the mailbox or the sign-in page, such as account
+setup, a desktop approval or the return from payment. Every page now starts removing that copy as soon as it
+learns the sign-in was ended, and waits up to 15 seconds for the removal before it goes on; a longer removal
+continues in the background, and one cut short by closing the page is finished by the next ohmail page the
+browser opens. Signing in, creating an account (on the sign-up page or from an invite link) and confirming an
+address now first wait, up to 15 seconds, to hear from the server whether the browser's sign-in still holds.
+A sign-in made while the copy is being removed, as the same account or another, keeps its own mail.
+
+### A rare word, a word nothing matches and a typo answer faster after the server has been idle
+
+The first page of a search for a rare word, a word no letter holds, a typo with few close words, or a rare
+word beside an excluded one now reads its few matches straight off the index, instead of first walking
+the newest letters of the mailbox. After a few idle minutes the server's database reads each of those
+letters from disk, so these searches now read a third or less of what they did and answer sooner. A word
+whose letters are among the oldest in the mailbox, misspelled or beside an excluded word, is now found from
+the oldest letters up and answers sooner too. The answers are the same. On ohmail Cloud and your own server.
+
+### Search reads `_` and `%` as typed, and a minus word no longer changes the count
+
+On every app and store, an underscore, a percent sign or a backslash in a search is now that character:
+`a_b` no longer finds `axb`, and `50%` no longer finds `500`. The same holds for the contact list's
+search on the server. A new letter sent to a long list of people keeps its file names findable by
+any part of them.
+
+On ohmail Cloud and your own server, a minus word that leaves no letter out (`mail -zzzqx`, or
+`mail or -zzzqx`) now gives the same "at least" count as the words alone, where it showed far fewer
+for a large mailbox. A bare `or` beside a minus word (`mail or -thanks`) now ranks and counts the same as
+`mail -thanks`, and its closest-word answer and first paint read it that way too.
+
+### The reply you send scrolls into view
+
+After you send a reply in a conversation, ohmail now brings it into view with one short, smooth scroll
+once the editor has closed and the message is drawn, on the web, the desktop app and the phone, whether
+you press Send or Cmd/Ctrl+Enter. It does
+nothing when the reply is already on screen or when you scrolled after pressing Send, any scroll of yours
+stops it at once, and with reduced motion turned on it moves without animating. Before, a reply to a
+single letter jumped the view back to that letter, and a longer reply in a thread was left below the fold.
+
+### The AI sample row names its invented sender on a reserved domain
+
+The sample sender line in the AI section of the web catalogue (English and German) now reads
+`atelier-eichspan.example`, the reserved name the demo world uses, instead of a `.ch` spelling
+somebody could register. A census now reads every string in the apps, the packages and the tests
+for a demo-world domain on a name that is not reserved.
+
+The address placeholders and illustrations that still spelled a registrable domain now use reserved
+names too: the German compose fields (web and phone) show `name@beispiel.example`, and the sign-up and
+in-place illustrations read `your-domain.example` (German `deine-domain.example`).
+
 ## [0.30.36] — 2026-11-04
 
 ### A word typed part way no longer lists the letters holding a common word it starts
@@ -16745,7 +16845,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.36...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.37...HEAD
+[0.30.37]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.37
 [0.30.36]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.36
 [0.30.35]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.35
 [0.30.34]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.34
