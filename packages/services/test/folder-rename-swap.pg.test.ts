@@ -48,17 +48,20 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   let m3: string;        // observed "Elsewhere", desired "Proj/Sub" — a pending move INTO the subtree
   let m4: string;        // tombstoned row in "Proj" — strings swap, NO change row
 
+  // The cases' fixed uids stay below 1000, so msg()'s never meet them at (folder, 7).
+  let nextUid = 1000;
   const msg = async (folder: string, opts: { deleted?: boolean } = {}): Promise<string> => {
     const id = randomUUID();
+    const uid = nextUid++;
     await db.insert(messages).values({
       id, accountId: ACCOUNT, mailboxId: mb,
       bodyHash: `h-${id.slice(0, 8)}`, dedupKey: `d-${id}`,
-      nativeLocator: { folder, ref: `7:${Math.floor(Math.random() * 100000)}` },
+      nativeLocator: { folder, ref: `7:${uid}` },
       ...(opts.deleted ? { deletedAt: new Date() } : {}),
     });
     await db.insert(messageInstances).values({
       accountId: ACCOUNT, mailboxId: mb, messageId: id,
-      folder, uidvalidity: 7n, uid: Math.floor(Math.random() * 100000), isPrimary: true,
+      folder, uidvalidity: 7n, uid, isPrimary: true,
     });
     return id;
   };
