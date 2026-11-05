@@ -78,6 +78,20 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.38" date="2026-11-05">
+      <description>
+        <ul>
+          <li>The desktop app on ohmail Cloud keeps checking every 8 seconds while you read</li>
+          <li>The desktop app forgets a mailbox's Sent folder name when its account ended while the app was closed</li>
+          <li>A sent reply is brought into view on the desktop paired to Cloud as well</li>
+          <li>The phone's Servers screen always has a way back after a pairing ends</li>
+          <li>The reply editor's tests wait for it by time, not by a count of ticks</li>
+          <li>A sign-in ended elsewhere takes its unsent replies even while another account is signed in</li>
+          <li>A later copy of the same settings is asked about again</li>
+          <li>On the web, a link in a plain letter asks before it opens when its text names another site</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.37" date="2026-11-05">
       <description>
         <ul>
@@ -127,16 +141,6 @@
           <li>An idle phone asks the server far less often</li>
           <li>A screen-out of a forged claim keeps a list you let in by its domain, a named contact or an approval</li>
           <li>A mailbox left on screen in another window closes when you sign out</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.33" date="2026-11-04">
-      <description>
-        <ul>
-          <li>A phone search for ines, ones or willing no longer lists every letter holding in, on or will</li>
-          <li>A company's own address waits unless confirmed</li>
-          <li>Closing the tab right after Sign out still signs out</li>
-          <li>Safari no longer forgets a sign-out that is still owed</li>
         </ul>
       </description>
     </release>

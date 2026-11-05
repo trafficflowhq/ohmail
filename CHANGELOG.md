@@ -21,6 +21,79 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.38] — 2026-11-05
+
+### The desktop app on ohmail Cloud keeps checking every 8 seconds while you read
+
+Signed in to ohmail Cloud, the desktop app counted only a request to its engine as somebody using it, and
+reading mail it already held makes none, so while you read it slowed its checks to every 32 seconds or a
+minute and new mail took up to 45 seconds to appear. A click, a key, scrolling or bringing the window to the
+front now counts too, at most once every 4 seconds and only on your own computer: the app checks every
+8 seconds while you use it, at once when you come back after a pause, and slows to once a minute as before
+while nobody does.
+
+### The desktop app forgets a mailbox's Sent folder name when its account ended while the app was closed
+
+On the desktop app, when a sign-in was ended from another device or an ohmail Cloud account was deleted while
+the app was closed, the next start showed the card saying so but kept the name of that mailbox's Sent folder,
+such as 'Envoyés', in the app's storage on the computer. That start now removes it with the rest of what the app
+kept for the mailbox, as the app already did when it was open at the time. It was the folder's name only, no
+mail. A sign-in that expired keeps it, as it keeps the mail.
+
+### A sent reply is brought into view on the desktop paired to Cloud as well
+
+On the desktop paired to ohmail Cloud, the reply you had just sent in a conversation was sometimes left
+below the window, and you had to scroll down to it. The provisional copy shown when the send was confirmed
+gave way to the copy from your Sent folder a moment later, and the reader lost track of it. It now follows
+the copy that stands, and also keeps the reveal when the reader is redrawn, for up to a minute after Send.
+Scrolling yourself still stops it at once.
+
+### The phone's Servers screen always has a way back after a pairing ends
+
+On the phone, after you forgot a pairing or removed the phone from a server's Devices list, the Servers
+screen could not be left: Back did nothing, and restarting the app opened the same screen again with no
+Back and no tab bar. Back now opens the mailbox this phone organizes itself when it has one, else a pairing the phone
+still holds that is still signed in, and the first screen otherwise; Android's system Back does the same.
+The app starts in that mailbox instead of on the Servers screen.
+
+### The reply editor's tests wait for it by time, not by a count of ticks
+
+Five web test files that open the reply or forward editor waited for its lazily loaded module by a fixed
+number of timer rounds, or not at all, and went red on a busy test machine. They now wait for the editor
+to appear with a real-time bound. Nothing changes in the apps.
+
+### A sign-in ended elsewhere takes its unsent replies even while another account is signed in
+
+On the web app, on ohmail Cloud and on your own server, when an account's sign-in was ended from another device
+while a different account was signed in on the same browser, the browser kept the ended account's half-written
+replies and forwards, the look it had chosen for the next start and its record of the notification registration
+until the next full sign-out. Each of these now names its account: the ended account's go with its mail, and the
+account signed in keeps its own. On the desktop app, ending one mailbox's account no longer removes the
+half-written replies of another mailbox in the window. A reply written before this release moves under its
+account the next time ohmail opens it or the mailbox it answers.
+
+### A later copy of the same settings is asked about again
+
+0.30.35 said an answer to imported settings covers that one copy, but a copy saved later that said what
+an answered copy said still counted as answered. After both computers had imported each other's settings,
+a rule removed on one and made again on the other never reached the first: its card asked nothing and its
+next save removed the copy that carried the rule. An answer now covers only the copy it was given for, so
+any later copy that differs from the settings here is asked about, while the same copy asks nothing after
+a restart. Answers given before this release still cover the copies saved before them.
+
+In the desktop app and on the phone, an install that organized a mailbox again without being restarted
+since it last organized it removed the other computer's settings from the mailbox without asking: after
+taking it back, after the phone app came back to the foreground, or after the computer woke from sleep
+while another computer had organized the mailbox in between. It now keeps them and asks, as it does after
+a restart.
+
+### On the web, a link in a plain letter asks before it opens when its text names another site
+
+In a letter set in ohmail's own type, a link whose text names a different site than the one it
+goes to (the reader already shows the real site beside it) now opens the same "Open this link?"
+page that links in designed letters and Show original open, instead of the site itself. Honest
+links still open at once. The desktop app already asked for these links. Web and your own server.
+
 ## [0.30.37] — 2026-11-05
 
 ### ohmail Cloud no longer holds a connection open for every open window
@@ -16845,7 +16918,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.37...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.38...HEAD
+[0.30.38]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.38
 [0.30.37]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.37
 [0.30.36]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.36
 [0.30.35]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.35
