@@ -1,6 +1,6 @@
 import { MessageGoneError, ImapConnectionClosedError, StoreRefusedError, StoreUnansweredError } from "@trafficflow/core/adapters/imap";
 import type {
-  MailboxAdapter, ImapConfig, ImapCursor, ChangeBatch, ImapCapabilities,
+  MailboxAdapter, ImapConfig, ImapCursor, ChangeBatch, ChangeBudget, ImapCapabilities,
   OutboundMessage, SendResult, FetchedPart, FetchByUidOptions, TargetedFetch,
 } from "@trafficflow/core/adapters/imap";
 import type {
@@ -99,6 +99,8 @@ export interface FakeControl {
   watchGate?: Promise<void>;
   /** `changesSince` awaits this — parks a cycle IN FLIGHT so a stop() can land on it. */
   syncGate?: Promise<void>;
+  /** `changesSince` takes at least this long (after `syncGate`): a turn that runs long on a slow store. */
+  syncDelayMs?: number;
   /**
    * Hand back at most this many pending messages per call and set `hasBacklog` while more
    * remain — the real adapter's bounded backfill (`DEFAULT_SYNC_BATCH_MAX_MESSAGES`).
@@ -511,6 +513,10 @@ export class FakeAdapterFleet {
   syncs = 0;
   /** Sync calls currently parked inside `changesSince` (see `syncGate`). */
   syncInFlight = 0;
+  /** mailboxId → the message limit each `changesSince` call was given, in order (`undefined`: none). */
+  readonly asked = new Map<string, Array<number | undefined>>();
+  /** mailboxId → every create ref `changesSince` handed over, in order: a ref twice is mail served twice. */
+  readonly served = new Map<string, string[]>();
   /** `connect()` calls entered and not yet returned, and the most there ever were at once. */
   connectInFlight = 0;
   connectPeak = 0;
@@ -724,13 +730,16 @@ export class FakeAdapterFleet {
         if (ctl().failEnsureFolders) throw new Error(`fake ensureFolders failed (${id})`);
         fleet.note(id, "ensure_folders");
       },
-      async changesSince(c: ImapCursor): Promise<ChangeBatch> {
+      async changesSince(c: ImapCursor, budget?: ChangeBudget): Promise<ChangeBatch> {
         fleet.note(id, "sync_start");
+        fleet.asked.set(id, [...(fleet.asked.get(id) ?? []), budget?.messages]);
         const syncGate = ctl().syncGate;
         if (syncGate) {
           fleet.syncInFlight++;
           try { await syncGate; } finally { fleet.syncInFlight--; }
         }
+        const syncDelayMs = ctl().syncDelayMs;
+        if (syncDelayMs !== undefined) await new Promise((r) => setTimeout(r, syncDelayMs));
         const syncError = ctl().syncError;
         if (syncError !== undefined) throw syncError;
         if (ctl().failSync) throw new Error(`fake sync failed (${id})`);
@@ -760,8 +769,11 @@ export class FakeAdapterFleet {
           .map((m, i) => ({ m, uid: 1000 + i }))
           .filter(({ m, uid }) => !(c.folders[m.folder ?? "INBOX"]?.known ?? []).some((k) => k.uid === uid));
         if (pending.length === 0) return { ...cursor, flagChanges, ...(moves.length > 0 ? { moves } : {}) };
-        const cap = ctl().batchSize;
-        const served = cap === undefined ? pending : pending.slice(0, cap);
+        // The call's own limit lowers `batchSize`, never raises it, and takes at least one, as the real adapter.
+        const limit = budget?.messages === undefined ? undefined : Math.max(1, Math.floor(budget.messages));
+        const caps = [ctl().batchSize, limit].filter((n): n is number => n !== undefined);
+        const served = caps.length === 0 ? pending : pending.slice(0, Math.min(...caps));
+        fleet.served.set(id, [...(fleet.served.get(id) ?? []), ...served.map(({ m, uid }) => `${m.folder ?? "INBOX"}/1:${uid}`)]);
         return {
           ...cursor,
           flagChanges,
