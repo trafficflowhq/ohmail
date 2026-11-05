@@ -567,7 +567,11 @@ interface Arm {
    * `candidate` is the condition alone (the letter holds enough of the typo's trigrams to be a candidate
    * of its index), `similar` the similarity it guards.
    */
-  readonly typo?: { readonly walkPred: SQL; readonly candidate: SQL; readonly similar: SQL; readonly vectors: boolean };
+  readonly typo?: {
+    readonly walkPred: SQL; readonly candidate: SQL; readonly similar: SQL; readonly vectors: boolean;
+    /** The branch's predicate with the word unpriced (the dialect's `guesses`), for the unfiltered read of its guesses. */
+    readonly guesses?: SQL;
+  };
   /**
    * A part arm held to an excluded word: it walks on past its bound, or reads its index, only while
    * the text arm is short of its cut ({@link SearchService.fusedArms}). Its words' whole forms are the
@@ -733,7 +737,8 @@ export class SearchService {
       // A guess never holds a word the reader excluded, anywhere in the letter.
       const held = (b: SearchArm, none: SQL | undefined): SearchArm => (none ? { pred: sql`(${b.pred} and ${none})`, rank: b.rank } : b);
       const excluded = d.search.words(q).excluded;
-      const fuzz = held(d.search.fuzzy(pos, "mail", { trigram, threshold: FUZZY_THRESHOLD }), excluded);
+      const typo = d.search.fuzzy(pos, "mail", { trigram, threshold: FUZZY_THRESHOLD });
+      const fuzz = held(typo, excluded);
       const old = (legacy?.fuzzy ?? []).map((b) => bare(held(b, legacy!.excluded)));
       const arm: Arm = { name: "similar", ranked: true, branches: [own(fuzz), ...old] };
       // The server's documents only: the desktop's store keeps its scans inside six cuts.
@@ -742,7 +747,8 @@ export class SearchService {
       if (pre === null) return read([arm]);
       const walkPred = sql`(s.account_id = ${ctx.accountId} and (case when ${pre} then ${fuzz.pred} else false end))`;
       const candidate = sql`(s.account_id = ${ctx.accountId} and ${pre})`;
-      return [{ ...arm, typo: { walkPred, candidate, similar: fuzz.pred, vectors: excluded !== undefined }, ...lettersOf }];
+      const guesses = typo.guesses === undefined ? {} : { guesses: own(held({ pred: typo.guesses, rank: typo.rank }, excluded)).pred };
+      return [{ ...arm, typo: { walkPred, candidate, similar: fuzz.pred, vectors: excluded !== undefined, ...guesses }, ...lettersOf }];
     }
     const local = this.opts.localStore === true && d.name === "pg" && documents && legacy === null;
     // The server's documents under the account-keyed word index: the recency arms may read sets.
@@ -1303,7 +1309,7 @@ export class SearchService {
    * letters instead, as the planner chooses: read first, the account's guesses had cost a broad typo under a
    * sender 15,192 buffers on 240,000 letters, where the sender's 40 letters cost 1,556.
    */
-  private typoRead(where: SQL, b: Branch, { walkPred, candidate, similar, vectors }: NonNullable<Arm["typo"]>, k: number, letters?: number): SQL {
+  private typoRead(where: SQL, b: Branch, { walkPred, candidate, similar, vectors, guesses }: NonNullable<Arm["typo"]>, k: number, letters?: number): SQL {
     const newestOf = (n: SQL | number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
       where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
     // Each walked message's document asked by itself (`offset 0`), so the walk streams in its order
@@ -1339,14 +1345,14 @@ export class SearchService {
     // The newest K are asked once each (`tz`: a candidate `c`, then a guess `h`; read only as far as asked):
     // the newest few first (`tf`), all K once the guesses are not few (`tp`). The guesses are read off the
     // GIN once (`tg`): a page and one of them first (`t0`), every one when the walk falls short (`tm`). One
-    // `<%` clause, so planned once: the planner prices each over the column's statistics, about 5 ms here.
+    // `<%` clause, its word a run-time value: the planner prices a typed one over the column's statistics, 5-13 ms here.
     // Materialized, so planned for all its rows (the GIN, never a walk of the account's index that a limit
     // makes look cheap) and run only as far as it is read.
     return sql`(with tz as materialized (select z.c as c, case when z.c then ${similar} else false end as h
         from (${newestOf(k)}) w left join lateral ${doc} on true cross join lateral (select ${candidate} as c) z),
       tf as materialized (select count(*) filter (where z.h) as h, count(*) filter (where z.c) as c
         from (select h, c from tz limit ${SEARCH_FIRST_LETTERS}) z),
-      tg as materialized (select s.message_id as id from message_search s where ${b.pred}),
+      tg as materialized (select s.message_id as id from message_search s where ${guesses ?? b.pred}),
       t0 as materialized (select id from tg where ${thin} limit ${page + 1}),
       ta as materialized (select ${thin} and (select count(*) from t0) <= ${page} as v),
       tp as (select count(*) as h from tz z where not ${few} and z.h), tw as (${walked}),

@@ -8,7 +8,7 @@
  * being written.
  */
 import { sql, type SQL } from "drizzle-orm";
-import { type LockMode, containsPattern, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, anyPartArms, eszettForms, partOperandsOf, partSidesOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
+import { type LockMode, type FuzzyArm, containsPattern, assertComparable, assertDistinct, assertJsonKey, type Dialect, type LockOptions, type SearchArm, type SearchCorpus, type SearchDocumentParts, type UnindexedMailArms, type MailWordArms, PART_PREFIX_MIN_CHARS, anyPartArms, eszettForms, partOperandsOf, partSidesOf, partWordTails, partWordsOf, typoTrigramsOf, queryOperandsOf, straddlesParts, type QueryOperands, type QueryOperand } from "./index.js";
 
 // Re-exported because it was defined here first and the server arm's tests import it by this
 // path; the refusal itself belongs to both arms and now lives in the contract.
@@ -88,11 +88,17 @@ function inLetter(o: QueryOperand, head: SQL, text: SQL, fold: boolean): SQL {
 
 /**
  * The typed text as the HEAD vector is asked it: its subject is english words, its people `simple`
- * ones (`ines` stays `ines`, english reads `ine`), so each form is asked both ways, OR-ed.
+ * ones (`ines` stays `ines`, english reads `ine`), so each form is asked both ways, OR-ed. Once where
+ * the two agree: a lexeme asked twice is priced as twice as common, and its page walked History.
  */
 function headTsquery(q: string, fold = true): SQL {
   const forms = fold ? eszettForms(q) : [q];
-  return sql`(${sql.join(forms.flatMap((f) => [sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${f})`, sql`websearch_to_tsquery('simple', ${f})`]), sql` || `)})`;
+  const one = (f: string): SQL => {
+    const e = sql`websearch_to_tsquery(${TEXT_SEARCH_CONFIG}, ${f})`;
+    const s = sql`websearch_to_tsquery('simple', ${f})`;
+    return sql`(case when ${e} = ${s} then ${e} else ${e} || ${s} end)`;
+  };
+  return sql`(${sql.join(forms.map(one), sql` || `)})`;
 }
 
 /** An operand as `websearch_to_tsquery` reads it. */
@@ -407,7 +413,7 @@ export function pgDialect(): Dialect {
         // sequential scan of the whole account.
         return { pred: sql`s.head_tsv @@ ${tsq}`, rank: sql`ts_rank_cd(s.head_tsv, ${tsq})` };
       },
-      fuzzy: (q: string, corpus: SearchCorpus, opts): SearchArm => {
+      fuzzy: (q: string, corpus: SearchCorpus, opts): FuzzyArm => {
         const like = containsPattern(q);
         if (corpus === "kb") {
           if (opts.trigram) {
@@ -424,7 +430,7 @@ export function pgDialect(): Dialect {
           // `<%` is `word_similarity >= pg_trgm.word_similarity_threshold`, and unlike the function
           // it is served by `message_search_terms_trgm_idx`; the caller sets the threshold for its
           // transaction through `fuzzyThreshold`, so the operator and `opts.threshold` agree.
-          return { pred: sql`${q} <% s.terms`, rank: sql`word_similarity(${q}, s.terms)` };
+          return { pred: sql`${q} <% s.terms`, rank: sql`word_similarity(${q}, s.terms)`, guesses: sql`(select ${q}::text) <% s.terms` };
         }
         // The degrade, for a deployment without the trigram index: the same shape, no index, and
         // it still answers rather than pretending the arm does not exist. RECENCY is the rank —

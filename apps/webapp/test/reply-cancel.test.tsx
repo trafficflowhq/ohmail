@@ -334,6 +334,109 @@ describe("Cancel returns to the message and strands nothing", () => {
   });
 });
 
+describe("an open reply keeps the keyboard", () => {
+  /* jsdom does not derive `isContentEditable` from the attribute; a browser does, and the
+     keymap's typing guard reads it. Defined here the way a browser answers it. */
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, "isContentEditable", {
+      configurable: true,
+      get(this: HTMLElement) { return this.closest('[contenteditable="true"]') !== null; },
+    });
+  });
+  afterEach(() => {
+    delete (HTMLElement.prototype as unknown as { isContentEditable?: boolean }).isContentEditable;
+  });
+
+  /** A key pressed where focus is, as a person's keyboard delivers it. */
+  const keyAtFocus = async (k: string): Promise<void> => {
+    const at = (document.activeElement ?? document.body) as HTMLElement;
+    await act(async () => {
+      at.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+    });
+  };
+
+  /** Open a reply and attach files to it; they live only in the open editor. */
+  async function replyWithFile(names: readonly string[] = ["notes.txt"]): Promise<HTMLElement> {
+    await mountShell();
+    await openReply();
+    const surface = await replyEditorSurface();
+    const input = q<HTMLInputElement>('.reply input[type="file"]');
+    expect(input, "the reply drew no attach control").not.toBeNull();
+    const files = names.map((n) => new File([new Uint8Array(512)], n, { type: "text/plain" }));
+    Object.defineProperty(input!, "files", { value: files, configurable: true });
+    await act(async () => { input!.dispatchEvent(new Event("change", { bubbles: true })); });
+    await waitFor(() => names.every((n) => (q(".reply")?.textContent ?? "").includes(n)), "the picked files never showed");
+    return surface;
+  }
+
+  /* The park's own toast — the rail's "Parked" pile carries the same word. */
+  const parked = (): boolean =>
+    [...host!.querySelectorAll(".toast")].some((t) => (t.textContent ?? "").includes("Parked"));
+
+  /* Mutation: drop the body focus from the subject's Escape — focus falls out of the reply to the
+     list, and (with `data-key-writing` gone too) `e` parks the message and drops the file. */
+  it("Escape in the subject returns to the body; a typed e parks nothing and keeps the file", async () => {
+    const surface = await replyWithFile();
+    const subject = openSubject();
+    await act(async () => { q<HTMLButtonElement>(".reply .reply-subject")!.click(); });
+    const field = q<HTMLInputElement>(".reply .reply-subject-input");
+    expect(document.activeElement, "the subject field did not take focus").toBe(field);
+
+    await keyAtFocus("Escape");
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(q(".reply .reply-subject-input"), "Escape left the subject field open").toBeNull();
+    expect(surface.contains(document.activeElement), "Escape did not hand focus to the reply's body").toBe(true);
+
+    await keyAtFocus("e");
+    expect(parked(), "a letter typed after the subject's Escape parked the message").toBe(false);
+    expect(replySurface(), "the letter closed the reply").not.toBeNull();
+    expect(q(".reply")!.textContent, "the attached file was dropped").toContain("notes.txt");
+    expect(openSubject(), "the message being answered left the screen").toBe(subject);
+  });
+
+  /* Mutation: drop the reply's `data-key-writing` — `e` on a button inside the reply runs the
+     mailbox's park on the message behind it. */
+  it("no mailbox letter runs from a control inside the open reply", async () => {
+    await replyWithFile();
+    const subject = openSubject();
+    await act(async () => { q<HTMLButtonElement>(".reply .reply-subject")!.focus(); });
+    await keyAtFocus("e");
+    expect(parked(), "e on the reply's own button parked the message").toBe(false);
+    expect(replySurface(), "the letter closed the reply").not.toBeNull();
+    expect(q(".reply")!.textContent).toContain("notes.txt");
+    expect(openSubject()).toBe(subject);
+  });
+
+  /* Mutation: drop the writing-surface landing in `focus-follows` — the removed button's focus
+     falls to the list's row, and `e` there parks the message and drops the other file. */
+  it("removing a file by keyboard keeps focus in the reply; a typed e parks nothing", async () => {
+    const surface = await replyWithFile(["one.txt", "two.txt"]);
+    const subject = openSubject();
+    const remove = q<HTMLButtonElement>('.reply .compose-attach-remove[aria-label*="two.txt"]');
+    expect(remove, "no remove control for two.txt").not.toBeNull();
+    await act(async () => { remove!.focus(); });
+    await act(async () => { remove!.click(); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 5)); });
+    expect(q(".reply")!.textContent, "the file was not removed").not.toContain("two.txt");
+    expect(surface.contains(document.activeElement), "the removed button's focus left the reply").toBe(true);
+
+    await keyAtFocus("e");
+    expect(parked(), "a letter typed after removing a file parked the message").toBe(false);
+    expect(replySurface(), "the letter closed the reply").not.toBeNull();
+    expect(q(".reply")!.textContent, "the other file was dropped").toContain("one.txt");
+    expect(openSubject(), "the message being answered left the screen").toBe(subject);
+  });
+
+  /* The control: the same `e` parks once the reply is closed, so the cases above measure a claim. */
+  it("the mailbox letters come back when the reply closes", async () => {
+    await replyWithFile();
+    await act(async () => { replyCancel()!.click(); });
+    expect(replySurface()).toBeNull();
+    await key("e");
+    await waitFor(parked, "e did not park the message with the reply closed");
+  });
+});
+
 describe("the dock wrapper is conditional at the source", () => {
   /**
    * The rendered guard above can only see the demo's own width. This pins the RULE, so the

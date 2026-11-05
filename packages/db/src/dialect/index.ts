@@ -195,6 +195,11 @@ export interface LockOptions {
 
 /** The two text-search arms, each as the predicate that selects and the expression that ranks. */
 export interface SearchArm { readonly pred: SQL; readonly rank: SQL }
+/**
+ * The typo arm: `guesses`, where the store has one, is `pred` with the typed word as a run-time value,
+ * which the same index serves but the planner does not price over the column's statistics.
+ */
+export interface FuzzyArm extends SearchArm { readonly guesses?: SQL }
 
 /**
  * The parts a message's search document is built from (mail 0125), each already bounded by the
@@ -832,7 +837,7 @@ export interface Dialect {
      * already breaks ties on `updated_at`. Making them agree would change what one of the two
      * returns — a product decision, not a port's.
      */
-    fuzzy(q: string, corpus: SearchCorpus, opts: { trigram: boolean; threshold: number }): SearchArm;
+    fuzzy(q: string, corpus: SearchCorpus, opts: { trigram: boolean; threshold: number }): FuzzyArm;
     /**
      * A NECESSARY CONDITION for the mail arm's `q <% terms`, cheap enough to ask before it, or
      * `null` where there is none: the operator holds only where at least `threshold` of the query's

@@ -136,8 +136,9 @@ describe("the search backfill reaches every account that owes it", () => {
 
     await waitFor(async () => (await documented(db, disabled.ids)) === 3, 30_000, "the disabled-only account's documents");
     await waitFor(async () => (await documented(db, parked.ids)) === 3, 30_000, "the parked account's documents");
-    expect(await marked(db, disabled.accountId), "the disabled-only account's marker").toBe(true);
-    expect(await marked(db, parked.accountId), "the parked account's marker").toBe(true);
+    // The marker is stamped after the documents, in its own statement.
+    await waitFor(() => marked(db, disabled.accountId), 30_000, "the disabled-only account's marker");
+    await waitFor(() => marked(db, parked.accountId), 30_000, "the parked account's marker");
     // The park held for the whole run: its mailbox was never attached, so the documents came from the tail.
     expect(worker.stats().mailboxes, "only the open account's mailbox is on the roster").toBe(1);
     expect(await documented(db, built.ids), "an account with its marker written was indexed again").toBe(0);
