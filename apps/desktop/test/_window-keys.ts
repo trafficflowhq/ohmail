@@ -12,6 +12,7 @@ import { readingAlongKey } from "../../webapp/app/shell/reading-along";
 import { screenerIntentsKey } from "../../webapp/app/shell/screener-intents";
 import { sendLocksKey } from "../../webapp/app/shell/send-lock";
 import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+import { windowSentFoldersKey } from "../src/window-outbox-store.js";
 
 export interface WindowKeys { gone: string[]; kept: string[] }
 
@@ -27,13 +28,14 @@ export function seedWindowKeys(end?: "erased"): WindowKeys {
   const gone = [
     screenerIntentsKey("mbx-1"), deleteIntentsKey("mbx-1"), routingIntentsKey("mbx-1"),
     composeDraftKey("mbx-1"), composeSessionKey("mbx-1"), composeRowKey("mbx-1"), `${COMPOSE_DRAFT_PREFIX}mbx-1`,
-    readingAlongKey("mbx-1"), `${ACCESS_VERDICT_PREFIX}mbx-1`, bootCacheKey("consent", "mbx-1"),
+    readingAlongKey("mbx-1"), `${ACCESS_VERDICT_PREFIX}mbx-1`, bootCacheKey("consent", "mbx-1"), windowSentFoldersKey("mbx-1"),
     replyDraftKey("msg-1"), replyMetaKey("lane-1"), LEGACY_COMPOSE_DRAFT_KEY, ...(end === "erased" ? [lane] : []),
   ];
   const kept = [
     screenerIntentsKey("mbx-10"), composeDraftKey("mbx-10"), composeDraftKey("mbx-1.x"), `${ACCESS_VERDICT_PREFIX}mbx-10`,
     bootCacheKey("consent", "mbx-10"), sendLocksKey("mbx-10"), sendLocksKey("mbx-1.x"), ...(end === "erased" ? [] : [lane]),
     "ohmail.theme", "ohmail.layout", searchSortKey("mbx-1"), "ohmail.ui.seed.notNow.mbx-1",
+    windowSentFoldersKey("mbx-10"), windowSentFoldersKey("mbx-1.x"),
   ];
   for (const k of [...gone, ...kept]) localStorage.setItem(k, "[]");
   expectKept({ gone, kept }, "seeded");

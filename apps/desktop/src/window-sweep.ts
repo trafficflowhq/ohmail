@@ -19,6 +19,7 @@ import { READING_ALONG_PREFIX } from "../../webapp/app/shell/reading-along";
 import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
 import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+import { windowSentFoldersKey } from "./window-outbox-store.js";
 
 /**
  * The keys built as `<prefix><mailbox>`, the compose three also as `<prefix><mailbox>.<composer>`. Not the
@@ -86,7 +87,7 @@ function sweepScopes(
   if (owed.length === 0) return null;
   const keys = dropLocalStorageKeysWhere((k) =>
     k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)
-    || owed.some((s) => scopedTo(k, s) || alsoGone(k, s)));
+    || owed.some((s) => scopedTo(k, s) || k === windowSentFoldersKey(s) || alsoGone(k, s)));
   const sweeps = [keys, ...owed.map((s) => clearBootCaches(s))];
   const swept: LocalSweep = {
     survivors: sweeps.flatMap((s) => s.survivors),
