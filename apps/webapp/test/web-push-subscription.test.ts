@@ -285,6 +285,34 @@ describe("syncWebPush — removing one, which is where OFF is enforced", () => {
   });
 });
 
+/**
+ * THE ROW NAMES THE ACCOUNT IT WAS ANNOUNCED FOR, beside its id: a revoke of one account while another holds this
+ * browser's jar forgets only its own (`sign-out.ts`, the one-account sweep). The name is the jar's at the POST.
+ */
+describe("syncWebPush — the stored row names its account", () => {
+  const stored = (): Array<string | null> => ["subscriptionId", "subscriptionEndpoint", "subscriptionOwner"]
+    .map((k) => window.localStorage.getItem(`ohmail.notifications.${k}`));
+  afterEach(() => { document.cookie = "tf_owner=; Path=/; Max-Age=0"; });
+
+  it("names A; a rotation announced under B names B; turning it off removes all three", async () => {
+    document.cookie = "tf_owner=acct_A; Path=/";
+    expect(await syncWebPush(true, api())).toBe("subscribed");
+    expect(stored()).toEqual(["row-1", "https://push.example/ep/abc", "acct_A"]);
+    document.cookie = "tf_owner=acct_B; Path=/";
+    existing!.endpoint = "https://push.example/ep/NEW";
+    expect(await syncWebPush(true, api({ subscribe: () => Promise.resolve({ id: "row-new" }) }))).toBe("subscribed");
+    expect(stored()).toEqual(["row-new", "https://push.example/ep/NEW", "acct_B"]);
+    expect(await syncWebPush(false, api())).toBe("unsubscribed");
+    expect(stored()).toEqual([null, null, null]);
+  });
+
+  it("a row announced with nobody in the jar names nobody, not the account named before", async () => {
+    window.localStorage.setItem("ohmail.notifications.subscriptionOwner", "acct_A");
+    expect(await syncWebPush(true, api())).toBe("subscribed");
+    expect(stored()).toEqual(["row-1", "https://push.example/ep/abc", null]);
+  });
+});
+
 describe("syncWebPush — two presses do not interleave", () => {
   it("an ON and an OFF in flight together resolve IN ORDER, not into a live subscription", async () => {
     /**

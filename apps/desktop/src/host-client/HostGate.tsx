@@ -26,7 +26,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
 import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
-import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../../../webapp/app/shell/mail-send";
+import {
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+} from "../../../webapp/app/shell/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents";
 import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
@@ -77,6 +79,9 @@ export const HOST_SCRATCH_PREFIXES: readonly string[] = [
   ROUTING_INTENTS_PREFIX,
   REPLY_DRAFT_PREFIX,
   REPLY_META_PREFIX,
+  // …and the same two under the pairing scope they were typed in.
+  OWNED_REPLY_DRAFT_PREFIX,
+  OWNED_REPLY_META_PREFIX,
 ];
 
 /**

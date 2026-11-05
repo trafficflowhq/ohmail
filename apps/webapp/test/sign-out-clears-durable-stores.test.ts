@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { dropLocalStorageKeys } from "../app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../app/shell/compose";
-import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "../app/shell/mail-send";
+import {
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+} from "../app/shell/mail-send";
 import { NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
 import { SCREENER_INTENTS_PREFIX } from "../app/shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "../app/shell/delete-intents";
@@ -68,6 +70,8 @@ const SWEPT = [
   LEGACY_COMPOSE_DRAFT_KEY,
   REPLY_DRAFT_PREFIX,
   REPLY_META_PREFIX,
+  OWNED_REPLY_DRAFT_PREFIX,
+  OWNED_REPLY_META_PREFIX,
   NOTIFICATION_SUBSCRIPTION_PREFIX,
   READING_ALONG_PREFIX,
   SESSION_MINTED_KEY,
@@ -304,6 +308,9 @@ describe("sign-out clears the durable decision stores", () => {
       [LEGACY_COMPOSE_DRAFT_KEY]: "an older unfinished message",
       [`${REPLY_DRAFT_PREFIX}msg-1`]: "an unsent reply body",
       [`${REPLY_META_PREFIX}lane-1`]: "{}",
+      // …and the same two under the account that typed them.
+      [`${OWNED_REPLY_DRAFT_PREFIX}acct-a:msg-2`]: "an unsent reply body, named",
+      [`${OWNED_REPLY_META_PREFIX}acct-a:lane-2`]: "{}",
       "ohmail.boot.acct-a.piles": "{}",
     };
     for (const [k, v] of Object.entries(jar)) window.localStorage.setItem(k, v);
@@ -331,6 +338,8 @@ describe("sign-out clears the durable decision stores", () => {
       "LEGACY_COMPOSE_DRAFT_KEY",
       "REPLY_DRAFT_PREFIX",
       "REPLY_META_PREFIX",
+      "OWNED_REPLY_DRAFT_PREFIX",
+      "OWNED_REPLY_META_PREFIX",
       "NOTIFICATION_SUBSCRIPTION_PREFIX",
       "READING_ALONG_PREFIX",
       "SESSION_MINTED_KEY",
@@ -371,6 +380,8 @@ describe("sign-out clears the durable decision stores", () => {
       "LEGACY_COMPOSE_DRAFT_KEY",
       "REPLY_DRAFT_PREFIX",
       "REPLY_META_PREFIX",
+      "OWNED_REPLY_DRAFT_PREFIX",
+      "OWNED_REPLY_META_PREFIX",
       "NOTIFICATION_SUBSCRIPTION_PREFIX",
       "READING_ALONG_PREFIX",
       "SESSION_MINTED_KEY",

@@ -5,9 +5,12 @@ import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
   LEGACY_COMPOSE_DRAFT_KEY,
 } from "./shell/compose";
-import { REPLY_DRAFT_PREFIX, REPLY_META_PREFIX } from "./shell/mail-send";
+import { FACE_ACCOUNT_KEY, FACE_ACCOUNT_OWNER_KEY } from "./shell/face-mirror";
 import {
-  NOTIFICATION_SUBSCRIPTION_PREFIX, revokeWakeRegistration,
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+} from "./shell/mail-send";
+import {
+  NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY, revokeWakeRegistration,
 } from "./shell/notification-settings";
 import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending, readOwner } from "./shell/owner-cookie";
@@ -88,10 +91,11 @@ export async function forgetThisBrowser(
     serverHeld?: boolean;
     /**
      * TRUE: forget `owner` and nothing of anybody else — the erased-account door. Its mirror, its
-     * boot caches and every store keyed to it go; another account's mirror and keys on this
-     * browser stay. The jar-wide stores (reply buffers, the session stamp, the wake registration)
-     * go as on sign-out: they belong to the jar's session, which was this account's. The marker
-     * and this client's binding are touched only when they name `owner`.
+     * boot caches and every store keyed to it go, its reply text included; another account's mirror
+     * and keys on this browser stay. The jar-wide stores (reply buffers that name no account, the
+     * session stamp, the wake registration, the face mirror) go as on sign-out: they belong to the
+     * jar's session, which was this account's. The marker and this client's binding are touched only
+     * when they name `owner`.
      */
     only?: boolean;
     /** With `only`: how far the wipe may still reach, asked before each step (the revoke door's). Absent, `jar`. */
@@ -159,7 +163,7 @@ export async function forgetThisBrowser(
   // replay on a later sign-in; a send lane would outlive the session whose
   // key it holds. Scoping a key to an account is not what makes a sign-out
   // reach it: the compose scratch was account-scoped and the sweep was
-  // simply never told; the reply buffers are keyed by message id and lane.
+  // simply never told. What it does is let a one-account wipe reach it.
   const durable = sweepFor(only ? owner! : null, [
     SEND_LOCKS_PREFIX,
     SCREENER_INTENTS_PREFIX,
@@ -184,22 +188,25 @@ export async function forgetThisBrowser(
     // cost is small, but a stale account id surviving a sign-out is the thing this sweep exists to
     // refuse, and the composer is the one reader that would act on it.
     COMPOSE_ROW_PREFIX,
-    // The reply scratch buffers, which are the same thing one surface along and are WORSE:
-    // keyed by message id and lane only, never by owner, so unlike the compose buffer they were
-    // never account-scoped in the first place. They hold the reply body.
+    // The reply scratch buffers, which are the same thing one surface along: they hold the reply
+    // body. A key that names no account (written before the keys named their owner, or with no
+    // storage owner) is the jar's; one that does, `<prefix><owner>:<lane>`, is that account's.
     REPLY_DRAFT_PREFIX,
     REPLY_META_PREFIX,
+    OWNED_REPLY_DRAFT_PREFIX,
+    OWNED_REPLY_META_PREFIX,
     // The FACE's account-derived pair (OHMARCHY-PLAN.md §3a). `ohmail.face.account` is the
     // DEVICE'S MIRROR OF THE ACCOUNT'S ANSWER — cached so the next boot's pre-paint stamp can
     // wear it before `GET /consent` lands — which makes it account data in the only sense this
     // sweep cares about: left behind, it re-skins the NEXT account's first paint from the
-    // departed account's preference. `ohmail.faceOffer` is the Option B offer's dismissal,
-    // answered in the context of the signed-in account; the next account on this device gets
-    // its own offer. The device's own pins (`ohmail.face`, `ohmail.layout`) SURVIVE beside
-    // `ohmail.theme` — a browser's look, not account data (the census names them).
-    "ohmail.face.account",
+    // departed account's preference; the account it names goes with it (`face-mirror.ts`).
+    // `ohmail.faceOffer` is the Option B offer's dismissal, answered in the context of the
+    // signed-in account; the next account on this device gets its own offer. The device's own
+    // pins (`ohmail.face`, `ohmail.layout`) SURVIVE beside `ohmail.theme` — a browser's look,
+    // not account data (the census names them).
+    FACE_ACCOUNT_KEY,
     "ohmail.faceOffer",
-    // The push row's id and the endpoint it was minted for, both
+    // The push row's id, the endpoint and the account it was minted for, all
     // session-bound. Swept UNCONDITIONALLY, even when the revoke could not
     // delete the row — deliberate: after a sign-out there is no credential
     // to retry the delete with (the account-scoped DELETE would 404 for the
@@ -308,13 +315,23 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
 
 /**
  * The prefixes whose keys are `<prefix><owner>…` — read off each module's key function. The rest
- * of the sweep's list is keyed by message id, by nothing, or by the jar's session.
+ * of the sweep's list names its account beside it ({@link OWNER_TAGGED}), names none (a message
+ * id, an old reply key), or belongs to the jar's session.
  */
 const OWNER_KEYED: readonly string[] = [
   SEND_LOCKS_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX,
-  ACCESS_VERDICT_PREFIX,
+  ACCESS_VERDICT_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX,
 ];
+
+/**
+ * The jar-wide entries that name their account in a key of their own, under the same prefix: the
+ * face mirror and the push id. A one-account wipe takes them when they name that account.
+ */
+const OWNER_TAGGED: ReadonlyMap<string, string> = new Map([
+  [FACE_ACCOUNT_KEY, FACE_ACCOUNT_OWNER_KEY],
+  [NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY],
+]);
 
 /**
  * How far a one-account wipe may still reach (`forgetThisBrowser`'s `reach`): `jar` takes all of it;
@@ -325,18 +342,30 @@ export type WipeReach = "jar" | "account" | "none";
 
 /**
  * The sweep, whole (`owner` null) or for ONE account: an owner-keyed prefix then matches only
- * `<prefix><owner>`, and the legacy compose key only itself — as a prefix it would also match
- * every account's `ohmail.ui.compose.<owner>.` buffers. A one-account sweep never takes a revoke's
- * owed record: the door drops its own once the copy is proved gone.
+ * `<prefix><owner>`, an owner-tagged entry goes with the jar or when its tag names `owner`, and the
+ * legacy compose key only itself — as a prefix it would also match every account's
+ * `ohmail.ui.compose.<owner>.` buffers. A one-account sweep never takes a revoke's owed record: the
+ * door drops its own once the copy is proved gone.
  */
 function sweepFor(owner: string | null, list: readonly string[], may: (scope: "jar" | "account") => boolean) {
   if (owner === null) return dropLocalStorageKeys(list);
   const jar = may("jar");
   const account = may("account");
+  const tags = new Map([...OWNER_TAGGED].map(([p, tag]) => [p, readTag(tag)]));
   return dropLocalStorageKeysWhere((key) => list.some((p) =>
     p === REVOKE_OWED_PREFIX ? false
       : OWNER_KEYED.includes(p) ? account && key.startsWith(`${p}${owner}`)
-        : jar && (p === LEGACY_COMPOSE_DRAFT_KEY ? key === p : key.startsWith(p))));
+        : tags.has(p) ? (jar || (account && tags.get(p) === owner)) && key.startsWith(p)
+          : jar && (p === LEGACY_COMPOSE_DRAFT_KEY ? key === p : key.startsWith(p))));
+}
+
+/** The account an owner-tagged entry names, or `null`: none, or a jar that cannot be read. */
+function readTag(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
 /** Sign-out presses per page, by tab name (a test runs two tabs in one document). */

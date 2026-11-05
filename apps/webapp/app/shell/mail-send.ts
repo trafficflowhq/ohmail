@@ -785,11 +785,32 @@ export function sendKeyOf(m: MailSend, surface: "compose" | "inline" = "compose"
  * the editor closed. Keeping the key and the cleanup in one file is also what stops the two
  * from being imported in a cycle.
  */
-/** Every reply scratch key starts here. Exported so sign-out can sweep them — these hold MAIL
- * TEXT and, unlike the compose buffer, they are not owner-keyed at all. */
+/** A reply scratch key that names no account starts here: one written before the keys named their owner, or
+ * on a surface with no storage owner. Exported so sign-out can sweep them — these hold MAIL TEXT. */
 export const REPLY_DRAFT_PREFIX = "ohmail.ui.reply:";
+/** …and one that names its account: `<prefix><owner>:<lane>`, so a one-account wipe takes its own. */
+export const OWNED_REPLY_DRAFT_PREFIX = "ohmail.ui.reply.";
 
-export const replyDraftKey = (messageId: string): string => `${REPLY_DRAFT_PREFIX}${messageId}`;
+export const replyDraftKey = (lane: string, owner: string | null = storageOwner()): string =>
+  owner === null ? `${REPLY_DRAFT_PREFIX}${lane}` : `${OWNED_REPLY_DRAFT_PREFIX}${owner}:${lane}`;
+
+/**
+ * THE KEY A LANE IS READ FROM: its account's, or the key that names no account, moved there first. Message and
+ * draft ids are random, so only the account that holds a lane can name it; the old copy goes only once the new
+ * one is stored, and a refused copy is read where it stands.
+ */
+function heldLaneKey(
+  lane: string, owner: string | null, key: (lane: string, owner: string | null) => string, store: string,
+): string {
+  const own = key(lane, owner);
+  if (owner === null) return own;
+  const old = key(lane, null);
+  const value = window.localStorage.getItem(own) === null ? window.localStorage.getItem(old) : null;
+  if (value === null) return own;
+  if (durableSet(own, value, store) !== "stored") return old;
+  durableRemove(old, store);
+  return own;
+}
 
 /**
  * The buffer HOLDS TWO HALVES NOW, and the key it holds them in did not change.
@@ -799,9 +820,9 @@ export const replyDraftKey = (messageId: string): string => `${REPLY_DRAFT_PREFI
  * `parseRichValue` is the shape-based read that makes both readable from one key — see
  * `rich-text.ts` for why it is shape-based and not "did it parse as JSON".
  */
-export function readReplyDraft(messageId: string): RichValue {
+export function readReplyDraft(lane: string, owner: string | null = storageOwner()): RichValue {
   try {
-    return parseRichValue(window.localStorage.getItem(replyDraftKey(messageId)));
+    return parseRichValue(window.localStorage.getItem(heldLaneKey(lane, owner, replyDraftKey, "reply.draft")));
   } catch {
     return EMPTY_RICH; // storage blocked — the editor still works for this session
   }
@@ -813,12 +834,16 @@ export function readReplyDraft(messageId: string): RichValue {
  * bare string for a reply with no formatting, so the common case stays readable by a bundle
  * that predates the envelope.
  */
-export function writeReplyDraft(messageId: string, value: RichValue): void {
+export function writeReplyDraft(lane: string, value: RichValue, owner: string | null = storageOwner()): void {
   const raw = serializeRichValue(value);
   // The draft still lives in React state for this session; a jar that refused it no longer
   // passes for one that kept it.
-  if (raw === null) durableRemove(replyDraftKey(messageId), "reply.draft");
-  else durableSet(replyDraftKey(messageId), raw, "reply.draft");
+  const key = replyDraftKey(lane, owner);
+  const kept = raw === null ? durableRemove(key, "reply.draft") : durableSet(key, raw, "reply.draft");
+  // The lane's old copy goes once this one stands, so an emptied reply cannot come back from it.
+  if (owner !== null && (raw === null || kept === "stored")) {
+    durableRemove(replyDraftKey(lane, null), "reply.draft");
+  }
 }
 
 /**
@@ -892,12 +917,14 @@ function envelopeOf(v: unknown): LaneEnvelope | null {
 
 /** Likewise for the reply editor's metadata half. */
 export const REPLY_META_PREFIX = "ohmail.ui.replymeta:";
+export const OWNED_REPLY_META_PREFIX = "ohmail.ui.replymeta.";
 
-export const replyMetaKey = (lane: string): string => `${REPLY_META_PREFIX}${lane}`;
+export const replyMetaKey = (lane: string, owner: string | null = storageOwner()): string =>
+  owner === null ? `${REPLY_META_PREFIX}${lane}` : `${OWNED_REPLY_META_PREFIX}${owner}:${lane}`;
 
-export function readReplyMeta(lane: string): ReplyEditorMeta {
+export function readReplyMeta(lane: string, owner: string | null = storageOwner()): ReplyEditorMeta {
   try {
-    const raw = window.localStorage.getItem(replyMetaKey(lane));
+    const raw = window.localStorage.getItem(heldLaneKey(lane, owner, replyMetaKey, "reply.meta"));
     if (!raw) return {};
     const parsed = JSON.parse(raw) as Partial<ReplyEditorMeta>;
     // Field-wise, like every scratch reader: only the shapes the model names restore.
@@ -931,14 +958,14 @@ export function readReplyMeta(lane: string): ReplyEditorMeta {
   }
 }
 
-export function writeReplyMeta(lane: string, meta: ReplyEditorMeta): void {
+export function writeReplyMeta(lane: string, meta: ReplyEditorMeta, owner: string | null = storageOwner()): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
-  if (meta.subject === undefined && meta.sig === undefined && meta.row === undefined && meta.envelope === undefined
-    && (meta.creates === undefined || meta.creates.length === 0) && meta.forwardParts === undefined) {
-    durableRemove(replyMetaKey(lane), "reply.meta");
-    return;
-  }
-  durableSet(replyMetaKey(lane), JSON.stringify(meta), "reply.meta");
+  const resting = meta.subject === undefined && meta.sig === undefined && meta.row === undefined
+    && meta.envelope === undefined && (meta.creates === undefined || meta.creates.length === 0)
+    && meta.forwardParts === undefined;
+  const key = replyMetaKey(lane, owner);
+  const kept = resting ? durableRemove(key, "reply.meta") : durableSet(key, JSON.stringify(meta), "reply.meta");
+  if (owner !== null && (resting || kept === "stored")) durableRemove(replyMetaKey(lane, null), "reply.meta");
 }
 
 /**
@@ -957,7 +984,7 @@ export function clearLaneScratch(
     if (key === COMPOSE_SEND_KEY) {
       // The delivered message's row is spent, and so is the block state keyed to it. Unguarded
       // because it is already keyed BY DRAFT ID: it can only ever name the message that went.
-      if (m.draftId) durableRemove(replyMetaKey(`draft:${m.draftId}`), "reply.meta");
+      if (m.draftId) writeReplyMeta(`draft:${m.draftId}`, {}, owner);
       /**
        * AND THE SCRATCH ONLY IF THE COMPOSER IS STILL HOLDING THIS MESSAGE. One buffer per
        * account meant "clear the scratch" was "clear whatever is open", so a confirmation
@@ -974,21 +1001,50 @@ export function clearLaneScratch(
     // exactly as a reply's draft does below. The compose form's autosave is deliberately
     // untouched: this send never used the form, and a half-written compose must survive
     // somebody forwarding a message mid-sentence.
-    clearReplyLane(key);
+    clearReplyLane(key, owner);
     return;
   }
-  clearReplyLane(m.inReplyTo);
+  clearReplyLane(m.inReplyTo, owner);
 }
 
 /**
  * THE TWO KEYS ONE LANE HOLDS, dropped together — the body scratch and the editor meta. Its own
  * function because there is now a second ending that spends a lane ({@link
  * promoteOrphanedReplyLane}), and two copies of "which keys is this lane holding" is two places
- * for a lane to leak a draft that outlives the message it was.
+ * for a lane to leak a draft that outlives the message it was. A lane's old copies go with it.
  */
-export function clearReplyLane(lane: string): void {
-  durableRemove(replyDraftKey(lane), "reply.draft");
-  durableRemove(replyMetaKey(lane), "reply.meta");
+export function clearReplyLane(lane: string, owner: string | null = storageOwner()): void {
+  for (const who of owner === null ? [null] : [owner, null]) {
+    durableRemove(replyDraftKey(lane, who), "reply.draft");
+    durableRemove(replyMetaKey(lane, who), "reply.meta");
+  }
+}
+
+/** The lanes `owner`'s partition holds a body or a meta for. */
+export function replyLanesOf(owner: string | null, half: "body" | "meta"): string[] {
+  const prefix = half === "body" ? replyDraftKey("", owner) : replyMetaKey("", owner);
+  try {
+    return Object.keys(window.localStorage).filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+  } catch {
+    return []; // storage blocked
+  }
+}
+
+/**
+ * MOVE THE OLD LANES `names` ACCEPTS into `owner`'s partition — a mount's sweep over keys written before
+ * they named their account. `names` answers whether this mirror holds the lane's parent: a lane it cannot
+ * name is never read, moved or promoted.
+ */
+export function adoptLegacyReplyLanes(names: (lane: string) => boolean, owner: string | null): void {
+  if (owner === null) return;
+  const lanes = new Set([...replyLanesOf(null, "body"), ...replyLanesOf(null, "meta")]);
+  for (const lane of lanes) {
+    if (lane === "" || !names(lane)) continue;
+    try {
+      heldLaneKey(lane, owner, replyDraftKey, "reply.draft");
+      heldLaneKey(lane, owner, replyMetaKey, "reply.meta");
+    } catch { /* storage blocked: nothing moves */ }
+  }
 }
 
 /**
@@ -1017,7 +1073,8 @@ export type LanePromotion = "promoted" | "empty" | "unplaceable" | "refused";
  * lane's as its original (legal: the FKs are nullable, the delete is soft).
  *
  * THE ORDER IS THE INVARIANT: the lane clears after the row is confirmed and never before, so a
- * refusal leaves the text where it was — unreachable, as today, rather than gone.
+ * refusal leaves the text where it was — unreachable, as today, rather than gone. `owner` is the
+ * partition it started in, which a late save still clears.
  */
 export async function promoteOrphanedReplyLane(
   lane: string,
@@ -1029,15 +1086,16 @@ export async function promoteOrphanedReplyLane(
     subject: string; body: string; html?: string | null;
     to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
+  owner: string | null = storageOwner(),
 ): Promise<LanePromotion> {
-  const body = readReplyDraft(lane);
+  const body = readReplyDraft(lane, owner);
   if (body.text.trim().length === 0) return "empty";
   if (plan === null) return "unplaceable";
   // A FORWARD LANE SAVES A FORWARD: its note names the original it forwards, never as
   // the message it answers — that would thread a forward onto its original as a reply.
   const forward = lane !== parentId;
   // A forward lane's kept files ride its promoted row, so it still sends only those.
-  const kept = forward ? readReplyMeta(lane).forwardParts : undefined;
+  const kept = forward ? readReplyMeta(lane, owner).forwardParts : undefined;
   const result = await save({
     kind: "draft_save", draftId: plan.rowId,
     mailboxId: plan.mailboxId,
@@ -1057,11 +1115,11 @@ export async function promoteOrphanedReplyLane(
      an EDITED signature is the person's words too, and the row has no column for it, so dropping
      the meta here would restore a signature somebody had struck. Written before the old lane is
      cleared: the order is the same invariant as above. */
-  const meta = readReplyMeta(lane);
+  const meta = readReplyMeta(lane, owner);
   if (meta.subject !== undefined || meta.sig !== undefined || meta.envelope !== undefined) {
-    writeReplyMeta(`draft:${rowId}`, meta);
+    writeReplyMeta(`draft:${rowId}`, meta, owner);
   }
-  clearReplyLane(lane);
+  clearReplyLane(lane, owner);
   return "promoted";
 }
 

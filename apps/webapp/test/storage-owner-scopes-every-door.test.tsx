@@ -12,6 +12,11 @@ import {
   readComposeDraft,
   writeComposeDraft,
 } from "../app/shell/compose";
+import { dropLocalStorageKeys } from "../app/shell/boot-cache";
+import {
+  COMPOSE_SEND_KEY, clearLaneScratch, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
+  writeReplyDraft, writeReplyMeta,
+} from "../app/shell/mail-send";
 import { searchSortKey } from "../app/shell/persisted-ui";
 import {
   armScreenerIntent,
@@ -189,6 +194,103 @@ describe("a host-supplied owner partitions the shell's durable stores", () => {
     for (const key of [...first, ...second]) {
       expect(key.endsWith("local"), `${key} still collapses onto the shared partition`).toBe(false);
     }
+  });
+});
+
+/**
+ * THE REPLY BUFFERS NAME THEIR OWNER TOO: `<prefix><owner>:<lane>`, so a one-account wipe can take one account's
+ * reply text and leave another's. A key written before (or with no owner) moves into the reader's partition on
+ * read: message and draft ids are random, so only the account that holds a lane can name it.
+ */
+describe("the reply buffers are partitioned by the storage owner", () => {
+  const words = (text: string) => ({ text, html: "" });
+  /** The jar refuses every write while `run` runs, as a full quota does. */
+  function refusingWrites<T>(run: () => T): T {
+    const real = window.localStorage;
+    const held = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      value: {
+        get length() { return real.length; },
+        key: (i: number) => real.key(i),
+        getItem: (k: string) => real.getItem(k),
+        setItem: () => { throw new DOMException("quota exceeded", "QuotaExceededError"); },
+        removeItem: (k: string) => real.removeItem(k),
+        clear: () => real.clear(),
+      } as Storage,
+    });
+    try {
+      return run();
+    } finally {
+      if (held) Object.defineProperty(window, "localStorage", held);
+    }
+  }
+
+  it("the keys differ by owner, no owner keeps the old key, and one mailbox never reads another's reply", () => {
+    expect(new Set([replyDraftKey("m-1", A), replyDraftKey("m-1", B), replyDraftKey("m-1", null)]).size).toBe(3);
+    expect(new Set([replyMetaKey("m-1", A), replyMetaKey("m-1", B), replyMetaKey("m-1", null)]).size).toBe(3);
+    expect([replyDraftKey("m-1", null), replyMetaKey("m-1", null)]).toEqual(["ohmail.ui.reply:m-1", "ohmail.ui.replymeta:m-1"]);
+    setStorageOwner(A);
+    writeReplyDraft("m-1", words("A's reply"));
+    setStorageOwner(B);
+    expect(readReplyDraft("m-1").text, "the next mailbox was handed the previous one's reply").toBe("");
+    setStorageOwner(A);
+    expect(readReplyDraft("m-1").text).toBe("A's reply");
+  });
+
+  it("an old lane read under A moves to A's key; a refused copy keeps the old one and is still read", () => {
+    const old = { body: "typed before its account was named", meta: { subject: "a title" } };
+    window.localStorage.setItem(replyDraftKey("m-1", null), old.body);
+    window.localStorage.setItem(replyMetaKey("m-1", null), JSON.stringify(old.meta));
+    setStorageOwner(A);
+    expect(refusingWrites(() => [readReplyDraft("m-1").text, readReplyMeta("m-1")]), "a refused copy hid the words")
+      .toEqual([old.body, old.meta]);
+    expect(window.localStorage.getItem(replyDraftKey("m-1", null)), "the old copy went before the new one stood").toBe(old.body);
+    expect([readReplyDraft("m-1").text, readReplyMeta("m-1")]).toEqual([old.body, old.meta]);
+    expect([replyDraftKey("m-1", null), replyMetaKey("m-1", null)].map((k) => window.localStorage.getItem(k))).toEqual([null, null]);
+    expect(window.localStorage.getItem(replyDraftKey("m-1", A))).toBe(old.body);
+    expect(JSON.parse(window.localStorage.getItem(replyMetaKey("m-1", A))!)).toEqual(old.meta);
+  });
+
+  it("emptying or clearing a reply never brings its old copy back", () => {
+    window.localStorage.setItem(replyDraftKey("m-1", null), "an old copy");
+    setStorageOwner(A);
+    expect(refusingWrites(() => readReplyDraft("m-1")).text).toBe("an old copy");
+    writeReplyDraft("m-1", words(""));
+    expect(readReplyDraft("m-1").text, "the emptied reply came back from its old copy").toBe("");
+    window.localStorage.setItem(replyMetaKey("m-1", null), JSON.stringify({ subject: "an old title" }));
+    clearReplyLane("m-1");
+    expect(readReplyMeta("m-1"), "a cleared lane came back from its old copy").toEqual({});
+  });
+
+  it("a send that settles after a mailbox switch clears its own partition only, on every lane", () => {
+    const lanes = ["m-1", "fwd:m-1", "draft:d-1"];
+    for (const owner of [A, B]) {
+      setStorageOwner(owner);
+      for (const lane of lanes) writeReplyMeta(lane, { subject: `${owner}'s` });
+      for (const lane of lanes.slice(0, 2)) writeReplyDraft(lane, words(`${owner}'s`));
+    }
+    // The window serves B when A's reply, forward and compose sends settle.
+    const settled = (m: object) => m as Parameters<typeof clearLaneScratch>[1];
+    clearLaneScratch("m-1", settled({ inReplyTo: "m-1", draftId: null }), A, true);
+    clearLaneScratch("fwd:m-1", settled({ inReplyTo: null, forwardOf: "m-1", draftId: null }), A, true);
+    clearLaneScratch(COMPOSE_SEND_KEY, settled({ inReplyTo: null, draftId: "d-1" }), A, false);
+    const held = (): Array<string | undefined> => [
+      ...lanes.map((lane) => readReplyMeta(lane).subject), ...lanes.slice(0, 2).map((lane) => readReplyDraft(lane).text),
+    ];
+    expect(held(), "the new mailbox's reply scratch went with the old one's sends").toEqual(Array(5).fill(`${B}'s`));
+    setStorageOwner(A);
+    expect(held(), "the sends left their own scratch").toEqual([undefined, undefined, undefined, "", ""]);
+  });
+
+  it("the host door's sweep takes the reply text a pairing named", async () => {
+    const { HOST_SCRATCH_PREFIXES } = await import("../../desktop/src/host-client/HostGate");
+    setStorageOwner("pairing-scope-1");
+    writeReplyDraft("m-1", words("typed on a phone"));
+    writeReplyMeta("m-1", { subject: "a title" });
+    expect(Object.keys(window.localStorage)).toHaveLength(2);
+    dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
+    expect(Object.keys(window.localStorage), "an ended pairing left its reply text").toEqual([]);
   });
 });
 

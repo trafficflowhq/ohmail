@@ -81,6 +81,7 @@ import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "./reply-aut
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { attachmentBytes, useForwardFiles, type ForwardFilesPlan } from "./forward-files";
 import {
+  adoptLegacyReplyLanes,
   clearReplyLane,
   COMPOSE_SEND_KEY,
   composeRowWaits,
@@ -91,8 +92,7 @@ import {
   readReplyDraft,
   readReplyMeta,
   replyDockState,
-  REPLY_DRAFT_PREFIX,
-  REPLY_META_PREFIX,
+  replyLanesOf,
   SEND_IN_FLIGHT_PHASES,
   sendLockOwed,
   sendPendingInDurableOutbox,
@@ -129,6 +129,7 @@ import {
   type SignatureState,
 } from "./signature";
 import { useStableCallback } from "./stable-callback";
+import { storageOwner } from "./storage-owner";
 import { noteReplyPress } from "./sent-reveal";
 import type { OhboxReplyDone } from "../views/OhboxView";
 import type { MailboxEntity } from "../views/SettingsView";
@@ -747,6 +748,16 @@ export function useShellCompose({
 
   /* ── a parent another mail client took away ───────────────────────────────────────────── */
 
+  /** Whose reply lanes this mount's scans and promotions read: captured once, as the send hook's owner is. */
+  const laneOwner = useRef<string | null>(storageOwner());
+  /** Does this mirror name the lane's parent: its message, here or tombstoned, or its draft row? */
+  const namesLane = useStableCallback((lane: string): boolean => {
+    if (lane.startsWith("draft:")) return engine.read().get<EngineDraft>("draft", lane.slice("draft:".length)) != null;
+    const id = lane.startsWith("fwd:") ? lane.slice("fwd:".length) : lane;
+    if (id.length === 0 || id.includes(":")) return false;
+    return engine.read().get<EngineMessage>("message", id) != null || engine.messageIsGone(id);
+  });
+
   /**
    * WHAT A PROMOTED LANE NAMES — the envelope it was written under, then what the dead parent still
    * says, then nothing. `null` ⇒ nothing can place it, and the lane is left exactly as it is.
@@ -757,7 +768,7 @@ export function useShellCompose({
    */
   const promotionPlanFor = useStableCallback(
     (lane: string, parentId: string, parent: EngineMessage | null): LanePromotionPlan | null => {
-      const meta = readReplyMeta(lane);
+      const meta = readReplyMeta(lane, laneOwner.current);
       const env = meta.envelope;
       /* `sendingMailboxId` is the COMPOSE fallback, and that is what this row is: a draft the
          person will address and send from the compose form, not a reply going out now. */
@@ -794,6 +805,7 @@ export function useShellCompose({
    * last instant `parent` can be read, and every field but the text comes from it.
    */
   const promoteLanesOf = useStableCallback((ids: readonly string[]) => {
+    const owner = laneOwner.current;
     for (const id of ids) {
       const parent = engine.read().get<EngineMessage>("message", id) ?? null;
       const wasOpen = replyToRef.current === id;
@@ -810,13 +822,13 @@ export function useShellCompose({
         ) continue;
         // A reply the account already holds as a row with these words is a draft already.
         const kept = lane === id ? accountReplyRow(id) : null;
-        if (kept?.body != null && kept.body.trim() === readReplyDraft(lane).text.trim()) {
-          clearReplyLane(lane);
+        if (kept?.body != null && kept.body.trim() === readReplyDraft(lane, owner).text.trim()) {
+          clearReplyLane(lane, owner);
           continue;
         }
         void promoteOrphanedReplyLane(
           lane, id, promotionPlanFor(lane, id, parent),
-          (m) => engine.mutate(m as EngineMutation),
+          (m) => engine.mutate(m as EngineMutation), owner,
         ).then((outcome) => {
           if (outcome !== "promoted" || !wasOpen) return;
           // The editor's host is already unmounting; what is owed is the sentence saying where
@@ -849,18 +861,16 @@ export function useShellCompose({
    *
    * IT ASKS FOR A TOMBSTONE AND NEVER FOR ABSENCE: `prune` removes rather than tombstones, so a
    * parent that is merely not here is ordinary mail outside this device's window, and promoting on
-   * that would turn every small mirror into a draft-making machine.
+   * that would turn every small mirror into a draft-making machine. Lanes written before they named
+   * their account move into this mount's partition first, when this mirror names their parent.
    */
   useEffect(() => {
     const scan = (): void => {
       if (orphanScanDone.current) return;
       orphanScanDone.current = true;
-      let keys: string[] = [];
-      try { keys = Object.keys(window.localStorage); } catch { return; } // storage blocked
+      adoptLegacyReplyLanes(namesLane, laneOwner.current);
       const dead = new Set<string>();
-      for (const k of keys) {
-        if (!k.startsWith(REPLY_DRAFT_PREFIX)) continue;
-        const lane = k.slice(REPLY_DRAFT_PREFIX.length);
+      for (const lane of replyLanesOf(laneOwner.current, "body")) {
         const parentId = lane.startsWith("fwd:") ? lane.slice("fwd:".length) : lane;
         // A lane whose remainder is still namespaced belongs to a surface with its own row.
         if (parentId.length === 0 || parentId.includes(":")) continue;
@@ -869,7 +879,7 @@ export function useShellCompose({
       if (dead.size > 0) promoteLanesOf([...dead]);
     };
     return engine.subscribe(scan);
-  }, [engine, promoteLanesOf]);
+  }, [engine, promoteLanesOf, namesLane]);
 
   useEffect(() => engine.onMessagesRemoved(promoteLanesOf), [engine, promoteLanesOf]);
 
@@ -1656,14 +1666,11 @@ export function useShellCompose({
     },
   });
   /* EVERY LANE'S STORED CREATES ARE JUDGED FROM THE MOUNT, shown or not: a reload's replayed create
-     is not left standing beside the reply's row until Reply is pressed. */
+     is not left standing beside the reply's row until Reply is pressed. This mount's lanes only. */
   useEffect(() => whenComposerReady(() => {
-    let keys: string[] = [];
-    try { keys = Object.keys(window.localStorage); } catch { return; } // storage blocked
-    for (const k of keys) {
-      if (!k.startsWith(REPLY_META_PREFIX)) continue;
-      const lane = k.slice(REPLY_META_PREFIX.length);
-      if ((readReplyMeta(lane).creates ?? []).length > 0) replyAutosave.restore(lane);
+    adoptLegacyReplyLanes(namesLane, laneOwner.current);
+    for (const lane of replyLanesOf(laneOwner.current, "meta")) {
+      if ((readReplyMeta(lane, laneOwner.current).creates ?? []).length > 0) replyAutosave.restore(lane);
     }
   }), []);
   /* A QUEUED WRITE HAS LANDED once the confirmed mirror's row holds its words (never the overlaid

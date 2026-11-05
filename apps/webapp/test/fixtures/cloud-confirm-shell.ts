@@ -386,8 +386,8 @@ export function rememberOwner(accountId = ACCOUNT): void {
 async function shellModules() {
   const { CloudShell } = await import("../../app/(product)/mailbox/CloudShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const { localStorageDoor } = await import("../../app/shell/durable.js");
-  return { CloudShell, ThemeProvider, ToastHost, localStorageDoor };
+  const { THEME_DOOR } = await import("../../app/shell/face-mirror.js");
+  return { CloudShell, ThemeProvider, ToastHost, THEME_DOOR };
 }
 
 /**
@@ -407,7 +407,7 @@ export function mountCloudShell(): Promise<HTMLElement> {
 }
 
 async function mountNow(): Promise<HTMLElement> {
-  const { CloudShell, ThemeProvider, ToastHost, localStorageDoor } = await shellModules();
+  const { CloudShell, ThemeProvider, ToastHost, THEME_DOOR } = await shellModules();
   caseLive();
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -421,7 +421,7 @@ async function mountNow(): Promise<HTMLElement> {
       now: new Date(ISO),
       children: h(ThemeProvider, {
         // The product door's persistence, through the same durable door its providers pass.
-        storage: localStorageDoor("theme"),
+        storage: THEME_DOOR,
         children: h(ToastHost, { children: h(CloudShell, { demo: false }) }),
       }),
     }));
