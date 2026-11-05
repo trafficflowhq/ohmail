@@ -17,9 +17,14 @@ import type { ServerProfile } from "../src/state/servers";
 
 const scene = vi.hoisted(() => ({ conn: null as unknown, routes: [] as string[] }));
 
-vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
+vi.mock("react-native", async () => ({
+  ...(await import("./_rendered-dom")).rnDom,
+  BackHandler: { addEventListener: () => ({ remove: () => undefined }) },
+}));
 vi.mock("expo-router", () => ({
   router: { push: (to: string) => void scene.routes.push(to), replace: (to: string) => void scene.routes.push(to), canGoBack: () => true },
+  useIsFocused: () => true,
+  Stack: { Screen: () => null },
 }));
 vi.mock("../src/net/connection", () => ({ useConnection: () => scene.conn }));
 vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { accent: "#000", ink2: "#000" }, radius: { dot: 1 } }) }));
