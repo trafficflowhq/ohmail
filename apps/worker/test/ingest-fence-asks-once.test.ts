@@ -6,6 +6,8 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { MailboxRemovedError, runSyncCycle } from "../src/sync.js";
+import { ingestRunRepository } from "../src/ingest-run.js";
+import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
 
@@ -34,6 +36,8 @@ function watching(real: DrizzleRepo, commits: Commit[]): DrizzleRepo {
         // allocation. Counting only the first would read the fold as "never asked".
         if (prop === "mailboxStatusForWrite") commit.asks += 1;
         if (prop === "recordChanges" && args[1] !== undefined) commit.asks += 1;
+        // A run hands the fence to its own allocation, inside the call.
+        if (prop === "persistNewRun" && (args[1] as { mailboxMustBeLive?: unknown }).mailboxMustBeLive !== undefined) commit.asks += 1;
         return (value as (...a: unknown[]) => unknown).apply(target, args);
       };
     },
@@ -140,6 +144,33 @@ describe("the ingest's removal fence, per commit", () => {
       + "sound for a genuinely new message").toBe(true);
   }, 60_000);
 
+  it("asks once for a whole run, through the run's own allocation", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const [mb] = await db.insert(mailboxes).values({
+      accountId: ACCOUNT, provider: "imap", address: `run-${randomUUID().slice(0, 8)}@x.test`,
+    }).returning();
+    const mailboxId = mb!.id;
+    const commits: Commit[] = [];
+    const fleet = new FakeAdapterFleet();
+    const adapter = fleet.factory(
+      { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
+      { accountId: ACCOUNT, mailboxId, onConnectionError: () => { /* nothing dials here */ } },
+    );
+    fleet.behave(mailboxId, {
+      deliver: Array.from({ length: 5 }, (_, i) => ({ from: "s@x.example", subject: `run ${i}`, messageId: `run-${i}-${randomUUID()}@x` })),
+    });
+    await runSyncCycle({
+      writeAuthority: FIXTURE_LEASE, repo: watching(ingestRunRepository(makeDrizzleRepo(db as never)), commits),
+      adapter, accountId: ACCOUNT, mailboxId, storageCap: UNMETERED_STORAGE_CAP, ingestRuns: INGEST_RUN_BOUNDS,
+      role: "organizer", trustedAuthservIds: new Set<string>(),
+    });
+    expect((await db.select().from(messages).where(eq(messages.mailboxId, mailboxId))).length).toBe(5);
+    expectAsksOnceAndFirst(commits);
+    const runs = commits.filter((c) => c.calls.includes("persistNewRun"));
+    expect(runs.map((c) => c.asks), "the five letters were not one run asking once").toEqual([1]);
+    expect(runs[0]!.calls.includes("mailboxStatusForWrite"), "the run paid for a read of its own").toBe(false);
+  }, 60_000);
+
   it("asks even when the plan was NEW and the insert lost the race", async () => {
     /* THE ONE `new` COMMIT THAT ALLOCATES NOTHING. `insertMessage` is an upsert and the loser
        returns straight away, so the allocation that carries the folded question is never sent —
@@ -183,6 +214,7 @@ describe("the ingest's removal fence, per commit", () => {
     const blind = new Proxy(real, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop === "findByDedupKeys" && typeof value === "function") return async () => new Map();
         if (prop !== "findByDedupKey" || typeof value !== "function") return value;
         return async (): Promise<null> => null;
       },

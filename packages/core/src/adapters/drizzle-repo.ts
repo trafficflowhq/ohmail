@@ -22,6 +22,7 @@ import {
   type JunkHuskIdentity, type JunkUnhuskOutcome, type StorageCapRefill,
 } from "../husk-restore.js";
 import type { BlankMessageRow } from "../blank-repair.js";
+import type { NewPlan, StorageCap } from "../pipeline.js";
 import { listBlankMessageRows } from "./blank-rows.js";
 import { foldMessageIdDomain } from "../identity.js";
 import { MAX_THREAD_PARTICIPANTS } from "../threading.js";
@@ -409,8 +410,32 @@ export interface FlagCompletion {
   physicalObservation?: boolean;
 }
 
+/** One letter of a batched ingest: its plan, and the row its insert writes. */
+export interface IngestRunMember { plan: NewPlan; insert: InsertMessageInput }
+
+/** What a batched ingest commits under: the commit's own deps, as `commitChange` takes them. */
+export interface IngestRunContext {
+  accountId: string;
+  mailboxId: string;
+  storageCap: StorageCap;
+  observedSince?: Date | null;
+  mailboxMustBeLive?: MailboxMustBeLive;
+}
+
+/**
+ * The first `persisted` letters were stored, as these rows, in letter order. The rest are the
+ * caller's to commit one by one: the first of them would not have fit under the storage cap.
+ */
+export interface IngestRunResult { persisted: number; messageIds: string[] }
+
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
 export interface WorkerRepo extends RepoPort, RoutingPort {
+  /**
+   * Store a run of NEW letters in the caller's transaction, as `commitChange` would one by one
+   * (`apps/worker/src/ingest-run.ts`). Only the hosted worker's repositories carry it; absent,
+   * every letter commits alone.
+   */
+  persistNewRun?(members: readonly IngestRunMember[], ctx: IngestRunContext): Promise<IngestRunResult>;
   /**
    * The switch-off an ingest's route override OWES (`ProcessResult.owedDemotions`), run after that
    * ingest committed and never inside it. Required: a worker that cannot run it would record a
@@ -1118,6 +1143,145 @@ function inSubtree(col: SQLWrapper, path: string) {
   return sql`(${col} = ${path} or substr(${col}, 1, length(${path}) + 1) = ${path + "/"})`;
 }
 
+/** The `attachments` rows {@link DrizzleRepo.insertAttachments} writes for one message. */
+export function attachmentRowsOf(messageId: string, accountId: string, rows: readonly AttachmentMeta[]): Array<typeof attachmentsTbl.$inferInsert> {
+  return rows.map((a) => ({
+    accountId, messageId,
+    filename: a.filename,
+    contentType: a.contentType,
+    sizeBytes: a.sizeBytes,
+    partId: a.partId,
+    contentId: a.contentId,
+    inline: a.inline,
+    // The content digest computed at parse. Persisted so an operator can answer
+    // "are these two attachments the same file" without the bytes — which we do not have and
+    // must not store (§13.2/§14). The FINGERPRINT reads the in-memory value, never this column,
+    // for the reason the ruling prohibits a backfill: a stored column is not what ingest hashes.
+    contentSha256: a.contentSha256,
+  }));
+}
+
+/**
+ * THE ONE DOOR `messages` ROWS ARE INGESTED THROUGH — {@link DrizzleRepo.insertMessage}'s single row,
+ * and the worker's batched ingest's run of them. A row another ingest already owns is not returned.
+ * `inStoreOrder`: each row a microsecond after the one before it, so one transaction's rows keep
+ * the order they were written in, as one transaction per row does.
+ */
+export async function insertMessageRows(
+  db: Db, d: Dialect, mailboxId: string, inputs: readonly InsertMessageInput[],
+  opts: { mustBeLive?: MailboxMustBeLive | undefined; inStoreOrder?: boolean } = {},
+): Promise<Array<typeof messages.$inferSelect>> {
+  /* THE MAILBOX TOMBSTONE, IN THIS TRANSACTION AND BEFORE THIS WRITE. The row's key to
+     `mailboxes` refuses the account sweep, which deletes that parent — and nothing at all for
+     the mailbox's own erasure, which leaves the row standing. This branch holds no `messages`
+     row yet, so it is not the erasing sweep's deadlock partner.
+     ASKED BY THE CALLER'S OWN STATEMENT when one is handed over: `mustBeLive` is the
+     change-log allocation this commit is already sending, which takes this row at this strength
+     and refuses this stamp — a read here would be a second round trip per message. */
+  await fenceErasedMailbox(db as unknown as Tx, d, mailboxId, "share", opts.mustBeLive);
+  const out: Array<typeof messages.$inferSelect> = [];
+  // Asked for by the worker's batched ingest only, which runs on the server's store.
+  const inStoreOrder = opts.inStoreOrder === true && d.name === "pg";
+  for (let at = 0; at < inputs.length; at += MESSAGE_ROWS_CHUNK) {
+    const rows = inputs.slice(at, at + MESSAGE_ROWS_CHUNK).map((input, i) => {
+      if (inStoreOrder) return { ...messageRowOf(input), createdAt: pgOnly(sql`now() + (${at + i} * interval '1 microsecond')`) };
+      return messageRowOf(input);
+    });
+    out.push(...await db.insert(messages).values(rows)
+      .onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning());
+  }
+  return out;
+}
+
+/**
+ * New conversations the worker's batched ingest started, as {@link DrizzleRepo.upsertThread} inserts
+ * one; a root another writer took since the run read it inserts nothing. The count inserted.
+ */
+export async function insertNewThreads(
+  db: Db, accountId: string,
+  rows: ReadonlyArray<{ id: string; rootMessageIdHeader: string | null; subject: string; participants: EmailAddress[]; lastMessageAt: Date | null }>,
+): Promise<number> {
+  if (rows.length === 0) return 0;
+  const made = await db.insert(threads).values(rows.map((t) => ({
+    id: t.id, accountId, rootMessageIdHeader: t.rootMessageIdHeader, subject: t.subject,
+    participants: t.participants.slice(0, MAX_THREAD_PARTICIPANTS), lastMessageAt: t.lastMessageAt,
+  }))).onConflictDoNothing({ target: [threads.accountId, threads.rootMessageIdHeader] }).returning({ id: threads.id });
+  return made.length;
+}
+
+/** A locator as the `message_instances` tuple {@link DrizzleRepo.insertMessage} records it under. */
+export function instanceTupleOf(locator: NativeLocator): { folder: string; uidvalidity: bigint; uid: number } {
+  return { folder: locator.folder, uidvalidity: BigInt(parseUidValidity(locator.ref)), uid: parseUid(locator.ref) };
+}
+
+/**
+ * The `messages` row an insert writes — {@link DrizzleRepo.insertMessage}'s, and the worker's
+ * batched ingest's, so the two cannot write different rows for one letter.
+ */
+export function messageRowOf(input: InsertMessageInput): typeof messages.$inferInsert {
+  return {
+    accountId: input.accountId, mailboxId: input.mailboxId,
+    // Bounded HERE and only here (`stored-values.ts`): the dedup key above was made from the values
+    // as sent. A Message-ID over the btree ceiling is stored as none: the row stands alone in its
+    // thread and a reply to it carries no In-Reply-To.
+    messageIdHeader: storedMessageId(input.canonical.messageIdHeader),
+    bodyHash: input.canonical.bodyHash,
+    dedupKey: input.dedupKey,
+    subject: storedSubject(input.subject), fromAddress: storedAddress(input.fromAddress), date: input.date,
+    // `?? null` reproduces the column's own default: no INTERNALDATE means "arrival not
+    // recorded" on disk, and the sort clamp stays off for this row (mail 0119).
+    arrivedAt: input.arrivedAt ?? null,
+    // `?? null` reproduces the column's own default (nullable, no default expression) — the
+    // recipients' rule one line down, applied to the sender's display name (mail 0057).
+    fromName: input.fromName ?? null,
+    // `?? []` reproduces the two columns' own `'[]'::jsonb` default, on the same argument as
+    // `unread ?? true` below: this is the ONE place the ingest mapping for recipients is
+    // visible, and a caller with nothing to report writes what the database would have written.
+    // The value is an `EmailAddress[]`, stored as jsonb — the shape
+    // `materialize.ts#messageRowToDTO` reads and the shape `cloud-mirror.ts` writes from the
+    // DTO into the same columns of the local mail database.
+    toAddresses: input.to ?? [],
+    ccAddresses: input.cc ?? [],
+    nativeLocator: input.nativeLocator,
+    noAi: input.flags.no_ai, noForward: input.flags.no_forward,
+    noKb: input.flags.no_kb, priority: input.flags.priority,
+    snippet: input.snippet ?? "",
+    sensitivityCategory: input.sensitivityCategory ?? null,
+    hasAttachments: input.hasAttachments ?? false,
+    attachmentCount: input.attachmentCount ?? 0,
+    // `?? true` reproduces the column default for a caller that has no read-state to report,
+    // so this is the ONE place the default is spelled out and the ingest mapping is visible.
+    unread: input.unread ?? true,
+    // `?? null` and NOT a `"unauthenticated"` literal. The column is nullable with no default
+    // precisely so "nobody stated a verdict" is distinguishable on disk from "a caller looked
+    // and stated `unauthenticated`", and `rules.ts#AuthVerdict` fixes the reading of NULL. A
+    // literal here would fabricate the second from the first.
+    //
+    // `ON CONFLICT DO NOTHING` below means a racing LOSER never reaches this write: the
+    // winner's verdict is the one on the row, and the loser returns `created: false` and
+    // writes nothing. That is the correct outcome — both computed the same verdict from the
+    // same bytes — and it is why this needs no conflict clause of its own.
+    authVerdict: input.authVerdict ?? null,
+    // The identity fact `planChange` computed: `'none'` for checked-and-clean. A caller the type
+    // could not reach (untyped JS) leaves NULL — "never checked", the backfill's question.
+    senderCheck: input.senderCheck === undefined ? null : input.senderCheck === null ? "none" : "impersonation",
+    senderCheckBrand: input.senderCheck ? input.senderCheck.brand : null,
+    // …and that the store wrote it as it took the message in (mail 0149): the Screener dates such a
+    // claim by this row's own record time, which a backfilled row's fact never earns.
+    senderCheckBy: input.senderCheck === undefined ? null : "ingest",
+    unconfirmedHold: input.unconfirmedHold === true ? true : null,
+  };
+}
+
+/** The `folder_state` row {@link DrizzleRepo.upsertFolderState} inserts for a message with none. */
+export function folderStateRowOf(messageId: string, s: FolderStateRow): typeof folderState.$inferInsert {
+  return {
+    messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+    lastSetBy: s.lastSetBy, reconcileStatus: reconcileStatusFor(s), conflict: false,
+    ...(s.decidedAt !== undefined ? { decidedAt: s.decidedAt } : {}),
+  };
+}
+
 export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /**
    * The dialect is resolved on first use, deliberately. Resolving in the constructor was tried
@@ -1147,10 +1311,25 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     return (this.carriedDialect ??= dialect(this.db));
   }
 
+  /** The handle and dialect a repository speaks, for a writer outside this class (`ingest-run.ts`). */
+  static handleOf(repo: DrizzleRepo): { db: Db; d: Dialect } {
+    return { db: repo.db, d: repo.d };
+  }
+
   async findByDedupKey(mailboxId: string, dedupKey: string): Promise<StoredMessage | null> {
     const rows = await this.db.select().from(messages)
       .where(and(eq(messages.mailboxId, mailboxId), eq(messages.dedupKey, dedupKey))).limit(1);
     return rows[0] ? rowToStored(rows[0]) : null;
+  }
+
+  /** {@link RepoPort.findByDedupKeys}: one row per key at most, `(mailbox_id, dedup_key)` being unique. */
+  async findByDedupKeys(mailboxId: string, dedupKeys: readonly string[]): Promise<Map<string, StoredMessage>> {
+    const out = new Map<string, StoredMessage>();
+    if (dedupKeys.length === 0) return out;
+    const rows = await this.db.select().from(messages)
+      .where(and(eq(messages.mailboxId, mailboxId), inArray(messages.dedupKey, [...new Set(dedupKeys)])));
+    for (const r of rows) out.set(r.dedupKey, rowToStored(r));
+    return out;
   }
 
   /**
@@ -1184,67 +1363,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async insertMessage(input: InsertMessageInput): Promise<InsertedMessage> {
-    /* THE MAILBOX TOMBSTONE, IN THIS TRANSACTION AND BEFORE THIS WRITE. The row's key to
-       `mailboxes` refuses the account sweep, which deletes that parent — and nothing at all for
-       the mailbox's own erasure, which leaves the row standing. This branch holds no `messages`
-       row yet, so it is not the erasing sweep's deadlock partner.
-       ASKED BY THE CALLER'S OWN STATEMENT when one is handed over: `mailboxMustBeLive` is the
-       change-log allocation this commit is already sending, which takes this row at this strength
-       and refuses this stamp — a read here would be a second round trip per message. */
-    await fenceErasedMailbox(
-      this.db as unknown as Tx, this.d, input.mailboxId, "share", input.mailboxMustBeLive);
-    const inserted = await this.db.insert(messages).values({
-      accountId: input.accountId, mailboxId: input.mailboxId,
-      // Bounded HERE and only here (`stored-values.ts`): the dedup key above was made from the values
-      // as sent. A Message-ID over the btree ceiling is stored as none: the row stands alone in its
-      // thread and a reply to it carries no In-Reply-To.
-      messageIdHeader: storedMessageId(input.canonical.messageIdHeader),
-      bodyHash: input.canonical.bodyHash,
-      dedupKey: input.dedupKey,
-      subject: storedSubject(input.subject), fromAddress: storedAddress(input.fromAddress), date: input.date,
-      // `?? null` reproduces the column's own default: no INTERNALDATE means "arrival not
-      // recorded" on disk, and the sort clamp stays off for this row (mail 0119).
-      arrivedAt: input.arrivedAt ?? null,
-      // `?? null` reproduces the column's own default (nullable, no default expression) — the
-      // recipients' rule one line down, applied to the sender's display name (mail 0057).
-      fromName: input.fromName ?? null,
-      // `?? []` reproduces the two columns' own `'[]'::jsonb` default, on the same argument as
-      // `unread ?? true` below: this is the ONE place the ingest mapping for recipients is
-      // visible, and a caller with nothing to report writes what the database would have written.
-      // The value is an `EmailAddress[]`, stored as jsonb — the shape
-      // `materialize.ts#messageRowToDTO` reads and the shape `cloud-mirror.ts` writes from the
-      // DTO into the same columns of the local mail database.
-      toAddresses: input.to ?? [],
-      ccAddresses: input.cc ?? [],
-      nativeLocator: input.nativeLocator,
-      noAi: input.flags.no_ai, noForward: input.flags.no_forward,
-      noKb: input.flags.no_kb, priority: input.flags.priority,
-      snippet: input.snippet ?? "",
-      sensitivityCategory: input.sensitivityCategory ?? null,
-      hasAttachments: input.hasAttachments ?? false,
-      attachmentCount: input.attachmentCount ?? 0,
-      // `?? true` reproduces the column default for a caller that has no read-state to report,
-      // so this is the ONE place the default is spelled out and the ingest mapping is visible.
-      unread: input.unread ?? true,
-      // `?? null` and NOT a `"unauthenticated"` literal. The column is nullable with no default
-      // precisely so "nobody stated a verdict" is distinguishable on disk from "a caller looked
-      // and stated `unauthenticated`", and `rules.ts#AuthVerdict` fixes the reading of NULL. A
-      // literal here would fabricate the second from the first.
-      //
-      // `ON CONFLICT DO NOTHING` below means a racing LOSER never reaches this write: the
-      // winner's verdict is the one on the row, and the loser returns `created: false` and
-      // writes nothing. That is the correct outcome — both computed the same verdict from the
-      // same bytes — and it is why this needs no conflict clause of its own.
-      authVerdict: input.authVerdict ?? null,
-      // The identity fact `planChange` computed: `'none'` for checked-and-clean. A caller the type
-      // could not reach (untyped JS) leaves NULL — "never checked", the backfill's question.
-      senderCheck: input.senderCheck === undefined ? null : input.senderCheck === null ? "none" : "impersonation",
-      senderCheckBrand: input.senderCheck ? input.senderCheck.brand : null,
-      // …and that the store wrote it as it took the message in (mail 0149): the Screener dates such a
-      // claim by this row's own record time, which a backfilled row's fact never earns.
-      senderCheckBy: input.senderCheck === undefined ? null : "ingest",
-      unconfirmedHold: input.unconfirmedHold === true ? true : null,
-    }).onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning();
+    const inserted = await insertMessageRows(this.db, this.d, input.mailboxId, [input], { mustBeLive: input.mailboxMustBeLive });
     if (inserted[0]) {
       // Every message row gets its primary instance here, and only here:
       // `messages.native_locator` is a mirror of the primary `message_instances` row, so the two
@@ -2170,20 +2289,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /** Persist attachment metadata (never bytes) in the ambient tx, {@link MESSAGE_ROWS_CHUNK} rows to a statement. */
   async insertAttachments(messageId: string, accountId: string, rows: AttachmentMeta[]): Promise<void> {
     for (let at = 0; at < rows.length; at += MESSAGE_ROWS_CHUNK) {
-      await this.db.insert(attachmentsTbl).values(rows.slice(at, at + MESSAGE_ROWS_CHUNK).map((a) => ({
-        accountId, messageId,
-        filename: a.filename,
-        contentType: a.contentType,
-        sizeBytes: a.sizeBytes,
-        partId: a.partId,
-        contentId: a.contentId,
-        inline: a.inline,
-        // The content digest computed at parse. Persisted so an operator can answer
-        // "are these two attachments the same file" without the bytes — which we do not have and
-        // must not store (§13.2/§14). The FINGERPRINT reads the in-memory value, never this column,
-        // for the reason the ruling prohibits a backfill: a stored column is not what ingest hashes.
-        contentSha256: a.contentSha256,
-      })));
+      await this.db.insert(attachmentsTbl).values(attachmentRowsOf(messageId, accountId, rows.slice(at, at + MESSAGE_ROWS_CHUNK)));
     }
   }
 
@@ -2211,10 +2317,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async upsertFolderState(messageId: string, s: FolderStateRow): Promise<void> {
     const reconcileStatus = reconcileStatusFor(s);
     const decided = s.decidedAt !== undefined ? { decidedAt: s.decidedAt } : {};
-    await this.db.insert(folderState).values({
-      messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
-      lastSetBy: s.lastSetBy, reconcileStatus, conflict: false, ...decided,
-    }).onConflictDoUpdate({
+    await this.db.insert(folderState).values(folderStateRowOf(messageId, s)).onConflictDoUpdate({
       target: folderState.messageId,
       set: {
         desiredFolder: s.desiredFolder, observedFolder: s.observedFolder, lastSetBy: s.lastSetBy,

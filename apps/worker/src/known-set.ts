@@ -242,7 +242,7 @@ export const processKnownSetBudget = new KnownSetBudget(KNOWN_SET_BUDGET_BYTES);
  * projected. `transaction` is neutral and special: a pass-through whose callback repo is wrapped in turn. */
 export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // reads
-  "findByDedupKey", "findByMessageIdHeader", "listMessageFailures", "primaryInstanceVanished",
+  "findByDedupKey", "findByDedupKeys", "findByMessageIdHeader", "listMessageFailures", "primaryInstanceVanished",
   // The local backstop's run: `message_failures` and the newest `messages.created_at` — reads.
   "writeOffRun",
   // `message_instances` for one message, at most two rows — a read; it moves no instance.
@@ -835,6 +835,20 @@ export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): 
           const added = insertedLocator(input, out);
           if (added === null) cache.drop(prop);
           else cache.noteInserted(added);
+          return out;
+        };
+      }
+
+      /* A RUN of inserts (`ingest-run.ts`), followed letter by letter as `insertMessage` is: every
+         letter it stored is a created row, appended once the bracket commits. */
+      if (prop === "persistNewRun") {
+        return async (members: ReadonlyArray<{ insert: InsertMessageArgs }>, ...rest: unknown[]): Promise<unknown> => {
+          const out = await (value as (...a: unknown[]) => Promise<unknown>).call(obj, members, ...rest);
+          const persisted = (out as { persisted?: unknown } | null)?.persisted;
+          if (typeof persisted !== "number") { cache.drop(prop); return out; }
+          const added = members.slice(0, persisted).map((m) => insertedLocator(m.insert, { created: true }));
+          if (added.some((a) => a === null)) cache.drop(prop);
+          else for (const a of added) cache.noteInserted(a!);
           return out;
         };
       }

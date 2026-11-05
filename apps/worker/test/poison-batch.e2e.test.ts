@@ -80,6 +80,13 @@ function faultOn(inner: WorkerRepo, victimKey: string, makeErr: () => unknown, s
           return (t as WorkerRepo).findByDedupKey(mailboxId, key);
         };
       }
+      // The same lookup, all of one message's keys in one read.
+      if (prop === "findByDedupKeys") {
+        return async (mailboxId: string, keys: readonly string[]) => {
+          if (keys.includes(victimKey)) { seen.hits++; throw makeErr(); }
+          return (t as WorkerRepo).findByDedupKeys!(mailboxId, keys);
+        };
+      }
       const v = Reflect.get(t, prop, recv);
       return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(t) : v;
     },

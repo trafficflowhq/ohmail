@@ -175,7 +175,7 @@ describe("the targeted retry's removal fence", () => {
     const repo = new Proxy(real, {
       get(target, prop, receiver) {
         const value = Reflect.get(target, prop, receiver) as unknown;
-        if (prop !== "findByDedupKey" || typeof value !== "function") return value;
+        if ((prop !== "findByDedupKey" && prop !== "findByDedupKeys") || typeof value !== "function") return value;
         return async (...args: unknown[]): Promise<unknown> => {
           if (!removed) {
             removed = true;

@@ -1,12 +1,14 @@
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { mailboxes, messages, type Tx } from "@trafficflow/db";
+import { mailboxes, messages, rules, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { runSyncCycle } from "../src/sync.js";
+import { ingestRunRepository } from "../src/ingest-run.js";
+import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import {
-  INGEST_STATEMENTS_CEILING, INGEST_TRANSACTIONS_CEILING,
+  INGEST_RUN_STATEMENTS_CEILING, INGEST_RUN_TRANSACTIONS_CEILING, INGEST_STATEMENTS_CEILING, INGEST_TRANSACTIONS_CEILING,
 } from "../../../scripts/perf/ingest-cost-pin.mjs";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
@@ -54,19 +56,33 @@ interface Client extends Doors {
   transaction: (cb: (tx: Doors) => Promise<unknown>) => Promise<unknown>;
 }
 
-interface Counted { statements: number; transactions: number }
+interface Counted { statements: number; transactions: number; byTable: Map<string, number> }
+
+/** The table a statement names first — what the per-table breakdown is keyed on. */
+function tableOf(text: unknown): string {
+  const q = typeof text === "string" ? text : String((text as { sql?: unknown } | null)?.sql ?? "");
+  const s = q.replace(/\s+/g, " ").trim().toLowerCase();
+  if (/^(begin|commit|rollback|savepoint|release)/.test(s)) return "(transaction)";
+  if (s.startsWith("with body as")) return "message_bodies+search";
+  const m = /^(?:insert into|update|delete from) "?([a-z_]+)"?/.exec(s) ?? /\bfrom "?([a-z_]+)"?/.exec(s);
+  return m?.[1] ?? "(other)";
+}
 
 /** Ingest `n` delivered messages in ONE cycle and count what the store was asked. */
-async function ingest(n: number): Promise<Counted> {
+async function ingest(n: number, opts: { admitAll?: boolean; runs?: boolean } = {}): Promise<Counted> {
   const db = (await makeTestDb()) as unknown as Tx;
   const client = (db as unknown as { $client: Client }).$client;
-  const seen: Counted = { statements: 0, transactions: 0 };
+  const seen: Counted = { statements: 0, transactions: 0, byTable: new Map() };
   let counting = false;
   const instrument = <T extends Doors>(target: T): T => {
     for (const door of ["query", "exec"] as const) {
       const inner = target[door].bind(target);
       target[door] = (...a: unknown[]): Promise<unknown> => {
-        if (counting) seen.statements += 1;
+        if (counting) {
+          seen.statements += 1;
+          const t = tableOf(a[0]);
+          seen.byTable.set(t, (seen.byTable.get(t) ?? 0) + 1);
+        }
         return inner(...(a as []));
       };
     }
@@ -82,6 +98,13 @@ async function ingest(n: number): Promise<Counted> {
   const [mb] = await db.insert(mailboxes)
     .values({ accountId: ACCOUNT, provider: "imap", address: `mb-${randomUUID().slice(0, 8)}@lichtgrat.example` })
     .returning();
+  // THE IMPORT'S SHAPE: a domain rule admits every fixture sender to the Imbox, so nothing is filed
+  // and what is counted is the store's own cost per letter.
+  if (opts.admitAll === true) {
+    await db.insert(rules).values({
+      accountId: ACCOUNT, kind: "domain", match: "x.example", destination: "INBOX", provenance: "manual", enabled: true, priority: 0,
+    });
+  }
   const fleet = new FakeAdapterFleet();
   const adapter = fleet.factory(
     { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
@@ -99,7 +122,9 @@ async function ingest(n: number): Promise<Counted> {
     // says so rather than leaving the field out — an omission is the shape that let a
     // hosted cycle write to a mailbox whose lease it had never asked about.
     writeAuthority: FIXTURE_LEASE,
-    repo: makeDrizzleRepo(db as never), adapter, accountId: ACCOUNT,
+    repo: opts.runs === true ? ingestRunRepository(makeDrizzleRepo(db as never)) : makeDrizzleRepo(db as never),
+    ...(opts.runs === true ? { ingestRuns: INGEST_RUN_BOUNDS } : {}),
+    adapter, accountId: ACCOUNT,
     mailboxId: mb!.id, storageCap: UNMETERED_STORAGE_CAP,
     // Both REQUIRED in `SyncDeps`, because for both the absent default is the dangerous branch.
     // The organizer role is the one the cost is measured under; an empty trusted set means every
@@ -114,6 +139,16 @@ async function ingest(n: number): Promise<Counted> {
   const rows = await db.select({ id: messages.id }).from(messages);
   expect(rows, `ingest wrote ${rows.length} rows for ${n} delivered messages`).toHaveLength(n);
   return seen;
+}
+
+/** The marginal statements per letter, by table, between two cycle sizes. */
+function perTable(small: Counted, large: Counted, span: number): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const t of new Set([...small.byTable.keys(), ...large.byTable.keys()])) {
+    const d = ((large.byTable.get(t) ?? 0) - (small.byTable.get(t) ?? 0)) / span;
+    if (d !== 0) out[t] = Number(d.toFixed(2));
+  }
+  return out;
 }
 
 describe("the ingest's per-message database cost", () => {
@@ -132,14 +167,16 @@ describe("the ingest's per-message database cost", () => {
       statementsPerMessage: Number(perMessage.toFixed(2)),
       transactionsPerMessage: Number(txPerMessage.toFixed(2)),
       statementsPerCycle: Math.round(perCycle),
+      byTable: perTable(small, large, span),
     }));
 
     /*
-     * MEASURED 25.0 statements and 2.0 transactions per message (40 to 200 in one cycle, no classifier),
+     * MEASURED 24.0 statements and 2.0 transactions per message (40 to 200 in one cycle, no classifier),
      * 9 per cycle; bounds sit half a statement above and the SIZES are part of the pin (a range of cycle sizes
      * reads 20.9 and 1.4). THE RISE 24.00 to 25.00 IS A RULING, not measurement drift (2026-09-14): the
      * removal fence now covers the whole cycle rather than the ingest commit alone, and transactions are
-     * UNCHANGED both sides — one read, no new locking. The per-message statement is `fileOne`'s
+     * UNCHANGED both sides — one read, no new locking. The fall to 24.0 is the dedup lookup's keys asked
+     * in one statement. The per-message statement is `fileOne`'s
      * completion group, and this fixture has no `moveMany`, so it is the UNBATCHED WORST CASE
      * (production pays it once per chunk). A ratchet may only FALL, so its bound is written as a
      * ruling. Both bounds live in `scripts/perf/ingest-cost-pin.mjs` — the portable harness reads
@@ -157,5 +194,26 @@ describe("the ingest's per-message database cost", () => {
     // And the reading is a real one: a counter that never fired would satisfy every bound above.
     expect(large.statements, "nothing was counted").toBeGreaterThan(1000);
     expect(large.transactions, "no transaction was counted").toBeGreaterThan(100);
+  }, 300_000);
+
+  it("the import's shape: letters a rule admits, nothing filed", async () => {
+    const small = await ingest(40, { admitAll: true, runs: true });
+    const large = await ingest(200, { admitAll: true, runs: true });
+    const span = 200 - 40;
+    const perMessage = (large.statements - small.statements) / span;
+    const txPerMessage = (large.transactions - small.transactions) / span;
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({
+      shape: "import", statementsPerMessage: Number(perMessage.toFixed(2)),
+      transactionsPerMessage: Number(txPerMessage.toFixed(2)),
+      statementsPerCycle: Math.round(small.statements - 40 * perMessage), byTable: perTable(small, large, span),
+    }));
+    // MEASURED 1.10 statements and 0.01 transactions per letter: the dedup read per letter, and one
+    // run's writes spread over its hundred letters. Both bounds are rulings, as above.
+    expect(perMessage, `the import now costs ${perMessage.toFixed(2)} statements per letter`)
+      .toBeLessThanOrEqual(INGEST_RUN_STATEMENTS_CEILING);
+    expect(txPerMessage, `the import now opens ${txPerMessage.toFixed(2)} transactions per letter`)
+      .toBeLessThanOrEqual(INGEST_RUN_TRANSACTIONS_CEILING);
+    expect(large.statements, "nothing was counted").toBeGreaterThan(200);
   }, 300_000);
 });

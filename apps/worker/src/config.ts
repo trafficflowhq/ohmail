@@ -20,6 +20,7 @@ import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
 import { dialHostGuardFromEnv, type DialHostGuard } from "./dial-host-guard.js";
 import type { PlatformSignalConfig } from "./platform-signal-poll.js";
+import type { IngestRunBounds } from "./sync.js";
 
 /** One IMAP IDLE connection per mailbox lives in this process — cap it. */
 export const DEFAULT_MAX_MAILBOXES = 64;
@@ -346,6 +347,11 @@ export interface WorkerConfig {
    */
   blankRepair?: BlankRepairMode;
   /**
+   * How new letters are stored in runs (`sync.ts#SyncDeps.ingestRuns`), from `OHMAIL_INGEST_RUNS`:
+   * unset is on, `off` stores every letter alone. `null` is off.
+   */
+  ingestRuns?: IngestRunBounds | null;
+  /**
    * THIS DEPLOYMENT'S POLICY ON THE HOSTS IT MAY DIAL, and unlike the seam below `loadConfig` DOES
    * populate it — from `TF_PROBE_ALLOW_PRIVATE`, the same variable the API reads for its add-time
    * probe. Every mailbox dial is assembled through it, so a stored server whose name has since
@@ -567,6 +573,16 @@ export interface WorkerConfig {
  * needs, so it rides on the error as a field the handler logs deliberately; the `message` keeps its
  * original wording for a developer reading a stack locally.
  */
+/** A run of new letters: at most this many, this much body text, this old (`sync.ts#IngestRunBounds`). */
+export const INGEST_RUN_BOUNDS: IngestRunBounds = { maxMembers: 100, maxBodyBytes: 8 * 1024 * 1024, maxAgeMs: 10_000 };
+
+/** `OHMAIL_INGEST_RUNS`: unset is on, `off` is off (`null`); anything else is refused at boot. */
+export function ingestRunsFrom(value: string | undefined): IngestRunBounds | null | "invalid" {
+  const v = (value ?? "").trim().toLowerCase();
+  if (v === "") return INGEST_RUN_BOUNDS;
+  return v === "off" ? null : "invalid";
+}
+
 export class WorkerConfigError extends Error {
   /** Always this — `describeError` reads `code`, and the class is the taxonomy. */
   readonly code = "TF_CONFIG_INVALID";
@@ -1040,9 +1056,14 @@ export function loadConfig(
   if (blankRepair === null) {
     throw new WorkerConfigError("OHMAIL_BLANK_REPAIR", "OHMAIL_BLANK_REPAIR must be off, dry or apply");
   }
+  const ingestRuns = ingestRunsFrom(env.OHMAIL_INGEST_RUNS);
+  if (ingestRuns === "invalid") {
+    throw new WorkerConfigError("OHMAIL_INGEST_RUNS", "OHMAIL_INGEST_RUNS must be unset or off");
+  }
   const ring = kekRingFrom(env);
   return {
     blankRepair,
+    ingestRuns,
     databaseUrl: url,
     entitlements,
     // BOOTSTRAP-ONLY. It pairs with TF_MAILBOX_ID for the one-shot env-creds seed and

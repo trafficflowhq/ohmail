@@ -240,6 +240,114 @@ export async function resolveThread(
   return { threadId, created, parentFound: parent !== null, changes };
 }
 
+/** One stored thread as a batched ingest holds it while folding letters in. */
+export interface FoldThread {
+  id: string;
+  rootMessageIdHeader: string | null;
+  subject: string;
+  participants: EmailAddress[];
+  lastMessageAt: Date | null;
+}
+
+/** What {@link foldThreads} decided for a run of new letters, every write in one place. */
+export interface ThreadFold {
+  /** Each letter's thread, in letter order. */
+  threadOf: string[];
+  /** Each letter's owed deltas, in letter order — {@link ThreadResolution.changes}, letter by letter. */
+  changesOf: ThreadChange[][];
+  /** Threads to insert, as they stand after the whole run. */
+  created: FoldThread[];
+  /** Stored threads a letter changed, as they stand after the whole run. */
+  updated: FoldThread[];
+}
+
+/**
+ * {@link resolveThread} for a run of new letters at once, its rules replayed letter by letter in
+ * order, so one transaction stores what one transaction per letter would. Pure: the caller reads
+ * the stored rows the candidates name (`parents`, as `findThreadParent` reads them) and the stored
+ * threads those rows and the letters' roots name (`threads`), and writes what this returns. A
+ * letter of the run is never another's parent: the caller ends a run before a letter citing one.
+ */
+export function foldThreads(input: {
+  letters: ReadonlyArray<Omit<ThreadResolutionInput, "emitMessageUpdate">>;
+  parents: ReadonlyArray<{ header: string | null; threadId: string | null }>;
+  threads: ReadonlyArray<FoldThread>;
+  newId: () => string;
+}): ThreadFold {
+  // `findThreadParent`'s choice per header: the first row, unless a later one has a thread and it has none.
+  const byHeader = new Map<string, string | null>();
+  for (const r of input.parents) {
+    if (!r.header) continue;
+    if (!byHeader.has(r.header) || (byHeader.get(r.header) === null && r.threadId !== null)) {
+      byHeader.set(r.header, r.threadId);
+    }
+  }
+  const byId = new Map<string, FoldThread>();
+  const byRoot = new Map<string, FoldThread>();
+  for (const t of input.threads) {
+    const copy = { ...t, participants: [...t.participants] };
+    byId.set(t.id, copy);
+    if (t.rootMessageIdHeader !== null) byRoot.set(t.rootMessageIdHeader, copy);
+  }
+  const createdIds = new Set<string>();
+  const changedIds = new Set<string>();
+  const threadOf: string[] = [];
+  const changesOf: ThreadChange[][] = [];
+
+  for (const letter of input.letters) {
+    const key = threadKeyOf(letter.messageIdHeader, letter.headers);
+    const participants = letter.participants.filter((p) => p.address);
+    const changes: ThreadChange[] = [];
+    let parentThread: string | null = null;
+    for (const c of key.candidates) {
+      if (byHeader.has(c)) { parentThread = byHeader.get(c) ?? null; break; }
+    }
+    let thread: FoldThread | undefined = parentThread !== null ? byId.get(parentThread) : undefined;
+    if (parentThread !== null && thread === undefined) throw new Error("foldThreads: a parent's thread was not read");
+    let created = false;
+    if (thread === undefined) {
+      thread = key.rootMessageIdHeader === null ? undefined : byRoot.get(key.rootMessageIdHeader);
+      if (thread === undefined) {
+        thread = {
+          id: input.newId(), rootMessageIdHeader: key.rootMessageIdHeader, subject: baseSubject(letter.subject),
+          participants: participants.slice(0, MAX_THREAD_PARTICIPANTS), lastMessageAt: letter.date,
+        };
+        byId.set(thread.id, thread);
+        if (thread.rootMessageIdHeader !== null) byRoot.set(thread.rootMessageIdHeader, thread);
+        createdIds.add(thread.id);
+        created = true;
+        changes.push({ entityType: "thread", entityId: thread.id, op: "create" });
+      }
+    }
+    // `mergeThreadMessage`, in memory: union by address up to the bound, and a newer date.
+    if (!created) {
+      const byAddress = new Map(thread.participants.map((p) => [p.address.toLowerCase(), p]));
+      let grew = false;
+      for (const p of participants) {
+        const k = p.address.toLowerCase();
+        if (!k || byAddress.has(k) || byAddress.size >= MAX_THREAD_PARTICIPANTS) continue;
+        byAddress.set(k, p);
+        grew = true;
+      }
+      const advance = letter.date !== null
+        && (thread.lastMessageAt === null || letter.date.getTime() > thread.lastMessageAt.getTime());
+      if (grew) thread.participants = [...byAddress.values()];
+      if (advance) thread.lastMessageAt = letter.date;
+      if (grew || advance) {
+        if (!createdIds.has(thread.id)) changedIds.add(thread.id);
+        changes.push({ entityType: "thread", entityId: thread.id, op: "update" });
+      }
+    }
+    threadOf.push(thread.id);
+    changesOf.push(changes);
+  }
+  return {
+    threadOf, changesOf,
+    created: [...createdIds].map((id) => byId.get(id)!),
+    updated: [...changedIds].map((id) => byId.get(id)!),
+  };
+}
+
 /**
  * The localized prefix table, {@link baseSubject} and the SQL-shaped {@link SUBJECT_PREFIX_PATTERN}
  * live in `reply-subject.ts` — the dependency-free leaf the client engine can load — and are

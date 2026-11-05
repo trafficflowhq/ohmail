@@ -1,7 +1,7 @@
 import { countRealFiles, normalizeMime } from "./mime.js";
 import type { Logger } from "./log.js";
 import { prepareHtmlForStorage } from "./html-storage.js";
-import { searchBodyOf } from "./message-search.js";
+import { searchBodyOf, type MessageSearchInput } from "./message-search.js";
 import {
   fingerprintDedupKey, isStorableMessageId, legacyDedupKey, messageFingerprint, runtimeDedupKey, sameLetterBesideDate,
   verifiesLegacyIdentity,
@@ -38,7 +38,7 @@ import { reconcile, type ReconcileAction } from "./reconciler.js";
 // conditional completion is declared on `WorkerRepo` and the apply path REQUIRES it — see
 // {@link ReconcileApplyDeps}.
 import type { WorkerRepo } from "./adapters/drizzle-repo.js";
-import { resolveThread, threadKeyOf } from "./threading.js";
+import { resolveThread, threadKeyOf, type ThreadResolutionInput } from "./threading.js";
 import type { CorrespondentEvidence } from "./correspondent.js";
 // The LEAF, not `/cloud` and not the root barrel: this module runs inside the desktop engine, and
 // `/cloud` is billing, the credit ledger, the staff handle and the whole hosted schema.
@@ -51,7 +51,7 @@ import type { MailboxMustBeLive } from "@trafficflow/db";
 import { aiSpendPermitted } from "./ports.js";
 import type {
   Change, CreditGate, MoveEvidence, PipelineDeps, RepoPort, RepoChangeInput, RoutingPort, FolderStateRow,
-  MessageBodyInput, NativeLocator, StoredMessage,
+  MessageBodyInput, NativeLocator, StoredMessage, InsertMessageInput,
 } from "./ports.js";
 import type { ClassifierPort, ClassifierResult } from "./classifier-port.js";
 import { ModelDeclinedError } from "./model-declined.js";
@@ -850,7 +850,7 @@ async function adoptionBound(repo: unknown, mailboxId: string): Promise<Date | n
  * THE EARLIEST A LETTER FILED ON ARRIVAL WAS FILED: its INTERNALDATE (a move keeps it), else the bound
  * an adoption takes, else the epoch: decided at a time nobody knows, so it makes no press stale.
  */
-async function filedOnArrivalBound(p: NewPlan, deps: CommitDeps): Promise<Date> {
+async function filedOnArrivalBound(p: NewPlan, deps: Pick<CommitDeps, "repo" | "mailboxId" | "observedSince">): Promise<Date> {
   if (p.arrivedAt !== null) return p.arrivedAt;
   const since = deps.observedSince !== undefined ? deps.observedSince : await adoptionBound(deps.repo, deps.mailboxId);
   return since ?? new Date(0);
@@ -870,17 +870,20 @@ async function resolveExisting(
   repo: RepoPort, accountId: string, mailboxId: string, normalized: NormalizedMessage,
   ownAuthored: boolean, ownAddresses: ReadonlySet<string> | undefined,
 ): Promise<{ key: string; existing: StoredMessage | null; upgrade?: DedupKeyUpgrade }> {
-  const fpKey = fingerprintDedupKey(messageFingerprint(normalized));
-  const onFingerprint = await repo.findByDedupKey(mailboxId, fpKey);
+  const { fp: fpKey, prior: priorKey, legacy: legacyKey } = dedupKeysOf(normalized);
+  // All three keys in one statement where the store can; the priority below is the same either way.
+  const found = repo.findByDedupKeys === undefined ? null
+    : await repo.findByDedupKeys(mailboxId, priorKey === null ? [fpKey, legacyKey] : [fpKey, priorKey, legacyKey]);
+  const lookup = async (k: string): Promise<StoredMessage | null> =>
+    found !== null ? found.get(k) ?? null : repo.findByDedupKey(mailboxId, k);
+  const onFingerprint = await lookup(fpKey);
   if (onFingerprint) return { key: fpKey, existing: onFingerprint };
 
   // Step 1b: the key a row stored before mail-date.ts carries, its Date line read by the runtime.
-  const priorKey = runtimeDedupKey(normalized);
-  const prior = priorKey === null ? null : await repo.findByDedupKey(mailboxId, priorKey);
+  const prior = priorKey === null ? null : await lookup(priorKey);
   if (prior) return { key: priorKey!, existing: prior, upgrade: { messageId: prior.id, from: priorKey!, to: fpKey } };
 
-  const legacyKey = legacyDedupKey(normalized.canonical);
-  const candidate = await repo.findByDedupKey(mailboxId, legacyKey);
+  const candidate = await lookup(legacyKey);
   if (candidate && verifiesLegacyIdentity(candidate, normalized)) {
     return {
       key: legacyKey,
@@ -918,6 +921,15 @@ async function resolveExisting(
   // are "new", and both are stored under the NEW key — so a forged `mid:` gets its own row rather
   // than joining somebody else's.
   return { key: fpKey, existing: null };
+}
+
+/** The three keys {@link resolveExisting} looks a message up by: fingerprint, the pre-mail-date key, legacy. */
+export function dedupKeysOf(normalized: NormalizedMessage): { fp: string; prior: string | null; legacy: string } {
+  return {
+    fp: fingerprintDedupKey(messageFingerprint(normalized)),
+    prior: runtimeDedupKey(normalized),
+    legacy: legacyDedupKey(normalized.canonical),
+  };
 }
 
 /** A short preview of the body for the DTO snippet + the classifier input. */
@@ -1111,8 +1123,8 @@ function headersDigest(normalized: NormalizedMessage): string {
  * With no `classifier`/`routing` injected the routing decision is byte-identical to
  * the pre-AI baseline (sensitive → INBOX, else rule destination, else leave in place).
  */
-export async function planChange(change: Change, deps: PlanDeps): Promise<ChangePlan> {
-  const plan = await planFromRaw(change, deps);
+export async function planChange(change: Change, deps: PlanDeps, parsed?: NormalizedMessage): Promise<ChangePlan> {
+  const plan = await planFromRaw(change, deps, parsed);
   if (change.oversizeBytes !== undefined && plan.new) plan.new.bodyWithheld = "too_large";
   return plan;
 }
@@ -1131,7 +1143,7 @@ export class EmptySourceError extends Error {
   }
 }
 
-async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> {
+async function planFromRaw(change: Change, deps: PlanDeps, parsed: NormalizedMessage | undefined): Promise<ChangePlan> {
   if (!change.raw) {
     throw new Error("planChange requires change.raw (a content-bearing 'create')");
   }
@@ -1148,7 +1160,8 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
   // the resolved value as REQUIRED so no call site is silently on the wrong side of it.
   const ohboxPolicy: OhboxPolicy = deps.ohboxPolicy ?? DEFAULT_OHBOX_POLICY;
 
-  const normalized = await normalizeMime(change.raw, { log: deps.log });
+  // `parsed` is this same source already parsed by a caller that needed its keys first.
+  const normalized = parsed ?? await normalizeMime(change.raw, { log: deps.log });
   const { key, existing, upgrade } =
     await resolveExisting(repo, accountId, mailboxId, normalized, change.ownAuthored === true, deps.ownAddresses);
 
@@ -1717,6 +1730,142 @@ async function planFromRaw(change: Change, deps: PlanDeps): Promise<ChangePlan> 
 }
 
 /**
+ * The `messages` row a NEW plan writes — one builder for the per-letter commit and the worker's
+ * batched one, so the two cannot store different rows for one letter.
+ */
+export function newMessageInsertOf(
+  p: NewPlan, accountId: string, mailboxId: string, mailboxMustBeLive?: MailboxMustBeLive,
+): InsertMessageInput {
+  return {
+    accountId, mailboxId,
+    canonical: p.normalized.canonical,
+    dedupKey: p.dedupKey,
+    subject: p.normalized.subject,
+    fromAddress: p.normalized.from.address,
+    // ── THE SENDER'S DISPLAY NAME, WHICH THIS LINE IS THE FIRST TO PERSIST ───────────────
+    //
+    // The same repair as the recipients below, one header up: `parseMessage` has produced
+    // `from: { name, address }` since the parser was written, this function persisted only
+    // `.address`, and `materialize.ts` hardcoded the other half (`from: { name: null, … }`) —
+    // so every ingested message reached the reader as a bare address, and nothing failed,
+    // because a name the sender never set and a name ingest dropped are the same `null` on
+    // the wire. Same parse, not a second reading, on the recipients' argument verbatim.
+    fromName: p.normalized.from.name,
+    // The recipients, which this line is the first to persist.
+    // `messages.to_addresses`/`cc_addresses` have existed since the schema landed and the DTO
+    // has always projected them, but no Cloud ingest ever wrote them — every Cloud message
+    // reached the reader as `to: []` with no "To" line, and nothing failed, because an
+    // unwritten column and a message addressed to nobody are the same `[]` on the wire. The
+    // values were in `p.normalized` the whole time. Same parse, not a second reading — which
+    // keeps the row and the fingerprint that decides its identity from disagreeing about who a
+    // message was sent to.
+    to: p.normalized.to,
+    cc: p.normalized.cc,
+    date: p.normalized.date,
+    // The honest arrival the plan carried (INTERNALDATE, or null for "not recorded") — the
+    // truth `materialize.ts#sortAt` clamps the sender-written `date` against (mail 0119).
+    arrivedAt: p.arrivedAt,
+    nativeLocator: p.arrivalLocator,
+    flags: p.sensitivity.flags,
+    snippet: p.snippet,
+    sensitivityCategory: p.sensitivity.category,
+    // BOTH halves of the pair count DOWNLOADABLE parts, never `attachments.length`.
+    // They have to move together: a DTO reading `hasAttachments: false, attachmentCount: 3`
+    // is the same lie the flag alone was telling, one field over. `countRealFiles` is the
+    // single definition and `mime.ts#isRealFile` argues it.
+    hasAttachments: p.normalized.hasAttachments,
+    attachmentCount: countRealFiles(p.normalized.attachments),
+    // THE SERVER'S OWN READ-STATE, not the column default. See `NewPlan.seen`: without this
+    // line the default `unread = true` wins and every message the user has ever read comes
+    // back as "New" on the first sync of a real mailbox.
+    unread: !p.seen,
+    // The verdict that routed this message, written in the ingest transaction. `planChange`
+    // computed it once and `evaluateRules` already consumed it; this is the same value, not a
+    // second reading. Persisting here rather than in a later pass stops the row and the routing
+    // from disagreeing — a NULL column resolves to `"unauthenticated"`, and a NULL on a message
+    // that was in fact demoted would leave the reason for its demotion nowhere on disk. The
+    // column is `messages.auth_verdict` (mail 0028), written by nothing on the ingest path
+    // until this line; the unsubscribe service is the only other writer, from the same parser
+    // and the same stored headers.
+    authVerdict: p.authVerdict,
+    senderCheck: p.senderCheck,
+    ...(p.unconfirmedHold === true ? { unconfirmedHold: true as const } : {}),
+    // The fence the allocation below is already carrying — see `InsertMessageInput`: the write
+    // door asks nothing of its own when this commit's own statement asks for it.
+    mailboxMustBeLive,
+  };
+}
+
+/** The body, its storage cap context aside, and the search document a NEW plan writes. */
+export function newBodyWriteOf(p: NewPlan, accountId: string): { body: MessageBodyInput; search: MessageSearchInput } {
+  const storedHtml = prepareHtmlForStorage(p.normalized.htmlBody);
+  const searchBody = searchBodyOf(p.normalized.textBody, storedHtml);
+  return {
+    body: {
+      text: p.normalized.textBody,
+      html: storedHtml,
+      headers: p.normalized.headers,
+      ...(p.bodyWithheld !== undefined ? { withheld: p.bodyWithheld } : {}),
+    },
+    search: {
+      accountId,
+      subject: p.normalized.subject,
+      from: p.normalized.from,
+      to: p.normalized.to,
+      cc: p.normalized.cc,
+      attachmentNames: p.normalized.attachments.flatMap((a) => (a.filename ? [a.filename] : [])),
+      bodyText: searchBody.bodyText,
+      source: searchBody.source,
+    },
+  };
+}
+
+/** What a NEW plan's message is threaded from. */
+export function newThreadInputOf(p: NewPlan, accountId: string, messageId: string): ThreadResolutionInput {
+  return {
+    accountId,
+    messageId,
+    messageIdHeader: p.normalized.canonical.messageIdHeader,
+    headers: p.normalized.headers,
+    subject: p.normalized.subject,
+    // Sender AND recipients, because the plan HAS them. The backfill can only pass the
+    // sender: `insertMessage` has not always written `messages.to_addresses`, so
+    // the rows a backfill reaches carry `'[]'`. That asymmetry is documented on
+    // `ThreadResolutionInput.participants`.
+    participants: [p.normalized.from, ...p.normalized.to],
+    date: p.normalized.date,
+    emitMessageUpdate: false,
+  };
+}
+
+/** The `folder_state` row a NEW plan's message starts with. */
+export async function newFolderStateOf(p: NewPlan, deps: Pick<CommitDeps, "repo" | "mailboxId" | "observedSince">): Promise<FolderStateRow> {
+  return {
+    desiredFolder: p.desired,
+    observedFolder: p.arrivalLocator.folder,
+    // NOT a label — a structural gate. See {@link NewPlan.passive} and {@link readerAdoption}:
+    // `'us'` is "this install decided", `'external'` is "the user filed it by hand in a folder of
+    // their own", `'peer'` is "another install of this account placed it in a folder we organize".
+    // The `?? "external"` is the branch `change.passive` and the import hold take, and it is
+    // pinned by a control of its own rather than left to this operator.
+    lastSetBy: p.passive ? (p.adoption ?? "external") : "us",
+    // AN ANSWER THE GATE ADMITTED IS DECIDED FOR THIS LETTER: a later letter from the address waits
+    // at the gate without pulling it back, and no decision about the sender moves it. So is a letter
+    // filed on arrival: a client neither forecasts a rule's walk moving it nor counts it as ohmail's filing.
+    ...(p.filedOnArrival ? { decidedAt: await filedOnArrivalBound(p, deps) }
+      : p.correspondentAdmission || p.bounceAdmission ? { decidedAt: new Date() } : {}),
+  };
+}
+
+/** The optimistic `move` delta a NEW plan owes, or null when it stays where it arrived. */
+export function newMoveDeltaOf(p: NewPlan, accountId: string, messageId: string): RepoChangeInput | null {
+  return p.desired === p.arrivalLocator.folder ? null : {
+    accountId, entityType: "message", entityId: messageId, op: "move",
+    meta: { from: p.arrivalLocator.folder, to: p.desired },
+  };
+}
+
+/**
  * PHASE 2 — persist the plan, NO network. Runs inside the
  * worker's short transaction with a tx-scoped repo (`makeDrizzleRepo(tx)`), so
  * every entity write and every `change_log` row (allocateSeq → insert) commit
@@ -1820,64 +1969,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // This message's client-visible deltas, collected as the rows are written and appended ONCE
     // at the end of the branch — see the block at the bottom. Order is seq order.
     const deltas: RepoChangeInput[] = [];
-    const stored = await repo.insertMessage({
-      accountId, mailboxId,
-      canonical: p.normalized.canonical,
-      dedupKey: p.dedupKey,
-      subject: p.normalized.subject,
-      fromAddress: p.normalized.from.address,
-      // ── THE SENDER'S DISPLAY NAME, WHICH THIS LINE IS THE FIRST TO PERSIST ───────────────
-      //
-      // The same repair as the recipients below, one header up: `parseMessage` has produced
-      // `from: { name, address }` since the parser was written, this function persisted only
-      // `.address`, and `materialize.ts` hardcoded the other half (`from: { name: null, … }`) —
-      // so every ingested message reached the reader as a bare address, and nothing failed,
-      // because a name the sender never set and a name ingest dropped are the same `null` on
-      // the wire. Same parse, not a second reading, on the recipients' argument verbatim.
-      fromName: p.normalized.from.name,
-      // The recipients, which this line is the first to persist.
-      // `messages.to_addresses`/`cc_addresses` have existed since the schema landed and the DTO
-      // has always projected them, but no Cloud ingest ever wrote them — every Cloud message
-      // reached the reader as `to: []` with no "To" line, and nothing failed, because an
-      // unwritten column and a message addressed to nobody are the same `[]` on the wire. The
-      // values were in `p.normalized` the whole time. Same parse, not a second reading — which
-      // keeps the row and the fingerprint that decides its identity from disagreeing about who a
-      // message was sent to.
-      to: p.normalized.to,
-      cc: p.normalized.cc,
-      date: p.normalized.date,
-      // The honest arrival the plan carried (INTERNALDATE, or null for "not recorded") — the
-      // truth `materialize.ts#sortAt` clamps the sender-written `date` against (mail 0119).
-      arrivedAt: p.arrivedAt,
-      nativeLocator: p.arrivalLocator,
-      flags: p.sensitivity.flags,
-      snippet: p.snippet,
-      sensitivityCategory: p.sensitivity.category,
-      // BOTH halves of the pair count DOWNLOADABLE parts, never `attachments.length`.
-      // They have to move together: a DTO reading `hasAttachments: false, attachmentCount: 3`
-      // is the same lie the flag alone was telling, one field over. `countRealFiles` is the
-      // single definition and `mime.ts#isRealFile` argues it.
-      hasAttachments: p.normalized.hasAttachments,
-      attachmentCount: countRealFiles(p.normalized.attachments),
-      // THE SERVER'S OWN READ-STATE, not the column default. See `NewPlan.seen`: without this
-      // line the default `unread = true` wins and every message the user has ever read comes
-      // back as "New" on the first sync of a real mailbox.
-      unread: !p.seen,
-      // The verdict that routed this message, written in the ingest transaction. `planChange`
-      // computed it once and `evaluateRules` already consumed it; this is the same value, not a
-      // second reading. Persisting here rather than in a later pass stops the row and the routing
-      // from disagreeing — a NULL column resolves to `"unauthenticated"`, and a NULL on a message
-      // that was in fact demoted would leave the reason for its demotion nowhere on disk. The
-      // column is `messages.auth_verdict` (mail 0028), written by nothing on the ingest path
-      // until this line; the unsubscribe service is the only other writer, from the same parser
-      // and the same stored headers.
-      authVerdict: p.authVerdict,
-      senderCheck: p.senderCheck,
-      ...(p.unconfirmedHold === true ? { unconfirmedHold: true as const } : {}),
-      // The fence the allocation below is already carrying — see `InsertMessageInput`: the write
-      // door asks nothing of its own when this commit's own statement asks for it.
-      mailboxMustBeLive: deps.mailboxMustBeLive,
-    });
+    const stored = await repo.insertMessage(newMessageInsertOf(p, accountId, mailboxId, deps.mailboxMustBeLive));
 
     // The winner owns the tail. A loser writes NOTHING (measured on real Postgres).
     // `insertMessage` is an upsert, so two ingests that both planned `new` both arrive here, and
@@ -1910,26 +2002,11 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
 
     // The search document goes with the body — from the PARSED message and not from what the cap
     // let into the store, so a withheld body's message is still found by its words (mail 0125).
-    const storedHtml = prepareHtmlForStorage(p.normalized.htmlBody);
-    const searchBody = searchBodyOf(p.normalized.textBody, storedHtml);
-    await repo.insertMessageBody(stored.id, {
-      text: p.normalized.textBody,
-      html: storedHtml,
-      headers: p.normalized.headers,
-      ...(p.bodyWithheld !== undefined ? { withheld: p.bodyWithheld } : {}),
-    }, {
+    const bodyWrite = newBodyWriteOf(p, accountId);
+    await repo.insertMessageBody(stored.id, bodyWrite.body, {
       accountId,
       capBytes: deps.storageCap === UNMETERED_STORAGE_CAP ? null : deps.storageCap,
-    }, {
-      accountId,
-      subject: p.normalized.subject,
-      from: p.normalized.from,
-      to: p.normalized.to,
-      cc: p.normalized.cc,
-      attachmentNames: p.normalized.attachments.flatMap((a) => (a.filename ? [a.filename] : [])),
-      bodyText: searchBody.bodyText,
-      source: searchBody.source,
-    });
+    }, bodyWrite.search);
 
     // Threading, here and not anywhere else. In the persist phase because it is a pure DB
     // read/write with no network — the header chain is in `p.normalized.headers` and the parent
@@ -1942,20 +2019,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
     // again would mint a second `threads` row for a message with no Message-ID, whose NULL anchor
     // nothing can dedup.
     if (!stored.threadId) {
-      const resolution = await resolveThread(repo, {
-        accountId,
-        messageId: stored.id,
-        messageIdHeader: p.normalized.canonical.messageIdHeader,
-        headers: p.normalized.headers,
-        subject: p.normalized.subject,
-        // Sender AND recipients, because the plan HAS them. The backfill can only pass the
-        // sender: `insertMessage` has not always written `messages.to_addresses`, so
-        // the rows a backfill reaches carry `'[]'`. That asymmetry is documented on
-        // `ThreadResolutionInput.participants`.
-        participants: [p.normalized.from, ...p.normalized.to],
-        date: p.normalized.date,
-        emitMessageUpdate: false,
-      });
+      const resolution = await resolveThread(repo, newThreadInputOf(p, accountId, stored.id));
       // Collected HERE and not inside the resolver: the resolver takes the `threads` locks, and
       // the counter lock this list is eventually allocated from must be taken after every one of
       // them or a concurrent backfill batch deadlocks against us. See `ThreadResolution.changes`.
@@ -1966,22 +2030,7 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
 
     deltas.push({ accountId, entityType: "message", entityId: stored.id, op: "create", meta: null });
 
-    const initial: FolderStateRow = {
-      desiredFolder: p.desired,
-      observedFolder: p.arrivalLocator.folder,
-      // NOT a label — a structural gate. See {@link NewPlan.passive} and {@link readerAdoption}:
-      // `'us'` is "this install decided", `'external'` is "the user filed it by hand in a folder of
-      // their own", `'peer'` is "another install of this account placed it in a folder we organize".
-      // The `?? "external"` is the branch `change.passive` and the import hold take, and it is
-      // pinned by a control of its own rather than left to this operator.
-      lastSetBy: p.passive ? (p.adoption ?? "external") : "us",
-      // AN ANSWER THE GATE ADMITTED IS DECIDED FOR THIS LETTER: a later letter from the address waits
-      // at the gate without pulling it back, and no decision about the sender moves it. So is a letter
-      // filed on arrival: a client neither forecasts a rule's walk moving it nor counts it as ohmail's filing.
-      ...(p.filedOnArrival ? { decidedAt: await filedOnArrivalBound(p, deps) }
-        : p.correspondentAdmission || p.bounceAdmission ? { decidedAt: new Date() } : {}),
-    };
-    await repo.upsertFolderState(stored.id, initial);
+    await repo.upsertFolderState(stored.id, await newFolderStateOf(p, deps));
 
     /* THE CORRESPONDENT THIS REPORT PROVED UNREACHABLE — the stamp, written once, here.
      *
@@ -2023,12 +2072,8 @@ export async function commitChange(plan: ChangePlan, deps: CommitDeps): Promise<
 
     // Optimistic, user-wins move change at local commit. The physical
     // move follows outside the tx; a later change corrects any IMAP divergence.
-    if (p.desired !== p.arrivalLocator.folder) {
-      deltas.push({
-        accountId, entityType: "message", entityId: stored.id, op: "move",
-        meta: { from: p.arrivalLocator.folder, to: p.desired },
-      });
-    }
+    const move = newMoveDeltaOf(p, accountId, stored.id);
+    if (move !== null) deltas.push(move);
 
     // AI branch persistence: routing_decision (+ change), and — unless graduated —
     // an approval that gates the move until the user acts.

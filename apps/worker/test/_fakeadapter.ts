@@ -84,6 +84,10 @@ export interface FakeControl {
     ownAuthored?: boolean;
     /** The server's INTERNALDATE, carried on the create as a real adapter does. */
     internalDate?: Date;
+    /** Read out of a folder the customer made (`Change.passive`). */
+    passive?: boolean;
+    /** Refused on size: delivered as its header block (`Change.oversizeBytes`). */
+    oversizeBytes?: number;
   }>;
   /** `connect()` awaits this before proceeding (a takeover barrier). */
   gate?: Promise<void>;
@@ -775,6 +779,8 @@ export class FakeAdapterFleet {
             ...(m.structure !== undefined ? { structure: m.structure } : {}),
             ...(m.ownAuthored !== undefined ? { ownAuthored: m.ownAuthored } : {}),
             ...(m.internalDate !== undefined ? { internalDate: m.internalDate } : {}),
+            ...(m.passive !== undefined ? { passive: m.passive } : {}),
+            ...(m.oversizeBytes !== undefined ? { oversizeBytes: m.oversizeBytes } : {}),
           })),
         };
       },
