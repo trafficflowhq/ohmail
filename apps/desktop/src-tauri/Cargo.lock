@@ -2562,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "ohmail"
-version = "0.30.40"
+version = "0.30.41"
 dependencies = [
  "base64 0.22.1",
  "block2",
