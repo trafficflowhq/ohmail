@@ -15,6 +15,7 @@ import {
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import type { OrganizerIntent } from "@trafficflow/core/adapters/organizer-lease";
 import { asDatabaseFault, markDatabaseFaults } from "./db-fault.js";
+import { withIngestRuns } from "./ingest-run.js";
 // The RULE the fence answers with, from the module that owns the refusal it becomes. This
 // direction only: `sync.ts` must never import this file, which reaches `@trafficflow/db/cloud`
 // and would carry the hosted half into the engine bundle `apps/sidecar` builds from `sync.ts`.
@@ -958,9 +959,8 @@ export function makeSyncWriteFence(
           // `carryDialect`, not the bare `tx`: the transaction object does not inherit the
           // connection's dialect brand, and a repository built straight from it refuses on its
           // first locking statement — which is every write this fence exists to group.
-          result: await fn(
-            markDatabaseFaults(makeDrizzleRepo(carryDialect(db, tx) as unknown as Tx), "repo"),
-          ),
+          // And the batched ingest's door (`ingest-run.ts`), over the same transaction.
+          result: await fn(markDatabaseFaults(withIngestRuns(makeDrizzleRepo(carryDialect(db, tx) as unknown as Tx)), "repo")),
         };
       }));
     },

@@ -9,13 +9,21 @@
  * pin by more than the tolerance below.
  */
 
-/** Measured 25.0 marginal statements per message (40 to 200 in one cycle, no classifier). */
-export const INGEST_STATEMENTS_PER_MESSAGE = 25.0;
+/** Measured 24.0 marginal statements per message (40 to 200 in one cycle, no classifier). */
+export const INGEST_STATEMENTS_PER_MESSAGE = 24.0;
 /** The ratchet's bound, half a statement above the measurement. A RULING, not drift — see the ratchet. */
-export const INGEST_STATEMENTS_CEILING = 25.5;
+export const INGEST_STATEMENTS_CEILING = 24.5;
 /** Transactions per message, and its bound. */
 export const INGEST_TRANSACTIONS_PER_MESSAGE = 2.0;
 export const INGEST_TRANSACTIONS_CEILING = 2.1;
+/**
+ * The worker's import, new letters stored in runs (`apps/worker/src/ingest-run.ts`): measured 1.10
+ * marginal statements per letter, the dedup read alone, and the run's own writes spread over it.
+ */
+export const INGEST_RUN_STATEMENTS_PER_MESSAGE = 1.1;
+export const INGEST_RUN_STATEMENTS_CEILING = 1.6;
+/** One transaction per run of a hundred letters, and its bound. */
+export const INGEST_RUN_TRANSACTIONS_CEILING = 0.05;
 /**
  * How far the harness may sit from the pin and still be the same instrument: the tolerance the
  * harness's two independent agreements with the import rig were reported at. It is a RELATIVE

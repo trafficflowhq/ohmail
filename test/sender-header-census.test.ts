@@ -229,6 +229,14 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["thread-key-at-ingest"],
     why: "threads rows the ingest left unthreaded, through the same `resolveThread`",
   },
+  "apps/worker/src/ingest-run.ts": {
+    terms: ["messageIdHeader"], classes: ["thread-key-at-ingest"],
+    why: "the ingest's batched commit threads a run of new letters by `resolveThread`'s rules (`foldThreads`): the same chain, the same account-scoped parent read and the same root, read once for the run",
+  },
+  "apps/worker/src/sync.ts": {
+    terms: ["messageIdHeader"], classes: ["display"],
+    why: "a run of new letters is committed before a letter whose Message-ID or cited ids name one of its letters, so each plan reads what one commit per letter leaves; it decides when a batch commits, never what a letter is or joins",
+  },
   "apps/worker/src/away-reply-flag-redeliver.ts": {
     terms: ["messageIdHeader"], classes: ["display"],
     why: "selects the column into the away-reply projection",
@@ -383,6 +391,8 @@ const CALL_SITES: Record<string, Record<string, number>> = {
   recordListAddresses: {
     "packages/core/src/pipeline.ts#commitChange": 2,
     "apps/worker/src/list-address-backfill.ts#listAddressBackfillPass": 1,
+    // The batched commit of new letters: the last letter's, as `commitChange` writes it.
+    "apps/worker/src/ingest-run.ts#persistNewRun": 1,
   },
   correspondentsAmong: {
     "packages/core/src/adapters/drizzle-repo.ts#isCorrespondent": 1,
@@ -457,6 +467,7 @@ function everySource(): Array<{ file: string; text: string }> {
 
 /** Files allowed to read the ingest thread key — closed, so a new reader cannot self-classify. */
 const THREAD_KEY_READERS = [
+  "apps/worker/src/ingest-run.ts",
   "apps/worker/src/thread-backfill.ts",
   "packages/core/src/pipeline.ts",
   "packages/core/src/threading.ts",

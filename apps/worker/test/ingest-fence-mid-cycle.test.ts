@@ -6,6 +6,8 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { makeDrizzleRepo, type DrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import { runSyncCycle } from "../src/sync.js";
+import { ingestRunRepository } from "../src/ingest-run.js";
+import { INGEST_RUN_BOUNDS } from "../src/config.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
 import { FIXTURE_LEASE } from "./_door.js";
 
@@ -78,6 +80,46 @@ describe("the ingest's erasure fence, mid-cycle", () => {
     const [after] = await db.select({ status: mailboxes.status }).from(mailboxes)
       .where(eq(mailboxes.id, mailboxId));
     expect(after!.status).toBe("connected");
+  }, 60_000);
+
+  it("writes no run after an erasure that lands between two runs of one cycle", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const [mb] = await db.insert(mailboxes).values({
+      accountId: ACCOUNT, provider: "imap", address: `runs-${randomUUID().slice(0, 8)}@x.test`,
+    }).returning();
+    const mailboxId = mb!.id;
+    const real = ingestRunRepository(makeDrizzleRepo(db as never));
+    let erased = false;
+    const erasing = new Proxy(real, {
+      get(target, prop, recv) {
+        const value = Reflect.get(target, prop, recv) as unknown;
+        if (prop !== "transaction" || typeof value !== "function") return value;
+        return async (fn: (r: DrizzleRepo) => Promise<unknown>): Promise<unknown> => {
+          const out = await (value as (f: (r: DrizzleRepo) => Promise<unknown>) => Promise<unknown>).call(target, fn);
+          if (!erased && (await db.select({ id: messages.id }).from(messages)).length === 2) {
+            erased = true;
+            await db.update(mailboxes).set({ erasedAt: new Date() }).where(eq(mailboxes.id, mailboxId));
+          }
+          return out;
+        };
+      },
+    }) as DrizzleRepo;
+    const fleet = new FakeAdapterFleet();
+    const adapter = fleet.factory(
+      { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
+      { accountId: ACCOUNT, mailboxId, onConnectionError: () => { /* nothing dials here */ } },
+    );
+    fleet.behave(mailboxId, {
+      deliver: Array.from({ length: 6 }, (_, i) => ({ from: `s${i}@x.example`, subject: `msg ${i}`, messageId: `runs-${i}@x` })),
+    });
+    await runSyncCycle({
+      writeAuthority: FIXTURE_LEASE, repo: erasing, adapter, accountId: ACCOUNT, mailboxId,
+      storageCap: UNMETERED_STORAGE_CAP, ingestRuns: { ...INGEST_RUN_BOUNDS, maxMembers: 2 },
+      role: "organizer", trustedAuthservIds: new Set<string>(),
+    }).catch((err: unknown) => err);
+    expect(erased, "the erasure never landed between two runs").toBe(true);
+    expect((await db.select({ id: messages.id }).from(messages).where(eq(messages.mailboxId, mailboxId))).length,
+      "a run was written into a mailbox erased earlier in the same cycle").toBe(2);
   }, 60_000);
 
   it("refuses a second copy of a message it already holds, once the mailbox is erased", async () => {

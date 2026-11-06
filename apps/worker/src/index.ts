@@ -2862,6 +2862,8 @@ export async function startWorkerWithLock(
           log,
           // `OHMAIL_BLANK_REPAIR`, as the config read it: unset is apply (`blank-repair.ts`).
           ...(config.blankRepair !== undefined ? { blankRepair: config.blankRepair } : {}),
+          // `OHMAIL_INGEST_RUNS`: new letters stored in runs, through the fence's repository.
+          ...(config.ingestRuns ? { ingestRuns: config.ingestRuns } : {}),
           // ── THE ONE-TIME SWEEP'S COMMAND PORT (FOLDERS-SPEC.md §16.1) ─────────────────
           //
           // Built HERE because this is where the database handle and this mailbox's adapter

@@ -38,6 +38,15 @@ describe("OHMAIL_BLANK_REPAIR", () => {
   });
 });
 
+describe("OHMAIL_INGEST_RUNS", () => {
+  it("stores new letters in runs unless switched off, and refuses any other value by name", () => {
+    expect(loadConfig(BASE).ingestRuns).toEqual({ maxMembers: 100, maxBodyBytes: 8 * 1024 * 1024, maxAgeMs: 10_000 });
+    expect(loadConfig({ ...BASE, OHMAIL_INGEST_RUNS: "" }).ingestRuns).not.toBeNull();
+    expect(loadConfig({ ...BASE, OHMAIL_INGEST_RUNS: "off" }).ingestRuns).toBeNull();
+    expect(refusal({ OHMAIL_INGEST_RUNS: "on" }).configVar).toBe("OHMAIL_INGEST_RUNS");
+  });
+});
+
 describe("attach concurrency and deadline", () => {
   it("ships four at once, a ceiling of eight and a three-minute deadline", () => {
     expect(DEFAULT_ATTACH_CONCURRENCY).toBe(4);
