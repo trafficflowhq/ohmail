@@ -21,6 +21,42 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.44] — 2026-11-06
+
+### Adding a mailbox bigger than your storage finishes much sooner too
+
+On ohmail Cloud, when the mail you add is more than your storage holds, ohmail keeps the text of your
+newest letters and the headers of the older ones, as before. It now does this many letters at a time, so the
+first sync no longer slows down to one letter at a time once your storage is full.
+
+### The iPhone connects to a mail server that encrypts with STARTTLS
+
+On iOS, connecting a mailbox to a server on a STARTTLS port (143, or another port with Implicit TLS
+off) never got as far as encrypting the connection: the phone gave up after about a second and said
+the server offered no encrypted connection. The switch to encryption now happens, and the server's
+certificate is checked exactly as on port 993. If the switch itself fails, the phone now says so and
+stops before sending the password, instead of claiming the server has no encryption.
+
+On Android and iOS, anything that reaches the phone while the connection is being switched to
+encryption is no longer read as though the server had sent it encrypted: the switch is refused and
+the password is never sent.
+
+### Replies saved to a Sent folder made after connecting read as yours
+
+When a mailbox had no Sent folder at the time you connected it, and one such as "Envoyés" was made later
+in another app, ohmail saved your replies there but showed them as if someone else had written them, and
+the conversation did not move to show your reply. Those replies now read as sent by you and come into
+view at once, without connecting the mailbox again, on the phone, desktop, web and your own server.
+
+### Searching inside one folder is faster
+
+A search limited to one folder no longer reads the folder state of every mailbox on the server. A word with few
+matches is read from the search index, and a common word walks the folder's newest letters once for the whole
+page instead of looking up every one of its matches. On a large mailbox such a search had taken up to one and a
+half seconds, a word beside a minus word the longest; most now answer several times faster, on ohmail Cloud, your
+own server, the web app and the desktop app. A very common word in a folder that holds few of your letters is
+still read from the index and can take a few hundred milliseconds.
+
 ## [0.30.43] — 2026-11-06
 
 ### Adding a large mailbox finishes much sooner
@@ -17021,7 +17057,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.43...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.44...HEAD
+[0.30.44]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.44
 [0.30.43]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.43
 [0.30.42]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.42
 [0.30.41]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.41
