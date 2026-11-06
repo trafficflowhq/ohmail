@@ -21,7 +21,7 @@ import { publicPath, publicRel } from "./support/public-root.mjs";
  *     `docker compose pull` says `no matching manifest for linux/arm64/v8`. The docs still
  *     promise arm64. Nothing in CI notices, because from CI's point of view a release built,
  *     booted and promoted.
- *   * Someone points both matrix legs at `ubuntu-latest` and adds QEMU. The images still say
+ *   * Someone points both matrix legs at `ubuntu-24.04` and adds QEMU. The images still say
  *     arm64 and the manifest list is still well formed; what changed is that a Node toolchain
  *     is now cross-compiling under emulation, which is where the flaky, silently-wrong native
  *     halves come from.
@@ -123,7 +123,7 @@ describe("the published images are multi-arch, and stay that way", () => {
     expect(build).toContain("runs-on: ${{ matrix.runner }}");
     // `ubuntu-24.04-arm` is a real aarch64 host, free on public repositories.
     expect(build).toMatch(/- arch: arm64\n\s+runner: ubuntu-24\.04-arm\b/);
-    expect(build).toMatch(/- arch: amd64\n\s+runner: ubuntu-latest\b/);
+    expect(build).toMatch(/- arch: amd64\n\s+runner: ubuntu-24\.04\n/);
     // Emulation is the thing being avoided, so its setup action must be absent from the
     // whole workflow — a Node toolchain under QEMU is the slow, flaky path this design
     // deliberately declined.
@@ -143,7 +143,7 @@ describe("the published images are multi-arch, and stay that way", () => {
     const boot = job("gate-boot");
     expect(boot).toContain("runs-on: ${{ matrix.runner }}");
     expect(boot).toMatch(/- arch: arm64\n\s+runner: ubuntu-24\.04-arm\b/);
-    expect(boot).toMatch(/- arch: amd64\n\s+runner: ubuntu-latest\b/);
+    expect(boot).toMatch(/- arch: amd64\n\s+runner: ubuntu-24\.04\n/);
     // The stack it boots must be the three images staged for THIS leg. A hardcoded `-amd64`
     // here is the defect this gate was matrixed to remove: it booted amd64 twice and
     // reported the arm64 image as exercised.

@@ -146,17 +146,17 @@ describe("the hosted jobs each event starts", () => {
     [...hosted("pull_request", "refs/pull/7/merge", {}, extra, wfs), ...hosted("pull_request_target", "refs/heads/main", {}, extra, wfs)];
   const nightly = (wfs = WORKFLOWS) => hosted("schedule", "refs/heads/main", { cron: "daily" }, {}, wfs);
 
-  const QUICK = ["dco.yml: sign-off @ubuntu-latest", "guard.yml: guard @ubuntu-latest"];
-  const APK = "android.yml: apk @ubuntu-latest", SMOKE = "selfhost-smoke.yml: boot-smoke @ubuntu-latest";
+  const QUICK = ["dco.yml: sign-off @ubuntu-24.04", "guard.yml: guard @ubuntu-24.04"];
+  const APK = "android.yml: apk @ubuntu-24.04", SMOKE = "selfhost-smoke.yml: boot-smoke @ubuntu-24.04";
   /** The search budget, judged alone on a hosted runner of its own, in a workflow no hold cancels. */
   const BUDGET = "search-budget.yml: search-budget @ubuntu-24.04";
-  const ENGINE = ["build.yml: engine @ubuntu-latest", "build.yml: engine-ui-smoke @ubuntu-latest"];
+  const ENGINE = ["build.yml: engine @ubuntu-24.04", "build.yml: engine-ui-smoke @ubuntu-24.04"];
   const DESKTOP = ["macos @macos-15", "macos-sign @macos-15", "windows @windows-latest", "linux @ubuntu-24.04", "linux-arm64 @ubuntu-24.04-arm",
-    "linux-rpm-install @ubuntu-latest", "linux-flatpak @ubuntu-latest"].map((j) => `build.yml: ${j}`);
+    "linux-rpm-install @ubuntu-24.04", "linux-flatpak @ubuntu-24.04"].map((j) => `build.yml: ${j}`);
   const CI = ["plan", "suite (0)", "suite (1)", "alone (a.test.ts)", "sqlite (0)", "proxy-e2e", "webapp-build", "typecheck", "desktop"]
-    .map((j) => `ci.yml: ${j} @ubuntu-latest`);
-  const FULL = ["android.yml: changes @ubuntu-latest", APK, "build.yml: changes @ubuntu-latest", ...DESKTOP,
-    "selfhost-smoke.yml: changes @ubuntu-latest", SMOKE, ...QUICK];
+    .map((j) => `ci.yml: ${j} @ubuntu-24.04`);
+  const FULL = ["android.yml: changes @ubuntu-24.04", APK, "build.yml: changes @ubuntu-24.04", ...DESKTOP,
+    "selfhost-smoke.yml: changes @ubuntu-24.04", SMOKE, ...QUICK];
   const BATCH = { "github.head_ref": "pr/batch-0307" };
 
   it("an ordinary maintainer pull request: 2 hosted jobs, dco and guard", () => {
@@ -194,22 +194,22 @@ describe("the hosted jobs each event starts", () => {
   it("a v* tag: 22, build.yml's 10 and ghcr-images.yml's 12", () => {
     expect(hosted("push", "refs/tags/v0.30.7")).toEqual([
       "build.yml: macos @macos-15", "build.yml: macos-sign @macos-15", "build.yml: macos-signed-check @macos-15", "build.yml: windows @windows-latest",
-      "build.yml: linux @ubuntu-24.04", "build.yml: linux-arm64 @ubuntu-24.04-arm", "build.yml: linux-rpm-install @ubuntu-latest",
-      "build.yml: linux-flatpak @ubuntu-latest", ...ENGINE,
-      "ghcr-images.yml: version @ubuntu-latest", "ghcr-images.yml: mirror-images @ubuntu-latest",
-      "ghcr-images.yml: build-push (ohmail-server, amd64, ubuntu-latest, apps/server/Dockerfile) @ubuntu-latest",
+      "build.yml: linux @ubuntu-24.04", "build.yml: linux-arm64 @ubuntu-24.04-arm", "build.yml: linux-rpm-install @ubuntu-24.04",
+      "build.yml: linux-flatpak @ubuntu-24.04", ...ENGINE,
+      "ghcr-images.yml: version @ubuntu-24.04", "ghcr-images.yml: mirror-images @ubuntu-24.04",
+      "ghcr-images.yml: build-push (ohmail-server, amd64, ubuntu-24.04, apps/server/Dockerfile) @ubuntu-24.04",
       "ghcr-images.yml: build-push (ohmail-server, arm64, ubuntu-24.04-arm, apps/server/Dockerfile) @ubuntu-24.04-arm",
-      "ghcr-images.yml: build-push (ohmail-worker, amd64, ubuntu-latest, apps/worker/Dockerfile.selfhost) @ubuntu-latest",
+      "ghcr-images.yml: build-push (ohmail-worker, amd64, ubuntu-24.04, apps/worker/Dockerfile.selfhost) @ubuntu-24.04",
       "ghcr-images.yml: build-push (ohmail-worker, arm64, ubuntu-24.04-arm, apps/worker/Dockerfile.selfhost) @ubuntu-24.04-arm",
-      "ghcr-images.yml: build-push (ohmail-web, amd64, ubuntu-latest, apps/webapp/Dockerfile) @ubuntu-latest",
+      "ghcr-images.yml: build-push (ohmail-web, amd64, ubuntu-24.04, apps/webapp/Dockerfile) @ubuntu-24.04",
       "ghcr-images.yml: build-push (ohmail-web, arm64, ubuntu-24.04-arm, apps/webapp/Dockerfile) @ubuntu-24.04-arm",
-      "ghcr-images.yml: gate-boot (amd64, ubuntu-latest) @ubuntu-latest", "ghcr-images.yml: gate-boot (arm64, ubuntu-24.04-arm) @ubuntu-24.04-arm",
-      "ghcr-images.yml: gate-visibility @ubuntu-latest", "ghcr-images.yml: promote @ubuntu-latest",
+      "ghcr-images.yml: gate-boot (amd64, ubuntu-24.04) @ubuntu-24.04", "ghcr-images.yml: gate-boot (arm64, ubuntu-24.04-arm) @ubuntu-24.04-arm",
+      "ghcr-images.yml: gate-visibility @ubuntu-24.04", "ghcr-images.yml: promote @ubuntu-24.04",
     ]);
   });
 
   it("an android-v* tag: 2, the build and the signing", () => {
-    expect(hosted("push", "refs/tags/android-v0.30.7")).toEqual(["android.yml: build @ubuntu-latest", "android.yml: sign @ubuntu-latest"]);
+    expect(hosted("push", "refs/tags/android-v0.30.7")).toEqual(["android.yml: build @ubuntu-24.04", "android.yml: sign @ubuntu-24.04"]);
   });
 
   it("the nightly: 10, every platform, the APK, the search budget judged and the self-host smoke", () => {

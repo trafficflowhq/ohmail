@@ -115,7 +115,7 @@ jobs:
   # a CANDIDATE run (`candidate: <40 hex>`) builds `rc-<sha>` and moves nothing.
   version:
     if: github.repository == 'trafficflowhq/ohmail'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       version: ${{ steps.decide.outputs.version }}
@@ -162,7 +162,7 @@ jobs:
   mirror-images:
     if: github.repository == 'trafficflowhq/ohmail'
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -221,7 +221,7 @@ jobs:
         arch: [amd64, arm64]
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
           - image: ohmail-server
@@ -337,7 +337,7 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - arch: arm64
             runner: ubuntu-24.04-arm
     steps:
@@ -480,7 +480,7 @@ jobs:
   gate-visibility:
     if: github.repository == 'trafficflowhq/ohmail'
     needs: [version, build-push, mirror-images]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -530,7 +530,7 @@ jobs:
   promote-candidate:
     if: github.repository == 'trafficflowhq/ohmail' && needs.version.outputs.promote_public == 'no'
     needs: [version, build-push, gate-boot, gate-visibility]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       packages: write
@@ -576,7 +576,7 @@ jobs:
   promote:
     if: github.repository == 'trafficflowhq/ohmail' && needs.version.outputs.promote_public == 'yes'
     needs: [version, build-push, gate-boot, gate-visibility]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       packages: write
