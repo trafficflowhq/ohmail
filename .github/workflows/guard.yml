@@ -26,7 +26,7 @@ permissions:
 jobs:
   guard:
     name: the workflows, their tools and the gate change only on a maintainer branch of this repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: check out the BASE revision — the checker must not come from the pull request
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

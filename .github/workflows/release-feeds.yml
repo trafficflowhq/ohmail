@@ -173,7 +173,7 @@ jobs:
     # Desktop releases only, the same rule the jobs below state; they need no
     # `if:` beyond it, because a skipped `needs:` skips them.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
@@ -1873,7 +1873,7 @@ jobs:
     name: read a release promoted by hand, and fence it again without its feeds
     needs: fence
     if: github.event_name == 'release' && github.event.action == 'released'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write

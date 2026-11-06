@@ -209,7 +209,7 @@ jobs:
   changes:
     name: changes · which platform builds this pull request needs
     if: ${{ github.event_name == 'pull_request' && !(github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && !startsWith(github.head_ref, 'pr/batch-') && !(startsWith(github.head_ref, 'pr/release-') && endsWith(github.head_ref, '-bump')) && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association) && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       desktop: ${{ steps.scope.outputs.desktop }}
@@ -3884,7 +3884,7 @@ jobs:
     # Gated through `linux`, whose package it installs: it runs when `linux` built one.
     needs: linux
     if: ${{ !cancelled() && needs.linux.result == 'success' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -4078,7 +4078,9 @@ jobs:
     name: Linux · flatpak builds offline
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'pull_request' && needs.changes.result != 'skipped' && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true')) }}
-    runs-on: ubuntu-latest
+    # Pinned, as linux is: ubuntu-latest moves to 26.04, whose flatpak-builder unzips with
+    # bsdunzip, which that image does not carry.
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     defaults:
       run:
@@ -4245,7 +4247,7 @@ jobs:
             echo "the vendored runtime is not executable" >&2; exit 1; }
 
           # IN the runtime, not on the runner: this binary links the Platform's libraries
-          # (it fails on a stock ubuntu-latest with `libicui18n.so.77: cannot open shared
+          # (it fails on a stock ubuntu-24.04 with `libicui18n.so.77: cannot open shared
           # object file`), so running it here would be a false red about the app.
           flatpak build flatpak-build /app/lib/ohmail/runtime/node --version
 
@@ -4434,7 +4436,7 @@ jobs:
   # Where it runs: as ci.yml's jobs do (its header says when that is the maintainers' own runners).
   engine:
     name: engine · typecheck · build
-    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
 
     steps:
@@ -4570,7 +4572,7 @@ jobs:
   # ==========================================================================
   engine-ui-smoke:
     name: engine-bearing UI · scan · smoke
-    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-latest' }}
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 15
 
     steps:

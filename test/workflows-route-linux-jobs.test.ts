@@ -12,20 +12,23 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
  * ends in `[bot]`), and it is the nightly schedule, a push to main, a dispatch on main or on a `pr/` branch (a
  * dispatch needs write access: the release's whole run on its bump branch), or a maintainer's pull request: its head
  * a `pr/` branch of this repository, opened by a User who is OWNER, MEMBER or COLLABORATOR — the door guard.yml keeps
- * (.github/scripts/assert-pr-guard.sh). Everything else runs on GitHub's `ubuntu-latest`, as before: a fork's pull
+ * (.github/scripts/assert-pr-guard.sh). Everything else runs on GitHub's `ubuntu-24.04`, pinned: a fork's pull
  * request (a maintainer's own fork too, and one whose head was deleted), Dependabot's and an app's pull requests, a
  * branch outside `pr/`, a tag, a merge group, a dispatch on any other ref, `pull_request_target`, the variable unset or set to anything
  * else. Unset is the default, so this lands with no effect, and setting it to `hosted` is the way back. The runners'
  * own admission hook refuses the same set and ends its VM; it is written apart from this expression on purpose.
+ * The hosted label is pinned, here and in every workflow: `ubuntu-latest` moves to 26.04 under the jobs, and its
+ * flatpak-builder unzips with a tool that image does not carry.
  *
  * What must hold, read off the files and evaluated as written:
  *   · exactly the ten jobs carry the expression, with their names (and so the required contexts) unchanged; no other
  *     job does, and no file under .github/ but ci.yml and build.yml names the runners or the variable;
+ *   · no job runs on the floating `ubuntu-latest`;
  *   · a routed job reads no secret, takes no environment and uses no cache — the runner is a machine of ours;
  *   · the expression routes as above, and each of its guards is watched failing.
  */
 export const ROUTE =
-  "${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)) && fromJSON('[\"self-hosted\",\"ohmail-zorin\"]') || 'ubuntu-latest' }}";
+  "${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)) && fromJSON('[\"self-hosted\",\"ohmail-zorin\"]') || 'ubuntu-24.04' }}";
 const SELF_HOSTED = ["self-hosted", "ohmail-zorin"];
 
 /** The routed jobs by file, with the names they keep (five of them are required contexts). */
@@ -83,6 +86,7 @@ export function routeFindings(files: Record<string, string>): string[] {
     const pattern = file in ROUTED ? ROUTING : NAMING;
     executed(text).forEach((l) => {
       if (pattern.test(l) && !routedLines.has(l)) out.push(`${file}: names the self-hosted runners outside a routed job's runs-on: ${l.trim().slice(0, 80)}`);
+      if (/\bubuntu-latest\b/.test(l)) out.push(`${file}: runs on the floating ubuntu-latest: ${l.trim().slice(-80)}`);
     });
   }
   return out;
@@ -225,8 +229,8 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
     for (const [label, ctx] of TO_SELF) expect(evalValue(ROUTE, ctx), label).toEqual(SELF_HOSTED);
   });
 
-  it("routes everything else to GitHub's ubuntu-latest", () => {
-    for (const [label, ctx] of TO_HOSTED) expect(evalValue(ROUTE, ctx), label).toBe("ubuntu-latest");
+  it("routes everything else to GitHub's ubuntu-24.04", () => {
+    for (const [label, ctx] of TO_HOSTED) expect(evalValue(ROUTE, ctx), label).toBe("ubuntu-24.04");
   });
 
   it("each guard is watched failing", () => {
@@ -246,14 +250,14 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
     for (const [clause, by, ctx] of door) {
       const mutated = ROUTE.replace(clause, by);
       expect(mutated, clause).not.toBe(ROUTE);
-      expect(evalValue(ROUTE, ctx), clause).toBe("ubuntu-latest");
+      expect(evalValue(ROUTE, ctx), clause).toBe("ubuntu-24.04");
       expect(evalValue(mutated, ctx), clause).toEqual(SELF_HOSTED);
     }
     /* The dispatch's ref clause dropped: a dispatch on any branch would run here. */
     const anyRef = ROUTE.replace("(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/'))", "true");
     expect(anyRef).not.toBe(ROUTE);
     const docs = run("workflow_dispatch", "refs/heads/docs/x", null);
-    expect(evalValue(ROUTE, docs)).toBe("ubuntu-latest");
+    expect(evalValue(ROUTE, docs)).toBe("ubuntu-24.04");
     expect(evalValue(anyRef, docs)).toEqual(SELF_HOSTED);
     /* The switch dropped: unset no longer means GitHub's runners. */
     const noSwitch = ROUTE.replace("vars.OHMAIL_LINUX_RUNNER == 'zorin' && ", "");
@@ -263,10 +267,10 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
     const noRepo = ROUTE.replace("github.repository == 'trafficflowhq/ohmail' && ", "");
     expect(evalValue(noRepo, run("push", "refs/heads/main", null, { "github.repository": "someone/ohmail" }))).toEqual(SELF_HOSTED);
     /* The expression on android's sign job, or on guard: named. */
-    const sign = files["android.yml"].replace(/(\n {2}sign:\n(?: {4}.*\n)*? {4}runs-on: )ubuntu-latest/, `$1${ROUTE}`);
+    const sign = files["android.yml"].replace(/(\n {2}sign:\n(?: {4}.*\n)*? {4}runs-on: )ubuntu-24\.04/, `$1${ROUTE}`);
     expect(sign).not.toBe(files["android.yml"]);
     expect(routeFindings({ ...files, "android.yml": sign })).toContain("android.yml: sign routes to the self-hosted runners");
-    const guard = files["guard.yml"].replace("    runs-on: ubuntu-latest", `    runs-on: ${ROUTE}`);
+    const guard = files["guard.yml"].replace("    runs-on: ubuntu-24.04", `    runs-on: ${ROUTE}`);
     expect(guard).not.toBe(files["guard.yml"]);
     expect(routeFindings({ ...files, "guard.yml": guard })).toContain("guard.yml: guard routes to the self-hosted runners");
     /* One routed job respelled: named, by file and job. */
@@ -286,6 +290,13 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
     /* Another workflow naming the variable, even outside a runs-on: named. */
     const dco = files["dco.yml"].replace("\njobs:\n", "\nenv:\n  R: ${{ vars.OHMAIL_LINUX_RUNNER }}\njobs:\n");
     expect(routeFindings({ ...files, "dco.yml": dco }).some((f) => f.startsWith("dco.yml: names the self-hosted runners"))).toBe(true);
+    /* A hosted job, or the routed expression's hosted end, back on the floating label: named. */
+    const floating = files["selfhost-smoke.yml"].replace(/(\n {2}boot-smoke:\n(?: {4}.*\n)*? {4}runs-on: )ubuntu-24\.04/, "$1ubuntu-latest");
+    expect(floating).not.toBe(files["selfhost-smoke.yml"]);
+    expect(routeFindings({ ...files, "selfhost-smoke.yml": floating })).toContain("selfhost-smoke.yml: runs on the floating ubuntu-latest: runs-on: ubuntu-latest");
+    const routedFloating = files["ci.yml"].replace("|| 'ubuntu-24.04' }}", "|| 'ubuntu-latest' }}");
+    expect(routedFloating).not.toBe(files["ci.yml"]);
+    expect(routeFindings({ ...files, "ci.yml": routedFloating }).filter((f) => f.startsWith("ci.yml: runs on the floating ubuntu-latest"))).toHaveLength(1);
     /* A routed job gone: named. */
     const gone = files["build.yml"].replace(/\n {2}engine-ui-smoke:\n/, "\n  engine-ui-smoke-old:\n");
     expect(routeFindings({ ...files, "build.yml": gone })).toContain("build.yml: the routed job engine-ui-smoke is gone");

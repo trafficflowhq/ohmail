@@ -51,7 +51,7 @@ export function workflowFindings(text: string): string[] {
   for (const [k, v] of Object.entries(wf.on ?? {})) if (v && typeof v === "object" && ("paths" in v || "paths-ignore" in v)) out.push(`${k} is path-filtered`);
   if (JSON.stringify(wf.permissions) !== JSON.stringify({ contents: "read" })) out.push(`permissions: ${JSON.stringify(wf.permissions)}`);
   for (const [id, j] of Object.entries(wf.jobs ?? {})) {
-    if (j["runs-on"] !== "ubuntu-latest") out.push(`${id} runs on ${JSON.stringify(j["runs-on"])}`);
+    if (j["runs-on"] !== "ubuntu-24.04") out.push(`${id} runs on ${JSON.stringify(j["runs-on"])}`);
     if (j.permissions !== undefined) out.push(`${id} has its own permissions`);
     if (j.strategy !== undefined) out.push(`${id} has a matrix`);
   }
@@ -95,9 +95,9 @@ describe("selfhost-smoke.yml: full-build pull requests, the nightly and dispatch
     expect(workflowFindings(WF_TEXT.replace("!cancelled() && ", ""))).toContain("runs on a cancelled run");
     expect(workflowFindings(WF_TEXT.replace("needs.changes.result != 'skipped' && ", ""))).toContain("runs on a maintainer's ordinary pull request (changes skipped)");
     expect(workflowFindings(WF_TEXT.replace("github.event_name == 'schedule' || ", ""))).toContain("skips the nightly");
-    const boot = /\n {2}boot-smoke:\n(?: {4}.*\n)*? {4}runs-on: ubuntu-latest\n/;
+    const boot = /\n {2}boot-smoke:\n(?: {4}.*\n)*? {4}runs-on: ubuntu-24\.04\n/;
     expect(boot.test(WF_TEXT), "the planting found no runs-on in boot-smoke").toBe(true);
-    const hosted = WF_TEXT.replace(boot, (m) => m.replace("runs-on: ubuntu-latest", "runs-on: [self-hosted, linux]"));
+    const hosted = WF_TEXT.replace(boot, (m) => m.replace("runs-on: ubuntu-24.04", "runs-on: [self-hosted, linux]"));
     expect(workflowFindings(hosted)).toContain('boot-smoke runs on ["self-hosted","linux"]');
     expect(workflowFindings(WF_TEXT.replace("SHA: ${{ github.sha }}", "SHA: ${{ secrets.X }}"))).toContain("reads a secret");
     expect(workflowFindings(WF_TEXT.replace("    timeout-minutes: 45\n", "    timeout-minutes: 45\n    strategy:\n      matrix:\n        a: [1, 2]\n")))

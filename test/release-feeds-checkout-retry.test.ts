@@ -119,7 +119,7 @@ describe("every checkout in release-feeds.yml is bounded and retried once", () =
       inputs: ["tag", "promote", "verify_only", "tools"],
       concurrency: { group: "release-feeds-${{ github.event.release.tag_name || inputs.tag }}", "cancel-in-progress": false },
       jobs: {
-        fence: { if: ON_A_TAG, "runs-on": "ubuntu-latest", "timeout-minutes": 5, permissions: { contents: "write" }, checkouts: [] },
+        fence: { if: ON_A_TAG, "runs-on": "ubuntu-24.04", "timeout-minutes": 5, permissions: { contents: "write" }, checkouts: [] },
         prepare: {
           needs: "fence", if: `(${ON_A_TAG}) && github.event.action != 'released'`, "runs-on": "macos-15", "timeout-minutes": 30,
           permissions: { contents: "read", actions: "read" }, checkouts: [TAG_TREE, TOOLS_TREE],
@@ -133,7 +133,7 @@ describe("every checkout in release-feeds.yml is bounded and retried once", () =
           permissions: { contents: "write" }, checkouts: [TAG_TREE],
         },
         refence: {
-          needs: "fence", if: "github.event_name == 'release' && github.event.action == 'released'", "runs-on": "ubuntu-latest",
+          needs: "fence", if: "github.event_name == 'release' && github.event.action == 'released'", "runs-on": "ubuntu-24.04",
           "timeout-minutes": 10, permissions: { contents: "write" }, checkouts: [],
         },
       },
