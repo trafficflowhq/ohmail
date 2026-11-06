@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.44" date="2026-11-06">
+      <description>
+        <ul>
+          <li>Adding a mailbox bigger than your storage finishes much sooner too</li>
+          <li>The iPhone connects to a mail server that encrypts with STARTTLS</li>
+          <li>Replies saved to a Sent folder made after connecting read as yours</li>
+          <li>Searching inside one folder is faster</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.43" date="2026-11-06">
       <description>
         <ul>
@@ -109,14 +119,6 @@
           <li>Attached files show a picture of themselves while you write</li>
           <li>Contributors: the search budget is judged in a workflow of its own</li>
           <li>The phone shows what you attached, and opens it</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.39" date="2026-11-05">
-      <description>
-        <ul>
-          <li>The invitation page removes a signed-out browser's mail as it opens</li>
-          <li>The address confirmation page removes a signed-out browser's mail as it opens</li>
         </ul>
       </description>
     </release>
