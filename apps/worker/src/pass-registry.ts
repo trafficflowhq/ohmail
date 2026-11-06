@@ -521,8 +521,8 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     triggers: ["interval"],
     cadence: "on the bucket grid (nextSignalPollAt): SIGNAL_POLL_OFFSET_MS after each SIGNAL_POLL_EVERY_MS (5 min) bucket "
       + "closes, plus up to SIGNAL_POLL_JITTER_MS; shard 0's leader only, armed by TF_SIGNAL_VERCEL_TOKEN + TF_SIGNAL_VERCEL_TEAM_ID",
-    budget: "runPlatformSignalPass: at most SIGNAL_BACKFILL_BUCKETS windows under one SIGNAL_WALL_CLOCK_MS deadline, "
-      + "SIGNAL_PAGE_BUDGET pages per project; one run at a time",
+    budget: "runPlatformSignalPass: at most SIGNAL_BACKFILL_BUCKETS windows under one SIGNAL_POLL_WALL_CLOCK_MS (45 s) deadline, "
+      + "SIGNAL_POLL_PAGE_BUDGET (16) pages per project; one run at a time",
     owns: "platform_signals holds what the hosting platform served, the rows api_5xx_rate and signal_source_dark read, "
       + "read with the worker's own platform credential and none on the API host",
     fence: "leader lock (one poller); upserts fenced by fetched_at, and a complete row never regresses to a sample",

@@ -29,6 +29,18 @@ export const SIGNAL_POLL_EVERY_MS = SIGNAL_WINDOW_MS;
 export const SIGNAL_POLL_OFFSET_MS = SIGNAL_SETTLE_MS + 10_000;
 /** Added to every wait, never subtracted. */
 export const SIGNAL_POLL_JITTER_MS = 30_000;
+/**
+ * The worker's wall clock for one pass, in place of the API host's 40 s (sized for a 60 s function).
+ * Here the bound is the grid: the latest fire (offset plus jitter, 130 s), this, and two alert passes
+ * fit inside one cadence, so every window is judged twice; 45 s leaves 5 s for the upserts and prune.
+ */
+export const SIGNAL_POLL_WALL_CLOCK_MS = 45_000;
+/**
+ * Log pages per project and window: 800 requests, against the API host's 12 (600). Twenty pages ran
+ * a p90 of 39.4 s, about 2 s a page, so 16 pages (~32 s) leave the project lookup and a slow page
+ * inside the wall clock; a bigger budget would end busy windows as deadline samples that re-walk.
+ */
+export const SIGNAL_POLL_PAGE_BUDGET = 16;
 
 /** The first grid slot after `nowMs` (a bucket close plus the offset), plus `jitter01` of the jitter. */
 export function nextSignalPollAt(nowMs: number, jitter01: number): number {
@@ -37,7 +49,7 @@ export function nextSignalPollAt(nowMs: number, jitter01: number): number {
   return slot + Math.floor(jitter01 * SIGNAL_POLL_JITTER_MS);
 }
 
-/** The poll as `api_cron_stale` reads a target; `written` and `unconfigured` are both ok. */
+/** The poll as `api_cron_stale` reads a target; only `written` is ok, `unconfigured` is a half-set pair. */
 export interface PlatformSignalPollHealth {
   target: "platform_signals";
   everySeconds: number;
@@ -76,13 +88,17 @@ export const startPlatformSignalPoll = (deps: PlatformSignalPollDeps): PlatformS
   const setTimer = deps.seams?.setTimer ?? setTimeout;
   const clearTimer = deps.seams?.clearTimer ?? clearTimeout;
   const port = makePlatformSignalPort(signals.env, {
+    pageBudget: SIGNAL_POLL_PAGE_BUDGET,
+    wallClockMs: SIGNAL_POLL_WALL_CLOCK_MS,
     deliberate: signals.deliberate,
     ...(signals.fetchImpl ? { fetchImpl: signals.fetchImpl } : {}),
   });
   // Half a pair boots (the port answers `unconfigured`); the missing half is named once, never a value.
   const hasToken = (signals.env.VERCEL_TOKEN ?? "").trim().length > 0;
   const hasTeam = (signals.env.VERCEL_TEAM_ID ?? "").trim().length > 0;
-  if (hasToken !== hasTeam) {
+  // Never ok, so api_cron_stale pages; a pass with nothing left to read would otherwise say `written`.
+  const incomplete = hasToken !== hasTeam;
+  if (incomplete) {
     log.warn("platform_signal_config_incomplete", {
       configVar: hasToken ? "TF_SIGNAL_VERCEL_TEAM_ID" : "TF_SIGNAL_VERCEL_TOKEN",
     });
@@ -118,12 +134,13 @@ export const startPlatformSignalPoll = (deps: PlatformSignalPollDeps): PlatformS
     if (stopped || inFlight) return;
     inFlight = true;
     try {
-      const report = await runPlatformSignalPass(db, { port, now });
+      const report = await runPlatformSignalPass(db, { port, now, wallClockMs: SIGNAL_POLL_WALL_CLOCK_MS });
+      const code = incomplete ? "config_incomplete" : report.code;
       const fields = {
         outcome: report.outcome, rows: report.rows, pruned: report.pruned, deferred: report.deferred,
-        ...(report.code ? { code: report.code } : {}),
+        ...(code ? { code } : {}),
       };
-      if (report.outcome === "failed") {
+      if (incomplete || report.outcome !== "written") {
         consecutiveFailures += 1;
         outcome = "failed";
         (consecutiveFailures >= 3 ? log.error.bind(log) : log.warn.bind(log))("platform_signal_pass", fields);
