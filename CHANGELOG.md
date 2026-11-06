@@ -21,6 +21,22 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.45] — 2026-11-07
+
+### Send later works with attachments on the desktop
+
+On the desktop app, a message with attachments can now be scheduled with Send later. The files wait on
+your computer, never on our servers, and go out with the message at its time, unchanged. If you quit
+ohmail before then, the message goes when ohmail next opens (up to a day late; after that it is not sent
+and Drafts says so). Cancelling the schedule sends nothing and removes the kept files.
+While a file is still being attached, Send later waits for it, on every app, so a scheduled message
+never goes without it.
+
+ohmail Cloud and the web app cannot keep files for a later send yet. There, Send later now says so in the
+panel before you pick a time, instead of the button simply being greyed out: send the message now, or
+remove the files to schedule it. A scheduled message that ends without being sent keeps a note in Drafts
+that its files were not kept, so you know to attach them again.
+
 ## [0.30.44] — 2026-11-06
 
 ### Adding a mailbox bigger than your storage finishes much sooner too
@@ -17057,7 +17073,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.44...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.45...HEAD
+[0.30.45]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.45
 [0.30.44]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.44
 [0.30.43]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.43
 [0.30.42]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.42
