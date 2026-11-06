@@ -15,7 +15,7 @@ import type { ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
 import {
   D, D_SALT, MATRIX_DELETED, MATRIX_REST, NOISE, NOISE_SALT, autovacuum, coldReads, draw, idOf, isExplain, isSession, matrixCells, matrixOldest,
-  matrixOver, matrixWalk, matrixWhole, matrixWork, planNodes, plantMatrix, recording, seedDocumented, vocabWord, type MatrixBounds,
+  matrixFolderBounds, matrixOver, matrixWalk, matrixWhole, matrixWork, planNodes, plantMatrix, recording, seedDocumented, vocabWord, type MatrixBounds,
   type MatrixFilters, type PlanNode,
 } from "./_search-budget-fixture.js";
 
@@ -681,7 +681,20 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     "typo old sender": { guesses: 100 }, "typo spread sender": { guesses: 100 }, "pair spread sender": { buffers: 1_100, guesses: 100 },
     "typo old unread": { history: N / 10 }, "typo spread unread": { history: N / 10 },
     "typo old attachments": { history: N / 10 }, "typo spread attachments": { history: N / 10 },
-    "typo old folder": { folderPasses: 2 }, "typo spread folder": { folderPasses: 2 },
+    ...matrixFolderBounds(),
+    // Common words under a folder, as search-budget-matrix.pg bounds them on 240,000 letters: the page's work and about a tenth.
+    "plain common Archive": { folderPasses: 0, buffers: 260_000, folderRows: 59_000 },
+    "plain common Old": { folderPasses: 0, buffers: 132_000, folderRows: 20_400 },
+    "plain common INBOX": { folderPasses: 0, buffers: 74_000, folderRows: 9_600 },
+    "pair common Archive": { folderPasses: 0, buffers: 151_000, folderRows: 29_500 },
+    "pair common Old": { folderPasses: 0, buffers: 59_100, folderRows: 5_900 },
+    "pair common INBOX": { folderPasses: 0, buffers: 47_000, folderRows: 2_600 },
+    "beside common Archive": { folderPasses: 0, buffers: 387_000, folderRows: 87_800 },
+    "beside common Old": { folderPasses: 0, buffers: 138_300, folderRows: 15_200 },
+    "beside common INBOX": { folderPasses: 0, buffers: 102_900, folderRows: 7_800 },
+    "typo common Archive": { folderPasses: 0, buffers: 125_300, folderRows: 28_600 },
+    "typo common Old": { folderPasses: 0, buffers: 52_500, folderRows: 9_300 },
+    "typo common INBOX": { folderPasses: 0, buffers: 27_600, folderRows: 3_100 },
     "typo old dateTo": { buffers: 5_800 }, "typo spread dateTo": { buffers: 5_800 },
     "typo old none": { history: MATRIX_REST.typo + matrixOldest(2_606, 2_600, 1_500), lookups: 200 },
     "typo spread none": { history: MATRIX_REST.typo + whole(1_510), lookups: 200 },
@@ -746,12 +759,12 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     for (const c of MATRIX) {
       const { page, session } = await pageOf(c.q, c.filters);
       const f = await matrixWork(page, session, base, counted!.n);
-      read.push(`${c.label} ${f.buffers}/${f.history}/${f.lookups}/${f.folderPasses}/${f.guesses}`);
+      read.push(`${c.label} ${f.buffers}/${f.history}/${f.lookups}/${f.folderPasses}/${f.folderRows}/${f.guesses}`);
       expect(f.scans, c.label).toEqual([]);
       expect(f.guessReads, `${c.label}: reads of the typo arm's guesses`).toBeLessThanOrEqual(1);
       over.push(...matrixOver(c.label, f, MATRIX_BOUNDS), ...(f.temp > 0 ? [`${c.label} temp ${f.temp} of 0`] : []));
     }
-    console.log(`search-budget matrix (buffers/History letters/lookups/folder passes/guesses read): ${read.join(", ")}`);
+    console.log(`search-budget matrix (buffers/History letters/lookups/folder passes/folder rows/guesses read): ${read.join(", ")}`);
     expect(over).toEqual([]);
   }, 600_000);
 
