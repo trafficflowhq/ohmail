@@ -2,13 +2,14 @@ import { describe, it, expect, vi } from "vitest";
 import { createLogger } from "@trafficflow/core";
 import type { Tx } from "@trafficflow/db";
 import {
-  DEFAULT_ALERT_THRESHOLDS, platformSignals, platformSignalWindow, SIGNAL_SETTLE_MS, SIGNAL_WALL_CLOCK_MS,
+  DEFAULT_ALERT_THRESHOLDS, evaluateAlerts, platformSignals, platformSignalWindow, SIGNAL_PAGE_BUDGET, SIGNAL_SETTLE_MS,
+  SIGNAL_WALL_CLOCK_MS,
 } from "@trafficflow/db/cloud";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { DEFAULT_ALERT_INTERVAL_MS } from "../src/config.js";
 import {
   nextSignalPollAt, startPlatformSignalPoll, SIGNAL_POLL_EVERY_MS, SIGNAL_POLL_JITTER_MS, SIGNAL_POLL_OFFSET_MS,
-  type PlatformSignalPollDeps,
+  SIGNAL_POLL_PAGE_BUDGET, SIGNAL_POLL_WALL_CLOCK_MS, type PlatformSignalPollDeps,
 } from "../src/platform-signal-poll.js";
 
 /**
@@ -37,6 +38,8 @@ function harness(opts: {
   /** Virtual time one platform request takes. */
   requestMs?: number;
   onLogPage?: () => void;
+  /** Every log page says there is more, one row older than the cursor. */
+  endless?: boolean;
 }) {
   const clock = { ms: opts.startMs };
   const timers: Armed[] = [];
@@ -53,6 +56,13 @@ function harness(opts: {
     const start = Number(new URL(String(url)).searchParams.get("startDate"));
     reads.push({ start, at });
     opts.onLogPage?.();
+    if (opts.endless) {
+      const end = Number(new URL(String(url)).searchParams.get("endDate"));
+      return new Response(JSON.stringify({
+        rows: [{ requestId: `r${end}`, statusCode: 200, timestamp: new Date(end - 1000).toISOString(), environment: "production" }],
+        hasMoreRows: true,
+      }));
+    }
     return new Response(JSON.stringify({
       rows: [{ requestId: `r${start}`, statusCode: 200, timestamp: new Date(start + 1000).toISOString(), environment: "production" }],
       hasMoreRows: false,
@@ -109,7 +119,7 @@ describe("nextSignalPollAt — the bucket grid", () => {
     // Past the settle margin, so a read is complete; the latest fire plus a whole pass plus two alert
     // intervals inside one cadence, so each fifteen-minute window is judged at least twice.
     expect(SIGNAL_POLL_OFFSET_MS).toBeGreaterThan(SIGNAL_SETTLE_MS);
-    expect(SIGNAL_POLL_OFFSET_MS + SIGNAL_POLL_JITTER_MS + SIGNAL_WALL_CLOCK_MS + 2 * DEFAULT_ALERT_INTERVAL_MS)
+    expect(SIGNAL_POLL_OFFSET_MS + SIGNAL_POLL_JITTER_MS + SIGNAL_POLL_WALL_CLOCK_MS + 2 * DEFAULT_ALERT_INTERVAL_MS)
       .toBeLessThanOrEqual(SIGNAL_POLL_EVERY_MS);
   });
 });
@@ -194,13 +204,50 @@ describe("startPlatformSignalPoll", () => {
     poll.stop();
   });
 
-  it("half a pair is said once by name and asks the platform nothing", async () => {
+  it("half a pair is said once by name, asks the platform nothing, never counts as ok and pages", async () => {
     const h = harness({ startMs: CLOSE + 151_000 });
     const { poll } = await h.start({ VERCEL_TOKEN: TOKEN });
     await h.fire();
     expect(h.events("platform_signal_config_incomplete").map((l) => l.configVar)).toEqual(["TF_SIGNAL_VERCEL_TEAM_ID"]);
     expect(h.bearers).toEqual([]);
-    expect(poll.health().outcome).toBe("ok");
+    expect(poll.health()).toMatchObject({ outcome: "failed", consecutiveFailures: 1, lastOkAt: null });
+    expect(h.events("platform_signal_pass")[0]).toMatchObject({ level: "warn", outcome: "unconfigured", code: "config_incomplete" });
+    await h.fire();
+    await h.fire();
+    expect(h.events("platform_signal_pass").map((l) => l.level)).toEqual(["warn", "warn", "error"]);
+    // Past the stale floor: a stamped lastOkAt kept api_cron_stale clear for good.
+    const alerts = await evaluateAlerts(await makeTestDb(), {
+      now: new Date(poll.since().getTime() + 16 * MIN), driver: "worker",
+      apiCron: { since: poll.since(), targets: [{ ...poll.health(), inProcess: true }] },
+    });
+    expect(alerts.map((a) => a.key)).toContain("api_cron_stale:platform_signals");
+    poll.stop();
+  });
+
+  it("half a pair is not ok even when every bucket it would read is already held", async () => {
+    const h = harness({ startMs: CLOSE + 151_000 });
+    const db = (await makeTestDb()) as unknown as Tx;
+    for (const start of [CLOSE, CLOSE - SIGNAL_POLL_EVERY_MS, CLOSE - 2 * SIGNAL_POLL_EVERY_MS]) {
+      await db.insert(platformSignals).values({
+        provider: "vercel", project: "ohmail-api", windowStart: new Date(start),
+        requests: 5, errors5xx: 0, truncated: false, fetchedAt: new Date(CLOSE),
+      });
+    }
+    const { poll } = await h.start({ VERCEL_TEAM_ID: TEAM }, db);
+    await h.fire();
+    expect(h.events("platform_signal_pass")[0]).toMatchObject({ outcome: "written", rows: 0, code: "config_incomplete" });
+    expect(poll.health()).toMatchObject({ outcome: "failed", lastOkAt: null });
+    poll.stop();
+  });
+
+  it("walks the worker's page budget, not the API host's twelve", async () => {
+    const h = harness({ startMs: CLOSE + 151_000, endless: true });
+    const { db, poll } = await h.start({ VERCEL_TOKEN: TOKEN, VERCEL_TEAM_ID: TEAM, VERCEL_SIGNAL_PROJECTS: "ohmail-api" });
+    await h.fire();
+    const newest = Math.max(...h.reads.map((r) => r.start));
+    expect(h.reads.filter((r) => r.start === newest)).toHaveLength(SIGNAL_POLL_PAGE_BUDGET);
+    expect(SIGNAL_POLL_PAGE_BUDGET).toBeGreaterThan(SIGNAL_PAGE_BUDGET);
+    expect((await db.select().from(platformSignals)).map((r) => r.sampleCause)).toEqual(["page_budget", "page_budget", "page_budget"]);
     poll.stop();
   });
 
@@ -220,12 +267,31 @@ describe("startPlatformSignalPoll", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     try {
       // The first log page spends the pass's whole wall clock: the two older buckets are the next pass's.
-      const h = harness({ startMs: CLOSE + 151_000, onLogPage: () => { vi.setSystemTime(Date.now() + SIGNAL_WALL_CLOCK_MS + 1000); } });
+      const h = harness({ startMs: CLOSE + 151_000, onLogPage: () => { vi.setSystemTime(Date.now() + SIGNAL_POLL_WALL_CLOCK_MS + 1000); } });
       const { poll } = await h.start(undefined, db);
       await h.fire();
       expect(poll.health()).toMatchObject({ outcome: "ok", consecutiveFailures: 0 });
       expect(h.events("platform_signal_pass")[0]).toMatchObject({ level: "info", outcome: "written", rows: 1, deferred: 2 });
       expect(await db.select().from(platformSignals)).toHaveLength(1);
+      poll.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("the pass runs on the worker's wall clock: a first page past the API host's 40 s defers nothing", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      let first = true;
+      const h = harness({ startMs: CLOSE + 151_000, onLogPage: () => {
+        if (first) vi.setSystemTime(Date.now() + SIGNAL_WALL_CLOCK_MS + 1000);
+        first = false;
+      } });
+      const { poll } = await h.start(undefined, db);
+      await h.fire();
+      expect(SIGNAL_POLL_WALL_CLOCK_MS).toBeGreaterThan(SIGNAL_WALL_CLOCK_MS + 1000);
+      expect(h.events("platform_signal_pass")[0]).toMatchObject({ outcome: "written", rows: 3, deferred: 0 });
       poll.stop();
     } finally {
       vi.useRealTimers();

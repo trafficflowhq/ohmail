@@ -715,11 +715,12 @@ export async function runPlatformSignalPass(
   // not drifted. The prune still runs below; a pass with no gap to fill must not spend a walk
   // saying so, and must not report one.
   const answer: PlatformSignalFetch | null = answers[0] ?? null;
+  const unconfigured = answers.some((a) => "unconfigured" in a);
 
-  // PRUNE ON EVERY PASS, including an unconfigured one, and that is deliberate: a deployment that
-  // had a token and lost it must not keep a week of rows for ever, and the sweep is one indexed
-  // range delete over a table with a few thousand rows.
-  const pruned = await prune(db, new Date(now.getTime() - retentionMs));
+  // PRUNE ON A WRITTEN OR FAILED PASS, NEVER ON AN UNCONFIGURED ONE. Only the worker runs this pass,
+  // and only with half its credential pair does it answer unconfigured: emptying the table then
+  // resolved signal_source_dark (armed by a row) while nothing measured.
+  const pruned = unconfigured ? 0 : await prune(db, new Date(now.getTime() - retentionMs));
 
   if (answer === null) return { outcome: "written", rows: 0, pruned, deferred };
 
@@ -731,7 +732,6 @@ export async function runPlatformSignalPass(
   // the failure — the poll's health goes red and the log carries the code — but the rows already
   // read are kept.
   const failed = answers.find((a) => "failed" in a) as { failed: string } | undefined;
-  const unconfigured = answers.some((a) => "unconfigured" in a);
   const written: PlatformSignalRow[] = [];
   for (const a of answers) if (!("failed" in a) && !("unconfigured" in a)) written.push(...a.rows);
   for (const raw of written) {
