@@ -302,13 +302,14 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   "mergeThreadMessage", "setMessageThread", "recordRoutingDecision", "enqueueApproval",
   // the mail-0065 wave's writes, none of which touch a projected field (the projection is
   // message_instances + messages.unread/message_id_header + flag_state.observed_seen):
-  //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder/sent_folder, a discovery stamp
+  //  · setMailboxSpecialFolders — mailboxes.junk_folder/trash_folder/sent_folder, a discovery stamp;
+  //    fillMailboxSentFolder — the same sent_folder, filled while empty
   //  · huskBody / restoreWithheldBody — message_bodies + the storage counter (an expunge's husk
   //    also messages.snippet and message_search, `scrubGone`); refillGone — those two, refilled,
   //    and the header block with `folder_state.screener_floor_version`, which is not projected
   //  · clearDeletedOnAdopt / tombstoneInstanceless — messages.deleted_at (+ husk + change_log);
   //    a tombstoned row is by definition INSTANCELESS, so no instance row can be moved by it
-  "setMailboxSpecialFolders", "huskBody", "scrubGone", "restoreWithheldBody", "refillGone",
+  "setMailboxSpecialFolders", "fillMailboxSentFolder", "huskBody", "scrubGone", "restoreWithheldBody", "refillGone",
   "clearDeletedOnAdopt", "tombstoneInstanceless",
   // The Junk check: a read of instanceless rows, and the reaper's write on them (`tombstoneGone`).
   "listJunkParked", "tombstoneJunkParkedGone", "tombstoneGone",

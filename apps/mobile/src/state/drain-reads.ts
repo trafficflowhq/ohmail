@@ -78,6 +78,26 @@ export function drainReads<C>(deps: DrainReadDeps<C>): DrainRead<C> {
   return Object.assign(read, { factsDue: () => { mailboxes.owe(); consent.owe(); } });
 }
 
+/**
+ * A sent copy landed in a folder this phone does not know as Sent (`OhmailEngine.sentFolderAsks`): the
+ * mailbox's Sent folder was recorded since the last read, so the mailboxes are owed and asked now
+ * (`ask`, the flag machine's refresh), not at the next round. Answers the unsubscribe.
+ */
+export function readOnSentFolderAsk(
+  engine: { subscribe(l: () => void): () => void; sentFolderAsks(): number },
+  read: Pick<DrainRead<unknown>, "factsDue">,
+  ask: () => void,
+): () => void {
+  let seen = engine.sentFolderAsks();
+  return engine.subscribe(() => {
+    const n = engine.sentFolderAsks();
+    if (n <= seen) return;
+    seen = n;
+    read.factsDue();
+    ask();
+  });
+}
+
 /** One read's due rule: the stamp moved, `everyMs` passed, or it is owed. No stamp: always due. */
 function gate(everyMs: number) {
   type Last = { stamp: number; at: number } | null;

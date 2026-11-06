@@ -7,7 +7,7 @@
  * arrival absent; dropping the re-arm after a settle fails the second-arrival case.
  */
 import { afterEach, describe, expect, it } from "vitest";
-import { classifyWindowSyncFailure, lastCheckedAt } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine, classifyWindowSyncFailure, lastCheckedAt } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
 import { SyncRunner, drainLine } from "../src/net/drain";
 import {
@@ -19,7 +19,7 @@ import { readFoldersEnabled } from "../src/net/consent";
 import { readMailboxes } from "../src/net/mailboxes";
 import type { ConnectedSession } from "../src/net/pairing";
 import { readScreenerQueue } from "../src/net/screener";
-import { FACTS_REREAD_MS, drainReads } from "../src/state/drain-reads";
+import { FACTS_REREAD_MS, drainReads, readOnSentFolderAsk } from "../src/state/drain-reads";
 import { dto, listen, mailServer } from "./helpers/mail-server";
 import { sqlWorld } from "./helpers/pair-server";
 
@@ -411,5 +411,48 @@ describe("an idle foreground phone asks the server less, and a touch brings it b
     app.move("active");
     await phone.landed();
     expect(phone.clock.next()).toBe(FOREGROUND_DRAIN_MS);
+  });
+});
+
+describe("a sent copy in a folder the phone does not know as Sent asks the mailboxes at once", () => {
+  async function sendAndLand(folder: string): Promise<number> {
+    const at = "2026-11-05T09:14:00.000Z";
+    const theirs = {
+      id: "theirs", accountId: "a", mailboxId: "mb", threadId: "t", messageIdHeader: "theirs@x.test", subject: "Q3 plan",
+      from: { name: "Ben", address: "ben@x.test" }, to: [{ name: null, address: "me@x.test" }], cc: [], date: at,
+      folder: "INBOX", snippet: "", unread: false, hasAttachments: false, attachmentCount: 0,
+      sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+      triage: null, labels: [], remoteContent: "none", updatedAt: at,
+    };
+    const pages: unknown[][] = [[{ type: "message", op: "create", id: "theirs", seq: 1, updatedAt: at, entity: theirs }]];
+    const engine = new OhmailEngine({
+      store: new MemoryMirrorStore(), now: () => new Date(at),
+      adapter: {
+        sync: async () => ({ changes: { creates: pages.shift() ?? [], updates: [], moves: [], deletes: [] }, cursor: "c", hasMore: false, serverTime: at }),
+        mutate: async (m: { kind: string }) => (m.kind === "mail_send" ? { changes: [], seq: null, providerMessageId: "<minted@x.test>" } : { changes: [], seq: null }),
+        fetchBody: async () => null,
+      } as never,
+    });
+    await engine.start();
+    let facts = 0;
+    const reads = drainReads({ rest: [], facts: [() => { facts += 1; }], consent: async () => null, engine: engine as never, stamp: () => 1 });
+    await reads();
+    const off = readOnSentFolderAsk(engine, reads, () => { void reads(); });
+    await engine.mutate({ kind: "mail_send", inReplyTo: "theirs", body: "Gerne." } as never);
+    const before = facts;
+    pages.push([{ type: "message", op: "create", id: "real", seq: 2, updatedAt: at,
+      entity: { ...theirs, id: "real", folder, from: { name: null, address: "me@x.test" }, messageIdHeader: "minted@x.test" } }]);
+    await engine.syncOnce();
+    off();
+    engine.dispose();
+    return facts - before;
+  }
+
+  it("a copy landing in 'Envoyés' reads the mailboxes once, at once", async () => {
+    expect(await sendAndLand("Envoyés")).toBe(1);
+  });
+
+  it("control: a copy landing in Sent reads nothing extra", async () => {
+    expect(await sendAndLand("Sent")).toBe(0);
   });
 });

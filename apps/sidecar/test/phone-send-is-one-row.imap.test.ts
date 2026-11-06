@@ -11,15 +11,16 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it } from "vitest";
-import type { SqlExecutor, SqlRow, SqlValue } from "@ohmail/client-engine";
+import { isOwnSent, type EngineMessage, type SqlExecutor, type SqlRow, type SqlValue } from "@ohmail/client-engine";
 import {
   Cable, EXPECTED_DIALECT, HOST, ON_DEVICE_STORE, PORT, SMTP_PORT, SmtpSink,
-  bootPhone, cables, deliver, dirs, eventsSince, open, post, relaunch, seedMailboxId, untilIngested, withServer, type Phone,
+  bootPhone, cables, deliver, dirs, eventsSince, folderOnServer, open, post, relaunch, seedMailboxId, untilIngested, withServer, type Phone,
 } from "./_phone-offline-rig.js";
 import { serviceUp } from "@trafficflow/db/testing";
 import { bootEngine, LOCAL_ENGINE_ORIGIN } from "../../mobile/src/engine/boot.js";
 import { installNetworkReader, networkNow, type NetworkReader } from "../../mobile/src/net/network-door.js";
 import { answersWaiting, flushQueued, liveActions } from "../../mobile/src/state/live.js";
+import { readOnSentFolderAsk } from "../../mobile/src/state/drain-reads.js";
 import { sayArg } from "../../mobile/src/refusal.js";
 import { Copy } from "../../mobile/src/copy.js";
 
@@ -279,5 +280,41 @@ describe.runIf(ON_DEVICE_STORE && SERVER_UP)("a phone send is one row", () => {
     net.set("online");
     app.close();
   }, 300_000);
-});
 
+  it("a reply saved to an 'Envoyés' made after connecting is the person's own without connecting again", async () => {
+    const { phone, user } = await organizedPhone({ smtp: { port: SMTP_PORT } });
+    await withServer(user, (c) => c.mailboxCreate("Envoyés"));
+    const subject = `the quote ${randomUUID()}`;
+    await deliver(user, "ada@stranger.example", subject);
+    expect(await untilIngested(phone, subject, 60_000), "the letter never reached the engine").not.toBeNull();
+    const app = await appOver(phone, ":memory:");
+    const engine = app.boot.engine;
+    const parent = engine.read().list<{ id: string; subject?: string }>("message").find((m) => m.subject === subject);
+    expect(parent, "the app's mirror does not hold the letter").toBeDefined();
+    // The next mailbox read the copy asks for, as the world makes it: the door's list, stated to the engine.
+    const read = async (): Promise<Array<{ id: string; sentFolder?: string | null }>> => {
+      const res = await phone.engine.handle(new Request("http://sidecar/mailboxes", { headers: { authorization: `Bearer ${phone.engine.sessionToken}` } }));
+      return ((await res.json()) as { items: Array<{ id: string; sentFolder?: string | null }> }).items;
+    };
+    let asked: Promise<void> | null = null;
+    const off = readOnSentFolderAsk(engine, { factsDue: () => undefined }, () => { asked = read().then((rows) => { engine.setSentFolders(rows); }); });
+    try {
+      const res = await app.actions.sendReply(parent!.id, "Merci, à jeudi.", false);
+      expect(res.outcome, `the reply did not go — events ${eventsSince(phone, 0)}`).toBe("sent");
+      for (let i = 0; i < 20 && asked === null; i += 1) await engine.syncOnce();
+      expect(asked, "the copy in an unknown folder asked for no mailbox read").not.toBeNull();
+      await asked;
+      expect(await folderOnServer(user, `Re: ${subject}`), "the reply's copy is not in 'Envoyés'").toBe("Envoyés");
+      const folders = await withServer(user, async (c) => (await c.list()).map((b) => b.path));
+      expect(folders, "a Sent folder was created beside 'Envoyés'").not.toContain("Sent");
+      expect((await read()).map((m) => m.sentFolder)).toEqual(["Envoyés"]);
+      const copy = engine.read().list<EngineMessage>("message").find((m) => m.subject === `Re: ${subject}`);
+      expect(copy?.folder).toBe("Envoyés");
+      expect(isOwnSent(copy!), "the reply reads as someone else's").toBe(true);
+    } finally {
+      off();
+      engine.setSentFolders([]);
+      app.close();
+    }
+  }, 300_000);
+});

@@ -2,7 +2,9 @@ import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { changeLog, messages } from "@trafficflow/db";
+import { changeLog, mailboxes, messages } from "@trafficflow/db";
+import { isSentFolderOf } from "@trafficflow/core";
+import { recordSpecialFolders } from "@trafficflow/core/adapters/drizzle-repo";
 import { runMigrations } from "@trafficflow/db/admin";
 import { realPgAvailable } from "@trafficflow/db/testing";
 import { MessageService, SearchService, type ServiceContext } from "@trafficflow/services";
@@ -81,4 +83,43 @@ describe.skipIf(!AVAILABLE)("a message deleted on the server leaves History and 
       .filter((r) => r.entityType === "message" && r.op === "delete").map((r) => r.entityId);
     expect(deletes.sort(), "a mirror is not told").toEqual([sent, inbox].sort());
   });
+
+  /**
+   * A MAILBOX WITH NO SENT FOLDER AT CONNECT, AND A LOCALIZED ONE MADE LATER IN ANOTHER APP. No
+   * `\Sent` flag on GreenMail, so 'Envoyés' is the folder the app files into by name; one cycle
+   * records it, and a letter the person wrote there reads as theirs without connecting again.
+   */
+  for (const recorded of [null, "Sent Items"] as const) {
+    it(recorded === null
+      ? "one cycle records an 'Envoyés' made after the attach, and the letter in it is the account's own"
+      : "CONTROL: a recorded Sent folder is never overwritten by one made later", async () => {
+      const h = await makeHarness();
+      closers.push(() => h.adapter.close());
+      await recordSpecialFolders(h.adapter, h.repo, h.mailboxId);
+      const column = async () => (await h.db.select({ f: mailboxes.sentFolder }).from(mailboxes)
+        .where(eq(mailboxes.id, h.mailboxId)))[0]!.f;
+      expect(await column(), "the precondition: no Sent folder at connect").toBeNull();
+      if (recorded !== null) await h.db.update(mailboxes).set({ sentFolder: recorded }).where(eq(mailboxes.id, h.mailboxId));
+      const tag = randomUUID().slice(0, 8);
+      const id = `own-${tag}@trafficflow.test`;
+      const c = await rawClient(h.cfg);
+      closers.push(async () => { await c.logout().catch(() => undefined); });
+      await c.mailboxCreate("Envoyés");
+      const raw = `Date: Thu, 05 Nov 2026 09:14:00 +0000\r\n${eml({ from: h.cfg.auth.user, to: "anna@x.example", subject: `Re: fixture ${tag}`, messageId: id })}`;
+      await c.append("Envoyés", raw, ["\\Seen"], new Date("2026-11-05T09:14:00Z"));
+
+      await runSyncCycle({
+        repo: h.repo, adapter: h.adapter, accountId: h.accountId, mailboxId: h.mailboxId,
+        storageCap: UNMETERED_STORAGE_CAP, writeAuthority: FIXTURE_LEASE,
+        role: "organizer", trustedAuthservIds: new Set<string>(),
+      });
+
+      expect(await column()).toBe(recorded ?? "Envoyés");
+      const [row] = await h.db.select({ locator: messages.nativeLocator }).from(messages)
+        .where(and(eq(messages.mailboxId, h.mailboxId), eq(messages.messageIdHeader, id)));
+      const folder = (row?.locator as { folder?: string } | undefined)?.folder;
+      expect(folder, "the letter was not ingested from the new folder").toBe("Envoyés");
+      expect(isSentFolderOf(folder!, await column()), "the person's own letter reads as received").toBe(recorded === null);
+    });
+  }
 });

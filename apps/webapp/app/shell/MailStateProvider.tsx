@@ -20,6 +20,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import { documentHidden } from "./document-hidden";
@@ -508,6 +509,20 @@ export function MailStateProvider({
     if (sync.standingDown === true && now.probe) void readRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sync.standingDown]);
+  /* A sent copy landed in a folder this client does not know as Sent (`OhmailEngine.sentFolderAsks`):
+     the mailbox's Sent folder was recorded after the last read, so the roster is asked once per rise. */
+  const sentFolderAsks = useSyncExternalStore(
+    useCallback((l: () => void) => probeEngine.subscribe(l), [probeEngine]),
+    () => probeEngine.sentFolderAsks(),
+    () => 0,
+  );
+  const asksSeen = useRef({ engine: probeEngine, n: sentFolderAsks });
+  useEffect(() => {
+    const seen = asksSeen.current;
+    asksSeen.current = { engine: probeEngine, n: sentFolderAsks };
+    if (seen.engine === probeEngine && sentFolderAsks > seen.n && now.probe) void readRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [probeEngine, sentFolderAsks]);
   const refresh = useCallback(() => readRef.current().catch(() => { /* the state says so */ }), []);
   const factsReadAt = useCallback(() => factsReadAtRef.current, []);
 

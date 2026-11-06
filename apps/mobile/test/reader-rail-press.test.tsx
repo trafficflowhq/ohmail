@@ -1462,6 +1462,35 @@ describe("a reply that arrives below the opened message never moves the reader o
     expect(native.offset).toBe(endOf(G) - 200);
   });
 
+  /* A Sent folder made after connecting: the copy is drawn before a mailbox read names its folder, and is the
+     person's own only once that read lands. */
+  const lateMine = (dragged: boolean): { offset: number; square: string } => {
+    const el = openAtEnd();
+    quiet();
+    send("pressed");
+    if (dragged) dragTo(endOf(G) - 200);
+    send("sent");
+    rerender(conversation([{ id: "p5", seen: true }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    expect(native.offset, "a reply nobody knew as the person's own moved the reader").toBe(dragged ? endOf(G) - 200 : endOf(G));
+    rerender(conversation([{ id: "p5", seen: true, mine: true }]));
+    layBelow(el, G, [["p5", 600]]);
+    settle(1000);
+    quiet();
+    const square = all(el).find((x) => x.__props?.testID === "rail-p5");
+    return { offset: native.offset, square: String(square?.__props?.accessibilityLabel ?? "") };
+  };
+  it("a copy the next mailbox read names as the person's own: eased in once, its square 'sent by you'", () => {
+    const r = lateMine(false);
+    expect(r.offset).toBe(tops(G).opened + G.opened + 34 + 600 - G.view + 16);
+    expect(r.square).toContain("sent by you");
+  });
+  it("control: dragged after Send, the copy named later as the person's own moves nothing", () => {
+    expect(lateMine(true).offset).toBe(endOf(G) - 200);
+  });
+
   it("an untouched open at the end: the reply is drawn, the reader stays and the reply stays unread", () => {
     const el = openAtEnd();
     quiet();
