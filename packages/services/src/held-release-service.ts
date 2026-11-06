@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import {
   AccountErasedError, accountSettings, applyScreenerDecision, auditAction, auditLog, authScreensSql, changeLog,
-  contactOnlyHeldWhere, CUTLINE_ALLOW_DESTINATIONS, destinationIsDecisionSql, folderState, lockAccountRuleKeys,
+  contactOnlyHeldWhere, CUTLINE_ALLOW_DESTINATIONS, destinationIsDecisionSql, folderState, lockAccountMailboxes, lockAccountRuleKeys,
   heldUnconfirmedOnlySql, mailboxes, messages, notHeldForIdentitySql, personSkipSql,
   recordRuleDelta, ruleNamesSenderSql, rules as rulesTbl, seqBounds, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -495,9 +495,11 @@ export async function releaseHeld(
      rule and an audit row, and a transaction opened straight on the handle can commit them AFTER
      an erasure sweep has finished — a row belonging to an account that no longer exists. */
   return withAccountTx(ctx, async (t) => {
-    // The rule-key lock first after the fence: this press writes rules by id and then decides
-    // senders, whose held bags lock mailboxes it cannot name up front (every writer's order).
+    // The rule-key lock first after the fence, then the account's mailbox rows: this press writes
+    // rules by id, checks senders and decides them, all after the mailbox rows, as a hosted write
+    // group writes after its own (every writer's order).
     await lockAccountRuleKeys(bridgeTx(t), ctx.accountId);
+    await lockAccountMailboxes(bridgeTx(t), ctx.accountId);
     // Read the groups INSIDE the transaction that acts on them: the count written to the audit row
     // is then the count the press released, not one measured before somebody else's decision landed.
     const groups = await heldReleaseGroups(bridgeTx(t), ctx.accountId);

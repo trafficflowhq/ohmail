@@ -16,7 +16,7 @@ import { bridgeTx, bridgeDb, withAccountTx, type Db, type ServiceContext } from 
 import { ServiceError, IdempotencyRaceLost } from "./errors.js";
 import { mailboxProfileRowToDTO, mailboxProfileRows, materializeRule } from "./dto/materialize.js";
 import {
-  planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutRefusal,
+  lockFanOutTargets, planAccountFanOut, writeReaderRequest, type AccountFanOut, type FanOutRefusal,
 } from "./reader-request.js";
 import type { Folder, RuleDTO } from "./dto/types.js";
 
@@ -457,7 +457,11 @@ export class RulesService {
        * travelled, an all-reader account refused where a request could go. `planAccountFanOut`
        * carries the three states.
        */
+      // The rule-key lock first (the reconcile below takes it again), then the held mailboxes'
+      // rows this press asks, before its delta: every rules writer's order.
+      await lockAccountRuleKeys(bridgeTx(tx), ctx.accountId);
       const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.create");
+      await lockFanOutTargets(bridgeTx(tx), ctx.accountId, plan);
 
       if (!plan.writeLocally) {
         /* NOTHING TO WRITE HERE — every live mailbox is organized elsewhere, and at least one
@@ -679,8 +683,9 @@ export class RulesService {
        * whose effect would be nil.
        */
       // The per-mailbox dispatch that replaces the account-wide refusal — see `create`'s own note
-      // for why the one question was wrong in both directions.
+      // for why the one question was wrong in both directions. The rows it asks, before the delta.
       const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.update");
+      await lockFanOutTargets(bridgeTx(tx), ctx.accountId, plan);
 
       // Read the CURRENT destination before the write, inside the transaction, so "did the
       // destination change" is answered against the row this update replaces, not a caller value
@@ -969,6 +974,8 @@ export class RulesService {
        * The account-wide refusal is replaced by the per-mailbox dispatch — see `create`'s note.
        */
       const plan = await planAccountFanOut(bridgeTx(tx), ctx.accountId, "rule.delete");
+      // The rows it asks, before the delta.
+      await lockFanOutTargets(bridgeTx(tx), ctx.accountId, plan);
 
       /* THE KEY IS READ BEFORE THE ROW GOES, and it has to be: after the DELETE there is nothing
          left to name the rule to the other install. `returning({ id })` was enough while the

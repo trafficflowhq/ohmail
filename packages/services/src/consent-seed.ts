@@ -16,7 +16,7 @@ import { fenceErasedAccount } from "./erasure-fence.js";
 // its text alternative is rendered by the same function. A second sanitizer here would be a
 // second door into the body with its own answer about what markup is allowed.
 import { prepareOutboundBody } from "./outbound-html.js";
-import { planAccountFanOut, routeMailboxWrite, writeReaderRequest } from "./reader-request.js";
+import { lockFanOutTargets, planAccountFanOut, routeMailboxWrite, writeReaderRequest } from "./reader-request.js";
 import {
   fanOutProfileEdit, profileRequestPayload, profileTravelled,
   TRAVELLING_SIGNATURE_MAX_CHARS, type ProfileTravel,
@@ -1417,6 +1417,8 @@ export async function setDormancyDays(
         screeningScope: accountSettings.screeningScope,
       });
     effective = row;
+    // The held mailboxes' rows this window travels to: after the settings row, before its delta.
+    await lockFanOutTargets(tx, ctx.accountId, plan);
     await recordSettingsChange(tx, ctx.accountId); // AFTER the settings row — the global lock order above
     if (profileTravelled(plan)) {
       travel = await fanOutProfileEdit(tx, ctx, plan, travelling);

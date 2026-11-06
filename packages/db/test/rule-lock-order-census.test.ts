@@ -8,8 +8,8 @@ import ts from "typescript";
  * account row; the thread-structure lock; account_settings; the rule-key lock; the profile import's
  * lock; a mailbox row FOR UPDATE; contacts; held folder_state rows; the change-log counter; the
  * graduation row. One exception: a writer holding the rule-key lock takes the counter at its delta
- * write, and never once it holds a graduation row. A class may be taken again once held; every
- * `rules` write follows the rule-key lock. The writers are DERIVED by parse (an opener whose
+ * write, and never once it holds a graduation row; a mailbox row, FOR SHARE too, still comes before
+ * it. A class may be taken again once held; every `rules` write follows the rule-key lock. The writers are DERIVED by parse (an opener whose
  * closure reaches a rules or graduations write, the counter or a learning door), read from the
  * outermost transaction, every path, helpers followed; a shape the walk cannot read is refused.
  */
@@ -199,6 +199,8 @@ function primitive(c: ts.CallExpression): Ev[] | null {
     }
     case "readOrganizerRole": return a.some((x) => prop(x, "lock") === "true") ? [{ kind: "share", label: name }] : [];
     case "assertOrganizerRole": return [{ kind: "share", label: name }];
+    // The account's mailbox rows (or the ones it names), FOR SHARE in id order; none when it names none.
+    case "lockAccountMailboxes": return [{ kind: "share", label: name }];
     case "lockAccountRuleKeys": return [ev(RULE_KEY, name)];
     // The key's writers take its lock, write `rules` and record their deltas, in that order.
     case "convergeRuleKey": case "writeRuleUnderKey": return [ev(RULE_KEY, name), { kind: "rules", label: name }, ev(COUNTER, name)];
@@ -296,6 +298,13 @@ function step(states: States, e: Ev, cx: Ctx): States {
   for (const s of states.values()) {
     let t: St = s;
     if (e.kind === "share") {
+      // A mailbox row FOR SHARE keeps the exclusive lock's place, a first one included: after the
+      // counter (even an early one) or a class above the row, a write group holding the row and
+      // asking for that class met it crosswise (40P01). Once one is held, another is a re-take.
+      if (!s.shared && !s.held.includes(MAILBOX_X)) {
+        const above = s.top > MAILBOX_X ? s.top : s.held.includes(COUNTER) ? COUNTER : -1;
+        if (above >= 0) cx.out.add(`a mailbox row FOR SHARE (${e.label}) taken after ${CHAIN[above]}`);
+      }
       t = { ...s, shared: true };
     } else if (e.kind === "rules") {
       if (!s.held.includes(RULE_KEY)) cx.out.add(`a rules write (${e.label}) before the rule-key lock`);
@@ -306,6 +315,8 @@ function step(states: States, e: Ev, cx: Ctx): States {
       // The counter's early take under the rule-key lock ends at the graduation row.
       const excepted = e.cls === COUNTER && s.held.includes(RULE_KEY) && s.top < GRADUATION;
       if (!excepted && e.cls < s.top) cx.out.add(`${CHAIN[e.cls]} (${e.label}) taken after ${CHAIN[s.top]}`);
+      // The exception covers the classes after the row; the row itself still comes before the counter.
+      else if (e.cls === MAILBOX_X && s.held.includes(COUNTER)) cx.out.add(`${CHAIN[e.cls]} (${e.label}) taken after ${CHAIN[COUNTER]}`);
       t = { held: [...s.held, e.cls].sort((x, y) => x - y), top: excepted ? s.top : Math.max(s.top, e.cls), shared: s.shared };
     }
     next.set(keyOf(t), t);
@@ -902,6 +913,23 @@ describe("the census's own controls", () => {
       await upsertDesired(tx, r, "INBOX", now); await recordChange(tx, c);
     }); }`)).toEqual([]);
   });
+
+  it("a mailbox row first asked after the counter (the press before #706) or a class above it is refused, at either strength", () => {
+    expect(plant(`async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(tx, a); await recordRuleDelta(tx, a, ids, "create"); await readOrganizerRole(tx, d, a, m, { lock: true });
+    }); }`)).toEqual(["a mailbox row FOR SHARE (readOrganizerRole) taken after the change-log counter"]);
+    expect(plant(`async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(tx, a); await recordRuleDelta(tx, a, ids, "update"); await fenceErasedMailbox(tx, d, m, "update");
+    }); }`)).toEqual(["a mailbox row FOR UPDATE (fenceErasedMailbox) taken after the change-log counter"]);
+    expect(plant(`async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(tx, a); await tx.insert(contacts).values({}); await assertOrganizerRole(tx, d, a, m);
+    }); }`)).toEqual(["a mailbox row FOR SHARE (assertOrganizerRole) taken after contacts"]);
+    // The press since #706: the account's rows right after the rule-key lock, asked again after its delta.
+    expect(plant(`async function f(ctx) { return withAccountTx(ctx, async (tx) => {
+      await lockAccountRuleKeys(tx, a); await lockAccountMailboxes(tx, a); await recordRuleDelta(tx, a, ids, "create");
+      await readOrganizerRole(tx, d, a, m, { lock: true });
+    }); }`)).toEqual([]);
+  });
 });
 
 /* ── rules and graduations statements outside the two door files ──────────────────────────── */
@@ -1049,5 +1077,331 @@ describe("the derivation's and the new refusals' own controls", () => {
   it("held folder_state after a graduation row is refused", () => {
     expect(plant(`async function f(ctx) { return withAccountTx(ctx, async (tx) => { await tx.update(graduations).set({}); await upsertDesired(tx, r, "INBOX", now); }); }`))
       .toEqual(["held folder_state rows (upsertDesired) taken after the graduation row"]);
+  });
+});
+
+/* ── several mailbox rows in one statement ──────────────────────────────────────────────────── */
+
+/**
+ * A STATEMENT ON SEVERAL MAILBOX ROWS TAKES THEM IN ID ORDER, as a decision takes its account's
+ * (`lockAccountMailboxes`). A plan reads a small table in the heap's order, so a statement that
+ * locked several rows in its own scan's order met a decision crosswise (40P01: the worker's pass-end
+ * stamp, a person's pull, the junk sweep). Read per statement, in a transaction or not: a locking
+ * select or an UPDATE/DELETE on `mailboxes` names one row (an `eq` on the id, `limit(1)`), orders a
+ * select by the id, or reaches its rows through the id-ordered sub-select `mailboxRowsInIdOrder`
+ * writes; after a locking select of its transaction took them in id order, exclusively, it takes them
+ * again, and a second one taking others is refused. A name and a helper are followed to what they
+ * hold or return. The device's store is one connection, where no statement waits on another:
+ * `apps/sidecar/src` is not read.
+ */
+const MAILBOX_TABLES: ReadonlySet<string> = new Set(["mailboxes", "mailboxesTbl"]);
+type Rows = "one" | "in id order" | "several";
+
+const isMailboxTable = (e: ts.Expression | undefined): boolean => {
+  const x = bare(e);
+  return x !== undefined && ts.isIdentifier(x) && MAILBOX_TABLES.has(x.text);
+};
+const isMailboxId = (e: ts.Expression | undefined): boolean => {
+  const x = bare(e);
+  return x !== undefined && ts.isPropertyAccessExpression(x) && x.name.text === "id" && isMailboxTable(x.expression);
+};
+/** `asc(<mailboxes>.id)`, or the bare column. */
+const isIdOrder = (e: ts.Expression | undefined): boolean => {
+  const x = bare(e);
+  return x !== undefined && (isMailboxId(x) || (ts.isCallExpression(x) && callName(x) === "asc" && isMailboxId(x.arguments[0])));
+};
+
+/** The value a `const` holds, from the nearest scope declaring the name; none past a parameter of that name. */
+function constValue(id: ts.Identifier): ts.Expression | undefined {
+  for (let n: ts.Node | undefined = id.parent; n; n = n.parent) {
+    if (ts.isFunctionLike(n) && n.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === id.text)) return undefined;
+    if (!ts.isBlock(n) && !ts.isSourceFile(n)) continue;
+    for (const st of n.statements) {
+      if (!ts.isVariableStatement(st)) continue;
+      for (const d of st.declarationList.declarations) {
+        if (ts.isIdentifier(d.name) && d.name.text === id.text && d.initializer) return d.initializer;
+      }
+    }
+  }
+  return undefined;
+}
+/** An object-literal argument's property, as written. */
+function propValue(arg: ts.Expression | undefined, name: string): ts.Expression | undefined {
+  const o = bare(arg);
+  if (!o || !ts.isObjectLiteralExpression(o)) return undefined;
+  for (const p of o.properties) {
+    if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name) && p.name.text === name) return p.initializer;
+    if (ts.isShorthandPropertyAssignment(p) && p.name.text === name) return p.name;
+  }
+  return undefined;
+}
+
+const narrowest = (parts: readonly Rows[]): Rows => parts.includes("one") ? "one" : parts.includes("in id order") ? "in id order" : "several";
+const widest = (parts: readonly Rows[]): Rows => parts.length === 0 || parts.includes("several") ? "several" : parts.includes("in id order") ? "in id order" : "one";
+
+/** A raw predicate: `${id} = ${x}` names one row; a sub-select `order by ${id}` with its lock clause, rows in id order. */
+function templateRows(t: ts.TemplateLiteral): Rows {
+  if (ts.isNoSubstitutionTemplateLiteral(t)) return "several";
+  const text = [t.head.text, ...t.templateSpans.map((s) => s.literal.text)];
+  const spans = t.templateSpans.map((s) => s.expression);
+  if (spans.some((e, i) => isMailboxId(e) && i + 1 < spans.length && /^\s*=\s*$/.test(text[i + 1]!))) return "one";
+  const ordered = spans.some((e, i) => isMailboxId(e) && /\border\s+by\s*$/i.test(text[i]!)
+    && spans.slice(i + 1).some((x) => ts.isCallExpression(x) && callName(x) === "lockClause"));
+  return ordered ? "in id order" : "several";
+}
+
+/** Predicates that never narrow to one row of their own. */
+const NOT_ONE: ReadonlySet<string> = new Set([
+  "or", "not", "inArray", "notInArray", "ne", "lt", "lte", "gt", "gte", "isNull", "isNotNull", "like", "ilike", "exists", "notExists", "between",
+]);
+
+/** How many mailbox rows a predicate can name, from its shape. */
+function rowsOf(w: ts.Expression | undefined, file: string, depth = 0): Rows {
+  const x = bare(w);
+  if (x === undefined || depth > 8) return "several";
+  if (ts.isTaggedTemplateExpression(x)) return templateRows(x.template);
+  if (ts.isIdentifier(x)) {
+    const v = constValue(x);
+    return v ? rowsOf(v, file, depth + 1) : "several";
+  }
+  if (ts.isConditionalExpression(x)) return widest([rowsOf(x.whenTrue, file, depth + 1), rowsOf(x.whenFalse, file, depth + 1)]);
+  // The parts `sql.join` joins by `and`.
+  if (ts.isArrayLiteralExpression(x)) return narrowest(x.elements.map((e) => rowsOf(e, file, depth + 1)));
+  if (!ts.isCallExpression(x)) return "several";
+  const name = callName(x);
+  if (name === "eq") return x.arguments.some((a) => isMailboxId(a)) ? "one" : "several";
+  if (name === "and") return narrowest(x.arguments.map((a) => rowsOf(a, file, depth + 1)));
+  if (name === "join" && ts.isPropertyAccessExpression(x.expression) && ts.isIdentifier(x.expression.expression) && x.expression.expression.text === "sql") {
+    const sep = bare(x.arguments[1]);
+    const byAnd = sep !== undefined && ts.isTaggedTemplateExpression(sep) && ts.isNoSubstitutionTemplateLiteral(sep.template)
+      && /^\s*and\s*$/i.test(sep.template.text);
+    return byAnd ? rowsOf(x.arguments[0], file, depth + 1) : "several";
+  }
+  if (NOT_ONE.has(name)) return "several";
+  const hit = name ? resolveCall(name, file) : null;
+  return hit ? returnedRows(hit.decl, hit.file, depth + 1) : "several";
+}
+
+/** What a helper returns: each of its own `return`s (or an arrow's body), the widest of them. */
+function returnedRows(decl: Decl, file: string, depth: number): Rows {
+  if (!decl.body) return "several";
+  if (!ts.isBlock(decl.body)) return rowsOf(decl.body, file, depth);
+  const outs: Rows[] = [];
+  const visit = (n: ts.Node): void => {
+    if (ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n)) outs.push(rowsOf(n.expression, file, depth));
+    n.forEachChild(visit);
+  };
+  decl.body.forEachChild(visit);
+  return widest(outs);
+}
+
+/** The builder calls made on `n`, outward: `n.set(…)`, then `.where(…)`, … */
+function callsOn(n: ts.Expression): ts.CallExpression[] {
+  const out: ts.CallExpression[] = [];
+  let cur: ts.Node = n;
+  while (ts.isPropertyAccessExpression(cur.parent) && cur.parent.expression === cur
+    && ts.isCallExpression(cur.parent.parent) && cur.parent.parent.expression === cur.parent) {
+    cur = cur.parent.parent;
+    out.push(cur as ts.CallExpression);
+  }
+  return out;
+}
+/** The builder calls that made `q`, inward: `q` itself, then the call it was made on, through a `const`. */
+function callsMaking(q: ts.Expression | undefined): ts.CallExpression[] {
+  const out: ts.CallExpression[] = [];
+  let cur = bare(q);
+  for (let hops = 0; cur !== undefined && hops < 40; hops++) {
+    if (ts.isIdentifier(cur)) { cur = bare(constValue(cur)); continue; }
+    if (!ts.isCallExpression(cur)) break;
+    out.push(cur);
+    cur = ts.isPropertyAccessExpression(cur.expression) ? bare(cur.expression.expression) : undefined;
+  }
+  return out;
+}
+
+/** A locking select's rows when the lock reaches `mailboxes` (its FROM, or a join `of` does not exclude), else null. */
+function lockedSelectRows(chain: readonly ts.CallExpression[], of: ts.Expression | undefined, file: string): Rows | null {
+  const from = chain.find((c) => callName(c) === "from");
+  const reads = (from !== undefined && isMailboxTable(from.arguments[0]))
+    || chain.some((c) => /Join$/.test(callName(c)) && isMailboxTable(c.arguments[0]));
+  const ofs = of === undefined ? null : (() => { const o = bare(of); return o && ts.isArrayLiteralExpression(o) ? [...o.elements] : [of]; })();
+  if (!reads || (ofs !== null && !ofs.some((o) => isMailboxTable(o)))) return null;
+  const limit = bare(chain.find((c) => callName(c) === "limit")?.arguments[0]);
+  if (limit !== undefined && ts.isNumericLiteral(limit) && limit.text === "1") return "one";
+  const where = chain.find((c) => callName(c) === "where");
+  const rows = where ? rowsOf(where.arguments[0], file) : "several";
+  if (rows !== "several") return rows;
+  return isIdOrder(chain.find((c) => callName(c) === "orderBy")?.arguments[0]) ? "in id order" : "several";
+}
+
+/** A raw statement's text, `${…}` read as `?`. */
+const templateText = (t: ts.TemplateLiteral): string =>
+  ts.isNoSubstitutionTemplateLiteral(t) ? t.text : [t.head.text, ...t.templateSpans.map((sp) => sp.literal.text)].join(" ? ");
+
+/** One statement on mailbox rows: how many it takes, whether it only locks them, and how strongly. */
+interface MailboxStatement { node: ts.Node; label: string; rows: Rows; lockOnly: boolean; exclusive: boolean }
+
+/** A raw statement on `mailboxes` that locks or writes rows, or null for any other text. */
+function rawMailboxStatement(node: ts.Node, text: string): MailboxStatement | null {
+  if (!/\bmailboxes\b/i.test(text)) return null;
+  const verb = /^\s*\(?\s*(\w+)/.exec(text)?.[1]?.toLowerCase() ?? "";
+  const lock = /\bfor\s+(update|no\s+key\s+update|share|key\s+share)\b/i.exec(text)?.[1]?.toLowerCase();
+  if (verb !== "update" && verb !== "delete" && lock === undefined) return null;
+  const rows: Rows = /\bwhere\s+(\w+\.)?id\s*=\s*\?/i.test(text) ? "one"
+    : lock !== undefined && /\border\s+by\s+(\w+\.)?id\b/i.test(text) ? "in id order" : "several";
+  return {
+    node, label: "a raw statement on mailboxes", rows, lockOnly: verb === "select",
+    exclusive: verb !== "select" || lock === "update" || lock === "no key update",
+  };
+}
+
+/** The statements on mailbox rows in one file, in the order they are written. */
+function mailboxStatementsOf(file: string): MailboxStatement[] {
+  const out: MailboxStatement[] = [];
+  walkAll(sourceOf(file), (n) => {
+    if (ts.isTaggedTemplateExpression(n) && ts.isIdentifier(n.tag) && n.tag.text === "sql") {
+      const raw = rawMailboxStatement(n, templateText(n.template));
+      if (raw) out.push(raw);
+      return;
+    }
+    if (!ts.isCallExpression(n)) return;
+    const name = callName(n);
+    if ((name === "update" || name === "delete") && ts.isPropertyAccessExpression(n.expression) && isMailboxTable(n.arguments[0])) {
+      const where = callsOn(n).find((c) => callName(c) === "where");
+      out.push({ node: n, label: `.${name}(mailboxes)`, rows: where ? rowsOf(where.arguments[0], file) : "several", lockOnly: false, exclusive: true });
+    } else if ((name === "forUpdate" || name === "skipLocked") && n.arguments.length > 0) {
+      const rows = lockedSelectRows(callsMaking(n.arguments[0]), propValue(n.arguments[1], "of"), file);
+      const mode = prop(n.arguments[1], "mode");
+      if (rows) out.push({ node: n, label: `${name}(mailboxes)`, rows, lockOnly: true, exclusive: mode !== "share" && mode !== "key share" });
+    } else if (name === "for" && ts.isPropertyAccessExpression(n.expression)) {
+      const rows = lockedSelectRows(callsMaking(n.expression.expression), propValue(n.arguments[1], "of"), file);
+      const m = bare(n.arguments[0]);
+      const mode = m && ts.isStringLiteral(m) ? m.text : undefined;
+      if (rows) out.push({ node: n, label: ".for(mailboxes)", rows, lockOnly: true, exclusive: mode !== "share" && mode !== "key share" });
+    }
+  });
+  return out;
+}
+
+/** The callback of the transaction a node is written in, or null outside one (its own statement). */
+function transactionOf(n: ts.Node): ts.Node | null {
+  for (let p: ts.Node | undefined = n.parent; p; p = p.parent) {
+    if (ts.isArrowFunction(p) || ts.isFunctionExpression(p)) {
+      return p.parent && ts.isCallExpression(p.parent) && openerOf(p.parent)?.body === p ? p : null;
+    }
+    if (ts.isFunctionLike(p)) return null;
+  }
+  return null;
+}
+
+/**
+ * The statements in `files` that take several mailbox rows out of id order: in their plan's order,
+ * or in id order after another statement of their transaction took some. A statement after a
+ * locking select that took the rows in id order, exclusively, in its transaction re-takes them.
+ */
+function unorderedMailboxStatements(files: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const file of files) {
+    const scopes = new Map<ts.Node, MailboxStatement[]>();
+    for (const s of mailboxStatementsOf(file)) {
+      const scope = transactionOf(s.node) ?? s.node;
+      scopes.set(scope, [...(scopes.get(scope) ?? []), s]);
+    }
+    for (const list of scopes.values()) {
+      let preLocked = false;
+      let took = false;
+      for (const s of list.sort((a, b) => a.node.getStart() - b.node.getStart())) {
+        if (s.rows === "one" || preLocked) continue;
+        const at = `${file}#${enclosingName(s.node)}: ${s.label}`;
+        if (s.rows === "several") out.add(`${at} takes several mailbox rows in its plan's order`);
+        else if (took) out.add(`${at} takes several mailbox rows after another statement of its transaction took some`);
+        preLocked = s.rows === "in id order" && s.lockOnly && s.exclusive;
+        took = true;
+      }
+    }
+  }
+  return [...out].sort();
+}
+
+describe("a statement on several mailbox rows takes them in id order", () => {
+  it("every server root", () => {
+    const files = SCANNED_ROOTS.filter((r) => r !== "apps/sidecar/src").flatMap(sourcesUnder);
+    expect(unorderedMailboxStatements(files), "a statement that takes several mailbox rows out of id order").toEqual([]);
+  });
+});
+
+describe("the several-rows rule's own controls", () => {
+  let n = 0;
+  const plant = (src: string, more: Record<string, string> = {}): string[] => {
+    for (const [f, t] of Object.entries(more)) sourceOf(f, t);
+    const file = `planted/rows-${n++}.ts`;
+    sourceOf(file, src);
+    return unorderedMailboxStatements([file]).map((r) => r.slice(r.indexOf(": ") + 2));
+  };
+  const inIdOrder = `function inIdOrder(d, where) {
+    return sql\`\${mailboxes.id} in (select \${mailboxes.id} from \${mailboxes} where \${where} order by \${mailboxes.id} \${d.lockClause({ mode: "no key update" })})\`; }`;
+
+  it("a lock or a write on several rows in its plan's order is refused (the pass-end stamp's, the pull's, the sweep's old shapes)", () => {
+    expect(plant(`async function f(db, ids) { await db.update(mailboxes).set({ lastSyncAt: now }).where(inArray(mailboxes.id, ids)); }`))
+      .toEqual([".update(mailboxes) takes several mailbox rows in its plan's order"]);
+    expect(plant(`async function f(ctx, tx) { await dialect(ctx.db).forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes)
+      .where(and(eq(mailboxes.accountId, a), eq(mailboxes.status, "connected"))).limit(n)); }`))
+      .toEqual(["forUpdate(mailboxes) takes several mailbox rows in its plan's order"]);
+    expect(plant(`async function f(db, a, targets) { await db.update(mailboxes).set({}).where(and(eq(mailboxes.accountId, a), inArray(mailboxes.id, targets))); }`))
+      .toEqual([".update(mailboxes) takes several mailbox rows in its plan's order"]);
+    expect(plant(`async function f(tx, ids) { await tx.execute(sql\`update mailboxes set status = 'disabled' where id in (\${ids})\`); }`))
+      .toEqual(["a raw statement on mailboxes takes several mailbox rows in its plan's order"]);
+  });
+
+  it("one row by its id, or several in id order, is admitted", () => {
+    expect(plant(`async function f(tx, a, m) {
+      await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes).where(and(eq(mailboxes.id, m), eq(mailboxes.accountId, a))));
+      await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, a)).limit(1));
+      await d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, a)).orderBy(asc(mailboxes.id)), { mode: "share" });
+      await tx.update(mailboxes).set({}).where(sql\`\${mailboxes.id} = \${m}\`);
+    }`)).toEqual([]);
+  });
+
+  it("a write's rows through the id-ordered sub-select are admitted, the helper in another file too; without its order, refused", () => {
+    expect(plant(`import { inIdOrder } from "./rows-helper"; async function f(db, ids) {
+      await db.update(mailboxes).set({}).where(inIdOrder(d, inArray(mailboxes.id, ids))); }`,
+    { "planted/rows-helper.ts": `export ${inIdOrder}` })).toEqual([]);
+    expect(plant(`${inIdOrder.replace(" order by ${mailboxes.id}", "")} async function f(db, ids) {
+      await db.update(mailboxes).set({}).where(inIdOrder(d, inArray(mailboxes.id, ids))); }`))
+      .toEqual([".update(mailboxes) takes several mailbox rows in its plan's order"]);
+  });
+
+  it("a where held by a name or built by a helper is read through them", () => {
+    expect(plant(`function one(m) { return and(eq(mailboxes.id, m), ne(mailboxes.status, "disabled")); }
+      async function f(db, m) { const w = one(m); await db.update(mailboxes).set({}).where(w); }`)).toEqual([]);
+    expect(plant(`function joined(m) { const parts = [sql\`\${mailboxes.id} = \${m}\`, sql\`\${mailboxes.status} <> 'disabled'\`]; return sql.join(parts, sql\` and \`); }
+      async function f(db, m) { await db.update(mailboxes).set({}).where(joined(m)); }`)).toEqual([]);
+    expect(plant(`function all(a) { return eq(mailboxes.accountId, a); }
+      async function f(db, a) { await db.update(mailboxes).set({}).where(all(a)); }`))
+      .toEqual([".update(mailboxes) takes several mailbox rows in its plan's order"]);
+  });
+
+  it("a write after its transaction took the rows in id order, exclusively, re-takes them; after a shared lock, or none, it does not", () => {
+    const inTx = (lock: string) => plant(`async function f(db, a) { return db.transaction(async (tx) => {
+      ${lock}
+      await tx.update(mailboxes).set({}).where(eq(mailboxes.accountId, a));
+    }); }`);
+    const ordered = `d.forUpdate(tx.select({ id: mailboxes.id }).from(mailboxes).where(eq(mailboxes.accountId, a)).orderBy(asc(mailboxes.id))`;
+    expect(inTx(`await ${ordered});`)).toEqual([]);
+    expect(inTx(`await ${ordered}, { mode: "share" });`)).toEqual([".update(mailboxes) takes several mailbox rows in its plan's order"]);
+    expect(inTx("")).toEqual([".update(mailboxes) takes several mailbox rows in its plan's order"]);
+    // The operator's dedup: a raw select in id order, then the raw write.
+    expect(plant(`async function f(db, ids) { return db.transaction(async (tx) => {
+      await rows(tx, sql\`select id from mailboxes where id in (\${ids}) order by id for update\`);
+      await tx.execute(sql\`update mailboxes set status = 'disabled' where id in (\${ids})\`);
+    }); }`)).toEqual([]);
+  });
+
+  it("a second statement of one transaction taking several rows, each in id order, is refused", () => {
+    expect(plant(`${inIdOrder} async function f(db, a) { return db.transaction(async (tx) => {
+      await tx.update(mailboxes).set({}).where(inIdOrder(d, eq(mailboxes.accountId, a)));
+      await tx.update(mailboxes).set({}).where(inIdOrder(d, eq(mailboxes.status, "connected")));
+    }); }`)).toEqual([".update(mailboxes) takes several mailbox rows after another statement of its transaction took some"]);
   });
 });
