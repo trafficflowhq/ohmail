@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.45" date="2026-11-07">
+      <description>
+        <ul>
+          <li>Send later works with attachments on the desktop</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.44" date="2026-11-06">
       <description>
         <ul>
@@ -110,15 +117,6 @@
         <ul>
           <li>Escape in a reply's subject goes back to the reply</li>
           <li>Searching a common word answers faster again</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.40" date="2026-11-05">
-      <description>
-        <ul>
-          <li>Attached files show a picture of themselves while you write</li>
-          <li>Contributors: the search budget is judged in a workflow of its own</li>
-          <li>The phone shows what you attached, and opens it</li>
         </ul>
       </description>
     </release>
