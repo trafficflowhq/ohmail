@@ -677,6 +677,21 @@ export interface LeasePermit {
    * install reads the claim fresh in, less the clock skew an admitted peer may carry.
    */
   standing(): "held" | "stale" | "revoked";
+  /**
+   * A CYCLE EDGE WITH NO WRITE STILL RENEWS: once the last read is a TTL old, read (and renew) the
+   * claim, so a long drain that files nothing never lets it go stale. Otherwise free: no write is
+   * counted and the folder is not stamped.
+   *
+   * @throws {OrganizerStandDownError} this permit is revoked, or the renewal found another holder.
+   * @throws {LeaseUnavailableError} the lease could not be read — NOT a stand-down.
+   */
+  keepAlive(): Promise<void>;
+}
+
+/** {@link LeasePermit.keepAlive} for a cycle's authority; a reader holds no claim to renew. */
+export async function keepLeaseAlive(authority: OrganizerWriteAuthority): Promise<void> {
+  if ("noLease" in authority) return;
+  await authority.keepAlive();
 }
 
 /** The five facts a permit names, so a write can say which claim it is riding. */
@@ -1036,6 +1051,14 @@ export async function acquireLeasePermit(input: LeasePermitInput): Promise<Lease
       // The stamp is asked only here: a boundary that is about to re-read anyway has nothing to
       // prove, and paying for both would put a STATUS in front of every hundredth gate run.
       if (await movedSince()) await read();
+    },
+    async keepAlive(): Promise<void> {
+      if (revoked) {
+        throw new OrganizerStandDownError({
+          organize: false, reason: "organized_elsewhere:unknown", state: "held", by: null,
+        });
+      }
+      if (permitAge() >= ttlMs) await read();
     },
   };
 }

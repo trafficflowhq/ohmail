@@ -16,6 +16,7 @@ import type {
 import type { ProfileIo, RawProfileMessage } from "@trafficflow/core/adapters/organizer-profile";
 import { folderState, mailboxes, messages } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
+import { requestOrganizerTakeover } from "../src/organize-here.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
 
@@ -118,6 +119,14 @@ class MetaWorld {
     });
   }
 
+  /** The newest heartbeat `installId`'s claims carry, or null for none. */
+  newestBeat(installId: string): number | null {
+    const beats = this.claims.map((c) => parseClaim(c.raw, c.ref))
+      .filter((c): c is OrganizerClaim => c !== null && !isMalformed(c) && c.installId === installId)
+      .map((c) => c.heartbeat.getTime());
+    return beats.length === 0 ? null : Math.max(...beats);
+  }
+
   /** The claims standing in the folder right now, parsed. */
   liveClaims(): Array<{ installId: string; nonce: string }> {
     return this.claims
@@ -211,6 +220,8 @@ interface Rig {
   batched: boolean;
   cycles: number;
   moves: number;
+  /** Cycles left that report a backlog and file nothing, each moving the clock `stepMs`. */
+  drain?: { cycles: number; stepMs: number };
 }
 
 function rigAdapter(rig: Rig): (cfg: ImapConfig) => MailboxAdapter {
@@ -246,6 +257,11 @@ function rigAdapter(rig: Rig): (cfg: ImapConfig) => MailboxAdapter {
     async changesSince(): Promise<ChangeBatch> {
       rig.cycles += 1;
       spend();
+      if (rig.drain !== undefined && rig.drain.cycles > 0) {
+        rig.drain.cycles -= 1;
+        nowMs += rig.drain.stepMs;
+        return { ...empty, hasBacklog: true };
+      }
       return { ...empty };
     },
     async move(locator: NativeLocator, toFolder: string): Promise<NativeLocator> {
@@ -670,5 +686,83 @@ describe("a renewal this install performed is this install's own claim", () => {
     }, "this install's own lapsed claim was never taken back").toEqual({
       organizing: true, role: "organizer", claims: 1, sibling: false,
     });
+  });
+});
+
+describe("a long drain that files nothing keeps the claim it organizes under fresh", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => {
+    for (const c of cleanups.splice(0).reverse()) await c();
+    nowMs = Date.parse("2026-09-13T09:00:00.000Z");
+  });
+  /** The staleness window every install here reads a claim in: twice the permit's TTL. */
+  const WINDOW_MS = 120_000;
+
+  async function boot(rig: Rig, consent: "organizer" | "none", machineName: string): Promise<Sidecar> {
+    const dataDir = await freshDataDir("ohmail-keepalive-");
+    const sidecar = await createSidecar({
+      dataDir,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: PASSWORD } },
+      address: ADDRESS, machineName,
+      pollIntervalMs: 60 * 60 * 1000,
+      leaseStaleAfterMs: WINDOW_MS,
+      adapterFactory: rigAdapter(rig),
+      now,
+      log: () => {},
+      dkimKeys: null,
+    });
+    cleanups.push(async () => {
+      await sidecar.stop();
+      rmSync(dataDir, { recursive: true, force: true });
+    });
+    if (consent === "organizer") {
+      await sidecar.db.update(mailboxes)
+        .set({ organizeConsentedAt: new Date(nowMs), organizerRole: "organizer" })
+        .where(isNull(mailboxes.organizeConsentedAt));
+    }
+    await sidecar.start();
+    nowMs += 5_000;
+    return sidecar;
+  }
+  const rigOn = (meta: MetaWorld): Rig => ({ meta, armed: null, batched: false, cycles: 0, moves: 0 });
+  const appendsOf = (meta: MetaWorld): number => meta.wire.filter((w) => w === "claim:append").length;
+
+  it("a drain of 2.5 windows: the claim stays fresh, a peer's look says held, and a fresh install's join yields", async () => {
+    const meta = new MetaWorld();
+    const rig = rigOn(meta);
+    const organizer = await boot(rig, "organizer", "organizing host");
+    expect(organizer.organizerState().organizing, "the precondition: this install organizes").toBe(true);
+    const ours = meta.liveClaims()[0]!.installId;
+
+    rig.drain = { cycles: 20, stepMs: 15_000 };
+    await organizer.syncMailbox(organizer.world.mailboxId);
+    expect(rig.drain.cycles, "the drain did not run its whole backlog").toBe(0);
+    const age = nowMs - meta.newestBeat(ours)!;
+    expect(age, "the claim aged out while its organizer drained").toBeLessThan(WINDOW_MS);
+
+    const peer = await boot(rigOn(meta), "none", "the new laptop");
+    expect((await peer.peekOrganizer(peer.world.mailboxId)).answer, "a peer reads the organizer as gone").toBe("held");
+    const pressed = await requestOrganizerTakeover(peer.db, { mailboxId: peer.world.mailboxId, now: now(), intent: "join" });
+    expect(pressed.outcome).toBe("authorized");
+    await peer.syncMailbox(peer.world.mailboxId).catch(() => undefined);
+    expect({
+      joined: peer.organizerState().organizing,
+      claims: meta.liveClaims().map((c) => c.installId === ours ? "organizer" : "joiner"),
+    }, "a join displaced the organizer whose drain was still running").toEqual({ joined: false, claims: ["organizer"] });
+  });
+
+  it("CONTROL: a drain shorter than the permit's TTL renews nothing the gate did not", async () => {
+    const meta = new MetaWorld();
+    const rig = rigOn(meta);
+    const organizer = await boot(rig, "organizer", "organizing host");
+    let before = appendsOf(meta);
+    await organizer.syncMailbox(organizer.world.mailboxId);
+    const quietPass = appendsOf(meta) - before;
+    nowMs += 5_000;
+    rig.drain = { cycles: 3, stepMs: 15_000 };
+    before = appendsOf(meta);
+    await organizer.syncMailbox(organizer.world.mailboxId);
+    expect(rig.drain.cycles).toBe(0);
+    expect(appendsOf(meta) - before, "a 45 s drain renewed the claim").toBe(quietPass);
   });
 });

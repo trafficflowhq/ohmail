@@ -79,6 +79,21 @@ describe("the gap in the profile envelope", () => {
     expect(rest).toEqual(makeProfileDoc(PAYLOAD, META));
   });
 
+  /* A quit and a phone leaving the foreground resume; a person's Stop does not, and says nothing. */
+  it("`resumes` round-trips as the literal true; any other value reads as a key without it", () => {
+    const resumes: ProfileGap = { ...GAP, resumes: true };
+    const r = parsed(formatProfileMessage(makeProfileDoc(PAYLOAD, { ...META, gap: resumes }), { installId: WRITER }));
+    expect(r.doc!.gap).toEqual(resumes);
+    expect(r.encoded).toBe(true);
+    expect(parsed(formatProfileMessage(makeProfileDoc(PAYLOAD, { ...META, gap: GAP }), { installId: WRITER })).doc!.gap)
+      .toEqual(GAP);
+    for (const value of [false, "true", 1, null]) {
+      const read = parsed(withGap({ ...GAP, resumes: value }));
+      expect(read.doc!.gap, `resumes: ${JSON.stringify(value)}`).toEqual(GAP);
+      expect(read.gapRefused).toBeUndefined();
+    }
+  });
+
   it("absent is UNSTATED: no key on the document and nothing refused", () => {
     const r = parsed(withGap(undefined));
     expect("gap" in r.doc!).toBe(false);
@@ -121,6 +136,7 @@ describe("the gap in the profile envelope", () => {
   it("readProfileGap answers undefined, a gap, or a refusal", () => {
     expect(readProfileGap(undefined, WRITER)).toBeUndefined();
     expect(readProfileGap(GAP, WRITER)).toEqual(GAP);
+    expect(readProfileGap({ ...GAP, resumes: true }, WRITER)).toEqual({ ...GAP, resumes: true });
     expect(readProfileGap(GAP, null)).toHaveProperty("refused");
     expect(readProfileGap({ ...GAP, since: GAP.at }, WRITER)).toEqual({ ...GAP, since: GAP.at });
   });

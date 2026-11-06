@@ -619,6 +619,9 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     expect(b.gap(), "a letter from before B's look was counted").toMatchObject({ letters: 1, pressed: null });
   }, 60_000);
 
+  /* NEITHER EXIT IS A STOP (ruling 2026-11-06): X stays the organizer of record and claims again when
+     it next runs, so for one staleness window after it let go B is shown X holding the mailbox and
+     B's join is refused; past the window the press is admitted. Only a person's Stop frees it at once (a). */
   it.each(["quit", "background"] as const)("(p) %s soon after X saw the holder go: B counts from that look, never back over the holder's turn", async (exit) => {
     const meta = new MemoryMetaFolder();
     await meta.appendClaim(claimOf("install-y", new Date()));
@@ -639,9 +642,13 @@ describe.runIf(ON_DEVICE_STORE)("the gap travels across installs, two stores and
     await x.organizing();
     expect(x.engine.runtimes().organizer[x.id]?.organizing, "premise: X organizes").toBe(true);
     await exitBy(x, exit);
-    expect(meta.newest().doc.gap, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x" });
+    expect(meta.newest().doc.gap, `the ${exit} left no moment in the settings`).toMatchObject({ by: "install-x", resumes: true });
     await b.engine.resume();
     expect(b.gap().since, "B's window reached back over Y's turn").toBeGreaterThanOrEqual(sawItGo);
+    expect(stateOf(b), `B was not shown X holding the mailbox right after its ${exit}`).toBe("held");
+    expect(await b.engine.claimHere({ by: "press" }), "a join inside the window was admitted").toBe("held_consented");
+    b.clock.skewMs = 15 * 60_000;
+    await b.engine.resume();
     await b.organizeHere();
     expect(b.gap(), "a letter taken in while Y held was offered").toEqual({ since: null, letters: null, pressed: null });
     expect(b.server.moves).toEqual([]);

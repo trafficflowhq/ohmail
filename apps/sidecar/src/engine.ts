@@ -165,6 +165,7 @@ import {
   readMailboxLease, acquireLeasePermit, releaseMailboxClaim, LeaseUnavailableError,
   OrganizerStandDownError,
   leaseStoodDown, writeDoorOf, cycleWriteAuthority, DEFAULT_STALE_AFTER_MS, leaseBlockReason, leaseRefusalIsNamed,
+  keepLeaseAlive,
   type OrganizerWriteAuthority,
 } from "@trafficflow/worker/lease";
 // The APPEND-LESS read, straight from core: an install that has not been asked to organize must
@@ -176,10 +177,14 @@ import {
   type LeasePeekAnswer, type LeaseOp, type OrganizerKind,
   type OrganizerIntent,
   isMalformed, metaReadBudget, parseClaim, resumesOwnClaim, withMinted, writtenByThisProcess, type LeaseSelf,
+  isRenewalEvidence, type LeaseOccupancy,
 } from "@trafficflow/core/adapters/organizer-lease";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import type { ImapAuth } from "@trafficflow/core/adapters/imap-types";
-import { OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror } from "@trafficflow/worker/profile";
+import {
+  DEFAULT_PROFILE_FLUSH_INTERVAL_MS, OrganizerProfileSync, readNewestSettings, sweepHeld, syncProfileMirror,
+  type NewestSettings,
+} from "@trafficflow/worker/profile";
 import type { ProfileIo } from "@trafficflow/core/adapters/organizer-profile";
 // THE SYMMETRIC-TAKEOVER REQUEST DRAIN (0.14.1), from the worker's own subpath for
 // the same reason `OrganizerProfileSync` is: one implementation of "apply a reader's decision" or
@@ -5316,6 +5321,47 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       let lastPassOrganizing = false;
       /** The last gate's organize continued a claim this process still held in the folder (`continued`). */
       let gateContinued = false;
+      /**
+       * THE READER'S MIRROR OWES A READ NOW, past its cadence: owed at launch, at a stand-down and
+       * when a look records another holder, until the copy is the holder's own or the bound ends.
+       */
+      let mirrorOwed = true;
+      let mirrorOwedSince = monotonic();
+      const oweMirror = (): void => { mirrorOwed = true; mirrorOwedSince = monotonic(); };
+
+      /**
+       * THE NEWEST SETTINGS DOCUMENT, read once per stretch of empty claim folder; `undefined` is
+       * unread. A quit hands the claim back and leaves its let-go key in that document, so the key
+       * is the one trace of an organizer between its quit and its relaunch's first gate.
+       */
+      let newestSettingsSeen: NewestSettings | null | undefined;
+      const readSettingsOnce = async (): Promise<NewestSettings | null> => {
+        if (newestSettingsSeen !== undefined) return newestSettingsSeen;
+        const mkIo = (adapter as Partial<{
+          profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
+        }>).profileIo;
+        newestSettingsSeen = typeof mkIo === "function"
+          ? await readNewestSettings(mkIo.call(adapter, { installId: "reader-profile-mirror", mailboxId: mb.id }), log)
+          : null;
+        return newestSettingsSeen;
+      };
+      /**
+       * WHO SETUP IS SHOWN OVER AN EMPTY FOLDER: the install whose let-go key the newest settings
+       * carry, as live for one staleness window after it let go and as stopped after that. Only for
+       * an install nobody has asked to organize, and never this install's own let-go. Only a key
+       * that says the install resumes (a quit, the phone leaving the foreground): a person's Stop
+       * frees the mailbox at once.
+       */
+      const letGoHolder = async (occupancy: LeaseOccupancy, consentGiven: boolean): Promise<{
+        installId: string; kind: string; state: "held" | "stopped";
+      } | null> => {
+        if (consentGiven || occupancy !== "none") return null;
+        const newest = await readSettingsOnce();
+        const gap = newest?.gap ?? null;
+        if (newest === null || gap === null || gap.resumes !== true || gap.by === installId) return null;
+        const live = isRenewalEvidence(new Date(gap.at), now(), config.leaseStaleAfterMs ?? DEFAULT_STALE_AFTER_MS);
+        return { installId: gap.by, kind: organizerKindColumn(newest.kind), state: live ? "held" : "stopped" };
+      };
 
       /**
        * An install that is not the organizer looks, and still does not claim. Two arms reach
@@ -5416,6 +5462,16 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              `organizer_event_at` — the fifteen-second notice the compare exists to stop.
              Caught by renaming this binding and finding that nothing broke. */
           const holderInstallId = top === null ? null : top.installId;
+          const lookedAt = now().getTime();
+          const quiet = lastLookAt !== null && lookedAt - lastLookAt > 2 * idlePollCeilingMs;
+          lastLookAt = lookedAt;
+          const opening = state !== "held" && (gapOpen !== true || quiet);
+          /* A held folder ends the stretch; an opening re-reads (after a quiet stretch above all). */
+          if (seen.state !== "none" || opening) newestSettingsSeen = undefined;
+          const letGo = await letGoHolder(seen.state, consented);
+          const shownKind = letGo === null ? kind : letGo.kind;
+          const shownState = letGo === null ? state : letGo.state;
+          const shownInstallId = letGo === null ? holderInstallId : letGo.installId;
           /* The REASON is the caller's, because the two arms that peek mean different things by
              the same four columns. A pre-consent install names no reason — nobody has stood
              anything down and putting "another install has claimed this mailbox" in front of
@@ -5443,9 +5499,9 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
            * poll of a settled reader would stamp `organizer_event_at` and the notice would
            * reappear every fifteen seconds for ever.
            */
-          const same = holderSeen.kind === kind && holderSeen.name === name
-            && holderSeen.state === state && holderSeen.capabilities === capabilities
-            && holderSeen.installId === holderInstallId
+          const same = holderSeen.kind === shownKind && holderSeen.name === name
+            && holderSeen.state === shownState && holderSeen.capabilities === capabilities
+            && holderSeen.installId === shownInstallId
             && (holderSeen.since ? holderSeen.since.getTime() : null)
               === (since ? since.getTime() : null);
           /* THE WINDOW IS THE GAP THIS READER IS LOOKING AT NOW. A look that finds no live holder
@@ -5455,23 +5511,14 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           /* AFTER A QUIET STRETCH THE WINDOW IS WRITTEN AGAIN (RULING-026 lane A): a hand-back's
              latch, the OS asleep or a long backoff can hide a whole tenure between two looks, and
              only a fresh write reads the key that tenure's release left. Idempotent otherwise. */
-          const lookedAt = now().getTime();
-          const quiet = lastLookAt !== null && lookedAt - lastLookAt > 2 * idlePollCeilingMs;
-          lastLookAt = lookedAt;
-          const opening = state !== "held" && (gapOpen !== true || quiet);
           /* WHERE IT OPENS: a stopped claim's last server stamp; otherwise the gap the last hand-back
-             left in the settings document, read here and never written or cached. */
+             left in the settings document, read fresh at every opening (the stretch's one read). */
           let travelled: TravelledGap | null = null;
           let written: { by: string | null; at: Date } | null = null;
           if (opening && state === null) {
-            const mkIo = (adapter as Partial<{
-              profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
-            }>).profileIo;
-            if (typeof mkIo === "function") {
-              const left = await readNewestSettings(mkIo.call(adapter, { installId: "reader-profile-mirror", mailboxId: mb.id }), log);
-              if (left !== null) written = { by: left.by, at: left.at };
-              if (left?.gap) travelled = { since: new Date(left.gap.since), by: left.gap.by, at: new Date(left.gap.at) };
-            }
+            const left = await readSettingsOnce();
+            if (left !== null) written = { by: left.by, at: left.at };
+            if (left?.gap) travelled = { since: new Date(left.gap.since), by: left.gap.by, at: new Date(left.gap.at) };
           }
           const beats = seen.holders.map((h) => h.heartbeat.getTime());
           const gapWrite = state === "held"
@@ -5499,26 +5546,27 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              looked") is what the reader's two sentences are about, while a peer restarting shifts
              `organized_since` and a machine being renamed shifts the name — neither is news, and
              telling somebody about them is the notice crying wolf. */
-          const stateChanged = holderSeen.state !== state;
+          const stateChanged = holderSeen.state !== shownState;
           await db.update(mailboxes)
             .set({
-              organizedByKind: kind,
+              organizedByKind: shownKind,
               organizedByName: name,
               organizedSince: since,
-              organizerState: state,
+              organizerState: shownState,
               // Mail 0089 — the fifth holder column, on the same read.
               organizedByCapabilities: capabilities,
               // Mail 0092 — the sixth, on the same read as the kind: the two must never disagree.
-              organizedByInstallId: holderInstallId,
+              organizedByInstallId: shownInstallId,
               ...(stateChanged ? { organizerEventAt: now() } : {}),
               ...gapWrite,
               ...heldEnds,
             })
             .where(eq(mailboxes.id, mb.id));
           if (gapWrite !== null) { gapOpen = state !== "held"; if (gapOpen) gapOwed.add(mb.id); }
-          holderSeen.kind = kind; holderSeen.name = name;
-          holderSeen.since = since; holderSeen.state = state;
-          holderSeen.capabilities = capabilities; holderSeen.installId = holderInstallId;
+          if (holderSeen.installId !== shownInstallId) oweMirror();
+          holderSeen.kind = shownKind; holderSeen.name = name;
+          holderSeen.since = since; holderSeen.state = shownState;
+          holderSeen.capabilities = capabilities; holderSeen.installId = shownInstallId;
         } catch (err) {
           /* And it is recorded where a person can see it, not only in a log. Keeping the row's
            * previous answer is right — a failed look is not evidence about who holds the
@@ -5557,9 +5605,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        * document before the claim, so an install that slept through this turn counts from here and
        * never back over it. `at` is the engine's own clock, the one its claim was stamped with;
        * `since` is a Stop's start with `at` as the press ({@link handBackStart}, mail 0169), so it
-       * never reaches back over a holder's turn this row recorded either.
+       * never reaches back over a holder's turn this row recorded either. `resumes`: this install
+       * stays the organizer of record, unlike a person's Stop ({@link leavingGap}).
        */
-      const lettingGo = async (): Promise<{ gap: { since: string; by: string; at: string } }> => {
+      const lettingGo = async (): Promise<{ gap: { since: string; by: string; at: string; resumes: true } }> => {
         const at = now();
         // Unreadable, `at`: the turn ends now. The phone's hand-back keeps the row's values for the next one.
         let since = at.getTime();
@@ -5572,7 +5621,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             err, reason: "where this turn's gap starts could not be read, so it starts at the instant this install let go",
           });
         }
-        return { gap: { since: new Date(since).toISOString(), by: installId, at: at.toISOString() } };
+        return { gap: { since: new Date(since).toISOString(), by: installId, at: at.toISOString(), resumes: true } };
       };
       /** Such an exit's settings write did not land: said once, and the claim goes back regardless. */
       const settingsNotLeft = (
@@ -6042,7 +6091,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               profileIo(id: { installId: string; mailboxId: string }): ProfileIo;
             }>).profileIo;
             if (typeof mkIo === "function") {
-              await syncProfileMirror({
+              /* OWED, the cadence is skipped (bounded): a stood-down organizer counts with the new
+                 holder's window from its next pass, not one cadence later. */
+              if (mirrorOwed && monotonic() - mirrorOwedSince >= 2 * DEFAULT_PROFILE_FLUSH_INTERVAL_MS) mirrorOwed = false;
+              const mirrored = await syncProfileMirror({
                 db, accountId: world.accountId, mailboxId: mb.id,
                 /* A NAMED READER IDENTITY, not this install's own. `readOrganizerProfile` remembers
                    a position per identity, and borrowing the organizer write-behind's would let a
@@ -6050,7 +6102,10 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                    for the same reason. */
                 io: mkIo.call(adapter, { installId: "reader-profile-mirror", mailboxId: mb.id }),
                 now: now(), log,
+                fresh: mirrorOwed, self: installId,
               });
+              if (mirrored.state === "written" && mirrored.installId !== null
+                && mirrored.installId === holderSeen.installId) mirrorOwed = false;
             }
           }
           return false;
@@ -6452,6 +6507,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              released it — and setting it before the write meant a failed write silently retired
              the handover with it. See {@link priorStandDown}. */
           priorStandDown = outcome.reason;
+          // A reader now: its next pass reads the new holder's settings, past the cadence.
+          oweMirror();
           if (handed !== null && (handed.exported > 0 || handed.unmappable > 0)) {
             log("organizer_stand_down_moves_handed_over", {
               mailboxId: mb.id,
@@ -6951,6 +7008,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           let hasBacklog: boolean;
           let owesFiling: boolean;
           try {
+            // A drain that files nothing still renews its claim once a permit TTL old.
+            if (organizing) await keepLeaseAlive(leasePermit);
             /**
              * THE CYCLE RUNS IN THE INGEST LANE, and every statement it issues inherits it.
              *
@@ -9224,6 +9283,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           if (stopped) return { answer: "unreadable", op: "no_lease_peek_io", cause: undefined };
           return peekOrganizer();
         },
+        /* The consent is the row's, read now: a press can come before the gate's first read. */
+        async letGoHolder(occupancy: LeaseOccupancy) {
+          const [row] = await db.select({ consentedAt: mailboxes.organizeConsentedAt })
+            .from(mailboxes).where(eq(mailboxes.id, mb.id)).limit(1);
+          if (row === undefined) return null;
+          return letGoHolder(occupancy, row.consentedAt !== null);
+        },
       };
       runtimes.add(rt);
       return rt;
@@ -10092,6 +10158,13 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
                 }
                 if (looked.answer === "held" && looked.holder.installId !== installId) {
                   holder = { name: organizerDisplayName(looked.holder.displayName) ?? "", kind: looked.holder.kind };
+                }
+                /* AN EMPTY FOLDER RIGHT AFTER AN ORGANIZER QUIT: its let-go key names it, as the look does. */
+                if (looked.answer === "free" && rt !== undefined) {
+                  const letGo = await rt.letGoHolder(looked.peek.state).catch(() => null);
+                  if (letGo?.state === "held") holder = { name: "", kind: letGo.kind };
+                }
+                if (holder !== null) {
                   /* The engine's own look records the holder; it stays the only writer of those columns. */
                   void rt?.syncUntilQuiet(undefined, { force: true })
                     .catch(() => { /* the drain reports its own failures */ });

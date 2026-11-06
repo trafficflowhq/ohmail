@@ -2404,7 +2404,8 @@ type MarkerFact =
 
 /** What one mirror pass did, for the log and for the tests. */
 export type MirrorOutcome =
-  | { state: "written"; generation: number | bigint; uid: number }
+  /** `installId`: whose document the copy is (null when it named none). */
+  | { state: "written"; generation: number | bigint; uid: number; installId: string | null }
   /** The folder holds no document — a stale cached copy is DISCARDED rather than left standing. */
   | { state: "discarded"; reason: "no_document" }
   /** Nothing was touched, and the reason distinguishes "could not look" from "nothing there". */
@@ -2422,6 +2423,10 @@ export interface MirrorDeps {
   io: ProfileIo;
   now: Date;
   log: (event: string, detail: Record<string, unknown>) => void;
+  /** Read now, past the cadence: a launch, a stand-down or a new holder. */
+  fresh?: boolean;
+  /** This install's id: another install's document is mirrored ahead of this one's own. */
+  self?: string;
 }
 
 /**
@@ -2471,7 +2476,7 @@ export async function syncProfileMirror(deps: MirrorDeps): Promise<MirrorOutcome
   const attempted = lastMirrorAttemptAt.get(memoKey);
   if (attempted !== undefined) stamps.push(attempted);
   if (cached !== undefined && cached.readAt !== null) stamps.push(new Date(cached.readAt).getTime());
-  if (stamps.length > 0) {
+  if (deps.fresh !== true && stamps.length > 0) {
     const ageMs = deps.now.getTime() - Math.max(...stamps);
     if (ageMs >= 0 && ageMs < DEFAULT_PROFILE_FLUSH_INTERVAL_MS) {
       return { state: "kept", reason: "within_cadence" };
@@ -2483,7 +2488,7 @@ export async function syncProfileMirror(deps: MirrorDeps): Promise<MirrorOutcome
 
   let read: ProfileReadResult;
   try {
-    read = await readOrganizerProfile(deps.io);
+    read = await readOrganizerProfile(deps.io, deps.self === undefined ? undefined : { foreignTo: deps.self });
   } catch (err) {
     /* THE THROWN VALUE IS PASSED WHOLE — {@link OrganizerProfileSync.noteFailure}'s rule, and
      * this site was the one that did not follow it. Pre-stringifying it gave the logger a string
@@ -2620,7 +2625,7 @@ export async function applyProfileRead(
       mailboxId: deps.mailboxId, accountId: deps.accountId, reason: read.screeningRefused,
     });
   }
-  return { state: "written", generation, uid };
+  return { state: "written", generation, uid, installId: read.installId };
 }
 
 export { PROFILE_VERSION };
@@ -2630,7 +2635,7 @@ const GAP_ABSENT = "absent";
 
 /** One string per gap, `absent` for none — the release flush's dirty check. */
 export function gapKeyOf(g: ProfileGap | undefined): string {
-  return g === undefined ? GAP_ABSENT : JSON.stringify([g.since, g.by, g.at]);
+  return g === undefined ? GAP_ABSENT : JSON.stringify([g.since, g.by, g.at, g.resumes === true]);
 }
 
 /** What a reader's look takes from the newest settings document: its gap key, its writer, its write. */
@@ -2639,6 +2644,8 @@ export interface NewestSettings {
   /** The writer's `X-Ohmail-Install-Id`, or null when it named none. */
   by: string | null;
   at: Date;
+  /** The writer's producer kind (`local`, `cloud`, `mobile`). */
+  kind: string;
 }
 
 /**
@@ -2655,7 +2662,9 @@ export async function readNewestSettings(
     const at = new Date(read.doc.updatedAt);
     if (!Number.isFinite(at.getTime())) return null;
     if (read.gapRefused !== undefined) log("profile_gap_refused", { reason: read.gapRefused });
-    return { gap: read.gapRefused === undefined ? read.doc.gap ?? null : null, by: read.installId, at };
+    return {
+      gap: read.gapRefused === undefined ? read.doc.gap ?? null : null, by: read.installId, at, kind: read.doc.producer.kind,
+    };
   } catch (err) {
     log("profile_gap_read_failed", {
       err, reason: "the settings document could not be read, so this look opens the window as before",

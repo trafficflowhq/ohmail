@@ -6,7 +6,7 @@ import type {
 } from "@trafficflow/core/adapters/organizer-lease";
 import {
   LeaseUnavailableError, MIN_PERMIT_TTL_MS, OrganizerStandDownError, acquireLeasePermit,
-  leaseStoodDown, readMailboxLease,
+  keepLeaseAlive, leaseStoodDown, readMailboxLease,
 } from "../src/lease.js";
 import { FakeMetaFolder } from "./_fakeadapter.js";
 import { PermitClock } from "./_permit-clock.js";
@@ -189,6 +189,46 @@ describe("the organizer lease permit — a dated receipt, not a boolean", () => 
     expect(stand.reason).toBe("organized_elsewhere:local");
     expect(stand.state).toBe("held");
     expect(stand.heldBy).toBe("ohmail on the laptop");
+  });
+
+  it("keepAlive renews once the receipt is a TTL old, and counts no write and asks no stamp", async () => {
+    const meta = new FakeMetaFolder();
+    const t = new PermitClock(1_000_000);
+    const permit = await acquireLeasePermit({
+      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, ...t.pair, ttlMs: 60_000,
+    });
+    t.advance(59_999);
+    await permit.keepAlive();
+    expect({ reads: permit.reads, appends: meta.appends, probes: permit.probes, writes: permit.writesSinceRead })
+      .toEqual({ reads: 1, appends: 1, probes: 0, writes: 0 });
+    t.advance(1);
+    await permit.keepAlive();
+    expect({ reads: permit.reads, appends: meta.appends }, "a TTL-old receipt was not renewed").toEqual({ reads: 2, appends: 2 });
+    await keepLeaseAlive(permit);
+    expect(permit.reads, "a fresh renewal was renewed again").toBe(2);
+  });
+
+  it("keepAlive past the TTL finds the takeover and stands down; a dead permit stays dead; a reader renews nothing", async () => {
+    const meta = new FakeMetaFolder();
+    const t = new PermitClock(1_000_000);
+    const permit = await acquireLeasePermit({
+      adapter: adapterOf(meta), self: selfOf(), ...REQUIRED, ...t.pair, ttlMs: 60_000,
+    });
+    meta.messages.length = 0;
+    meta.messages.push({
+      ref: 42,
+      raw: claim({
+        kind: "local", installId: "ohmail-desktop:laptop", nonce: randomUUID(),
+        claimedAt: new Date(t.ms), heartbeat: new Date(t.ms), displayName: "ohmail on the laptop",
+      }),
+    });
+    t.advance(60_000);
+    await expect(permit.keepAlive()).rejects.toBeInstanceOf(OrganizerStandDownError);
+    expect(leaseStoodDown(permit)).toBe(true);
+    const reads = permit.reads;
+    await expect(keepLeaseAlive(permit)).rejects.toBeInstanceOf(OrganizerStandDownError);
+    expect(permit.reads, "a revoked permit read the lease again").toBe(reads);
+    await expect(keepLeaseAlive({ noLease: "reader" })).resolves.toBeUndefined();
   });
 
   it("a restored clone wearing our install id is not us — the nonce is threaded, never re-armed", async () => {

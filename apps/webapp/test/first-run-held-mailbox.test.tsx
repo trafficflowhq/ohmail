@@ -325,6 +325,12 @@ describe("the claim question cannot be walked past", () => {
     expect(stopped.picked()).toBe("here");
   });
 
+  it("AN ORGANIZER THAT JUST QUIT (unnamed, no since) is asked about, with nothing pre-selected", async () => {
+    // What the engine's look writes from a quit's let-go key over an empty claim folder.
+    const s = await mount({ facts: facts({ ...PRE_CONSENT, organizedBy: { kind: "local", name: null, since: null }, organizerState: "held" }) });
+    expect({ heading: s.heading(), picked: s.picked() }).toEqual({ heading: t.elsewhereTitle, picked: null });
+  });
+
   it("A PICKED 'Organize here instead' walks on to Agree, which asks for the takeover", async () => {
     const s = await mount({ facts: facts(PEEKED) });
     await s.pick("here");

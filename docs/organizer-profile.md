@@ -446,7 +446,9 @@ writers, so last-incumbent-wins and no merge algorithm exists.
 
 An install that only reads the mailbox keeps a copy of the current document,
 read again every few minutes, and shows the mail where the organizer's rules
-place it. It applies none of them itself: nothing is moved or screened by a
+place it. It reads it at once when it launches, when it stops organizing, and
+when another install starts organizing, until it holds the organizer's own
+copy; another install's document is kept ahead of its own. It applies none of them itself: nothing is moved or screened by a
 reading install.
 
 ## A found document stays — and holds the screening

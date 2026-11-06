@@ -10,7 +10,7 @@
  */
 
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import type { LeasePeekAnswer } from "@trafficflow/core/adapters/organizer-lease";
+import type { LeaseOccupancy, LeasePeekAnswer } from "@trafficflow/core/adapters/organizer-lease";
 import type { SyncDeps } from "@trafficflow/worker/sync";
 import type { OrganizerProfileSync, SettingsLeft } from "@trafficflow/worker/profile";
 import type { MailboxDisabledReason, MailboxSyncBlockReason } from "@trafficflow/db";
@@ -498,6 +498,13 @@ export interface LocalMailboxRuntime {
    * SELECT and a FETCH imapflow already queues, and a press made to wait out a drain hangs.
    */
   peekOrganizer(): Promise<LeasePeekAnswer>;
+  /**
+   * WHO SETUP IS SHOWN OVER AN EMPTY CLAIM FOLDER: the install whose let-go key the newest settings
+   * carry, `held` for one staleness window after it let go and `stopped` after that. `null` once
+   * this mailbox has an organize consent, over a folder that is not empty, or with no key that says
+   * the install resumes (a person's Stop says nothing of the kind).
+   */
+  letGoHolder(occupancy: LeaseOccupancy): Promise<{ installId: string; kind: string; state: "held" | "stopped" } | null>;
   /** Can this install open this mailbox right now? Read fresh from the store on every call. */
   credentialState(): Promise<CredentialState>;
   /**

@@ -112,7 +112,7 @@ describe("a found document is cached with the generation its uid was read under"
       state: "found", doc: DOC as never, installId: "cloud-1", ref: 42,
       generation: 1757000000, residue: 0,
     });
-    expect(out).toEqual({ state: "written", generation: 1757000000, uid: 42 });
+    expect(out).toEqual({ state: "written", generation: 1757000000, uid: 42, installId: "cloud-1" });
     const r = await row(w);
     expect(r).toMatchObject({ uid: 42, uidvalidity: 1757000000n });
     expect(r!.doc).toEqual(DOC);
@@ -343,6 +343,43 @@ describe("the cadence bounds what a reader pays", () => {
     expect(r!.uid).not.toBe(42);
     expect(calls.append).toBe(0);
     expect(calls.expunge).toBe(0);
+  });
+
+  it("`fresh` reads inside the cadence (a launch, a stand-down, a new holder); the next poll is bounded again", async () => {
+    forgetMirrorCadence();
+    const w = await world();
+    const { io, calls } = countingIo({ generation: 1757000000, uid: 42 });
+    expect(await mirror(w, io, NOW)).toMatchObject({ state: "written" });
+    const owed = await syncProfileMirror({
+      db: w.db as never, accountId: w.accountId, mailboxId: w.mailboxId, io, now: new Date(NOW.getTime() + POLL_MS), log, fresh: true,
+    });
+    expect(owed, "an owed read was kept for the cadence").toMatchObject({ state: "written", installId: "the-organizer" });
+    expect(await mirror(w, io, new Date(NOW.getTime() + 2 * POLL_MS))).toEqual({ state: "kept", reason: "within_cadence" });
+    expect(calls.list).toBe(2);
+  });
+
+  it("`self` mirrors another install's document ahead of this install's own newer one", async () => {
+    const w = await world();
+    const at = (iso: string) => ({ ...(DOC as object), updatedAt: iso }) as never;
+    const io: ProfileIo = {
+      ensureMetaFolder: async () => { /* no-op */ },
+      listProfileMessages: async () => [
+        { ref: 41, raw: formatProfileMessage(at("2026-09-07T10:00:00.000Z"), { installId: "the-organizer" }), generation: 1757000000 },
+        { ref: 42, raw: formatProfileMessage(at("2026-09-07T10:30:00.000Z"), { installId: "this-install" }), generation: 1757000000 },
+      ],
+      appendProfile: async () => { throw new Error("a mirror read must never append"); },
+      removeProfiles: async () => { throw new Error("a mirror read must never expunge"); },
+    };
+    const read = (self?: string) => {
+      forgetMirrorCadence();
+      return syncProfileMirror({
+        db: w.db as never, accountId: w.accountId, mailboxId: w.mailboxId, io, now: NOW, log, fresh: true,
+        ...(self === undefined ? {} : { self }),
+      });
+    };
+    expect(await read()).toMatchObject({ state: "written", installId: "this-install", uid: 42 });
+    expect(await read("this-install"), "a stood-down reader mirrored its own settings")
+      .toMatchObject({ state: "written", installId: "the-organizer", uid: 41 });
   });
 
   it("a mailbox whose organizer has published NOTHING is bounded too", async () => {

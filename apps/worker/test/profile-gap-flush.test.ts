@@ -93,6 +93,18 @@ describe("the gap a hand-back leaves in the settings document", () => {
     expect(r.folder.gapOfLast()).toEqual(LATER);
   });
 
+  it("a key that says the install resumes is its own write beside the same key without it", async () => {
+    const r = await rig();
+    await r.decide("first");
+    await r.sync.onOrganize();
+    expect(await r.sync.flushBeforeLeaving(HELD, undefined, { gap: GAP })).toBe("saved");
+    expect(await r.sync.flushBeforeLeaving(HELD, undefined, { gap: { ...GAP, resumes: true } })).toBe("saved");
+    expect(r.folder.appends, "the resuming key was taken for the one already written").toBe(3);
+    expect(r.folder.gapOfLast()).toEqual({ ...GAP, resumes: true });
+    expect(await r.sync.flushBeforeLeaving(HELD, undefined, { gap: { ...GAP, resumes: true } })).toBe("saved");
+    expect(r.folder.appends, "the same key was written twice").toBe(3);
+  });
+
   it("the next ordinary write drops the key", async () => {
     const r = await rig();
     await r.decide("first");

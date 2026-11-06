@@ -248,11 +248,15 @@ export interface ProfileScreening {
  * person's press, or its own uncounted window), `by` the releasing install (its message's
  * `X-Ohmail-Install-Id`), `at` the release. The next install's look opens its window from it; any
  * other write leaves it out. Absent = unstated. `PROFILE_VERSION` does not move.
+ * `resumes`: the install let go without a person's Stop (the app quit, or the phone left the
+ * foreground) and stays the organizer of record, so it claims again when it next runs. Only the
+ * literal `true`; a Stop, and every older writer, leave it out.
  */
 export interface ProfileGap {
   since: string;
   by: string;
   at: string;
+  resumes?: true;
 }
 
 /** The longest install id a gap key may name; the lease's ids are far shorter. */
@@ -829,7 +833,9 @@ export function makeProfileDoc(
       screening: { baselineAt: meta.screening.baselineAt, dormancyDays: meta.screening.dormancyDays, scope: meta.screening.scope },
     }),
     // ENVELOPE too, after `screening`: only a release flush supplies it.
-    ...(meta.gap === undefined ? {} : { gap: { since: meta.gap.since, by: meta.gap.by, at: meta.gap.at } }),
+    ...(meta.gap === undefined ? {} : {
+      gap: { since: meta.gap.since, by: meta.gap.by, at: meta.gap.at, ...(meta.gap.resumes === true ? { resumes: true as const } : {}) },
+    }),
     // ENVELOPE, after `gap`: the organizer's own bookkeeping, never the person's configuration.
     ...(meta.applied === undefined ? {} : { applied: meta.applied.slice(0, PROFILE_APPLIED_MAX) }),
     // ENVELOPE, after `applied`: absent when there is none to record.
@@ -1110,7 +1116,8 @@ export function readProfileGap(raw: unknown, installId: string | null): ProfileG
     return { refused: "gap.by is not an install id" };
   }
   if (o.by !== installId) return { refused: "gap.by is not the install that wrote the message" };
-  return { since: o.since, by: o.by, at: o.at };
+  // Only the literal `true` says the install resumes; anything else reads as a key without it.
+  return { since: o.since, by: o.by, at: o.at, ...(o.resumes === true ? { resumes: true as const } : {}) };
 }
 
 const APPLIED_ID = /^[A-Za-z0-9._-]{1,128}$/;

@@ -1255,12 +1255,12 @@ function isBelievableHeartbeat(heartbeat: Date, now: Date): boolean {
  * Evidence that something renewed this record recently — believable, AND inside the window. The
  * conjunction has a name because its halves drifted apart: the election excluded implausible
  * stamps while the gate's unrankable scan and the preview's per-holder `fresh` read the bare
- * reader-clock test, under which a 2099 stamp is fresh at every real instant. Its caller today is
- * {@link peekLease}'s per-holder `fresh`; {@link readFolderClock} deliberately does not call it —
+ * reader-clock test, under which a 2099 stamp is fresh at every real instant. Its callers are
+ * {@link peekLease}'s per-holder `fresh` and the engine's look at a let-go key; {@link readFolderClock} deliberately does not call it —
  * it establishes believability first with a `continue`, and calling this afterwards would test
  * believability twice.
  */
-function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): boolean {
+export function isRenewalEvidence(heartbeat: Date, now: Date, staleAfterMs: number): boolean {
   // CAPPED AT `now`, exactly as the reference is, and for the same reason: a stamp ahead of us is
   // evidence that the writer is ALIVE, not evidence about how much time has passed. For every
   // positive window the cap changes nothing — an ahead stamp gives `now − now = 0`, which is fresh
