@@ -48,7 +48,7 @@ interface Client {
   close(): void;
   on(event: string, fn: (e: unknown) => void): void;
 }
-type Refusal = Error & { code?: string; tlsFailed?: boolean; certificateRefused?: boolean; certificateKind?: string };
+type Refusal = Error & { code?: string; tlsFailed?: boolean; upgradeFailed?: boolean; certificateRefused?: boolean; certificateKind?: string };
 
 beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "close-behind-connect-"));
@@ -224,8 +224,9 @@ describe("the phone bundle's imapflow, a refused STARTTLS certificate", () => {
     const err = await dial(phone.ImapFlow, server.port);
     expect(err).not.toBeNull();
     expect(err!.tlsFailed).toBe(true);
+    expect(err!.upgradeFailed).toBe(true);
     expect(err!.certificateRefused).toBeUndefined();
-    expect(err!.message).toMatch(/no peer certificate/);
+    expect(err!.message).toMatch(/closed before the TLS upgrade finished/);
     expect(server.logins()).toBe(0);
   }, 30_000);
 

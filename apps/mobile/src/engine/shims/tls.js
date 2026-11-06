@@ -148,9 +148,11 @@ function detachPlainSide(existing, underlying) {
 
 /**
  * THE UPGRADE ENDS ONE WAY, WITHIN A BOUND, AND SAYS WHICH. Every error before the handshake is
- * confirmed carries `tlsFailed` (imapflow's own flag), so a send can tell "never secured, nothing
- * offered" from an unknown fate; a handshake still open at the bound is refused by name rather than
- * left to the caller's idle timer. One line per upgrade records how it ended.
+ * confirmed carries `tlsFailed` (imapflow's own flag) and `upgradeFailed` (the switch itself broke,
+ * which Connect does not word as a server without encryption); a close before it is said as one
+ * such error, since the caller listens only for errors while it upgrades. A handshake still open at
+ * the bound is refused by name. Until the end is confirmed no byte is read (`net.js`). One line per
+ * upgrade records how it ended.
  */
 function superviseUpgrade(native, bridge, deadlineMs = UPGRADE_DEADLINE_MS) {
   const started = Date.now();
@@ -162,15 +164,30 @@ function superviseUpgrade(native, bridge, deadlineMs = UPGRADE_DEADLINE_MS) {
     clearTimeout(timer);
     socketLogLine("tls_upgrade_settled", { outcome, connectMs: Date.now() - started });
   };
+  const failed = (raw) => {
+    const err = raw instanceof Error ? raw : new Error(String(raw));
+    err.tlsFailed = true;
+    err.upgradeFailed = true;
+    // The transport patch's own refusal, said in both natives' words (patches/README.md, 5 and 10).
+    if ((err.code === undefined || err.code === null) && err.message.includes("plaintext arrived after the STARTTLS command")) {
+      err.code = "STARTTLS_INJECTION";
+    }
+    return err;
+  };
+  bridge._refuseBeforeSecure = "refusing the TLS upgrade: bytes arrived before the handshake finished and would be read as though they came from the encrypted session";
   const emit = bridge.emit.bind(bridge);
   bridge.emit = (event, ...args) => {
-    if (event === "secureConnect") settle("secured");
-    else if (event === "error" && !settled) {
-      const err = args[0] instanceof Error ? args[0] : new Error(String(args[0]));
-      err.tlsFailed = true;
-      args[0] = err;
+    if (event === "secureConnect") {
+      bridge._refuseBeforeSecure = null;
+      settle("secured");
+    } else if (event === "error" && !settled) {
+      args[0] = failed(args[0]);
       settle("refused");
-    } else if (event === "close") settle("closed");
+    } else if (event === "close" && !settled) {
+      settle("closed");
+      // The platform closed it (a close we asked for is no failure to report).
+      if (!bridge.destroyed) emit("error", failed(new Error("the connection closed before the TLS upgrade finished")));
+    }
     return emit(event, ...args);
   };
   timer = setTimeout(() => {
@@ -179,45 +196,45 @@ function superviseUpgrade(native, bridge, deadlineMs = UPGRADE_DEADLINE_MS) {
     bridge.emit("error", Object.assign(new Error(`the TLS upgrade did not finish within ${deadlineMs} ms`), { code: "UPGRADE_TIMEOUT" }));
     bridge.destroy();
   }, deadlineMs);
-  confirmUpgrade(native, bridge);
+  confirmUpgrade(native, bridge, () => settled);
 }
 
 /** How long a STARTTLS handshake may take: imapflow's own upgrade bound, applied to SMTP too. */
 const UPGRADE_DEADLINE_MS = 10_000;
 
 /**
- * THE UPGRADE'S HANDSHAKE HAS NO EVENT OF ITS OWN.
+ * THE UPGRADE'S END, AS EACH PLATFORM SAYS IT, taken once from whichever comes first.
  *
- * The platform emits `secureConnect` for a fresh TLS dial only; a STARTTLS upgrade emits nothing,
- * so a caller waiting for it waits until its own timeout and the dial dies as "closed" — every
- * mailbox on a STARTTLS port, measured on a device. The completion is therefore ASKED of the
- * platform: a peer certificate exists only once the handshake has finished. It is never inferred
- * from `connect`, which fires before the upgrade has happened and would call plaintext secure.
+ * The library emits `secureConnect` for a fresh TLS dial only. iOS (the transport patch, section
+ * 11) says an upgrade's end as the upgraded socket's own `connect`, and shows no peer certificate on
+ * its default trust path. Android says nothing, but its handshake runs inside `startTLS`, so a peer
+ * certificate answers once it is done: asked at once and every `waitMs` until supervision settles.
+ * Neither is the plain socket's TCP `connect`, which happened before this socket existed.
  */
-function confirmUpgrade(native, bridge, attempts = UPGRADE_ATTEMPTS, waitMs = UPGRADE_WAIT_MS) {
-  let left = attempts;
+function confirmUpgrade(native, bridge, settled, waitMs = UPGRADE_WAIT_MS) {
+  let confirmed = false;
+  const confirm = () => {
+    if (confirmed || settled()) return;
+    confirmed = true;
+    bridge.emit("secureConnect");
+  };
+  if (typeof native.once === "function") native.once("connect", confirm);
   const ask = () => {
+    if (confirmed || settled()) return;
     Promise.resolve()
       .then(() => native.getPeerCertificate())
       .then((cert) => {
-        if (cert && typeof cert === "object" && Object.keys(cert).length > 0) {
-          bridge.emit("secureConnect");
-          return;
-        }
-        left -= 1;
-        if (left <= 0) {
-          bridge.emit("error", new Error("the TLS upgrade produced no peer certificate, so the connection is not secured"));
-          return;
-        }
-        setTimeout(ask, waitMs);
+        if (cert && typeof cert === "object" && Object.keys(cert).length > 0) confirm();
+        else setTimeout(ask, waitMs);
       })
-      .catch((err) => { bridge.emit("error", err instanceof Error ? err : new Error(String(err))); });
+      .catch((err) => {
+        if (!confirmed && !settled()) bridge.emit("error", err instanceof Error ? err : new Error(String(err)));
+      });
   };
   ask();
 }
 
-/** How long the upgrade may take before it is reported as not secured: 20 x 50 ms. */
-const UPGRADE_ATTEMPTS = 20;
+/** How often Android's peer certificate is asked for while its handshake runs. */
 const UPGRADE_WAIT_MS = 50;
 
 function unsupported(name) {

@@ -35,7 +35,8 @@ MIT, so it may be modified and redistributed in an AGPL program. Upstream:
 <https://github.com/Rapsssito/react-native-tcp-socket>.
 
 This is the TCP and TLS transport a phone's mail engine dials over. Two defects in its **Android**
-half made it unusable for mail; its iOS half has neither and is untouched.
+half made it unusable for mail, and its **iOS** half could not upgrade a connection to TLS at all
+(sections 10 and 11).
 
 **1. TLS validated the chain and not the name.** `TcpSocketClient.connect` built the secure socket
 with the no-argument `createSocket()` and then connected it by address, so the socket had no peer
@@ -129,6 +130,42 @@ failed`; the reason is only in the causes. So a certificate the phone refused on
 server it could not reach. The handshake's failure now closes the socket and is thrown with every
 cause in its message, behind the literal `the TLS handshake failed: `, as §5 does for the upgrade.
 
+**10. On iOS a STARTTLS upgrade never began.** `TcpSocketClient.m` keeps a read open on a connected
+socket at all times: `didConnectToHost` starts one, and `didReadData` starts the next after every
+chunk. GCDAsyncSocket (CocoaAsyncSocket, which the podspec does not pin; 7.6.5 here) queues a
+`startTLS:` packet behind that read and begins the handshake only once no read is outstanding. After
+its go-ahead the server sends nothing until it sees a ClientHello, so the read never finished and no
+ClientHello was sent: the server logged its go-ahead, then the phone's close, and the phone said the
+server offered no encrypted connection. Implicit TLS on 993 worked only because `connect:` queues the
+TLS packet before the first read. It could not be worked around from JavaScript: the read is the
+native client's own, and a pause from JavaScript only stops the next one from being queued.
+
+The upgrade of a connected client now runs on the delegate queue, where its reads are delivered. The
+plaintext socket is retired in one step on its own queue: its delegate cleared, its descriptor
+duplicated, the socket closed. GCDAsyncSocket closes with `close()`, never `shutdown()`, and its
+streams do not own the descriptor, so the connection stays open under the duplicate. A fresh socket
+adopts the descriptor (`socketFromConnectedSocketFD:`); its TLS packet is queued before the socket is
+published, so nothing can be written ahead of the ClientHello, and its first read waits behind the
+handshake. The certificate is checked as before: the same settings, peer name and trust path.
+
+The upgrade is refused, and the connection closed, when a write is still in flight on the plaintext
+socket, when plaintext waits unread on the descriptor (§5's rule: the server says nothing between its
+go-ahead and our ClientHello), or when the retired socket had already read bytes after the go-ahead;
+those bytes are never delivered. The close carries why behind §5's literal, `the TLS upgrade failed: `,
+so the shim reads the same words on both platforms.
+
+**11. The upgrade's end is said as `connect`.** The library emits `secureConnect` for a fresh TLS dial
+only, and on its default trust path the iOS half keeps no peer certificate (the trust object is held
+only under manual evaluation), so the shim's certificate poll, which is how it reads Android's end,
+never saw an iOS upgrade finish. `socketDidSecure:` now sends `connect` on the upgraded id when an
+upgrade finishes. Upstream 6.4.2 sent it too, but only because `_connecting` is never reset on a
+plain connect, which 6.4.3 changes; here it is explicit.
+
+To check an iOS build: `strings` on the Release app's binary shows `the TLS upgrade failed: refusing
+the TLS upgrade: plaintext arrived after the STARTTLS command and would be read as though it came from
+the encrypted session` (the iOS literals are `appleMarkers` in `apply-patches.mjs markers --json`). No
+workflow here builds for iOS, so nothing asks it of a build yet.
+
 **How to verify a build actually carries this, and why that needs saying.** The package manager keeps
 more than one copy of a patched module in its store, and Android autolinking compiled a copy the
 patch had not reached — six device checks passed against a build whose Java was upstream's. Editing
@@ -143,6 +180,7 @@ patch introduces must be in the APK's dex, which is what the Android workflow's
 
 **What would let us drop this:** upstream taking these changes. They are independent of anything
 specific to this program, and every one of them is a correctness fix for any user of the library.
+For 10 and 11, an iOS half that starts a STARTTLS handshake on a connected socket and says its end.
 
 ## `expo-image-picker@57.0.19`
 

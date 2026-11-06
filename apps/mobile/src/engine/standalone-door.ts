@@ -434,7 +434,7 @@ export type StandaloneOutcome =
  * `cause` walk and hop bound are the engine's: the adapter wraps, and reading only the
  * outermost error would answer `false` for the wrapped shape this exists to recognise.
  */
-const flagged = (err: unknown, flag: "authenticationFailed" | "tlsFailed" | "certificateRefused"): boolean => {
+const flagged = (err: unknown, flag: "authenticationFailed" | "tlsFailed" | "certificateRefused" | "upgradeFailed"): boolean => {
   for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
     if ((e as Record<string, unknown>)[flag] === true) return true;
     e = (e as { cause?: unknown }).cause;
@@ -624,6 +624,8 @@ export async function openStandaloneMailbox(
     /* An upgrade the server offered and that went wrong is not a server without encryption. */
     if (codeIn(err, "STARTTLS_INJECTION")) return { ok: false, reason: refuse("standaloneStarttlsInjected") };
     if (codeIn(err, "UPGRADE_TIMEOUT")) return { ok: false, reason: refuse("standaloneStarttlsTimeout") };
+    /* The TLS shim's stamp: the switch broke after the server offered it (`shims/tls.js`). */
+    if (flagged(err, "upgradeFailed")) return { ok: false, reason: refuse("standaloneStarttlsFailed") };
     if (encryptionRefused(err)) return { ok: false, reason: refuse("standaloneNoEncryption") };
     if (offline) return { ok: false, reason: refuse("standaloneOffline") };
     /* A server Connect could not sign in to: the address and port, never the password's sentence. */

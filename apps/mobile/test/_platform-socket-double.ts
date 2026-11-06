@@ -6,10 +6,10 @@ import tls from "node:tls";
  * THE PHONE'S PLATFORM SOCKET, OFF-DEVICE — `react-native-tcp-socket` as the shims meet it, over
  * real node sockets. The rules kept are the ones the device showed: ONE receiver per connection
  * whose bytes reach EVERY JavaScript socket on that connection (an upgrade adds a second one), a
- * pause from ANY of them pauses that shared receiver, and a STARTTLS upgrade announces nothing —
- * its peer certificate answers only once the handshake is done.
+ * pause from ANY of them pauses that shared receiver, and a STARTTLS upgrade ends the way its
+ * platform ends it (`upgrade`).
  */
-interface Conn {
+export interface Conn {
   raw: net.Socket; paused: boolean; held: Buffer[]; sockets: Set<PlatformSocket>; pauses: number;
   readonly options: DoubleOptions;
   /** The size of every native write, in order. */
@@ -38,6 +38,12 @@ export interface DoubleOptions {
    * `setTimeout(ms)`, reset only when a native write completes or data arrives.
    */
   writeRate?: number;
+  /**
+   * How the platform ends a STARTTLS upgrade. `android` (the default): it announces nothing, and its
+   * peer certificate answers only once the handshake is done. `ios`: the certificate answers null at
+   * once, and the upgraded socket emits `connect` when its handshake ends (the transport patch's iOS half).
+   */
+  upgrade?: "android" | "ios";
 }
 
 export class PlatformSocket extends EventEmitter {
@@ -99,7 +105,7 @@ export class PlatformSocket extends EventEmitter {
     return this;
   }
   address(): object { return {}; }
-  getPeerCertificate(): Promise<object> { return Promise.resolve({}); }
+  getPeerCertificate(): Promise<object | null> { return Promise.resolve({}); }
 }
 
 /** Over a SNAPSHOT, as React Native's emitter does: a socket joining mid-delivery gets later bytes. */
@@ -109,11 +115,16 @@ function dispatch(conn: Conn, b: Buffer): void {
 }
 
 /** A native event to every socket registered on the connection; a `close` unregisters where asked. */
-function report(conn: Conn, event: "error" | "close", payload: unknown): void {
+function report(conn: Conn, event: "error" | "close" | "connect", payload?: unknown): void {
   for (const s of [...conn.sockets]) {
     if (event === "close" && conn.options.unregisterOnClose === true) conn.sockets.delete(s);
     s.emit(event, payload);
   }
+}
+
+/** A native `data` event: bytes the platform's one receiver hands to every JavaScript socket on the connection. */
+export function deliverNative(conn: Conn, bytes: Buffer): void {
+  dispatch(conn, bytes);
 }
 
 function wire(conn: Conn, raw: net.Socket): void {
@@ -138,7 +149,7 @@ function wireRefusingDial(conn: Conn, raw: net.Socket, words: (err: Error) => st
 
 /** The TLS socket an upgrade hands back: the SAME connection, a second JavaScript socket on it. */
 class UpgradedSocket extends PlatformSocket {
-  private readonly done: Promise<object>;
+  private readonly done: Promise<object | null>;
   constructor(under: PlatformSocket, options: { servername?: string; ca?: string }, ca: string) {
     super(under.conn);
     const conn = under.conn;
@@ -149,10 +160,16 @@ class UpgradedSocket extends PlatformSocket {
     if (order !== undefined) { plain.removeAllListeners("error"); plain.removeAllListeners("close"); }
     const secure = tls.connect({ socket: plain, servername: options.servername ?? "localhost", ca, rejectUnauthorized: true });
     conn.raw = secure;
-    this.done = new Promise((resolve) => {
-      secure.once("secureConnect", () => resolve(secure.getPeerCertificate() as object));
-      secure.once("error", () => resolve({}));
-    });
+    if (conn.options.upgrade === "ios") {
+      this.done = Promise.resolve(null);
+      /* The module sends `connect` by the connection's id, so every JavaScript socket on it hears it. */
+      secure.once("secureConnect", () => report(conn, "connect"));
+    } else {
+      this.done = new Promise((resolve) => {
+        secure.once("secureConnect", () => resolve(secure.getPeerCertificate() as object));
+        secure.once("error", () => resolve({}));
+      });
+    }
     if (order === undefined) { wire(conn, secure); return; }
     let secured = false;
     secure.once("secureConnect", () => { secured = true; wire(conn, secure); });
@@ -164,7 +181,7 @@ class UpgradedSocket extends PlatformSocket {
       plain.destroy();
     });
   }
-  override getPeerCertificate(): Promise<object> { return this.done; }
+  override getPeerCertificate(): Promise<object | null> { return this.done; }
 }
 
 /**
