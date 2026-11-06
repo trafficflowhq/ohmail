@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { folderState } from "@trafficflow/db/mail";
+import { folderState, mailboxes } from "@trafficflow/db/mail";
 import type { MessageDTO, SyncChange, SyncResponse, ThreadDTO } from "@trafficflow/services/mail";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
@@ -62,7 +62,7 @@ function hostedCloud() {
   const msgId = randomUUID();
   /* `readFirst`: the page is read when ASKED and answered after `syncMs`, so a pull asked before a
      write never carries it. `beyond`: the write answers a seq the feed never reaches. */
-  const knobs = { syncMs: 0, readFirst: false, sync429: false, beyond: false };
+  const knobs = { syncMs: 0, readFirst: false, sync429: false, beyond: false, sentFolder: null as string | null };
   const asks = { sync: 0, marked: 0 };
   let seq = 100_000;
   const log: SyncChange[] = [];
@@ -83,7 +83,7 @@ function hostedCloud() {
       const url = new URL(path, "https://cloud.test");
       const method = (init?.method ?? "GET").toUpperCase();
       if (new Headers(init?.headers).has("x-ohmail-echo")) asks.marked += 1;
-      if (url.pathname === "/mailboxes" && method === "GET") return json(mailboxList([hostedMailbox(MB, "me@ohmail.test")]));
+      if (url.pathname === "/mailboxes" && method === "GET") return json(mailboxList([hostedMailbox(MB, "me@ohmail.test", { sentFolder: knobs.sentFolder })]));
       if (url.pathname === "/sync/snapshot") return new Response("no snapshot", { status: 404 });
       if (url.pathname === "/sync") {
         if (url.searchParams.get("types") === "rule") {
@@ -108,6 +108,12 @@ function hostedCloud() {
       if (/^\/messages\/[^/]+\/move$/.test(url.pathname) && method === "POST") {
         const dto = messageDTO(msgId, threadId, "ohmail/News");
         return json(dto, echo(commit({ type: "message", op: "update", id: msgId, entity: dto })));
+      }
+      // A send whose copy went to a Sent folder made after connecting: the hosted row records it.
+      if (/^\/drafts\/[^/]+\/send$/.test(url.pathname) && method === "POST") {
+        knobs.sentFolder = "Envoyés";
+        const dto = messageDTO(msgId, threadId, "INBOX");
+        return json({ status: "sent" }, echo(commit({ type: "message", op: "update", id: msgId, entity: dto })));
       }
       if (url.pathname === `/threads/${threadId}` && method === "PATCH") {
         const dto = thread("renamed");
@@ -149,7 +155,7 @@ async function standUp() {
     while (!(await f()) && Date.now() - t < ms) await advance(10);
     return Date.now() - t;
   };
-  return { cloud, mirror, proxy, events, folderOf, press, move, until };
+  return { cloud, mirror, proxy, events, folderOf, press, move, until, db: opened.db };
 }
 
 describe("an echo the bound cut is followed up off the request path", () => {
@@ -217,6 +223,21 @@ describe("an echo the bound cut is followed up off the request path", () => {
     expect(await settle(held)).toBe(true);
     expect(await t.folderOf()).toBe("ohmail/News");
     await settle(early);
+  }, 15_000);
+
+  it("a send re-reads the hosted mailboxes after its answer, though a pull asked before it carried its seq", async () => {
+    const t = await standUp();
+    fakeClock();
+    t.cloud.knobs.syncMs = 500;
+    const asked = t.cloud.asks.sync;
+    const early = t.mirror.pullOnce();
+    while (t.cloud.asks.sync === asked) await turn();
+    const res = await settle(t.press(`/drafts/${randomUUID()}/send`, "POST", { mailboxId: MB }));
+    expect(res.status).toBe(200);
+    await settle(early);
+    const sent = async (): Promise<string | null | undefined> =>
+      (await t.db.select({ f: mailboxes.sentFolder }).from(mailboxes).where(eq(mailboxes.id, MB)))[0]?.f;
+    expect(await sent(), "the mailbox list waited for the next poll").toBe("Envoyés");
   }, 15_000);
 
   it("two cut echoes on one route share one chain, and a second route has its own", async () => {

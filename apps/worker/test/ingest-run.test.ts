@@ -199,7 +199,8 @@ async function dump(db: Tx): Promise<unknown> {
       (r) => [threadKey(r.id), r.root_message_id_header, r.subject, r.participants, r.last_message_at]),
     changes: seqs.map((r) => [r.entity_type, r.op, ref(r.entity_type, r.entity_id), r.meta]),
     gapFree: seqs.every((r, i) => Number(r.seq) === Number(seqs[0]?.seq ?? 0) + i),
-    storage: await rowsOf(db, sql`select bytes, husked_for_space, withheld_on_arrival from account_storage`),
+    storage: await rowsOf(db, sql`select bytes, husked_for_space, withheld_on_arrival, kept_from,
+      first_husked_at is null as never_trimmed, last_husked_at is null as never_trimmed_last from account_storage`),
     lists: by(await rowsOf(db, sql`select address, consented_brands from list_addresses`), (r) => [r.address, r.consented_brands]),
     contacts: by(await rowsOf(db, sql`select address, source from contacts`), (r) => [r.address, r.source]),
     audit: by(await rowsOf(db, sql`select action from audit_log`), (r) => r.action),
@@ -239,7 +240,7 @@ describe("a run of new letters, against one transaction per letter", () => {
     expect(on.s.log.events).not.toContain("sync_ingest_run_fell_back");
   }, 120_000);
 
-  it("stores the same across the storage cap, the letters past it committed alone", async () => {
+  it("stores the same across the storage cap", async () => {
     const off = await ingestPage(false, { metered: true });
     const on = await ingestPage(true, { metered: true });
     const want = await dump(off.s.db) as { bodies: string[] };
@@ -247,6 +248,60 @@ describe("a run of new letters, against one transaction per letter", () => {
     expect(want.bodies.some((b) => b.includes("storage_cap"))).toBe(true);
     expect(await dump(on.s.db)).toEqual(want);
     expect(on.s.log.events).not.toContain("sync_ingest_run_fell_back");
+  }, 120_000);
+});
+
+describe("a run at the storage cap", () => {
+  /** A letter dated `at`, or with no Date line at all. */
+  const at = (id: string, when: Date | null, size: number): Deliver => ({
+    from: "a@x.example", subject: id, messageId: id,
+    raw: src([`Message-ID: <${id}>`, "From: a@x.example", `To: ${OWN}`, ...(when === null ? [] : [`Date: ${when.toUTCString()}`]),
+      `Subject: ${id}`, "Content-Type: text/plain"], size === 0 ? "" : filler(size)),
+  });
+
+  it("replays the rolling window exactly: the same bodies emptied, withheld and kept, the same counter", async () => {
+    const atCap = async (runs: boolean): Promise<{ dump: unknown; transactions: number; fellBack: boolean }> => {
+      const s = await store();
+      // Stored mail dated ahead, so the import's older letters are the window's oldest once stored.
+      // More small bodies than one trim may empty, so the largest letters are withheld on arrival.
+      const seed = Array.from({ length: 90 }, (_, n) => at(`w${n}@x.example`, new Date(Date.UTC(2031, 0, 1 + n)), 150 + (n % 5) * 40));
+      s.fleet.behave(s.mailboxId, { deliver: seed });
+      await s.cycle(false, UNMETERED_STORAGE_CAP);
+      const [used] = await rowsOf(s.db, sql`select bytes from account_storage`);
+      // Newest first, as an import reads: mixed sizes, letters with no Date line (dated by their
+      // arrival in the store), an empty one, and one no trim of 64 bodies can make room for.
+      const page = [
+        at("huge-later@x.example", new Date(Date.UTC(2040, 0, 1)), 60_000),
+        ...Array.from({ length: 24 }, (_, n) => at(`p${n}@x.example`, n % 4 === 3 ? null : new Date(Date.UTC(2020, 11, 28 - n)), [50, 900, 2400, 120][n % 4]!)),
+        at("empty@x.example", new Date(Date.UTC(2019, 0, 1)), 0),
+        at("huge@x.example", new Date(Date.UTC(2018, 0, 1)), 60_000),
+        ...Array.from({ length: 6 }, (_, n) => at(`q${n}@x.example`, null, 700)),
+      ];
+      s.fleet.behave(s.mailboxId, { deliver: [...seed, ...page] });
+      let transactions = 0;
+      const base = makeDrizzleRepo(s.db as never);
+      const repo = new Proxy(runs ? ingestRunRepository(base) : base, {
+        get(obj, prop): unknown {
+          const value = Reflect.get(obj, prop, obj) as unknown;
+          if (prop !== "transaction" || typeof value !== "function") return value;
+          return (...a: unknown[]) => { transactions++; return (value as (...b: unknown[]) => unknown).apply(obj, a); };
+        },
+      });
+      // Far past the cap before the page arrives (a smaller plan): one trim cannot make room at first.
+      await s.cycle(runs, Number(used!.bytes) - 16_000, { repo });
+      return { dump: await dump(s.db), transactions, fellBack: s.log.events.includes("sync_ingest_run_fell_back") };
+    };
+    const off = await atCap(false);
+    const on = await atCap(true);
+    const want = off.dump as { storage: Array<Record<string, unknown>>; bodies: string[] };
+    // The control: the window trimmed, withheld letters on arrival, and moved the month.
+    expect(Number(want.storage[0]!.withheld_on_arrival)).toBeGreaterThan(0);
+    expect(want.storage[0]!.kept_from).not.toBeNull();
+    expect(want.bodies.filter((b) => b.includes("storage_cap")).length).toBeGreaterThan(10);
+    expect(on.dump).toEqual(off.dump);
+    // …and the runs stored it: no letter fell back, and a few transactions did the work of many.
+    expect(on.fellBack).toBe(false);
+    expect(on.transactions * 4).toBeLessThan(off.transactions);
   }, 120_000);
 });
 

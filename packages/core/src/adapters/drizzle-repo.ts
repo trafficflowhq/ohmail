@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, exists, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
 import type {
@@ -422,10 +422,7 @@ export interface IngestRunContext {
   mailboxMustBeLive?: MailboxMustBeLive;
 }
 
-/**
- * The first `persisted` letters were stored, as these rows, in letter order. The rest are the
- * caller's to commit one by one: the first of them would not have fit under the storage cap.
- */
+/** The first `persisted` letters were stored, as these rows, in letter order; the rest are the caller's to commit alone. */
 export interface IngestRunResult { persisted: number; messageIds: string[] }
 
 /** Worker-facing repo: everything the pipeline needs (RepoPort + RoutingPort) plus enumeration for sync/reconcile. */
@@ -675,6 +672,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * a renamed folder heals. OPTIONAL, as above.
    */
   setMailboxSpecialFolders?(mailboxId: string, f: SpecialFolderColumns): Promise<void>;
+  /**
+   * Record the Sent folder found after the attach (one the app files into, made later in another
+   * app) — only while `sent_folder` is empty, and never INBOX. The attach's three-column write
+   * stays the one path that moves or clears a role. OPTIONAL, as above.
+   */
+  fillMailboxSentFolder?(accountId: string, mailboxId: string, path: string): Promise<void>;
   /**
    * Empty one stored body the way the storage cap does — real headers kept, `text=''`,
    * `html=NULL`, the closed marker, bytes released — for the two 0065 reasons. A row already
@@ -1170,7 +1173,7 @@ export function attachmentRowsOf(messageId: string, accountId: string, rows: rea
 export async function insertMessageRows(
   db: Db, d: Dialect, mailboxId: string, inputs: readonly InsertMessageInput[],
   opts: { mustBeLive?: MailboxMustBeLive | undefined; inStoreOrder?: boolean } = {},
-): Promise<Array<typeof messages.$inferSelect>> {
+): Promise<Array<typeof messages.$inferSelect & { atMicros?: string }>> {
   /* THE MAILBOX TOMBSTONE, IN THIS TRANSACTION AND BEFORE THIS WRITE. The row's key to
      `mailboxes` refuses the account sweep, which deletes that parent — and nothing at all for
      the mailbox's own erasure, which leaves the row standing. This branch holds no `messages`
@@ -1179,7 +1182,7 @@ export async function insertMessageRows(
      change-log allocation this commit is already sending, which takes this row at this strength
      and refuses this stamp — a read here would be a second round trip per message. */
   await fenceErasedMailbox(db as unknown as Tx, d, mailboxId, "share", opts.mustBeLive);
-  const out: Array<typeof messages.$inferSelect> = [];
+  const out: Array<typeof messages.$inferSelect & { atMicros?: string }> = [];
   // Asked for by the worker's batched ingest only, which runs on the server's store.
   const inStoreOrder = opts.inStoreOrder === true && d.name === "pg";
   for (let at = 0; at < inputs.length; at += MESSAGE_ROWS_CHUNK) {
@@ -1187,8 +1190,16 @@ export async function insertMessageRows(
       if (inStoreOrder) return { ...messageRowOf(input), createdAt: pgOnly(sql`now() + (${at + i} * interval '1 microsecond')`) };
       return messageRowOf(input);
     });
-    out.push(...await db.insert(messages).values(rows)
-      .onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] }).returning());
+    const insert = db.insert(messages).values(rows).onConflictDoNothing({ target: [messages.mailboxId, messages.dedupKey] });
+    if (inStoreOrder) {
+      // And each row's place in the storage window, to the microsecond.
+      out.push(...await insert.returning({
+        ...getTableColumns(messages),
+        atMicros: pgOnly(sql<string>`(extract(epoch from coalesce(${messages.date}, ${messages.createdAt})) * 1000000)::bigint::text`),
+      }));
+    } else {
+      out.push(...await insert.returning());
+    }
   }
   return out;
 }
@@ -1749,6 +1760,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     await this.db.update(mailboxes)
       .set({ junkFolder: f.junkFolder, trashFolder: f.trashFolder, sentFolder: f.sentFolder })
       .where(eq(mailboxes.id, mailboxId));
+  }
+
+  /** See the interface doc: fills an EMPTY `sent_folder` only, scoped to the account. */
+  async fillMailboxSentFolder(accountId: string, mailboxId: string, path: string): Promise<void> {
+    if (path === "" || path.toUpperCase() === "INBOX") return;
+    await this.db.update(mailboxes)
+      .set({ sentFolder: path })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.sentFolder)));
   }
 
   /**
@@ -4214,11 +4233,38 @@ export async function recordSpecialFolders(
   }
   const found = await adapter.findSpecialFolders();
   const caps = typeof adapter.capabilities === "function" ? await adapter.capabilities() : null;
-  await repo.setMailboxSpecialFolders(mailboxId, {
-    junkFolder: found.junk, trashFolder: found.trash,
-    sentFolder: caps?.watchedSentFolder ?? caps?.sentFolder ?? null,
-  });
+  const sentFolder = resolvedSentOf(caps);
+  await repo.setMailboxSpecialFolders(mailboxId, { junkFolder: found.junk, trashFolder: found.trash, sentFolder });
+  recordedSent.set(adapter, sentFolder);
   return true;
+}
+
+/** The Sent path the adapter resolved, as the scan watches it (mail 0132). */
+function resolvedSentOf(
+  caps: { watchedSentFolder?: string | null; sentFolder?: string | null } | null | undefined,
+): string | null {
+  return caps?.watchedSentFolder ?? caps?.sentFolder ?? null;
+}
+
+/** What this adapter's store last holds for Sent, as written here; absent until a write. */
+const recordedSent = new WeakMap<object, string | null>();
+
+/**
+ * A SENT FOLDER THAT APPEARED AFTER THE ATTACH, written down: the adapter's own answer (the one
+ * decision the send files by), filled only where the column is still empty. One statement per newly
+ * resolved folder per adapter; a throw remembers nothing, so the next cycle asks again.
+ */
+export async function recordAppearedSentFolder(
+  adapter: Pick<MailboxAdapter, "capabilities">,
+  repo: Pick<WorkerRepo, "fillMailboxSentFolder">,
+  accountId: string,
+  mailboxId: string,
+): Promise<void> {
+  if (typeof adapter.capabilities !== "function" || typeof repo.fillMailboxSentFolder !== "function") return;
+  const sent = resolvedSentOf(await adapter.capabilities());
+  if (sent === null || recordedSent.get(adapter) === sent) return;
+  await repo.fillMailboxSentFolder(accountId, mailboxId, sent);
+  recordedSent.set(adapter, sent);
 }
 
 /**

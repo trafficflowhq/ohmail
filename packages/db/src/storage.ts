@@ -1,6 +1,6 @@
 import { sql, eq, inArray } from "drizzle-orm";
 import { accountStorage, messageBodies, messages } from "./schema-mail.js";
-import type { Dialect } from "./dialect/index.js";
+import { pgOnly, type Dialect } from "./dialect/index.js";
 import type { Tx } from "./change-log.js";
 
 /**
@@ -464,4 +464,153 @@ export async function reserveBodyBytesEvicting(
   const target = Math.max(0, capBytes - bytes);
   await evictOldestBodies(tx, d, accountId, { targetBytes: target, maxBodies: EVICT_INLINE_MAX_BODIES });
   return reserveBodyBytes(tx, d, accountId, bytes, capBytes);
+}
+
+/** The counter row's facts a run of stored letters moves, read under its lock. */
+export interface StorageCounter {
+  bytes: number;
+  huskedForSpace: number;
+  withheldOnArrival: number;
+  keptFrom: string | null;
+  firstHuskedAt: Date | null;
+}
+
+/** {@link lockAccountStorage}, with the facts {@link replayReserveEvicting} moves. */
+export async function lockStorageCounter(tx: Tx, d: Dialect, accountId: string): Promise<StorageCounter> {
+  await tx.insert(accountStorage).values({ accountId, bytes: 0 }).onConflictDoNothing();
+  const [row] = await d.forUpdate(tx.select({
+    bytes: accountStorage.bytes, husked: accountStorage.huskedForSpace, onArrival: accountStorage.withheldOnArrival,
+    keptFrom: accountStorage.keptFrom, first: accountStorage.firstHuskedAt,
+  }).from(accountStorage).where(eq(accountStorage.accountId, accountId)));
+  return {
+    bytes: Number(row?.bytes ?? 0), huskedForSpace: Number(row?.husked ?? 0),
+    withheldOnArrival: Number(row?.onArrival ?? 0), keptFrom: row?.keptFrom ?? null,
+    firstHuskedAt: row?.first == null ? null : new Date(row.first as Date | string),
+  };
+}
+
+/** A stored body the window may empty: its message, the bytes it frees, and its place in the order. */
+export interface WindowBody {
+  messageId: string;
+  freed: number;
+  /** `coalesce(date, created_at)` in microseconds, the order's first key; the message id is the second. */
+  atMicros: bigint;
+  at: Date;
+}
+
+/**
+ * The account's oldest stored bodies, in the rolling window's order: {@link evictOldestBodies}' own
+ * victim read, with each one's place in the order to the microsecond. The server's store only.
+ */
+export async function oldestStoredBodies(tx: Tx, d: Dialect, accountId: string, limit: number): Promise<WindowBody[]> {
+  if (d.name !== "pg") throw new Error("oldestStoredBodies: the batched ingest runs on the server's store only");
+  const rows = await d.exec(tx, pgOnly(sql`
+    select b."message_id",
+           (octet_length(b."text") + coalesce(octet_length(b."html"), 0)) as freed,
+           (extract(epoch from coalesce(m."date", m."created_at")) * 1000000)::bigint::text as at_us,
+           coalesce(m."date", m."created_at") as at
+      from message_bodies b
+      join messages m on m."id" = b."message_id"
+     where m."account_id" = ${accountId}
+       and b."withheld_reason" is null
+       and (octet_length(b."text") > 0 or b."html" is not null)
+     order by coalesce(m."date", m."created_at") asc, m."id" asc
+     limit ${limit}`));
+  return rows.map((r) => ({
+    messageId: String(r[0]), freed: Number(r[1]), atMicros: BigInt(String(r[2])),
+    at: messages.createdAt.mapFromDriverValue(r[3] as never) as Date,
+  }));
+}
+
+/** One new letter of a run, in order: its body's bytes (`null` for a husk the plan decided) and its date. */
+export interface WindowLetter {
+  messageId: string;
+  bytes: number | null;
+  /** Its body holds text or HTML: once stored, a body the window may later empty. */
+  holdsContent: boolean;
+  atMicros: bigint;
+  at: Date;
+}
+
+/** What {@link replayReserveEvicting} decided, every write in one place. */
+export interface WindowReplay {
+  /** Per letter: its body was stored with its text, and still holds it once the run is done. */
+  holds: boolean[];
+  /** Stored bodies from before the run that the run empties. */
+  emptied: string[];
+  counter: StorageCounter;
+  /** The run emptied at least one body: the counter's latest trim is now. */
+  trimmed: boolean;
+}
+
+/**
+ * {@link reserveBodyBytesEvicting} for a run of new letters, replayed in memory in letter order:
+ * the reserve's test before adding, the inline trim of the oldest stored bodies (the run's own
+ * letters among them once stored, at most {@link EVICT_INLINE_MAX_BODIES} a letter), the second
+ * reserve, and {@link recordWithheldForSpace} for a letter that still does not fit. `stored` is the
+ * account's oldest stored bodies in the window's order, at least {@link EVICT_INLINE_MAX_BODIES}
+ * per letter of them, read under the counter's lock. Pure: the caller writes each body's final state
+ * once, empties `emptied`, and writes `counter`.
+ */
+export function replayReserveEvicting(
+  start: StorageCounter, capBytes: number, letters: readonly WindowLetter[], stored: readonly WindowBody[],
+): WindowReplay {
+  const counter = { ...start };
+  const before = (a: { atMicros: bigint; messageId: string }, b: { atMicros: bigint; messageId: string }): boolean =>
+    a.atMicros < b.atMicros || (a.atMicros === b.atMicros && a.messageId < b.messageId);
+  // The bodies the window may empty, oldest first; the run's letters join as they are stored.
+  const pool: Array<WindowBody & { letter?: number }> = [...stored];
+  const gone = new Set<string>();
+  const holds = letters.map(() => false);
+  const emptied: string[] = [];
+  let trimmed = false;
+  const reserve = (bytes: number): boolean => {
+    if (!(counter.bytes < capBytes)) return false;
+    counter.bytes += bytes;
+    return true;
+  };
+  letters.forEach((letter, i) => {
+    if (letter.bytes === null) return;
+    let fits = reserve(letter.bytes);
+    if (!fits) {
+      const target = Math.max(0, capBytes - letter.bytes);
+      if (counter.bytes > target) {
+        const page = pool.filter((b) => !gone.has(b.messageId)).slice(0, EVICT_INLINE_MAX_BODIES);
+        const need = counter.bytes - target;
+        const chosen: typeof page = [];
+        let freed = 0;
+        for (const v of page) {
+          if (freed >= need) break;
+          chosen.push(v);
+          freed += v.freed;
+        }
+        if (chosen.length > 0) {
+          for (const v of chosen) {
+            gone.add(v.messageId);
+            if (v.letter !== undefined) holds[v.letter] = false;
+            else emptied.push(v.messageId);
+          }
+          counter.bytes = Math.max(0, counter.bytes - freed);
+          counter.huskedForSpace += chosen.length;
+          if (counter.firstHuskedAt === null) counter.firstHuskedAt = new Date();
+          trimmed = true;
+          counter.keptFrom = keptFromPast(counter.keptFrom, chosen[chosen.length - 1]!.at);
+        }
+      }
+      fits = reserve(letter.bytes);
+    }
+    if (fits) {
+      holds[i] = true;
+      if (letter.holdsContent) {
+        const body = { messageId: letter.messageId, freed: letter.bytes, atMicros: letter.atMicros, at: letter.at, letter: i };
+        const at = pool.findIndex((b) => before(body, b));
+        pool.splice(at < 0 ? pool.length : at, 0, body);
+      }
+      return;
+    }
+    // Withheld for space on arrival: one more letter whose text is not held.
+    counter.huskedForSpace += 1;
+    if (onOrAfterKeptFrom(counter.keptFrom, letter.at)) counter.withheldOnArrival += 1;
+  });
+  return { holds, emptied, counter, trimmed };
 }

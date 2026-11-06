@@ -444,6 +444,8 @@ const TABLE = {
     "Your mail server sent unexpected data while the connection was switching to encryption, so we stopped before sending the password. Something on this network may be interfering: try another network, or port 993.",
   standaloneStarttlsTimeout:
     "Switching the connection to your mail server to encryption did not finish in time, so we stopped before sending the password. Try again, or use port 993.",
+  standaloneStarttlsFailed:
+    "Switching the connection to your mail server to encryption failed, so we stopped before sending the password. Try again, or use port 993.",
   standaloneOffline:
     "This phone has no network, so ohmail could not reach your mail server. Try again once it is back — nothing has been saved.",
   standaloneRefused: (detail: string) =>

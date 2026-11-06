@@ -23,6 +23,7 @@ import { LeaseUnavailableError } from "@trafficflow/core/adapters/organizer-leas
 import { MailboxErasedError, OWN_MAIL_RELEASE_BATCH } from "@trafficflow/db";
 import type { FilingRefusalClass, OrganizerRole } from "@trafficflow/db";
 import type { WorkerRepo, DrizzleRepo, PendingFolderState, PendingFlagState, IngestRunContext, IngestRunResult } from "@trafficflow/core/adapters/drizzle-repo";
+import { recordAppearedSentFolder } from "@trafficflow/core/adapters/drizzle-repo";
 import { ClassifierFaultError } from "./classifier-fault.js";
 import {
   DeadLetterLedger, classifyIngestFault, isStoreStatementFault, nextAttemptAfter,
@@ -1358,6 +1359,16 @@ async function syncCycleWithin(
   const batch = deps.batchMessages === undefined
     ? await adapter.changesSince(cursor)
     : await adapter.changesSince(cursor, { messages: deps.batchMessages });
+  // A Sent folder made after the attach, written down before this batch's own copies are ingested.
+  // Not after an overrun: the breach retired this connection, and the re-dial asks next cycle.
+  if (!deps.fence?.lost() && batch.overrun === undefined) {
+    try {
+      await recordAppearedSentFolder(adapter, repo, accountId, mailboxId);
+    } catch (err) {
+      rethrowRefusal(err);
+      log?.warn("sent_folder_record_failed", { mailboxId, accountId, err });
+    }
+  }
   if (deps.census !== undefined) {
     deps.census.observed += batch.creates.length + batch.moves.length
       + batch.flagChanges.length + batch.deletes.length + (batch.resetGone?.length ?? 0);

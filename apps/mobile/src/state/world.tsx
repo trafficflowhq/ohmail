@@ -64,7 +64,7 @@ import { letterDoor } from "../compose/letter-store";
 import type { FaceName } from "../theme/face";
 import { accountFaceShown, faceMirrorStands, faceScope } from "./face-scope";
 import { foldersFlag, freshestRead, signatureSequence, type FreshestRead, type SignatureSequence } from "./folders-flag";
-import { askEngineQueues, drainReads, type DrainRead } from "./drain-reads";
+import { askEngineQueues, drainReads, readOnSentFolderAsk, type DrainRead } from "./drain-reads";
 import { startUiVitals } from "../engine/engine-log";
 import { createProjector, listStamp, type Projected } from "./world-projection";
 import { usePrefs } from "./store";
@@ -1860,6 +1860,12 @@ export function WorldProvider({ children }: { children: ReactNode }) {
     if (engine === null || mailboxes === null) return;
     engine.setSentFolders(mailboxes);
   }, [engine, mailboxes]);
+
+  // The engine's own drain after a send starts no round, so a copy in an unknown folder asks the mailboxes itself.
+  useEffect(() => {
+    if (engine === null) return;
+    return readOnSentFolderAsk(engine, { factsDue: () => factsDueNow.current?.factsDue() }, () => { void machine?.refresh(); });
+  }, [engine, machine]);
 
   /**
    * THE MAILBOX'S OWN PROJECTION — derived from the mirror, never from the connection.

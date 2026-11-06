@@ -794,3 +794,207 @@ index 121edb47dbecb4ca2a044722b2ad5a71d50c1fa7..068bff8ca085ae953d6ac398f434f29d
      @SuppressLint("StaticFieldLeak")
      @SuppressWarnings("unused")
      @ReactMethod
+diff --git a/ios/TcpSocketClient.m b/ios/TcpSocketClient.m
+index a3df69c2828ffcda1bec5106dc296e4064f69f0e..bb4c0d43a76749d47f6ac8de7007db0d7098f64a 100644
+--- a/ios/TcpSocketClient.m
++++ b/ios/TcpSocketClient.m
+@@ -2,6 +2,8 @@
+ #import <arpa/inet.h>
+ #import <netinet/in.h>
+ #import <netinet/tcp.h>
++#import <sys/ioctl.h>
++#import <unistd.h>
+ 
+ #import <React/RCTLog.h>
+ 
+@@ -15,6 +17,11 @@
+ 
+ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+ 
++// Why a STARTTLS upgrade was refused, behind the Android half's literal (patches/README.md, 10).
++static NSString *const UpgradeRefusedPlaintext = @"the TLS upgrade failed: refusing the TLS upgrade: plaintext arrived after the STARTTLS command and would be read as though it came from the encrypted session";
++static NSString *const UpgradeRefusedWriting = @"the TLS upgrade failed: refusing the TLS upgrade: a write was still in flight on the plaintext connection";
++static NSString *const UpgradeRefusedAdoption = @"the TLS upgrade failed: the connection could not be handed to TLS";
++
+ @implementation ResolvableOption
+ 
+ - (instancetype)initWithValue:(NSString *)value
+@@ -66,6 +73,12 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+     long _sendTag;
+     SecTrustRef _peerTrust;
+     SecIdentityRef _clientIdentity;
++    // The STARTTLS upgrade of a connected client (patches/README.md, 10 and 11).
++    BOOL _plainConnected;
++    BOOL _upgrading;
++    BOOL _closeRequested;
++    // The plaintext socket an upgrade retired, kept alive so a late call on it is harmless.
++    GCDAsyncSocket *_retiredSocket;
+ }
+ 
+ - (id)initWithClientId:(NSNumber *)clientID
+@@ -250,9 +263,97 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+ 
+     //RCTLogWarn(@"startTLS: Final settings: %@", settings);
+     _tls = true;
++    // A connected plaintext client is upgraded on the delegate queue, where its reads are delivered.
++    if (_plainConnected && _serverId == nil) {
++        _upgrading = YES;
++        dispatch_async([self methodQueue], ^{
++          [self upgradeInPlace:settings];
++        });
++        return;
++    }
+     [_tcpSocket startTLS:settings];
+ }
+ 
++/**
++ * STARTTLS on a connected socket (patches/README.md, 10). GCDAsyncSocket starts a queued TLS packet
++ * only once no read is outstanding, and this client always keeps one open, so the handshake never
++ * began. The plaintext socket is retired (its descriptor duplicated, then closed with close(), which
++ * leaves the connection open) and a fresh socket adopts the descriptor with the TLS packet first.
++ */
++- (void)upgradeInPlace:(NSDictionary *)settings {
++    if (_closeRequested) {
++        _upgrading = NO;
++        return;
++    }
++    GCDAsyncSocket *old = _tcpSocket;
++    _retiredSocket = old;
++    [_lock lock];
++    BOOL writing = _pendingSends.count > 0;
++    [_lock unlock];
++    __block int fd = -1;
++    // One step on the socket's own queue, so no read lands between the delegate leaving and the close.
++    [old performBlock:^{
++      [old synchronouslySetDelegate:nil];
++      int current = [old socketFD];
++      if (!writing && current >= 0) fd = dup(current);
++      [old disconnect];
++    }];
++    if (writing) {
++        [self refuseUpgrade:UpgradeRefusedWriting];
++        return;
++    }
++    int unread = 0;
++    if (fd < 0 || ioctl(fd, FIONREAD, &unread) == -1) {
++        if (fd >= 0) close(fd);
++        [self refuseUpgrade:UpgradeRefusedAdoption];
++        return;
++    }
++    if (unread > 0) {
++        close(fd);
++        [self refuseUpgrade:UpgradeRefusedPlaintext];
++        return;
++    }
++    NSError *error = nil;
++    GCDAsyncSocket *fresh = [GCDAsyncSocket socketFromConnectedSocketFD:fd
++                                                               delegate:self
++                                                          delegateQueue:[self methodQueue]
++                                                                  error:&error];
++    if (fresh == nil) {
++        close(fd);
++        [self refuseUpgrade:[NSString stringWithFormat:@"%@ (%@)", UpgradeRefusedAdoption,
++                                                       error.localizedDescription ?: @"no reason given"]];
++        return;
++    }
++    [fresh setUserData:_id];
++    // Queued before the socket is published, so no write can go ahead of the ClientHello.
++    [fresh startTLS:settings];
++    [_lock lock];
++    _tcpSocket = fresh;
++    BOOL closing = _closeRequested;
++    [_lock unlock];
++    if (closing) [fresh disconnect];
++}
++
++/** The upgrade refused, once: both sockets closed, and the close carries why. */
++- (void)refuseUpgrade:(NSString *)why {
++    if (!_upgrading) return;
++    _upgrading = NO;
++    [_lock lock];
++    GCDAsyncSocket *current = _tcpSocket;
++    _tcpSocket = nil;
++    [_lock unlock];
++    if (current != nil && current != _retiredSocket) {
++        [current synchronouslySetDelegate:nil];
++        [current disconnect];
++    }
++    [_retiredSocket synchronouslySetDelegate:nil];
++    [_retiredSocket disconnect];
++    NSError *err = [NSError errorWithDomain:RCTTCPErrorDomain
++                                       code:RCTTCPOtherError
++                                   userInfo:@{NSLocalizedDescriptionKey : why}];
++    [_clientDelegate onClose:(id)_id withError:err];
++}
++
+ - (NSDictionary<NSString *, id> *)getAddress {
+     if (_tcpSocket) {
+         if (_tcpSocket.isConnected) {
+@@ -432,11 +533,20 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+ }
+ 
+ - (void)end {
+-    [_tcpSocket disconnectAfterWriting];
++    [[self requestClose] disconnectAfterWriting];
+ }
+ 
+ - (void)destroy {
+-    [_tcpSocket disconnect];
++    [[self requestClose] disconnect];
++}
++
++/** The close is asked first, so an upgrade in flight also closes the socket it adopts. */
++- (GCDAsyncSocket *)requestClose {
++    [_lock lock];
++    _closeRequested = YES;
++    GCDAsyncSocket *sock = _tcpSocket;
++    [_lock unlock];
++    return sock;
+ }
+ 
+ - (void)pause {
+@@ -458,6 +568,11 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+                    [sock userData]);
+         return;
+     }
++    // Plaintext the retired socket read after the go-ahead is never delivered.
++    if (_retiredSocket != nil && sock != _tcpSocket) {
++        [self refuseUpgrade:UpgradeRefusedPlaintext];
++        return;
++    }
+ 
+     [_clientDelegate onData:@(tag) data:data];
+     if (!_paused) {
+@@ -489,6 +604,14 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+                    [sock userData]);
+         return;
+     }
++    if (_retiredSocket != nil && sock != _tcpSocket) return;
++    // The upgrade's end, said as `connect` on the upgraded id (patches/README.md, 11).
++    if (_upgrading) {
++        _upgrading = NO;
++        _connecting = false;
++        [_clientDelegate onConnect:self];
++        return;
++    }
+     if (_serverId != nil) {
+         [_clientDelegate onSecureConnection:self toClient:_serverId];
+     } else if (_connecting) {
+@@ -574,6 +697,7 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+ 
+     // Show up if SSL handsake is done
+     if (!_tls) {
++        _plainConnected = YES;
+         [_clientDelegate onConnect:self];
+     }
+     [sock readDataWithTimeout:-1 tag:_id.longValue];
+@@ -591,6 +715,9 @@ NSString *const RCTTCPErrorDomain = @"RCTTCPErrorDomain";
+                    [sock userData]);
+         return;
+     }
++    // A socket the upgrade retired or gave up says nothing: the client's close is said once.
++    if (_retiredSocket != nil && sock != _tcpSocket) return;
++    _upgrading = NO;
+ 
+     [_clientDelegate
+           onClose:[sock userData]

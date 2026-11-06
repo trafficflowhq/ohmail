@@ -9,7 +9,7 @@
  */
 import { createRequire } from "node:module";
 import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const require_ = createRequire(import.meta.url);
 
@@ -157,16 +157,22 @@ describe("the handshake window", () => {
     expect(plainErr).toHaveLength(0);
   });
 
-  it("the no-certificate verdict on a bridge nobody listens to is logged, not thrown", async () => {
+  it("an upgrade with no certificate to show, on a bridge nobody listens to, ends at the deadline: logged, not thrown", async () => {
     const { net, tls } = loadShims();
     const lines: Line[] = [];
     net.setSocketLog((event, fields) => { lines.push({ event, fields }); });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    restore.push(() => { vi.useRealTimers(); });
     const plain = net.connect({ host: "imap.example.invalid", port: 143 });
     const secured = tls.connect({ socket: plain, servername: "imap.example.invalid" });
     tlsNatives[tlsNatives.length - 1]!.cert = Promise.resolve({});
     secured.removeAllListeners("error");
-    await new Promise((r) => setTimeout(r, 1_300));
-    expect(lines.some((l) => l.event === "socket_error_unlistened")).toBe(true);
+    await vi.advanceTimersByTimeAsync(9_900);
+    expect(lines.filter((l) => l.event === "socket_error_unlistened"), "a verdict before the deadline").toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(200);
+    const said = lines.filter((l) => l.event === "socket_error_unlistened");
+    expect(said).toHaveLength(1);
+    expect((said[0]!.fields.err as Error & { code?: string }).code).toBe("UPGRADE_TIMEOUT");
     expect(secured.destroyed).toBe(true);
   });
 

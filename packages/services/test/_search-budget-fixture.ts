@@ -291,13 +291,27 @@ export function matrixFilters(n: number): Record<string, MatrixFilters> {
     unread: { unread: true }, attachments: { hasAttachments: true }, dateTo: { dateTo: "2025-06-01T00:00:00Z" },
   };
 }
-export interface MatrixCell { shape: MatrixShape; dist: MatrixDistribution; filter: string; of: string; filters: MatrixFilters; label: string }
+/**
+ * COMMON WORDS UNDER A FOLDER, where the planted words are rare: a word in about three letters in four, a pair with the
+ * most common word, the most common word beside the next, and a typo of the first (`gijubadale`, word 5, one letter
+ * left out), each under {@link MATRIX_FOLDERS}.
+ */
+export const MATRIX_COMMON: Readonly<Partial<Record<MatrixShape, string>>> = { plain: "{5}", pair: "{5} {0}", beside: "{0} -{1}", typo: "gijubdale" };
+/**
+ * Archive, one letter in 100; Old, none of the newest 3,000 letters and every second one after them (sparse where a
+ * walk starts, half the mailbox past it); INBOX, the rest.
+ */
+export const MATRIX_FOLDERS = ["Archive", "Old", "INBOX"] as const;
+export interface MatrixCell { shape: MatrixShape; dist: MatrixDistribution | "common"; filter: string; of: string; filters: MatrixFilters; label: string }
 export function matrixCells(n: number): MatrixCell[] {
   const filters = matrixFilters(n);
-  return (Object.keys(MATRIX_SHAPES) as MatrixShape[]).flatMap((shape) => (Object.keys(MATRIX_DISTRIBUTIONS) as MatrixDistribution[])
+  const common = Object.entries(MATRIX_COMMON).flatMap(([shape, of]) => MATRIX_FOLDERS.map((folder) => ({
+    shape: shape as MatrixShape, dist: "common" as const, filter: folder, of: of!, filters: { folder }, label: `${shape} common ${folder}`,
+  })));
+  return [...(Object.keys(MATRIX_SHAPES) as MatrixShape[]).flatMap((shape) => (Object.keys(MATRIX_DISTRIBUTIONS) as MatrixDistribution[])
     .flatMap((dist) => Object.entries(filters).filter(([filter]) => filter === "none" || MATRIX_FILTERED.has(dist)).map(([filter, f]) => ({
       shape, dist, filter, of: MATRIX_SHAPES[shape](MATRIX_DISTRIBUTIONS[dist]), filters: f, label: `${shape} ${dist} ${filter}`,
-    }))));
+    })))), ...common];
 }
 const matrixStep = (n: number): number => {
   let s = Math.floor(n / MATRIX_MEMBERS);
@@ -317,6 +331,8 @@ export interface MatrixWork {
   lookups: number;
   /** Passes over the folder table: a read of half its rows or more, every account's. */
   folderPasses: number;
+  /** Rows of the folder table read, a letter asked by its key one. */
+  folderRows: number;
   /** The typo arm's guesses read off the trigram index, and in how many reads. */
   guesses: number;
   guessReads: number;
@@ -326,8 +342,21 @@ export interface MatrixWork {
   temp: number;
 }
 
+/**
+ * UNDER A FOLDER no page reads the folder table whole. The planted words have at most 2,000 matches a word, so each is
+ * read off its index, every match asked its folder by key before its letter is read, and no History is walked: a folder
+ * row for each match a branch reads, and for each of its letters in the folder (at most 3,200). The typo arm, and a
+ * rare word beside a common excluded word (whose exact tier is empty), ask the folder's newest 200 letters first: in
+ * Archive, one letter in 100, 20,000 History letters and a folder row each. Joined to the folder table, a page had
+ * read it whole for each read of the folder's newest letters (four beside an excluded word, 0.8-1.3 s on 240,000
+ * letters), or walked 20,000 to 40,000 letters for them.
+ */
+export const matrixFolderBounds = (): MatrixBounds => Object.fromEntries((Object.keys(MATRIX_SHAPES) as MatrixShape[])
+  .flatMap((shape) => [...MATRIX_FILTERED].map((dist) => [`${shape} ${dist} folder`, shape === "typo" || shape === "beside"
+    ? { folderPasses: 0, history: 20_000, folderRows: 21_600 } : { folderPasses: 0, history: 0, folderRows: 3_200 }])));
+
 /** The most of each kind of work a cell may do, by its label. */
-export type MatrixBounds = Readonly<Record<string, Partial<Record<"buffers" | "history" | "walks" | "lookups" | "folderPasses" | "guesses", number>>>>;
+export type MatrixBounds = Readonly<Record<string, Partial<Record<"buffers" | "history" | "walks" | "lookups" | "folderPasses" | "folderRows" | "guesses", number>>>>;
 /**
  * The History an unfiltered page of the shape reads besides its set reads' walks, to the hundred above: each arm's
  * newest letters, its probes, the letters after the newest a probe asks and the oldest with as many before them (5,440,
@@ -376,6 +405,7 @@ export async function matrixWork(page: SQL, session: SQL[], h: BudgetHandle, fol
     walks: history.filter((p) => walkNodes.has(p)).reduce((n, p) => n + rows(p), 0),
     lookups: nodes.filter((p) => p["Index Name"] === "messages_pkey" || p["Index Name"] === "messages_id_account_uq").reduce((n, p) => n + loops(p), 0),
     folderPasses: nodes.filter((p) => p["Relation Name"] === "folder_state" && rows(p) >= folderRows / 2).length,
+    folderRows: nodes.filter((p) => p["Relation Name"] === "folder_state").reduce((n, p) => n + rows(p), 0),
     guesses: guesses.reduce((n, p) => n + Number(p["Actual Rows"] ?? 0) * loops(p), 0),
     guessReads: guesses.length,
     scans: nodes.filter((p) => p["Node Type"] === "Seq Scan" && ["messages", "message_bodies"].includes(String(p["Relation Name"])))
@@ -386,7 +416,7 @@ export async function matrixWork(page: SQL, session: SQL[], h: BudgetHandle, fol
 
 /**
  * Plants the matrix's words in `acct`'s documents (before the word index is built and the tables are
- * vacuumed), deletes {@link MATRIX_DELETED} (their documents kept), and files one letter in 100 in Archive.
+ * vacuumed), deletes {@link MATRIX_DELETED} (their documents kept), and files the letters in {@link MATRIX_FOLDERS}.
  */
 export async function plantMatrix(h: BudgetHandle, acct: string, n: number): Promise<void> {
   const g = sql`split_part(m.dedup_key, ':', 3)::int`;
@@ -423,4 +453,6 @@ export async function plantMatrix(h: BudgetHandle, acct: string, n: number): Pro
     where m.account_id = ${acct}::uuid and ${g} in (${sql.join(MATRIX_DELETED.map((d) => sql`${n - d}`), sql`, `)})`);
   await h.execute(sql`update folder_state f set desired_folder = 'Archive'
     from messages m where m.id = f.message_id and m.account_id = ${acct}::uuid and ${g} % 100 = 7`);
+  await h.execute(sql`update folder_state f set desired_folder = 'Old'
+    from messages m where m.id = f.message_id and m.account_id = ${acct}::uuid and ${g} > 3000 and ${g} % 2 = 0`);
 }

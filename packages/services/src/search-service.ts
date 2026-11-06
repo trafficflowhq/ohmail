@@ -158,6 +158,20 @@ const NEWEST_WALK = 2_000;
  * {@link SUMMARY_EXACT_CAP} the filter keeps: a filter that keeps fewer is counted exactly up to here.
  */
 const FILTERED_SCAN = 20_000;
+/**
+ * UNDER A FOLDER an arm whose words have at most this many cuts of matches (counted off the index, at most one more)
+ * reads them there, each asked its folder by key, and walks nothing: in a folder of one letter in 100 a walk reads
+ * 100 letters for each it keeps. An arm with more walks the folder's letters, which every arm of the page reads
+ * from one walk of History ({@link SearchService.folderStream}), and reads its index only where that walk fell
+ * short: read off the index, a common word's 200,000 matches had cost two lookups each, 0.7-2.8 s on 240,000 letters.
+ */
+const FOLDER_INDEX_CUTS = 10;
+/**
+ * The page's walk of History under a folder reads at most this many cuts of letters (48,000 for a page of 50): a
+ * common word in a folder of one letter in 100 fills its cut within about 25,000. Past it the walk's arms read as
+ * where their bound was full, so a folder of few letters is never looked for through the whole mailbox.
+ */
+const FOLDER_HISTORY_CUTS = 240;
 
 export interface SearchFilters {
   folder?: string;            // a Destination (folder_state.desiredFolder, else native/INBOX)
@@ -508,8 +522,10 @@ function isStatementTimeout(err: unknown): boolean {
 
 /** Wheres {@link SearchService.whereSql} wrote with a filter: there a bounded arm reads as it always did. */
 const filteredWheres = new WeakSet<SQL>();
-/** Wheres that name the folder (`fs`): a read under one joins `folder_state`. */
+/** Wheres that name the folder, asked of each letter ({@link SearchService.folderOf}). */
 const folderWheres = new WeakSet<SQL>();
+/** A folder where's parts: the other filters (`rest`), and the folder asked of a letter `id`. */
+const folderParts = new WeakMap<SQL, { rest: SQL; of: (id: SQL) => SQL }>();
 
 /**
  * What the store says before a search composes its arms: the backfill marker, pg_trgm, the
@@ -579,6 +595,13 @@ interface Arm {
    */
   readonly besideText?: true;
 }
+
+/**
+ * A tier's letters under a folder, newest first ({@link SearchService.folderStream}): `rows` names them (`n`, each one's
+ * place in History), read only as far as asked; `cut` holds where the walk stopped at its bound with older letters
+ * unasked, and `past` names those.
+ */
+interface FolderStream { readonly rows: SQL; readonly cut: SQL; readonly past: SQL }
 
 /**
  * How a set read asks the newest and the oldest letters ({@link SearchService.setRead}): `newest` counts, as one
@@ -674,6 +697,16 @@ export class SearchService {
 
   /** desiredFolder → native locator folder → INBOX (mirrors materializeMessage). */
   private readonly folderExpr = sql`coalesce(fs.desired_folder, m.native_locator->>'folder', 'INBOX')`;
+
+  /**
+   * {@link folderExpr} of the letter `id`, asked of it alone: its `folder_state` row by the table's key, and its own
+   * row only where it has none, so a walk reads History alone. Joined, a read of the newest letters under the folder
+   * was planned as a pass over every account's folder state, two to five a page.
+   */
+  private static folderOf(id: SQL): SQL {
+    return sql`coalesce((select fq.desired_folder from folder_state fq where fq.message_id = ${id}),
+      (select mq.native_locator->>'folder' from messages mq where mq.id = ${id}), 'INBOX')`;
+  }
 
   /** Refuse an over-long query BEFORE anything scans it; see {@link SEARCH_QUERY_MAX_CHARS}. */
   private static termOf(raw: string | undefined): string {
@@ -849,11 +882,28 @@ export class SearchService {
    * ranked arm (then ordered by rank), at K otherwise — so no branch reads more than its cut off
    * an index; the branches are merged and the arm numbered by its own order.
    */
-  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL): SQL {
+  private armSql(where: SQL, arm: Arm, k: number, window: number, walk?: SQL, spare?: SQL, stream?: FolderStream): SQL {
     const cut = arm.ranked ? window : k;
-    const read = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${arm.ranked ? b.rank : sql`0`} as rank
-      ${this.from} where ${where} and ${b.pred}
+    const rankOf = (b: Branch): SQL => (arm.ranked ? b.rank : sql`0`);
+    const indexed = (b: Branch): SQL => sql`(select m.id as id, m.date as date, ${rankOf(b)} as rank
+      ${this.from} where ${SearchService.docWhere(where, b)} and ${b.pred}
       order by m.date desc nulls last, m.id desc limit ${cut})`;
+    // UNDER A FOLDER a branch whose words have more than a few matches ({@link FOLDER_INDEX_CUTS}, `bl`) and are
+    // dense enough in the folder's newest K to fill its cut within {@link SEARCH_EXCLUSION_WALK_FACTOR} cuts (`bp`)
+    // walks the folder's letters (`bw`); short of its cut where that walk stopped at its bound, it reads its index.
+    const read = (b: Branch): SQL => {
+      if (stream === undefined || b.raw === undefined || b.keyRead === undefined) return indexed(b);
+      const doc = sql`select ${rankOf(b)} as rank from message_search s where s.message_id = w.id and ${b.pred}`;
+      const walked = sql`(select v from bp) and ((select count(*) from bw) >= ${cut} or not ${stream.cut})`;
+      return sql`(with bl as materialized (select ${SearchService.fewMatches([sql`${b.keyRead} and ${b.raw}`], FOLDER_INDEX_CUTS * k)} as v),
+        bp as materialized (select count(*) >= ${Math.ceil(cut / SEARCH_EXCLUSION_WALK_FACTOR)} as v
+          from (select id from ${stream.rows} where not (select v from bl) limit ${k}) w where exists (${doc} limit 1 offset 0)),
+        bw as materialized (select w.id as id, w.date as date, h.rank as rank from (select id, date from ${stream.rows} where (select v from bp)) w
+          cross join lateral (${doc} offset 0) h limit ${cut})
+        select id, date, rank from bw where ${walked}
+        union all
+        select id, date, rank from ${indexed(b)} r where not (${walked}))`;
+    };
     const capped = SearchService.capped(arm);
     // A branch held to `after` keeps its cut rows that pass; a full cut says the arm is cut (`x`). A
     // row that fails stays as a row with no id, so the flag outlives every row.
@@ -862,8 +912,9 @@ export class SearchService {
           from (select r.*, case when count(*) over () >= ${cut} then 1 else 0 end as x from ${read(b)} r) c)`
       : capped ? sql`(select r.*, 0 as x from ${read(b)} r)` : read(b));
     const merged = arm.local && walk ? this.localRead(where, arm, k, cut, walk)
-      : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k, arm.letters)
-      : arm.bounded && !(arm.keyedOnly && filteredWheres.has(where)) ? this.boundedRead(where, arm.branches, k, arm.key, spare, arm.letters)
+      : arm.typo ? this.typoRead(where, arm.branches[0]!, arm.typo, k, arm.letters, stream)
+      // Under a folder the text arm walks the folder's letters too: no index serves the folder.
+      : arm.bounded && !(arm.keyedOnly && filteredWheres.has(where) && stream === undefined) ? this.boundedRead(where, arm.branches, k, arm.key, spare, arm.letters, stream)
       : arm.branches.length === 1 ? branch(arm.branches[0]!)
       : sql`(select id, date, max(rank) as rank${capped ? sql`, max(x) as x` : sql``}
           from (${sql.join(arm.branches.map(branch), sql` union all `)}) u group by id, date)`;
@@ -935,9 +986,15 @@ export class SearchService {
    * branch's matches are read instead, under a sort key no index serves (`date is null` first is
    * `nulls last`), so off its GIN. Exactly one of the two answers.
    */
-  private boundedRead(where: SQL, branches: readonly Branch[], k: number, key?: SQL, spare?: SQL, letters?: number): SQL {
-    const newestOf = (n: number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
-      where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
+  private boundedRead(where: SQL, branches: readonly Branch[], k: number, key?: SQL, spare?: SQL, letters?: number, stream?: FolderStream): SQL {
+    // Under a folder every walk reads the tier's walk of the folder ({@link folderStream}), in its order: sorted
+    // again, a walk would read its whole bound before its first row.
+    const skipped = (skip: number): SQL => (skip > 0 ? sql` offset ${skip}` : sql``);
+    const newestOf = (n: number, skip = 0): SQL => (stream === undefined
+      ? sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} order by m.date desc nulls last, m.id desc limit ${n}${skipped(skip)}`
+      : sql`select id, date from ${stream.rows} limit ${n}${skipped(skip)}`);
+    const inOrder = stream === undefined ? sql` order by w.date desc nulls last, w.id desc` : sql``;
     // Every branch the document's own: each walked row asks its document alone. The walk's row is
     // already the message under the filters, and a second lookup of it was a disk read per row cold.
     const docOnly = branches.every((b) => b.raw !== undefined);
@@ -956,17 +1013,23 @@ export class SearchService {
     // whose other arms read the index on account and message: both indexes' upper pages had cost 14 blocks more there.
     const docOf = (b: Branch): SQL => (docOnly && !filteredWheres.has(where) ? b.raw! : b.pred);
     const hit = hitOf(branches.map(docOf));
-    // The probe: the newest K asked first; a part too sparse there to fill the walk skips it.
-    const dense = sql`(select count(*) from (${newestOf(k)}) w where ${hit}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`;
-    const walked = sql`select w.id as id, w.date as date from (${newestOf(SEARCH_PART_WALK_FACTOR * k)}) w where ${dense} and ${hit}
-      order by w.date desc nulls last, w.id desc limit ${k}`;
+    // The probe: the newest K asked first; a part too sparse there to fill the walk skips it, as do words with few
+    // matches under a folder (`pl`, asked once), read off their index.
+    const counted = stream === undefined ? undefined : SearchService.fewMatches(branches.map((b) => (b.keyRead === undefined || b.raw === undefined
+      ? undefined : sql`${b.keyRead} and ${b.raw}`)), FOLDER_INDEX_CUTS * k);
+    const few = counted === undefined ? undefined : sql`(select v from pl)`;
+    const probed = sql`(select count(*) from (${newestOf(k)}) w where ${hit}) >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)}`;
+    const dense = few === undefined ? probed : sql`not ${few} and ${probed}`;
+    const walked = sql`select w.id as id, w.date as date from (${newestOf(SEARCH_PART_WALK_FACTOR * k)}) w where ${dense} and ${hit}${inOrder}
+      limit ${k}`;
     const read = (b: Branch): SQL => sql`select id, date from (select m.id as id, m.date as date ${this.from}
-      where ${where} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
+      where ${SearchService.docWhere(where, b)} and ${b.pred} order by (m.date is null), m.date desc, m.id desc limit ${k}) r`;
     const matched = sql`select id, date from (${sql.join(branches.map(read), sql` union all `)}) u group by id, date`;
     const plain = branches.every((b) => b.after === undefined && b.pos === undefined);
     if (key !== undefined && plain && docOnly && !filteredWheres.has(where)) return this.keyedRead(where, branches, k, key, newestOf, hit, matched);
+    const gated = counted === undefined ? sql`` : sql`pl as materialized (select ${counted} as v), `;
     if (plain) {
-      return sql`(with pw as (${walked})
+      return sql`(with ${gated}pw as (${walked})
       select id, date, 0 as rank from pw where (select count(*) from pw) >= ${k}
       union all
       select id, date, 0 as rank from (${matched}) pm where (select count(*) from pw) < ${k})`;
@@ -998,7 +1061,9 @@ export class SearchService {
           from (${newestOf(SEARCH_FIRST_LETTERS)}) w) n`,
         branches.map((b) => sql`select s.message_id as id from message_search s where ${b.keyRead!} and ${b.raw!}`), spare)
       : null;
-    const open = first === null ? sql`` : sql`not ${first.thin} and `;
+    // Thin, or few under a folder: no walk, and the index reads answer.
+    const skip = first === null ? few : first.thin;
+    const open = skip === undefined ? sql`` : sql`not ${skip} and `;
     const bound = SEARCH_PART_WALK_FACTOR * k;
     const far = SEARCH_EXCLUSION_WALK_FACTOR * k;
     const page = Math.ceil(k / SEARCH_ARM_FACTOR);
@@ -1006,8 +1071,9 @@ export class SearchService {
     const inside = (b: Branch): boolean => b.after === undefined && b.pos !== undefined
       && branches.some((o) => o.after !== undefined && o.pos === b.pos);
     const kept = hitOf(branches.filter((b) => !inside(b)).map((b) => (b.after === undefined ? docOf(b) : sql`(${docOf(b)} and ${b.after})`)));
-    const count = (n: number, skip = 0): SQL => sql`(select count(*) from (select m.id from messages m left join folder_state fs on fs.message_id = m.id
-      where ${where} order by m.date desc nulls last, m.id desc limit ${n} offset ${skip}) f)`;
+    const count = (n: number, skip = 0): SQL => sql`(select count(*) from (${newestOf(n, skip)}) f)`;
+    // A folder's walk stopped at its bound holds older letters unasked.
+    const past = (cond: SQL): SQL => (stream === undefined ? cond : sql`(${cond} or ${stream.cut})`);
     // Each asked once, and only once the one before it holds.
     const short = sql`(select count(*) from pw) < ${k}`;
     const full = sql`(select v from pf)`;
@@ -1017,7 +1083,8 @@ export class SearchService {
     const walkOn = sql`(select v from pv)`;
     const going = sql`${rate}${late.length === 0 ? sql`` : sql` or ${crowded}`}`;
     const held = spare === undefined ? sql`${short} and ${full} and not ${walkOn}` : sql`${short} and ${full} and not ${walkOn} and not ${spare}`;
-    const index = first === null ? held : sql`(${first.thin} or (${held}))`;
+    const index = first !== null ? sql`(${first.thin} or (${held}))`
+      : few === undefined ? held : sql`((${few}${spare === undefined ? sql`` : sql` and not ${spare}`}) or (${held}))`;
     const pr = (i: number): SQL => sql.raw("pr" + String(i));
     // A set read ({@link setRead}) while `index` holds: each held branch's newest `bound` matches off its term
     // (`paN`, which the gate reads first), and the newest K of every branch the index answers whole, their terms
@@ -1056,7 +1123,7 @@ export class SearchService {
         from (select m.id as id from messages m where ${where} order by m.date desc nulls last, m.id desc
           limit ${SEARCH_SET_NEXT_CUTS * k} offset ${bound}) e)`];
     const deep = late.map(({ b, i }) => (first === null ? sql`, ${pr(i)} as (select m.id as id, m.date as date ${this.from}
-        where ${where} and ${b.pred} and ${index} order by (m.date is null), m.date desc, m.id desc limit ${bound})`
+        where ${SearchService.docWhere(where, b)} and ${b.pred} and ${index} order by (m.date is null), m.date desc, m.id desc limit ${bound})`
       : sql`, ${pr(i)} as (${termRead(units.find((u) => u.tag === String(i))!, bound)})`));
     const passed = late.map(({ b, i }) => sql`select id, date from (select p.id, p.date from ${pr(i)} p where ${this.keeps(b.after!, sql`p.id`)} limit ${k}) k${pr(i)}`);
     const found = [
@@ -1066,20 +1133,19 @@ export class SearchService {
     ];
     const readFull = late.length === 0 ? sql`false` : sql.join(late.map(({ i }) => sql`(select count(*) from ${pr(i)}) >= ${bound}`), sql` or `);
     const crowd = first !== null && shared ? sql`pz z where ${open}z.h` : sql`(${newestOf(k)}) w where ${open}${words}`;
-    const gate = first === null ? sql``
+    const gate = first === null ? gated
       : sql`${shared ? sql`pz as materialized (select ${words} as h from (${newestOf(k)}) w), ` : sql``}${first.named}, `;
     // The held branches' words in the newest K, counted once (`pn`) where a set read asks them too.
     const crowding = first === null ? sql`(select count(*) from ${crowd})` : sql`(select h from pn)`;
     // Thin, the bound reads as not full: no deeper walk and no cut, the reads above the arm.
-    return sql`(with ${gate}pw as (select w.id as id, w.date as date from (${newestOf(bound)}) w where ${open}${kept}
-        order by w.date desc nulls last, w.id desc limit ${k}),
-      pf as (select ${open}${count(bound)} >= ${bound} as v),${first === null ? sql`` : sql`
+    return sql`(with ${gate}pw as (select w.id as id, w.date as date from (${newestOf(bound)}) w where ${open}${kept}${inOrder}
+        limit ${k}),
+      pf as (select ${open}${past(sql`${count(bound)} >= ${bound}`)} as v),${first === null ? sql`` : sql`
       pn as materialized (select count(*) as h from ${crowd}),`}
       pb as (select ${crowding} >= ${Math.ceil(k / SEARCH_PART_PROBE_SHARE)} as v),
       pv as (select ${spare === undefined ? going : sql`not ${spare} and (${going})`} as v),
-      pd as (select w.id as id, w.date as date from (select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
-          where ${where} order by m.date desc nulls last, m.id desc limit ${far - bound} offset ${bound}) w
-        where ${short} and ${full} and ${walkOn} and ${kept} order by w.date desc nulls last, w.id desc
+      pd as (select w.id as id, w.date as date from (${newestOf(far - bound, bound)}) w
+        where ${short} and ${full} and ${walkOn} and ${kept}${inOrder}
         limit (case when ${page} - (select count(*) from pw) > 0 then ${page} - (select count(*) from pw) else 0 end))${sql.join([...sizes, ...deep], sql``)}
       select id, date, 0 as rank, 0 as x from pw where (select count(*) from pw) >= ${k}
       union all
@@ -1089,7 +1155,8 @@ export class SearchService {
       where ${short}
       union all
       select null, null, 0, 1 where ${short} and ${full} and (case when ${walkOn}
-        then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${count(1, far)} > 0 else ${spare === undefined ? readFull : sql`(${spare} or ${readFull})`} end))`;
+        then (select count(*) from pw) + (select count(*) from pd) >= ${page} or ${past(sql`${count(1, far)} > 0`)} else ${spare === undefined ? readFull : sql`(${spare} or ${readFull})`} end)
+        ${few === undefined || first !== null ? sql`` : sql`or (${few} and ${spare === undefined ? readFull : sql`(${spare} or ${readFull})`})`})`;
   }
 
   /**
@@ -1117,6 +1184,24 @@ export class SearchService {
       thin: sql`(select v from qz)`,
       term,
     };
+  }
+
+  /**
+   * `where` for a read of a branch's matches off its index: under a folder a document's match is asked its folder by
+   * the document's key before its letter is read, a lookup each match outside the folder had cost besides.
+   */
+  private static docWhere(where: SQL, b: Branch): SQL {
+    const parts = folderParts.get(where);
+    return parts === undefined || b.raw === undefined ? where : sql`${where} and ${parts.of(sql`s.message_id`)}`;
+  }
+
+  /**
+   * Every one of `reads` (a document predicate under its index's key) has at most `cap` matches, each counted off
+   * its index up to one more: a scalar. False where one has no key, as a branch over the older columns.
+   */
+  private static fewMatches(reads: readonly (SQL | undefined)[], cap: number): SQL {
+    if (reads.length === 0 || reads.some((r) => r === undefined)) return sql`false`;
+    return sql`(${sql.join(reads.map((r) => sql`(select count(*) from (select 1 from message_search s where ${r!} limit ${cap + 1}) c) <= ${cap}`), sql` and `)})`;
   }
 
   /**
@@ -1309,9 +1394,14 @@ export class SearchService {
    * letters instead, as the planner chooses: read first, the account's guesses had cost a broad typo under a
    * sender 15,192 buffers on 240,000 letters, where the sender's 40 letters cost 1,556.
    */
-  private typoRead(where: SQL, b: Branch, { walkPred, candidate, similar, vectors, guesses }: NonNullable<Arm["typo"]>, k: number, letters?: number): SQL {
-    const newestOf = (n: SQL | number): SQL => sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
-      where ${where} order by m.date desc nulls last, m.id desc limit ${n}`;
+  private typoRead(
+    where: SQL, b: Branch, { walkPred, candidate, similar, vectors, guesses }: NonNullable<Arm["typo"]>, k: number, letters?: number, stream?: FolderStream,
+  ): SQL {
+    // Under a folder the walks read the tier's walk of it, in its order ({@link folderStream}).
+    const newestOf = (n: SQL | number): SQL => (stream === undefined
+      ? sql`select m.id as id, m.date as date from messages m left join folder_state fs on fs.message_id = m.id
+      where ${where} order by m.date desc nulls last, m.id desc limit ${n}`
+      : sql`select id, date from ${stream.rows} limit ${n}`);
     // Each walked message's document asked by itself (`offset 0`), so the walk streams in its order
     // and stops at K: joined, a mailbox inside the bound was read whole and sorted. `lower` once each.
     // The vectors only for an excluded word, which the walk then asks of the whole letter.
@@ -1323,9 +1413,32 @@ export class SearchService {
     const need = sql`((${k * k} + ${h} - 1) / (case when ${h} > 0 then ${h} else 1 end))`;
     const dense = sql`${h} >= ${Math.ceil(k / SEARCH_TYPO_WALK_FACTOR)}
       and (select count(*) from (${newestOf(need)}) n) >= ${need}`;
-    const walked = sql`select w.id as id, w.date as date from ${asked(SEARCH_TYPO_WALK_FACTOR * k)} and ${dense}
-      order by w.date desc nulls last, w.id desc limit ${k}`;
+    const walked = sql`select w.id as id, w.date as date from ${asked(SEARCH_TYPO_WALK_FACTOR * k)} and ${dense}${stream === undefined
+      ? sql` order by w.date desc nulls last, w.id desc` : sql``} limit ${k}`;
     const rank = sql`(select ${b.rank} from message_search s where s.message_id = u.id)`;
+    const parts = folderParts.get(where);
+    if (stream !== undefined && parts !== undefined) {
+      // UNDER A FOLDER the folder's newest K are asked first (`tp`), and the walk reads on past the folder walk's
+      // bound (`past`) where the folder holds the letters it needs, as the catalog's letters estimate it at the rate
+      // of those K in History: a common typo's guesses had cost a similarity each, 0.45 s for 77,000 on 240,000
+      // letters. Short of K, the guesses are read off the GIN (`tg`), each asked its folder by key, and the folder's dated.
+      const all = sql`(select id, date from ${stream.rows} union all select id, date from ${stream.past})`;
+      const holds = letters === undefined
+        ? sql`(select count(*) from (select 1 from ${stream.rows} limit ${need}) n) >= ${need}`
+        : sql`(select count(*) * ${Math.ceil(letters)} / max(n) from (select n from ${stream.rows} limit ${k}) n) >= ${need}`;
+      const deep = sql`${h} >= ${Math.ceil(k / SEARCH_TYPO_WALK_FACTOR)} and ${holds}`;
+      const far = sql`select w.id as id, w.date as date from (select id, date from ${all} f limit ${SEARCH_TYPO_WALK_FACTOR * k}) w
+        cross join lateral ${doc} where ${walkPred} and ${deep} limit ${k}`;
+      return sql`(with tg as materialized (select s.message_id as id from message_search s where ${guesses ?? b.pred}),
+        tp as (select count(*) as h from ${asked(k)}), tw as (${far})
+      select u.id, u.date, ${rank} as rank from (
+        select id, date from tw where (select count(*) from tw) >= ${k}
+        union all
+        select id, date from (select t.id as id, x.date as date from tg t
+            cross join lateral (select m.date as date from messages m where m.id = t.id and ${where} offset 0) x
+          where (select count(*) from tw) < ${k} and ${parts.of(sql`t.id`)}
+          order by (x.date is null), x.date desc, t.id desc limit ${k}) tm) u)`;
+    }
     // Under a filter, read as the arm always read: a selective filter's letters first, each asked.
     if (filteredWheres.has(where)) {
       const read = sql`select m.id as id, m.date as date ${this.from} where ${where} and ${b.pred}
@@ -1369,6 +1482,30 @@ export class SearchService {
         select id, date from te) u)`;
   }
 
+  /**
+   * A TIER'S LETTERS UNDER A FOLDER, newest first, as one walk of History every walking arm reads (`pre` + `fl`):
+   * materialized, so read once and only as far as the arm that reads furthest asks. Each letter is asked its
+   * folder by key. The walk reads at most {@link FOLDER_HISTORY_CUTS} cuts of History (`fc` says it was cut there).
+   * Only on the server, where a bounded or typo arm reads it.
+   */
+  private folderStream(d: Dialect, where: SQL, arms: readonly Arm[], k: number, pre: string): { named: SQL; at: FolderStream } | null {
+    const parts = folderParts.get(where);
+    if (parts === undefined || d.name !== "pg" || !arms.some((a) => a.local === undefined && (a.typo !== undefined || a.bounded === true))) return null;
+    const rows = sql.raw(pre + "fl");
+    const cut = sql.raw(pre + "fc");
+    const past = sql.raw(pre + "fx");
+    const most = FOLDER_HISTORY_CUTS * k;
+    const order = sql`m.date desc nulls last, m.id desc`;
+    const history = sql`select m.id as id, m.date as date from messages m where ${parts.rest} order by ${order}`;
+    return {
+      named: sql`${rows} as materialized (select w.id as id, w.date as date, w.n as n from (select m.id as id, m.date as date,
+          row_number() over (order by ${order}) as n from messages m where ${parts.rest} order by ${order} limit ${most}) w where ${parts.of(sql`w.id`)}),
+        ${cut} as materialized (select exists (select 1 from (${history} limit 1 offset ${most}) x) as v),
+        ${past} as materialized (select w.id as id, w.date as date from (${history} offset ${most}) w where ${parts.of(sql`w.id`)})`,
+      at: { rows, cut: sql`(select v from ${cut})`, past },
+    };
+  }
+
   /** The union of every branch's id set — what `total` and the facets count over. */
   private unionSql(where: SQL, arms: readonly Arm[]): SQL {
     const selects = arms.flatMap((a) => a.branches)
@@ -1398,7 +1535,8 @@ export class SearchService {
     // A part arm beside the text arm walks on only while the text arm, named before it, is short of K.
     const text = arms.findIndex((x) => x.name === "text");
     const spare = text < 0 ? undefined : sql`(select count(id) from ${a(text)}) >= ${k}`;
-    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined, x.besideText && i > text ? spare : undefined));
+    const stream = this.folderStream(d, where, arms, k, pre);
+    const armSqls = arms.map((x, i) => this.armSql(where, x, k, window, x.local ? walkOf(i) : undefined, x.besideText && i > text ? spare : undefined, stream?.at));
     const sizeNames = armSqls.map((_, i) => pre + "n" + String(i));
     // A gated arm is counted only when its gate holds, so a count never starts the arm either.
     // A local arm whose walk fell short counts as cut ({@link localRead}'s `x`), as does an arm an
@@ -1410,6 +1548,7 @@ export class SearchService {
     return {
       k,
       named: sql.join([
+        ...(stream === null ? [] : [stream.named]),
         ...(walking ? [sql`${walkName} as (${this.sharedWalk(where, arms, k)})`] : []),
         ...armSqls.map((x, i) => sql`${a(i)} as (${x})`),
       ], sql`, `),
@@ -2201,7 +2340,9 @@ export class SearchService {
     // `deleted_at is null` unconditionally (mail 0065): search is a living view, and a deleted
     // or fully-expunged message must not come back as a hit over its stored (husked) headers.
     const preds: SQL[] = [sql`m.account_id = ${accountId}`, sql`m.deleted_at is null`];
-    if (f.folder !== undefined) preds.push(sql`${this.folderExpr} = ${f.folder}`);
+    const inFolder = (id: SQL): SQL => sql`${SearchService.folderOf(id)} = ${f.folder}`;
+    const folder = f.folder === undefined ? undefined : inFolder(sql`m.id`);
+    if (folder !== undefined) preds.push(folder);
     if (f.sender !== undefined) preds.push(sql`lower(m.from_address) = lower(${f.sender})`);
     // Literals, not bound booleans — see `boolLiteral`.
     if (f.unread !== undefined) preds.push(sql`m.unread = ${boolLiteral(f.unread)}`);
@@ -2214,7 +2355,10 @@ export class SearchService {
     }
     const out = sql.join(preds, sql` and `);
     if (preds.length > 2) filteredWheres.add(out);
-    if (f.folder !== undefined) folderWheres.add(out);
+    if (folder !== undefined) {
+      folderWheres.add(out);
+      folderParts.set(out, { rest: sql.join(preds.filter((p) => p !== folder), sql` and `), of: inFolder });
+    }
     return out;
   }
 }
