@@ -299,6 +299,8 @@ export {
   EVICT_HIGH_WATER_RATIO, EVICT_LOW_WATER_RATIO, EVICT_BATCH_BODIES, EVICT_INLINE_MAX_BODIES,
   type EvictionResult,
   recomputeAccountStorage, lockAccountStorage, type AccountRecount,
+  // The worker's batched ingest: the counter's facts under its lock, and the window replayed for a run.
+  lockStorageCounter, oldestStoredBodies, replayReserveEvicting, type StorageCounter, type WindowBody, type WindowLetter, type WindowReplay,
   // Mail 0166: a letter withheld for space on arrival joins the count the trim and the erase keep;
   // a letter the refill gave its text back leaves it.
   recordWithheldForSpace, recordRefilledForSpace,

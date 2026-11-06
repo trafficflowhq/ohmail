@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import {
-  accountStorage, attachments, bodyBytesOf, folderState, lockAccountStorage, messageBodies, type Tx,
+  accountStorage, attachments, bodyBytesOf, EVICT_INLINE_MAX_BODIES, folderState, lockStorageCounter, messageBodies,
+  oldestStoredBodies, replayReserveEvicting, type Tx,
 } from "@trafficflow/db";
 import type { Dialect } from "@trafficflow/db/dialect";
 import {
@@ -23,7 +24,9 @@ import {
  * about twenty in all. What it writes, in `commitChange`'s lock order (mailbox, messages, storage,
  * threads, list addresses, the change-log counter last): the rows, their primary instances, the
  * attachments, the storage counter, the bodies with their search documents, the threads, the
- * folder rows, the last letter's list addresses, and every letter's deltas in letter order.
+ * folder rows, the last letter's list addresses, and every letter's deltas in letter order. At the
+ * storage cap the rolling window is replayed over the run (`replayReserveEvicting`), and each body
+ * is written once in its final state.
  *
  * The caller keeps the run sound (`sync.ts`): only letters `commitChange` would write nothing else
  * for, and a run ends before a letter whose plan could read a member's rows. Anything this cannot
@@ -62,37 +65,24 @@ function chunks<T>(rows: readonly T[], size: number): T[][] {
 
 /** {@link WorkerRepo.persistNewRun}, over the transaction's own handle. */
 export async function persistNewRun(
-  db: Tx, d: Dialect, repo: WorkerRepo, all: readonly IngestRunMember[], ctx: IngestRunContext,
+  db: Tx, d: Dialect, repo: WorkerRepo, members: readonly IngestRunMember[], ctx: IngestRunContext,
 ): Promise<IngestRunResult> {
-  if (all.length === 0) return { persisted: 0, messageIds: [] };
+  if (members.length === 0) return { persisted: 0, messageIds: [] };
   const { accountId, mailboxId } = ctx;
   const capBytes = ctx.storageCap === UNMETERED_STORAGE_CAP ? null : ctx.storageCap;
-  const writesAll = all.map((m) => newBodyWriteOf(m.plan, accountId));
+  const writes = members.map((m) => newBodyWriteOf(m.plan, accountId));
   // A husk the plan decided (`too_large`) reserves nothing.
-  const bytesAll = writesAll.map((w, i) => (all[i]!.plan.bodyWithheld !== undefined ? null : bodyBytesOf(w.body)));
-
-  // AT THE CAP the letter that would not fit, and every one after it, commit alone (the rolling
-  // window evicts per letter). Predicted here without a lock; proved under it below.
-  let n = all.length;
-  if (capBytes !== null && bytesAll.some((b) => b !== null)) {
-    const [row] = await db.select({ bytes: accountStorage.bytes }).from(accountStorage)
-      .where(eq(accountStorage.accountId, accountId));
-    n = fittingUnderCap(row?.bytes ?? 0, bytesAll, capBytes);
-    if (n === 0) return { persisted: 0, messageIds: [] };
-  }
-  const members = all.slice(0, n);
-  const writes = writesAll.slice(0, n);
-  const bytes = bytesAll.slice(0, n);
+  const bytes = writes.map((w, i) => (members[i]!.plan.bodyWithheld !== undefined ? null : bodyBytesOf(w.body)));
 
   // ── messages, through `insertMessage`'s own door: the erasure stamp asked once for the run ──
   // (unfenced, the change-log allocation below asks it), and a conflict is a letter stored since
   // it was planned.
-  const idByKey = new Map<string, string>();
+  const byKey = new Map<string, { id: string; at: Date; atMicros: bigint }>();
   const rows = await insertMessageRows(db, d, mailboxId, members.map((m) => m.insert), { mustBeLive: ctx.mailboxMustBeLive, inStoreOrder: true });
-  for (const r of rows) idByKey.set(r.dedupKey, r.id);
-  const ids = members.map((m) => idByKey.get(m.insert.dedupKey));
-  if (ids.some((id) => id === undefined)) throw new RunConflictError("a letter of the run was stored since it was planned");
-  const messageIds = ids as string[];
+  for (const r of rows) byKey.set(r.dedupKey, { id: r.id, at: r.date ?? r.createdAt, atMicros: BigInt(r.atMicros ?? "0") });
+  const inserted = members.map((m) => byKey.get(m.insert.dedupKey));
+  if (inserted.some((r) => r === undefined)) throw new RunConflictError("a letter of the run was stored since it was planned");
+  const messageIds = inserted.map((r) => r!.id);
 
   // ── primary instances: account and mailbox from the message row, never from the caller ──
   for (const chunk of chunks(members.map((m, i) => ({ id: messageIds[i]!, ...instanceTupleOf(m.insert.nativeLocator) })), ROWS_PER_STATEMENT)) {
@@ -109,16 +99,34 @@ export async function persistNewRun(
   const files = members.flatMap((m, i) => attachmentRowsOf(messageIds[i]!, accountId, m.plan.normalized.attachments));
   for (const chunk of chunks(files, ROWS_PER_STATEMENT)) await db.insert(attachments).values(chunk);
 
-  // ── the storage counter: made to exist, locked, decided as `reserveBodyBytes` decides, moved once ──
-  const total = bytes.reduce<number>((sum, b) => sum + (b ?? 0), 0);
+  // ── the storage counter: made to exist, locked, and `reserveBodyBytesEvicting` replayed over the
+  // run in letter order (the rolling window at the cap), then moved once ──
+  let holds = bytes.map((b) => b !== null);
   if (bytes.some((b) => b !== null)) {
-    const held = await lockAccountStorage(db, d, accountId);
-    if (fittingUnderCap(held, bytes, capBytes) !== bytes.length) {
-      throw new RunConflictError("the storage counter moved past the cap since the run was sized");
+    const held = await lockStorageCounter(db, d, accountId);
+    const total = bytes.reduce<number>((sum, b) => sum + (b ?? 0), 0);
+    if (capBytes === null || fittingUnderCap(held.bytes, bytes, capBytes) === bytes.length) {
+      await db.update(accountStorage)
+        .set({ bytes: sql`${accountStorage.bytes} + ${total}`, updatedAt: d.now() })
+        .where(eq(accountStorage.accountId, accountId));
+    } else {
+      const page = await oldestStoredBodies(db, d, accountId, EVICT_INLINE_MAX_BODIES * members.length);
+      const replay = replayReserveEvicting(held, capBytes, members.map((m, i) => ({
+        messageId: messageIds[i]!, bytes: bytes[i]!, at: inserted[i]!.at, atMicros: inserted[i]!.atMicros,
+        holdsContent: writes[i]!.body.text.length > 0 || writes[i]!.body.html !== null,
+      })), page);
+      holds = replay.holds;
+      if (replay.emptied.length > 0) {
+        await db.update(messageBodies).set({ text: "", html: null, withheldReason: "storage_cap" })
+          .where(inArray(messageBodies.messageId, replay.emptied));
+      }
+      await db.update(accountStorage).set({
+        bytes: replay.counter.bytes, huskedForSpace: replay.counter.huskedForSpace,
+        withheldOnArrival: replay.counter.withheldOnArrival, keptFrom: replay.counter.keptFrom,
+        ...(replay.trimmed ? { firstHuskedAt: sql`coalesce(${accountStorage.firstHuskedAt}, ${d.now()})`, lastHuskedAt: d.now() } : {}),
+        updatedAt: d.now(),
+      }).where(eq(accountStorage.accountId, accountId));
     }
-    await db.update(accountStorage)
-      .set({ bytes: sql`${accountStorage.bytes} + ${total}`, updatedAt: d.now() })
-      .where(eq(accountStorage.accountId, accountId));
   }
 
   // ── bodies, each with its search document in the same statement (mail 0125) ──
@@ -129,11 +137,13 @@ export async function persistNewRun(
     if (batch.length === 0) return;
     const bodyInsert = db.insert(messageBodies).values(batch.map((i) => {
       const w = writes[i]!;
+      // Each body's final state, once: a letter the window emptied, here or on arrival, is a husk.
+      const husk = w.body.withheld ?? (holds[i] ? null : ("storage_cap" as const));
       return {
         messageId: messageIds[i]!,
-        text: w.body.withheld !== undefined ? "" : w.body.text,
-        html: w.body.withheld !== undefined ? null : w.body.html,
-        withheldReason: w.body.withheld ?? null,
+        text: husk !== null ? "" : w.body.text,
+        html: husk !== null ? null : w.body.html,
+        withheldReason: husk,
         // A copy: the parser's null-prototype map refuses the driver (see `insertMessageBody`).
         headers: { ...w.body.headers },
       };
