@@ -109,6 +109,38 @@ describe("ImapAdapter.changesSince — bounded backfill", () => {
     await c.logout();
   }, 60_000);
 
+  it("takes a per-call limit that only lowers the cap, as an ordinary truncated batch", async () => {
+    const cfg = greenmailConfig();
+    adapter = new ImapAdapter(cfg, { capabilityOverrides: { condstore: false }, maxBatchMessages: 10 });
+    await adapter.connect();
+    await adapter.ensureFolders(FIXTURE_DOOR);
+    const c = await raw(cfg);
+    for (let i = 1; i <= 25; i++) {
+      await c.append("INBOX", eml({ from: "anna@x.example", subject: `l${i}`, messageId: `l${i}@x` }));
+    }
+
+    let cur = emptyCursor();
+    const b1 = await adapter.changesSince(cur, { messages: 3 });
+    expect(uidsOf(b1)).toEqual([23, 24, 25]);
+    expect(b1.hasBacklog).toBe(true);
+    // Held, exactly as under the adapter's own cap.
+    expect(b1.newCursor.folders["INBOX"]).toEqual({ uidValidity: "0", uidNext: 0, highestModseq: "0", serverExists: 25 });
+
+    // A limit above the adapter's own cap is the cap, never more.
+    cur = advance(cur, b1);
+    const b2 = await adapter.changesSince(cur, { messages: 1_000_000 });
+    expect(uidsOf(b2)).toEqual([13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
+    expect(b2.hasBacklog).toBe(true);
+
+    // Zero still takes one message, so a drain under any limit progresses.
+    cur = advance(cur, b2);
+    const b3 = await adapter.changesSince(cur, { messages: 0 });
+    expect(uidsOf(b3)).toEqual([12]);
+    expect(b3.hasBacklog).toBe(true);
+    expect(b3.newCursor.folders["INBOX"].highestModseq).toBe("0");
+    await c.logout();
+  }, 60_000);
+
   it("honours a byte budget, and always returns at least one message so an oversized mail cannot stall the drain", async () => {
     const cfg = greenmailConfig();
     // One byte: every message overshoots, so the >= 1 rule is the only thing that makes progress.

@@ -14,7 +14,7 @@ import { pgTransportReason } from "@trafficflow/db/cloud";
 import {
   DEFAULT_ALERT_THRESHOLDS, msOAuthEnv, WORKER_POOL_MAX, SSE_DISABLED_REFUSAL, type HeartbeatGet, type PostJson,
 } from "@trafficflow/db/cloud";
-import type { MailboxAdapter, ImapConfig } from "@trafficflow/core/adapters/imap";
+import { DEFAULT_SYNC_BATCH_MAX_MESSAGES, type MailboxAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { buildIdentityOf, buildVersionOf, type BuildIdentitySource } from "./build-version.js";
 import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
@@ -116,6 +116,54 @@ export function resolveTailTurn(
     throw new WorkerConfigError("tailTurn", "tailTurn.minTurnMs may not exceed tailTurn.turnBudgetMs");
   }
   return { minTurnMs, turnBudgetMs };
+}
+/**
+ * A BACKLOG TURN'S LENGTH. A pass ends only when its lanes return, so a full batch on a slow store,
+ * minutes long, held every pass that long. Each mailbox's limit is steered toward this
+ * by {@link nextTurnMessages}: long enough that a turn's fixed cost stays small beside its fetches.
+ */
+export const HEAVY_TURN_MS = 120_000;
+/** The limit a newly attached mailbox asks for, the floor the controller shrinks to, and its ceiling. */
+export const TURN_START_MESSAGES = 50;
+export const TURN_MIN_MESSAGES = 10;
+export const TURN_MAX_MESSAGES = DEFAULT_SYNC_BATCH_MAX_MESSAGES;
+
+/**
+ * The next turn's message limit from the last completed one: a turn past `targetMs` shrinks to the
+ * larger of half and the proportional share (never below {@link TURN_MIN_MESSAGES}); one that ended
+ * early still owing mail grows to the smaller of double and the proportional share (never above
+ * {@link TURN_MAX_MESSAGES}); anything else keeps its limit.
+ */
+export function nextTurnMessages(asked: number, turnMs: number, targetMs: number, owedMore: boolean): number {
+  const share = turnMs > 0 ? (asked * targetMs) / turnMs : Infinity;
+  if (turnMs > targetMs) {
+    return Math.max(TURN_MIN_MESSAGES, Math.floor(Math.max(asked / 2, share)));
+  }
+  if (owedMore && turnMs < targetMs) {
+    return Math.min(TURN_MAX_MESSAGES, Math.floor(Math.min(asked * 2, share)));
+  }
+  return asked;
+}
+
+/**
+ * The target instead while another mailbox of the same account is attached: one cycle per account
+ * keeps that mailbox out of every lane for the whole turn, so it is steered toward their revisit.
+ */
+export const SHARED_ACCOUNT_TURN_MS = 25_000;
+
+function positiveTurnMs(field: "heavyTurnMs" | "sharedAccountTurnMs", v: number): number {
+  if (!Number.isInteger(v) || v < 1) {
+    throw new WorkerConfigError(field, `${field} must be a positive integer (got ${v})`);
+  }
+  return v;
+}
+/** The backlog turn's target; a zero, a fraction or a negative refuses. */
+export function resolveHeavyTurnMs(requested: number | undefined): number {
+  return positiveTurnMs("heavyTurnMs", requested ?? HEAVY_TURN_MS);
+}
+/** The backlog turn's target beside a mailbox of the same account, never above `heavyTurnMs`. */
+export function resolveSharedAccountTurnMs(requested: number | undefined, heavyTurnMs: number): number {
+  return Math.min(heavyTurnMs, positiveTurnMs("sharedAccountTurnMs", requested ?? SHARED_ACCOUNT_TURN_MS));
 }
 /** Standby lock-retry backoff — a hot spare re-tries every 15 s. */
 export const DEFAULT_STANDBY_RETRY_MS = 15_000;
@@ -381,6 +429,10 @@ export interface WorkerConfig {
   /** TEST SEAM (never populated by `loadConfig`): the tail's turn, resolved by {@link resolveTailTurn}.
    *  Production takes the constants; a test cannot wait out twenty seconds. */
   tailTurn?: { minTurnMs?: number; turnBudgetMs?: number };
+  /** TEST SEAM (never populated by `loadConfig`): the backlog turn's target, resolved by {@link resolveHeavyTurnMs}. */
+  heavyTurnMs?: number;
+  /** TEST SEAM (never populated by `loadConfig`): the same beside a mailbox of its account, by {@link resolveSharedAccountTurnMs}. */
+  sharedAccountTurnMs?: number;
   /** TEST SEAM (never populated by `loadConfig`): awaited before every tail slice with its section
    *  name and account index, so an ordering test can park a slice and read the trace. */
   tailSliceHook?: (section: string, accountIndex: number) => Promise<void>;

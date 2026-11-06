@@ -3,7 +3,8 @@ import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
 import { makePlatformSignalPort, SSE_DISABLED_REFUSAL } from "@trafficflow/db/cloud";
 import {
   ATTACH_DEADLINE_MS, DEFAULT_ATTACH_CONCURRENCY, DEFAULT_SYNC_BLOCK_GRACE_MS, MAX_ATTACH_CONCURRENCY,
-  WorkerConfigError, loadConfig, resolveAttachConcurrency,
+  HEAVY_TURN_MS, SHARED_ACCOUNT_TURN_MS, TURN_START_MESSAGES, TURN_MIN_MESSAGES, TURN_MAX_MESSAGES,
+  WorkerConfigError, loadConfig, resolveAttachConcurrency, nextTurnMessages, resolveHeavyTurnMs, resolveSharedAccountTurnMs,
 } from "../src/config.js";
 import { keyRingVar, KEY_RING_RETIRED } from "../../../test/support/key-ring-env.js";
 
@@ -67,6 +68,57 @@ describe("attach concurrency and deadline", () => {
 
   it("gives up on an attach before the row's sync-block grace runs out", () => {
     expect(ATTACH_DEADLINE_MS).toBeLessThan(DEFAULT_SYNC_BLOCK_GRACE_MS);
+  });
+});
+
+describe("a turn's message limit, steered by the turn's length", () => {
+  it("starts at 50 and keeps between 10 and 200, aiming at two-minute turns", () => {
+    expect([TURN_START_MESSAGES, TURN_MIN_MESSAGES, TURN_MAX_MESSAGES, HEAVY_TURN_MS]).toEqual([50, 10, 200, 120_000]);
+  });
+
+  it("shrinks a long turn to the larger of half and its share, never below 10", () => {
+    expect(nextTurnMessages(50, 240_000, 120_000, true)).toBe(25);
+    expect(nextTurnMessages(50, 130_000, 120_000, true)).toBe(46);
+    expect(nextTurnMessages(50, 10_000_000, 120_000, true)).toBe(25);
+    expect(nextTurnMessages(12, 600_000, 120_000, false)).toBe(10);
+  });
+
+  it("grows a short turn that still owes mail to the smaller of double and its share, never above 200", () => {
+    expect(nextTurnMessages(50, 30_000, 120_000, true)).toBe(100);
+    expect(nextTurnMessages(50, 100_000, 120_000, true)).toBe(60);
+    expect(nextTurnMessages(150, 1_000, 120_000, true)).toBe(200);
+    expect(nextTurnMessages(200, 0, 120_000, true)).toBe(200);
+  });
+
+  it("keeps the limit for a short turn that owes nothing, or one on target", () => {
+    expect(nextTurnMessages(50, 1_000, 120_000, false)).toBe(50);
+    expect(nextTurnMessages(80, 120_000, 120_000, true)).toBe(80);
+  });
+
+  it("settles a store of one second a message at the target from either side", () => {
+    // The fake clock: a turn costs one second per message plus a fixed five.
+    for (const start of [TURN_START_MESSAGES, TURN_MIN_MESSAGES, TURN_MAX_MESSAGES]) {
+      let n = start;
+      for (let i = 0; i < 12; i++) n = nextTurnMessages(n, 5_000 + n * 1_000, HEAVY_TURN_MS, true);
+      expect(n, `from ${start}`).toBeGreaterThanOrEqual(110);
+      expect(n, `from ${start}`).toBeLessThanOrEqual(120);
+    }
+  });
+
+  it("takes a positive whole target and refuses anything else by name", () => {
+    expect(resolveHeavyTurnMs(undefined)).toBe(HEAVY_TURN_MS);
+    expect(resolveHeavyTurnMs(1)).toBe(1);
+    for (const bad of [0, -5, 2.5, Number.NaN]) {
+      expect(() => resolveHeavyTurnMs(bad), String(bad)).toThrow(WorkerConfigError);
+      expect(() => resolveSharedAccountTurnMs(bad, HEAVY_TURN_MS), String(bad)).toThrow(WorkerConfigError);
+    }
+  });
+
+  it("aims at a 25 s turn beside a mailbox of the same account, never longer than the lone target", () => {
+    expect(resolveSharedAccountTurnMs(undefined, HEAVY_TURN_MS)).toBe(SHARED_ACCOUNT_TURN_MS);
+    expect(SHARED_ACCOUNT_TURN_MS).toBe(25_000);
+    expect(resolveSharedAccountTurnMs(undefined, 1_000)).toBe(1_000);
+    expect(resolveSharedAccountTurnMs(7, HEAVY_TURN_MS)).toBe(7);
   });
 });
 

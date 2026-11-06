@@ -58,6 +58,7 @@ import {
   DEFAULT_ALERT_INTERVAL_MS, DEFAULT_SYNC_BLOCK_GRACE_MS,
   DEFAULT_LEASE_UNAVAILABLE_DETACH_MS, resolveCycleLanes, CYCLE_FAST_LANES, CYCLE_WAKE_REVISITS,
   resolveTailTurn, TAIL_SLICE_BUDGET_MS, resolveAttachConcurrency, ATTACH_DEADLINE_MS,
+  resolveHeavyTurnMs, resolveSharedAccountTurnMs, nextTurnMessages, TURN_START_MESSAGES,
   type WorkerConfig,
 } from "./config.js";
 import {
@@ -562,6 +563,18 @@ interface MailboxRuntime {
    * turn inside a pass that a long lane is holding open; see `admitDue` in `cycle()`.
    */
   lastVisitEndedAt: number | null;
+  /**
+   * How many message bodies this mailbox's next turn may fetch, steered toward `heavyTurnMs` by
+   * `nextTurnMessages` after every completed turn. In memory only: a fresh attach starts small, so a
+   * backlog turn after a restart cannot hold the first pass for a full batch.
+   */
+  turnMessages: number;
+  /**
+   * Its last completed turn owed a backlog and ran at least half the lone target (`heavyTurnMs`),
+   * whatever its own: an import's turn, not a burst drained in seconds. Only such a mailbox takes one
+   * turn a pass, leads the pass, and makes a kick serve the others while it runs; FALSE at attach, like `owesBacklog`.
+   */
+  longTurns: boolean;
 }
 
 /** A detached mailbox waiting out its exponential retry backoff. */
@@ -761,6 +774,9 @@ export async function startWorkerWithLock(
      * shard on which no backfill may ever run: at one lane there is nothing to reserve FROM.
      */
     const heavyLanes = Math.max(1, cycleLanes - CYCLE_FAST_LANES);
+    /** The length a turn's message limit is steered toward (`MailboxRuntime.turnMessages`); half of it is a long turn. */
+    const heavyTurnMs = resolveHeavyTurnMs(config.heavyTurnMs);
+    const sharedAccountTurnMs = resolveSharedAccountTurnMs(config.sharedAccountTurnMs, heavyTurnMs);
     const rosterIntervalMs = config.rosterIntervalMs ?? DEFAULT_ROSTER_INTERVAL_MS;
     const heartbeatMs = config.lockHeartbeatMs ?? DEFAULT_LOCK_HEARTBEAT_MS;
     const retryBaseMs = config.mailboxRetryMs ?? DEFAULT_MAILBOX_RETRY_MS;
@@ -1266,6 +1282,8 @@ export async function startWorkerWithLock(
     // second. This is the other thing the race waits on. ONE pending promise, re-armed on every fire,
     // rather than a fresh one per turn — the naive form leaves every superseded promise unresolved
     // and holds its `resolve` for the life of the process. It never rejects, so the race cannot either.
+    /** `Date.now()` of the last `kickCycle()`, deduped or not: a pass has been asked for since then. */
+    let lastKickAt = 0;
     let wakeSignal!: Promise<void>;
     let fireWake!: () => void;
     function armWake(): void { wakeSignal = new Promise<void>((r) => { fireWake = r; }); }
@@ -2995,6 +3013,8 @@ export async function startWorkerWithLock(
           }),
           wokenAt: null,
           lastVisitEndedAt: null,
+          turnMessages: TURN_START_MESSAGES,
+          longTurns: false,
         };
 
         // Arm the profile hold before the first routing decision (TAKEOVER-RESCREEN). A mailbox taken
@@ -3783,13 +3803,18 @@ export async function startWorkerWithLock(
       // to the FRONT (`servedIds` bounds one turn per id), and between them sit mailboxes with an
       // unserved wake, oldest wake first (the sub-second channel that produced a 15.5-minute gap).
       const woken = (rt: MailboxRuntime): boolean => rt.lastSuccessAt !== null && rt.wokenAt !== null;
-      /** Runtimes still owed a bounded batch this pass, first-syncers first, then the woken. */
+      const settled = (rt: MailboxRuntime): boolean => rt.lastSuccessAt !== null && !woken(rt);
+      /**
+       * Runtimes still owed a bounded batch this pass: first-syncers, then the woken, then those whose
+       * turns run long (`longTurns`: their one turn is the pass's longest, so it starts first), then the rest.
+       */
       const pending: MailboxRuntime[] = [...runtimes.values()]
         .filter((rt) => rt.lastSuccessAt === null)
         .concat(
           [...runtimes.values()].filter(woken).sort((a, b) => (a.wokenAt ?? 0) - (b.wokenAt ?? 0)),
         )
-        .concat([...runtimes.values()].filter((rt) => rt.lastSuccessAt !== null && !woken(rt)));
+        .concat([...runtimes.values()].filter((rt) => settled(rt) && rt.longTurns))
+        .concat([...runtimes.values()].filter((rt) => settled(rt) && !rt.longTurns));
       /** Mailbox ids that have had their turn this pass — at most one each. */
       const servedIds = new Set<string>();
       /**
@@ -3827,6 +3852,8 @@ export async function startWorkerWithLock(
       function admitWoken(): void {
         for (const rt of runtimes.values()) {
           if (rt.wokenAt === null) continue;
+          // One turn a pass for a mailbox whose turns run long: its wake leads the next pass instead.
+          if (rt.longTurns) continue;
           if (!servedIds.has(rt.mailboxId)) continue;
           if (laneBusy.has(rt.mailboxId)) continue;
           if (pending.includes(rt)) continue;
@@ -3880,8 +3907,9 @@ export async function startWorkerWithLock(
        *  - the mailbox has had its turn this pass, is in no lane (one turn of a mailbox at a time),
        *    is not already queued, is owed no post-loop action (`owedAfterThePass`), carries no unserved wake (a rung doorbell goes through
        *    `admitWoken` and its bound, unchanged), and its own `pollIntervalMs` has passed since its
-       *    last visit ENDED. IDLE does not exempt it: the doorbell rings for new INBOX mail only, so
-       *    flag changes from other devices and every other folder still arrive by the poll;
+       *    last visit ENDED, or a long turn (`longTurns`) holds the pass and a kick came after that visit. IDLE
+       *    does not exempt it: the doorbell rings for new INBOX mail only, so flag changes from other
+       *    devices and every other folder still arrive by the poll; its own turns are not long (one turn a pass);
        *  - it is admissible now (its account has no lane, and the heavy cap holds), so a heavy
        *    mailbox still holds only its own lane.
        * Oldest-due first, at most one candidate per free lane and per account. The fill loop below
@@ -3892,7 +3920,10 @@ export async function startWorkerWithLock(
         if (free <= 0 || queuedWaiting() || !longLaneInFlight()) return;
         const now = Date.now();
         const accounts = new Set<string>();
-        const due = dueCandidates().filter((rt) => now - rt.lastVisitEndedAt! >= config.pollIntervalMs);
+        const due = dueCandidates().filter((rt) => now - rt.lastVisitEndedAt! >= config.pollIntervalMs
+          // A long turn holds this pass while another is owed: whoever was visited before that
+          // kick goes again now rather than waiting out the import's turn.
+          || (longInFlight > 0 && rt.lastVisitEndedAt! < lastKickAt));
         for (const rt of due) {
           if (free <= 0) break;
           if (accounts.has(rt.accountId) || !admissible(rt)) continue;
@@ -3921,11 +3952,11 @@ export async function startWorkerWithLock(
         return closedOwed.has(rt.mailboxId) || toStandDown.includes(rt)
           || toQuarantine.some((q) => q.rt === rt) || toReconnect.some((r) => r.rt === rt);
       }
-      /** Served, unwoken runtimes free to take another turn once due, oldest visit first. */
+      /** Served, unwoken runtimes whose turns are not long, free to take another turn once due, oldest visit first. */
       function dueCandidates(): MailboxRuntime[] {
         return [...runtimes.values()]
           .filter((rt) => servedIds.has(rt.mailboxId) && !laneBusy.has(rt.mailboxId) && !pending.includes(rt)
-            && rt.wokenAt === null && rt.lastVisitEndedAt !== null && !owedAfterThePass(rt))
+            && rt.wokenAt === null && rt.lastVisitEndedAt !== null && !rt.longTurns && !owedAfterThePass(rt))
           .sort((a, b) => a.lastVisitEndedAt! - b.lastVisitEndedAt!);
       }
       /**
@@ -3976,13 +4007,13 @@ export async function startWorkerWithLock(
        * position. `admitWoken` handles the already-served half; this is the other, measured one: the
        * pass plans its order once at the top, so a doorbell ringing two seconds into a seven-minute
        * pass for the last mailbox in the snapshot bought nothing (probe 2 of 2026-08-26 waited 478 s
-       * with `wokenAt` set). A STABLE re-partition into the planner's three groups (first-syncers
-       * untouched, then woken by oldest wake, then the rest) — it moves mailboxes only BETWEEN turns
+       * with `wokenAt` set). A STABLE re-partition into the planner's four groups (first-syncers
+       * untouched, then woken by oldest wake, then those whose turns run long, then the rest) — it moves mailboxes only BETWEEN turns
        * (never one a lane holds), consumes nothing, and admission re-applies every rule at fill time. Runs every turn; the array is at most the shard's mailbox count, so the sort is noise.
        */
       function reorderPending(): void {
         const rank = (rt: MailboxRuntime): number =>
-          rt.lastSuccessAt === null ? 0 : rt.wokenAt !== null ? 1 : 2;
+          rt.lastSuccessAt === null ? 0 : rt.wokenAt !== null ? 1 : rt.longTurns ? 2 : 3;
         // `Array.prototype.sort` is stable per spec, so equal-rank entries keep their order.
         pending.sort((a, b) => {
           const ra = rank(a);
@@ -4037,6 +4068,18 @@ export async function startWorkerWithLock(
       const busyAccounts = new Set<string>();
       /** Lanes in flight holding a mailbox that owes a backlog — rule 3. */
       let heavyInFlight = 0;
+      /** Lanes in flight holding a mailbox whose turns run long (`longTurns`). */
+      let longInFlight = 0;
+      /**
+       * The length a mailbox's turn is steered toward: shorter while another mailbox of its account is
+       * attached, since one cycle per account keeps that one out of every lane for the whole turn.
+       */
+      function turnTargetMs(rt: MailboxRuntime): number {
+        for (const other of runtimes.values()) {
+          if (other !== rt && other.accountId === rt.accountId) return sharedAccountTurnMs;
+        }
+        return heavyTurnMs;
+      }
       /**
        * The pass must take no NEW mailbox: a shared database fault (which used to `break`) or a
        * fence refusal (which used to `return`).
@@ -4206,6 +4249,7 @@ export async function startWorkerWithLock(
             syncOutcome = await runSyncCycle({
             ...rt.deps, ...aiFor(rt.mailboxId, rt.accountId), ...(await screeningFor(rt.accountId)),
             census,
+            batchMessages: rt.turnMessages,
             // Mail 0083. THE ROLE THE GATE JUST ANSWERED, spread over the attach-time deps so a
             // flip applies to THIS pass rather than to the one after the next re-attach. Placed
             // after the spread deliberately: it must win over `rt.deps.role`, which is only ever
@@ -4804,6 +4848,7 @@ export async function startWorkerWithLock(
           }
           rt.wokenAt = null;
           const heavy = rt.owesBacklog;
+          const long = rt.longTurns;
           busyAccounts.add(rt.accountId);
           laneBusy.add(rt.mailboxId);
           const overCap = overCapAdmitted.delete(rt.mailboxId);
@@ -4811,20 +4856,30 @@ export async function startWorkerWithLock(
           const dueTurn = dueAdmitted.delete(rt.mailboxId);
           if (dueTurn) { dueLanes.add(rt.mailboxId); dueRevisits++; }
           if (heavy) heavyInFlight++;
+          if (long) longInFlight++;
           // The bookkeeping is in a `finally` INSIDE the async body, so it has already run by the
           // time this promise settles — which is what lets the `Promise.race` below trust the
           // maps it re-reads on the next turn.
           const lane = (async () => {
             const visitStarted = Date.now();
+            const successBefore = rt.lastSuccessAt;
             try {
               await visitMailbox(rt, wokenVisit);
             } finally {
+              const visitMs = Date.now() - visitStarted;
+              const asked = rt.turnMessages;
               // Every turn's wall clock, so the lane that holds a pass open has a name: the
               // 2026-10-09 burst waited on a 271 s pass and no line said whose turn it was.
               log.info("mailbox_visit", {
-                mailboxId: rt.mailboxId, accountId: rt.accountId, visitMs: Date.now() - visitStarted,
-                woken: wokenVisit, overCap, heavy, due: dueTurn,
+                mailboxId: rt.mailboxId, accountId: rt.accountId, visitMs,
+                woken: wokenVisit, overCap, heavy, due: dueTurn, messages: asked,
               });
+              // Only a completed turn measures what its limit costs.
+              if (rt.lastSuccessAt !== successBefore) {
+                rt.turnMessages = nextTurnMessages(asked, visitMs, turnTargetMs(rt), rt.owesBacklog);
+                // One length for every mailbox: half the shorter target beside a sibling is a burst's turn.
+                rt.longTurns = rt.owesBacklog && visitMs * 2 >= heavyTurnMs;
+              }
               rt.lastVisitEndedAt = Date.now();
               inFlight.delete(rt.mailboxId);
               busyAccounts.delete(rt.accountId);
@@ -4832,6 +4887,7 @@ export async function startWorkerWithLock(
               overCapLanes.delete(rt.mailboxId);
               dueLanes.delete(rt.mailboxId);
               if (heavy) heavyInFlight--;
+              if (long) longInFlight--;
             }
           })();
           inFlight.set(rt.mailboxId, lane);
@@ -6364,6 +6420,9 @@ export async function startWorkerWithLock(
 
     let cycleQueued = false;
     function kickCycle(): void {
+      // Heard by a pass a long turn holds open, which serves the other mailboxes (`admitDue`).
+      lastKickAt = Date.now();
+      nudgeCycle();
       if (stopped || cycleQueued) return;
       cycleQueued = true;
       void serialize(async () => { cycleQueued = false; await cycle(); }).catch((err: unknown) => {

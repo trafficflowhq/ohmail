@@ -818,6 +818,11 @@ export const DEFAULT_SENT_HISTORY_MESSAGES = 2_000;
  */
 export const DEFAULT_SYNC_BATCH_MAX_FLAGS = 500;
 
+/** One `changesSince` call's own limit, under {@link DEFAULT_SYNC_BATCH_MAX_MESSAGES}: at least one message. */
+export interface ChangeBudget {
+  messages?: number;
+}
+
 export interface ImapAdapterOpts {
   /** Inject a preconstructed (or fake) client for tests; when set, connect() does not dial. */
   client?: unknown;
@@ -1201,7 +1206,8 @@ export interface MailboxAdapter {
    * lacks it never repairs.
    */
   legacyNewsRepairGate?(): { attach: number } | null;
-  changesSince(cursor: ImapCursor): Promise<ChangeBatch>;
+  /** `budget` can only lower this call's bounds; a call it truncates is an ordinary truncated batch. */
+  changesSince(cursor: ImapCursor, budget?: ChangeBudget): Promise<ChangeBatch>;
   /** `door` is asked before the MOVE, or once before a COPY-then-DELETE pair — see {@link WriteDoor}. */
   move(locator: NativeLocator, toFolder: string, door: WriteDoor): Promise<NativeLocator>;
   /**

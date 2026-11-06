@@ -76,7 +76,7 @@ import {
   DEFAULT_PASSIVE_FOLDERS_MAX, PASSIVE_FOLDERS_MAX_NO_STATUS, passiveFolderExclusion,
   imapTlsFloor, smtpTlsFloor, loopbackDialPin, LOCALHOST_DIAL_ADDRESS,
   type ImapConfig, type ImapAdapterOpts, type ImapCapabilities, type MailboxAdapter, type TlsPin,
-  type ImapCursor, type ChangeBatch, type PersistedFolderCursor, type FolderCursor,
+  type ImapCursor, type ChangeBatch, type ChangeBudget, type PersistedFolderCursor, type FolderCursor,
   type BudgetStop, type MessageSite,
   type KnownEntry,
   type OutboundMessage, type SendOptions, type SendResult, type FetchedPart, type FetchPartOptions, type StreamedPart,
@@ -4250,19 +4250,19 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
    * would need rebuilding. `finally`, not a trailing assignment: a pass that throws must still
    * clear the budget, or the next pass inherits an expired clock and refuses instantly.
    */
-  async changesSince(cursor: ImapCursor): Promise<ChangeBatch> {
+  async changesSince(cursor: ImapCursor, budget?: ChangeBudget): Promise<ChangeBatch> {
     this.assertUsable();
     this.cycleDeadline = ImapDeadline.in(
       IMAP_CYCLE_DEADLINE_MS, "cycle_deadline", () => this.now(),
     );
     try {
-      return await this.changesSinceInner(cursor);
+      return await this.changesSinceInner(cursor, budget);
     } finally {
       this.cycleDeadline = undefined;
     }
   }
 
-  private async changesSinceInner(cursor: ImapCursor): Promise<ChangeBatch> {
+  private async changesSinceInner(cursor: ImapCursor, asked?: ChangeBudget): Promise<ChangeBatch> {
     const caps = await this.capabilities();
     // ── THE PERSISTED CURSOR IS VALIDATED HERE, NEVER TRUSTED FROM ITS TYPE ─────────────────
     //
@@ -4318,8 +4318,11 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
     // NOT add a batch. Sent can only spend what INBOX and the ohmail folders left, so a Sent
     // backlog of tens of thousands of messages cannot delay this cycle's inbound mail by one
     // message — it drains through `hasBacklog` re-kicks behind it.
+    const messageCap = this.opts.maxBatchMessages ?? DEFAULT_SYNC_BATCH_MAX_MESSAGES;
     const budget = {
-      messages: this.opts.maxBatchMessages ?? DEFAULT_SYNC_BATCH_MAX_MESSAGES,
+      // The caller's limit only lowers the cap, and never below one message (the drain must progress).
+      messages: asked?.messages === undefined || Number.isNaN(asked.messages)
+        ? messageCap : Math.max(1, Math.min(Math.floor(asked.messages), messageCap)),
       bytes: this.opts.maxBatchBytes ?? DEFAULT_SYNC_BATCH_MAX_BYTES,
       // …and FLAGS, which had no budget at all at first. See
       // `DEFAULT_SYNC_BATCH_MAX_FLAGS`: this one bounds the worker's serial queue, not memory.
