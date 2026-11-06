@@ -10,7 +10,7 @@ import type {
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import { formatClaim } from "@trafficflow/core/adapters/organizer-lease";
-import { drafts, mailboxes, outboundSends, STAND_DOWN_SEND_SENTENCES } from "@trafficflow/db";
+import { drafts, mailboxes, outboundSends, scheduledSendFiles, STAND_DOWN_SEND_SENTENCES } from "@trafficflow/db";
 import { ScheduleService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { createSidecar, type Sidecar } from "../src/engine.js";
@@ -233,7 +233,10 @@ describe("a stand-down closes the send-later appointments it can no longer keep"
   }
 
   /** An appointment two hours out, made the way the compose surface makes one. */
-  async function scheduleOne(sidecar: Sidecar, subject = "the appointment"): Promise<string> {
+  async function scheduleOne(
+    sidecar: Sidecar, subject = "the appointment",
+    files?: { filename: string; contentType: string; content: Buffer }[],
+  ): Promise<string> {
     const [d] = await sidecar.db.insert(drafts).values({
       accountId: sidecar.world.accountId,
       mailboxId: sidecar.world.mailboxId,
@@ -246,7 +249,7 @@ describe("a stand-down closes the send-later appointments it can no longer keep"
       db: sidecar.db as never, accountId: sidecar.world.accountId, userId: null,
       now: () => new Date(), requestId: "test",
     };
-    await schedules.schedule(ctx, d!.id, new Date(Date.now() + 2 * HOUR).toISOString());
+    await schedules.schedule(ctx, d!.id, new Date(Date.now() + 2 * HOUR).toISOString(), files ? { files, surfaceMaxTotalBytes: null } : undefined);
     return d!.id;
   }
 
@@ -254,6 +257,23 @@ describe("a stand-down closes the send-later appointments it can no longer keep"
     const [row] = await sidecar.db.select().from(drafts).where(eq(drafts.id, id));
     return row!;
   };
+
+  it("THE HANDOVER WITH FILES (mail 0179) — the closed appointment's kept files go with it, the count stays as the mark", async () => {
+    const dir = await dataDir();
+    const meta = new MemoryMetaFolder();
+    const mailbox = quietMailbox(meta);
+    const sidecar = await boot(dir, meta, mailbox);
+    await sidecar.start();
+    const draftId = await scheduleOne(sidecar, "with files", [{ filename: "a.pdf", contentType: "application/pdf", content: Buffer.from("%PDF") }]);
+    expect(await sidecar.db.select().from(scheduledSendFiles)).toHaveLength(1);
+    await meta.seedCloudClaim();
+    await sidecar.syncUntilQuiet();
+    expect(sidecar.organizerState().organizing).toBe(false);
+    const closed = await draftRow(sidecar, draftId);
+    expect(closed).toMatchObject({ status: "draft", sendKey: null, sendFiles: 1 });
+    expect(await sidecar.db.select().from(scheduledSendFiles), "a stood-down appointment kept its files").toHaveLength(0);
+    expect(mailbox.sends).toHaveLength(0);
+  });
 
   it("THE HANDOVER — the gate stands down and the appointment is closed with a sentence, not left saying 'Sends'", async () => {
     const dir = await dataDir();

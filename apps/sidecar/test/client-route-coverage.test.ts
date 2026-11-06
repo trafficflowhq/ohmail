@@ -195,6 +195,11 @@ const FORWARDED_IN_CLOUD_MODE = [
      its own drain runs the pass, so both doors keep the promise they make. */
   "POST /drafts/x/schedule",
   "DELETE /drafts/x/schedule",
+  /* SEND LATER WITH FILES (mail 0179) — handed to the relay like the rest, which REFUSES it: the
+     route is not on the relay allowlist, because the files wait on this computer and the hosted
+     account keeps none. The 404 is the client's `schedule_files_unsupported`, and the composer has
+     already said so from Cloud's `/hello` before anybody pressed. The standalone door serves it. */
+  "POST /drafts/x/schedule-with-files",
   /* THE FOLDER VERBS (FOLDERS-SPEC.md §18) — four MUTATIONS on the hosted account: each records
      a `folder_ops` command the HOSTED worker executes inside the mailbox's serial cycle. The
      mirror holds no command table and rings no doorbell, so answering any of them locally would

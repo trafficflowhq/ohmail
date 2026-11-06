@@ -671,5 +671,12 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "CREATE TABLE IF NOT EXISTS \"rule_removals\" (\n  \"account_id\" text NOT NULL,\n  \"rule_key\" text NOT NULL,\n  \"kind\" text NOT NULL,\n  \"match\" text NOT NULL,\n  \"subject_contains\" text,\n  \"body_contains\" text,\n  \"removed_at\" integer NOT NULL,\n  \"removed_by\" text,\n  CONSTRAINT \"rule_removals_account_id_rule_key_pk\" PRIMARY KEY (\"account_id\", \"rule_key\")\n);"
     ]
+  },
+  {
+    "name": "0179_scheduled_send_files.sql",
+    "statements": [
+      "ALTER TABLE \"drafts\" ADD COLUMN \"send_files\" integer NOT NULL DEFAULT 0;",
+      "CREATE TABLE IF NOT EXISTS \"scheduled_send_files\" (\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL,\n  \"draft_id\" text NOT NULL,\n  \"send_key\" text NOT NULL,\n  \"file_no\" integer NOT NULL,\n  \"seq\" integer NOT NULL DEFAULT 0,\n  \"filename\" text NOT NULL,\n  \"content_type\" text NOT NULL,\n  \"size_bytes\" integer NOT NULL,\n  \"content_sha256\" text NOT NULL,\n  \"raw_b64\" text NOT NULL,\n  \"created_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"scheduled_send_files_account_id_draft_id_file_no_seq_pk\" PRIMARY KEY (\"account_id\", \"draft_id\", \"file_no\", \"seq\"),\n  CONSTRAINT \"scheduled_send_files_sha256_hex\" CHECK (length(\"content_sha256\") = 64 AND \"content_sha256\" NOT GLOB '*[^0-9a-f]*')\n);"
+    ]
   }
 ] as const;

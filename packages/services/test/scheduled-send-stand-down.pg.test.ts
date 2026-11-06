@@ -5,14 +5,14 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import {
-  changeLog, closeStoodDownAppointments, drafts, mailboxes, outboundSends,
+  changeLog, closeStoodDownAppointments, drafts, mailboxes, outboundSends, scheduledSendFiles,
   STAND_DOWN_SEND_SENTENCES,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { ScheduleService, runScheduledSendPass } from "../src/index.js";
+import { ScheduleService, runScheduledSendPass, sweepScheduledSendFiles } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
 /**
@@ -107,7 +107,7 @@ interface World {
 }
 
 /** An account with one mailbox and one appointment on it, twelve minutes out. */
-async function seeded(opts: { at?: Date } = {}): Promise<World> {
+async function seeded(opts: { at?: Date; files?: { filename: string; contentType: string; content: Buffer }[] } = {}): Promise<World> {
   const accountId = randomUUID();
   const tag = randomUUID().slice(0, 8);
   const [mb] = await dbA.insert(mailboxes).values({
@@ -119,7 +119,9 @@ async function seeded(opts: { at?: Date } = {}): Promise<World> {
     createdAt: NOW, updatedAt: NOW,
   }).returning();
   const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
-  await schedules.schedule(ctx, d!.id, (opts.at ?? DUE).toISOString());
+  await schedules.schedule(
+    ctx, d!.id, (opts.at ?? DUE).toISOString(), opts.files ? { files: opts.files, surfaceMaxTotalBytes: null } : undefined,
+  );
   return { ctx, accountId, mailboxId: mb!.id, draftId: d!.id };
 }
 
@@ -245,6 +247,21 @@ describe.skipIf(!PG_UP)("a handover orphans a pending scheduled send", () => {
     const reservations = await dbA.select().from(outboundSends)
       .where(eq(outboundSends.accountId, w.accountId));
     expect(reservations, "a closed appointment minted a reservation").toHaveLength(0);
+  });
+
+  it("WITH FILES (mail 0179) — the closed appointment's files are swept, its count stays, nothing is sent", async () => {
+    const w = await seeded({ files: [{ filename: "a.pdf", contentType: "application/pdf", content: Buffer.from("%PDF") }] });
+    await standDownRow(w.mailboxId, "organized_elsewhere:cloud");
+    await closeStoodDownAppointments(dbA, {
+      accountId: w.accountId, mailboxId: w.mailboxId, reason: "organized_elsewhere:cloud", now: PAST,
+    });
+    const files = () => dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId));
+    expect(await files(), "the close itself leaves the bytes to the sweep").toHaveLength(1);
+    await sweepScheduledSendFiles(dbA, { mailboxIds: [w.mailboxId] });
+    expect(await files()).toHaveLength(0);
+    expect(await rowOf(w.draftId)).toMatchObject({ status: "draft", sendKey: null, sendFiles: 1 });
+    await runScheduledSendPass(dbA, { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
+    expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(0);
   });
 
   it("THE NEW ORGANIZER DOES NOT ADOPT IT — the appointment is closed on one side and absent on the other", async () => {

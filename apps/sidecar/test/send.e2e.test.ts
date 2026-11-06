@@ -1,9 +1,12 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { ImapFlow } from "imapflow";
+import { simpleParser } from "mailparser";
+import { eq } from "drizzle-orm";
+import { mailboxes, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { afterEach, describe, expect, it } from "vitest";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { connectOverStdio, type StdioClient } from "../src/client.js";
@@ -109,6 +112,8 @@ interface LaunchOptions {
   pass?: string;
   /** Intercept the resolved connection config; see the header for why the password is read here. */
   adapterFactory?: (cfg: ImapConfig) => unknown;
+  /** The engine's clock, for a launch after an appointment's time. */
+  now?: () => Date;
 }
 
 async function launch(opts: LaunchOptions): Promise<Launch> {
@@ -125,6 +130,7 @@ async function launch(opts: LaunchOptions): Promise<Launch> {
     ...(opts.adapterFactory
       ? { adapterFactory: opts.adapterFactory as unknown as SidecarConfig["adapterFactory"] }
       : {}),
+    ...(opts.now ? { now: opts.now } : {}),
     // Long enough that the poll never fires during a test — every cycle here is one the test asked
     // for, so a passing assertion is never a coincidence of timing.
     pollIntervalMs: 60 * 60 * 1000,
@@ -348,5 +354,112 @@ describe("the LOCAL engine sends, end to end against a real SMTP server", () => 
       }
     },
     120_000,
+  );
+
+  /**
+   * SEND LATER WITH FILES ON THE DESKTOP (mail 0179): a picture and a PDF scheduled through the
+   * engine's own route, the app quit, and the next launch (no password in the environment, its
+   * clock past the time) sends the letter once with both files byte-equal, in order, in the
+   * recipient's INBOX and in Sent; the kept bytes are gone after. A cancelled one sends nothing.
+   * The composer's floor is three minutes, so the time is set through the route and the clock.
+   */
+  const PICTURE = { filename: "photo.png", contentType: "image/png", bytes: randomBytes(40 * 1024) };
+  const PDF = { filename: "invoice.pdf", contentType: "application/pdf", bytes: randomBytes(3_300_000) };
+  const sha = (b: Buffer): string => createHash("sha256").update(b).digest("hex");
+  const authed = (l: Launch) => ({ authorization: `Bearer ${l.sidecar.sessionToken}`, "content-type": "application/json" });
+
+  async function scheduleWithFiles(cfg: Greenmail, dataDir: string, keks: Record<number, Buffer>, subject: string) {
+    const first = await launch({ dataDir, cfg, keks, pass: cfg.auth.pass });
+    expect((await enterCredential(first, cfg)).status).toBe(200);
+    // Somebody agreed to organize here: only an organizing install keeps appointments (see
+    // `scheduled-send-stand-down.test.ts` for why both columns).
+    await first.sidecar.db.update(mailboxes).set({ organizeConsentedAt: new Date(), organizerRole: "organizer" });
+    await first.sidecar.start();
+    const draft = await createDraft(first, { subject, html: "<p>With files.</p>", to: [{ name: null, address: cfg.auth.user }] });
+    const sendAt = new Date(Date.now() + 10 * 60_000);
+    const res = await first.client.fetch(`/drafts/${draft.id}/schedule-with-files`, {
+      method: "POST", headers: authed(first),
+      body: JSON.stringify({
+        sendAt: sendAt.toISOString(),
+        attachments: [PICTURE, PDF].map((f) => ({ filename: f.filename, contentType: f.contentType, contentBase64: f.bytes.toString("base64") })),
+      }),
+    });
+    const body = await res.json() as { status?: string; sendFiles?: number };
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    expect(body).toMatchObject({ status: "scheduled", sendFiles: 2 });
+    return { first, draft, sendAt };
+  }
+
+  async function lettersIn(cfg: Greenmail, folder: string, subject: string): Promise<Buffer[]> {
+    const c = new ImapFlow({ host: cfg.host, port: cfg.port, secure: cfg.secure, auth: cfg.auth, logger: false });
+    await c.connect();
+    rawClients.push(c);
+    const lock = await c.getMailboxLock(folder).catch(() => null);
+    if (lock === null) return [];
+    try {
+      const uids = await c.search({ subject }, { uid: true });
+      const out: Buffer[] = [];
+      for (const uid of Array.isArray(uids) ? uids : []) {
+        const msg = await c.fetchOne(String(uid), { source: true }, { uid: true });
+        if (msg && typeof msg !== "boolean" && msg.source) out.push(msg.source);
+      }
+      return out;
+    } finally {
+      lock.release();
+    }
+  }
+
+  it(
+    "a letter scheduled with a picture and a PDF goes once at its time after a relaunch, every file byte-equal",
+    async () => {
+      const cfg = greenmail();
+      const dataDir = freshDataDir();
+      const keks = { 1: aKek() };
+      const { first, draft, sendAt } = await scheduleWithFiles(cfg, dataDir, keks, "the files");
+      await shutdown(first);
+
+      const second = await launch({ dataDir, cfg, keks, now: () => new Date(sendAt.getTime() + 60_000) });
+      await second.sidecar.start();
+      let inbox: Buffer[] = [];
+      for (let i = 0; i < 100 && inbox.length === 0; i += 1) {
+        inbox = await lettersIn(cfg, "INBOX", "the files");
+        if (inbox.length === 0) await new Promise((r) => { setTimeout(r, 100); });
+      }
+      expect(inbox, "exactly one delivery").toHaveLength(1);
+      for (const source of [inbox[0]!, ...(await lettersIn(cfg, "Sent", "the files"))]) {
+        const parsed = await simpleParser(source);
+        expect(parsed.attachments.map((a) => [a.filename, a.contentType, sha(a.content)])).toEqual(
+          [PICTURE, PDF].map((f) => [f.filename, f.contentType, sha(f.bytes)]),
+        );
+      }
+      expect(await lettersIn(cfg, "Sent", "the files"), "one Sent copy").toHaveLength(1);
+      const after = await second.client.fetch(`/drafts/${draft.id}`, { headers: authed(second) });
+      expect(((await after.json()) as { status: string }).status).toBe("sent");
+      expect(await second.sidecar.db.select().from(outboundSends).where(eq(outboundSends.draftId, draft.id))).toHaveLength(1);
+      expect(await second.sidecar.db.select().from(scheduledSendFiles), "the kept bytes outlived the send").toHaveLength(0);
+    },
+    180_000,
+  );
+
+  it(
+    "a cancelled letter with files sends nothing after a relaunch past its time; its files are gone and the row says so",
+    async () => {
+      const cfg = greenmail();
+      const dataDir = freshDataDir();
+      const keks = { 1: aKek() };
+      const { first, draft, sendAt } = await scheduleWithFiles(cfg, dataDir, keks, "the cancelled files");
+      const cancel = await first.client.fetch(`/drafts/${draft.id}/schedule`, { method: "DELETE", headers: authed(first) });
+      expect(cancel.status).toBe(200);
+      await shutdown(first);
+
+      const second = await launch({ dataDir, cfg, keks, now: () => new Date(sendAt.getTime() + 60_000) });
+      await second.sidecar.start();
+      await new Promise((r) => { setTimeout(r, 1_000); });
+      expect(await lettersIn(cfg, "INBOX", "the cancelled files")).toHaveLength(0);
+      const after = await second.client.fetch(`/drafts/${draft.id}`, { headers: authed(second) });
+      expect(await after.json()).toMatchObject({ status: "draft", sendAt: null, sendFiles: 2 });
+      expect(await second.sidecar.db.select().from(scheduledSendFiles)).toHaveLength(0);
+    },
+    180_000,
   );
 });

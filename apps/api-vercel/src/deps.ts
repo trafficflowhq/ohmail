@@ -766,6 +766,8 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         // able to load a picture through; it says so now instead of the client inferring it
         // from its own build.
         remoteImages: true,
+        // Cloud keeps no letter's files at rest: Send later with files is the desktop's own (mail 0179).
+        scheduleFiles: false,
       },
     },
     // `withRequestId` binds `requestId` onto this, so every line downstream carries the

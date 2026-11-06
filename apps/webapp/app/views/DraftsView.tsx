@@ -252,6 +252,8 @@ export function DraftsView({
                       </span>
                       <span className="draft-line">
                         <span className="draft-to">{to || t("noRecipient")}</span>
+                        {/* The files waiting with it on this computer (mail 0179). */}
+                        {d.sendFiles ? <span className="draft-badge">{t("scheduledFiles", { count: d.sendFiles })}</span> : null}
                       </span>
                       <span className="draft-preview">{preview(d.body ?? "")}</span>
                     </button>
@@ -338,6 +340,10 @@ export function DraftsView({
                         <span className="draft-state" role="status">
                           {t("scheduleFailedNote", { reason: d.sendError })}
                         </span>
+                      ) : null}
+                      {/* Its schedule ended unsent and the files it kept went with it (mail 0179). */}
+                      {d.status === "draft" && d.sendFiles ? (
+                        <span className="draft-state" role="status">{t("filesNotKeptNote", { count: d.sendFiles })}</span>
                       ) : null}
                     </button>
                     {/* THE ROW'S CONTROLS, AT THE TRAILING EDGE. A held row (the server says

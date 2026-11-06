@@ -17,7 +17,8 @@ import {
   drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders,
   mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageStates,
   messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends,
-  orphanedSettingsHashRows, recordChanges, recordMailboxRemoved, routingDecisions, settingsHashRows, threadNotes, threads,
+  orphanedSettingsHashRows, recordChanges, recordMailboxRemoved, routingDecisions, scheduledSendFiles, settingsHashRows,
+  threadNotes, threads,
   trackerEvents,
   unsubscribeExamined, unsubscribeRecords,
   type LedgerTx, type Tx,
@@ -35,6 +36,7 @@ import type { LocalDb } from "./db.js";
  * only on the Cloud door; the standalone removal takes their `sent` rows and keeps the rest.
  */
 export const WIPED_TABLES: readonly string[] = [
+  "scheduled_send_files",
   "outbound_sent_copies",
   "outbound_send_fingerprints",
   "outbound_sends",
@@ -175,6 +177,8 @@ export async function deleteMailboxRows(
     .where(eq(outboundSendFingerprints.mailboxId, mailboxId));
   // The Sent copies this mailbox still owes: a removed mailbox has no Sent folder left to file them in.
   await db.delete(outboundSentCopies).where(eq(outboundSentCopies.mailboxId, mailboxId));
+  // A scheduled letter's files: a removed mailbox sends nothing, and a kept draft keeps its count as the mark.
+  await db.delete(scheduledSendFiles).where(eq(scheduledSendFiles.mailboxId, mailboxId));
   if (opts.unsentDrafts === "delete") {
     await db.delete(outboundSends).where(inArray(outboundSends.id, claimed));
     await db.delete(outboundSendFingerprints).where(eq(outboundSendFingerprints.mailboxId, mailboxId));

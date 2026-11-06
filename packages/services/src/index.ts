@@ -287,6 +287,10 @@ export {
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
 export {
+  readScheduledFiles, scheduledFilesMeta, sweepScheduledSendFiles, scheduledFileRows,
+  SCHEDULED_FILE_PIECE_CHARS, SCHEDULED_FILES_UNREADABLE, type ScheduledFile, type ScheduledFileMeta,
+} from "./scheduled-send-files.js";
+export {
   runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_CALL_CEILING_MS,
   SEND_RECONCILE_CLOSE_CEILING_MS, SEND_RECONCILE_NET_TIMEOUTS,
   SEND_RECONCILE_DIAL_DEADLINE_MS, SEND_RECONCILE_GIVE_UP_MS, SEND_RECONCILE_SCAN_FACTOR,

@@ -133,6 +133,8 @@ const MAIL_TABLES = [
   "outbound_sent_copies",
   // Mail 0178: the rules a person removed, account-scoped mail data beside `rules`.
   "rule_removals",
+  // Mail 0179: a scheduled letter's files, kept by the local engine until it is sent. MAIL.
+  "scheduled_send_files",
   // THE JUNK RESCUE'S DESIRED STATE (mail 0115) — MAIL, and structurally so. The row is a command
   // about a message in the user's OWN IMAP Junk folder, recorded by the door the person pressed and
   // executed by whichever install organizes that mailbox — the hosted worker, a desktop engine or a
@@ -4371,10 +4373,11 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 106 → 107 for `connect_attempts` (cloud 0054) — how connecting a mailbox ended, CLOUD.
     // 107 → 108 for `account_storage_holds` (cloud 0055) — a lower storage limit's hold, CLOUD.
     // 108 → 109 for `rule_removals` (mail 0178) — the rules a person removed, MAIL.
-    expect(SIDE.size).toBe(109);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 109 → 110 for `scheduled_send_files` (mail 0179) — a scheduled letter's kept files, MAIL.
+    expect(SIDE.size).toBe(110);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
-    expect(MAIL_TABLES).toHaveLength(59);   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
+    expect(MAIL_TABLES).toHaveLength(60);   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
     // 30 → 33: credit_usage_daily + credit_usage_totals + credit_rollup_runs (cloud 0028)
     // 33 → 36: billing_invoices + platform_costs + ai_usage_daily (cloud 0029)
     // 36 → 38: alert_pass_runs + platform_signals (cloud 0030)

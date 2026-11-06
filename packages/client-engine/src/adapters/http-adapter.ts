@@ -161,6 +161,13 @@ export interface HttpAdapterOptions {
    * on, {@link HttpAdapter.forwardPartsAnnounced} exists too.
    */
   forwardPartsCheck?: boolean;
+  /**
+   * SEND LATER MAY CARRY FILES where the server says it keeps them (`features.scheduleFiles` on
+   * `GET /hello`, mail 0179): a letter with files is scheduled at `/drafts/:id/schedule-with-files`.
+   * Off by default, and then such a schedule is refused before any request, as before. On,
+   * {@link HttpAdapter.scheduleFilesAnnounced} exists too. The desktop window sets it.
+   */
+  scheduleFilesCheck?: boolean;
 }
 
 /** The zone this runtime names for itself, or `null` where it cannot name one. */
@@ -551,6 +558,26 @@ export class HttpAdapter implements EngineAdapter {
     this.syncDeadlines = opts.syncDeadlines ?? null;
     this.forwardPartsCheck = opts.forwardPartsCheck === true;
     if (this.forwardPartsCheck) this.forwardPartsAnnounced = () => this.askForwardParts();
+    this.scheduleFilesCheck = opts.scheduleFilesCheck === true;
+    if (this.scheduleFilesCheck) this.scheduleFilesAnnounced = () => this.askScheduleFiles();
+  }
+
+  /** See {@link HttpAdapterOptions.scheduleFilesCheck}; present only where it is on. */
+  scheduleFilesAnnounced?: () => Promise<boolean | null>;
+  private readonly scheduleFilesCheck: boolean;
+
+  /** `features.scheduleFiles` from this adapter's own `/hello`; `null` when there is no answer. */
+  private async askScheduleFiles(): Promise<boolean | null> {
+    try {
+      return await this.withDeadline(FORWARD_PARTS_HELLO_MS, async (signal) => {
+        const res = await this.request("GET", "/hello", signal ? { signal } : {});
+        if (!res.ok) return null;
+        const body = await res.json().catch(() => null) as { product?: unknown; features?: { scheduleFiles?: unknown } } | null;
+        return body?.product === "ohmail" ? body.features?.scheduleFiles === true : null;
+      });
+    } catch {
+      return null;
+    }
   }
 
   /** See {@link HttpAdapterOptions.forwardPartsCheck}; present only where it is on. */
@@ -2729,10 +2756,12 @@ export class HttpAdapter implements EngineAdapter {
     // ordinary gated send when the time comes.
     if (m.sendAt) {
       // A draft row stores no attachment bytes (they ride the SEND request, §13.2/§14), and the
-      // scheduled pass cannot stream a forward's original, so an appointment carries neither. The
-      // compose surface disables the affordance for both; this is the same rule where it cannot be
+      // scheduled pass cannot stream a forward's original, so an appointment carries neither —
+      // except files on a door that keeps them itself (`scheduleFilesCheck`, the desktop's engine).
+      // The compose surface says so before the pick; this is the same rule where it cannot be
       // bypassed, refused before any request rather than after the row is marked.
-      if ((m.attachments?.length ?? 0) > 0 || m.forwardOf) {
+      const withFiles = (m.attachments?.length ?? 0) > 0;
+      if ((withFiles && !this.scheduleFilesCheck) || m.forwardOf) {
         this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "Send later isn't available for messages with attachments or forwards yet.",
@@ -2740,11 +2769,25 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
 
-      const res = await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule`, {
-        body: { sendAt: m.sendAt },
-        idempotencyKey,
-      });
+      const res = withFiles
+        ? await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule-with-files`, {
+          body: { sendAt: m.sendAt, attachments: m.attachments },
+          idempotencyKey,
+        })
+        : await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule`, {
+          body: { sendAt: m.sendAt },
+          idempotencyKey,
+        });
       const seq = this.noteSeq(res);
+      if (res.status === 404 && withFiles) {
+        // A door that keeps no files (Cloud, an older engine) has no such route: the draft stands,
+        // nothing was scheduled, and nothing leaves without its files.
+        this.forgetSendKey(idempotencyKey);
+        throw new MutationRejectedError(
+          "This message was not scheduled: this server can't keep files for a later send. Send it now, or remove the files.",
+          { status: 404, code: "schedule_files_unsupported", retryable: false },
+        );
+      }
       if (res.status === 404) {
         // VERSION SKEW: a server that predates scheduling answers its ordinary 404 here. The
         // draft row stands (it is in Drafts, nothing lost); what must not happen is a silent

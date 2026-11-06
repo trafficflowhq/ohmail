@@ -4,7 +4,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
-import { drafts, mailboxes, outboundSends } from "@trafficflow/db";
+import { drafts, mailboxes, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -55,7 +55,7 @@ function fakeAdapter() {
   return { factory, state };
 }
 
-async function seeded() {
+async function seeded(files?: { filename: string; contentType: string; content: Buffer }[]) {
   const accountId = randomUUID();
   const tag = randomUUID().slice(0, 8);
   const [mb] = await dbA.insert(mailboxes).values({
@@ -67,7 +67,7 @@ async function seeded() {
     createdAt: NOW, updatedAt: NOW,
   }).returning();
   const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
-  await schedules.schedule(ctx, d!.id, DUE.toISOString());
+  await schedules.schedule(ctx, d!.id, DUE.toISOString(), files ? { files, surfaceMaxTotalBytes: null } : undefined);
   return { ctx, accountId, draftId: d!.id };
 }
 
@@ -165,5 +165,39 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     });
     expect(r2).toMatchObject({ claimed: 1, sent: 1 });
     expect(fake.state.delivered).toHaveLength(1);
+  });
+
+  it("WITH FILES (mail 0179): a cancel that loses to the claim deletes no file; the claim sends them", async () => {
+    const files = [{ filename: "a.pdf", contentType: "application/pdf", content: Buffer.from("%PDF the page") }];
+    const w = await seeded(files);
+    let releaseLock!: () => void;
+    const held = new Promise<void>((r) => { releaseLock = r; });
+    const claimTx = sqlB.begin(async (tx) => {
+      await tx`update drafts set status = 'draft', updated_at = now()
+               where id = ${w.draftId} and status = 'scheduled'`;
+      await held;
+    });
+    await sleep(150);
+    const cancelP = schedules.cancel(w.ctx, w.draftId).then(() => null, (e: unknown) => e as { httpStatus?: number });
+    await sleep(300);
+    releaseLock();
+    await claimTx;
+    expect((await cancelP)?.httpStatus).toBe(409);
+    const kept = await dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId));
+    expect(kept.map((f) => f.filename), "a refused cancel took the files of a letter being sent").toEqual(["a.pdf"]);
+
+    // The claim window's recovery sends the letter once, with its file.
+    const fake = fakeAdapter();
+    await runScheduledSendPass(dbA, { openSendAdapter: fake.factory, now: () => new Date(DUE.getTime() + 11 * 60_000) });
+    const mine = fake.state.delivered.filter((m) => m.subject === "the appointment" && m.attachments?.length);
+    expect(mine.map((m) => m.attachments!.map((a) => a.filename))).toEqual([["a.pdf"]]);
+  });
+
+  it("WITH FILES: a cancel that wins takes the files, and the claim sends nothing", async () => {
+    const w = await seeded([{ filename: "b.png", contentType: "image/png", content: Buffer.from("png") }]);
+    await schedules.cancel(w.ctx, w.draftId);
+    expect(await dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId))).toHaveLength(0);
+    await runScheduledSendPass(dbA, { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
+    expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(0);
   });
 });

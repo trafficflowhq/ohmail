@@ -40,6 +40,7 @@ import {
   outboundSends,
   outboundSentCopies,
   ruleRemovals,
+  scheduledSendFiles,
   pairingTokens,
   refreshTokens,
   routingDecisions,
@@ -670,6 +671,10 @@ const REFUSED_BY_CONSTRAINT: readonly string[] = [
   // the database rather than a hope about the one call site — and the constraint arrived in the
   // same migration as the column for exactly that reason.
   "folder_state.last_error_class",
+  // mail 0179 — CHECK `content_sha256 ~ '^[0-9a-f]{64}$'`: the digest of a scheduled letter's kept
+  // file, held to hex by the database. Its siblings `filename` and `raw_b64` carry the mail and are
+  // tainted by the sweep.
+  "scheduled_send_files.content_sha256",
 ];
 
 /**
@@ -1722,6 +1727,12 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   // A delivered message's owed Sent copy (mail 0170): its bytes are mail, seeded and swept as such.
   await db.insert(outboundSentCopies).values({
     sendId: stuck!.id, accountId, mailboxId, rawB64: Buffer.from(`owed copy ${tag}`).toString("base64"),
+  });
+
+  // A scheduled letter's kept file (mail 0179): its name and bytes are mail, seeded and swept as such.
+  await db.insert(scheduledSendFiles).values({
+    accountId, mailboxId, draftId: draft!.id, sendKey: `sk-${tag}`, fileNo: 0, filename: `kept ${tag}.pdf`,
+    contentType: "application/pdf", sizeBytes: 4, contentSha256: "cd".repeat(32), rawB64: Buffer.from(`kept ${tag}`).toString("base64"),
   });
 
   // A rule the person removed (mail 0178): its key is their words, seeded and swept as mail.

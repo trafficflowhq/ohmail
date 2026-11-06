@@ -25,6 +25,8 @@ import { attachmentRoutes } from "./attachments.js";
 import { kbRoutes } from "./kb.js";
 import { tagsRoutes } from "./tags.js";
 import { draftsRoutes } from "./drafts.js";
+// Send later with files: kept in this engine's store, so this table alone mounts it (mail 0179).
+import { scheduleFilesRoutes } from "./schedule-files.js";
 import { workflowsRoutes } from "./workflows.js";
 import { healthRoutes } from "./health.js";
 // `GET /hello` — server identity + capability negotiation, mounted in EVERY composition so a
@@ -138,5 +140,6 @@ export const localRoutes: Route[] = [
   ...kbRoutes,
   ...tagsRoutes,
   ...draftsRoutes,
+  ...scheduleFilesRoutes,
   ...workflowsRoutes,
 ];

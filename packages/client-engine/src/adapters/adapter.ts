@@ -411,6 +411,13 @@ export interface EngineAdapter {
   forwardPartsAnnounced?(): Promise<boolean | null>;
 
   /**
+   * DOES THE SERVER THIS ADAPTER SCHEDULES WITH KEEP A LETTER'S FILES FOR A LATER SEND (`GET /hello`
+   * `features.scheduleFiles`, mail 0179)? `null` is no answer. Optional: without it, a letter with
+   * files is never offered Send later.
+   */
+  scheduleFilesAnnounced?(): Promise<boolean | null>;
+
+  /**
    * `GET /drafts/:id` — THE DRAFT'S TEXT, when the mirror row arrived without it.
    *
    * OPTIONAL for the reason `fetchBodies` is: absence is a real answer. The FixturesAdapter's

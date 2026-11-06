@@ -680,6 +680,8 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         // egress a few lines down (`makePrivacyService({ remote: nodeRemoteFetch, … })`), so
         // `GET /img` here fetches rather than refusing.
         remoteImages: true,
+        // The schedule-with-files route is mounted (localRoutes) but this server keeps no files at rest.
+        scheduleFiles: false,
       },
     },
     logger: rt.logger,

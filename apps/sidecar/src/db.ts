@@ -1234,6 +1234,26 @@ export async function reclaimOwedCopySpace(client: PGlite): Promise<boolean> {
   }
 }
 
+/**
+ * A scheduled letter's files whose appointment ended without the pass seeing it (a stand-down
+ * close, a quit between an ending and its sweep): removed at open, and their space handed back.
+ * One DELETE on a store with none; silent, and the next open tries again. Answers the rows removed.
+ */
+export async function sweepScheduledFilesAtOpen(client: PGlite): Promise<number> {
+  try {
+    const r = await client.query(
+      `DELETE FROM scheduled_send_files f
+       WHERE NOT EXISTS (SELECT 1 FROM drafts d
+         WHERE d.id = f.draft_id AND d.account_id = f.account_id AND d.send_key = f.send_key)
+       RETURNING 1`,
+    );
+    if (r.rows.length > 0) await client.exec(`VACUUM scheduled_send_files`);
+    return r.rows.length;
+  } catch {
+    return 0;
+  }
+}
+
 /** WAL segment files in a data directory. `pg_wal` also holds `archive_status/`, which is not one. */
 function walSegments(pgDataDir: string): number {
   try {
@@ -2350,6 +2370,7 @@ export async function openLocalDb(dataDir: string, opts: OpenLocalDbOptions = {}
     const tCompact = Date.now();
     await reclaimBodyBloat(client, log, opts.onPhase);
     await reclaimOwedCopySpace(client);
+    await sweepScheduledFilesAtOpen(client);
     const compactMs = Date.now() - tCompact;
     // AFTER the migrator (the indexed tables must exist) and BEFORE serving, like the compaction.
     const tSearch = Date.now();

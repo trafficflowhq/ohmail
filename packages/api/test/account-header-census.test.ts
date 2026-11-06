@@ -817,7 +817,7 @@ describe("the account header is advertised, and the advertisement is true", () =
     flavor: "managed" as const,
     needsSetup: false,
     auth: { password: true, totp: true, webauthn: true, publicSignup: false },
-    features: { sse: false, staging: true, ai: true, pairing: false, remoteImages: true },
+    features: { sse: false, staging: true, ai: true, pairing: false, remoteImages: true, scheduleFiles: false },
   };
 
   const helloOf = async (base: ApiDeps): Promise<{ features: Record<string, unknown> }> => {

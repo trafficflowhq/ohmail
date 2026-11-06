@@ -2193,6 +2193,9 @@ export const drafts = pgTable("drafts", {
   // Mail 0168 — the original's attachment ids the person kept (sorted, at most 100), only beside
   // `forward_of_message_id`. NULL: nothing was removed, every part goes.
   forwardParts: jsonb("forward_parts").$type<string[]>(),
+  // Mail 0179 — how many files the appointment carries (`scheduled_send_files`); 0 for a schedule
+  // without files. After an ending without delivery it stays as the mark that the files were not kept.
+  sendFiles: integer("send_files").notNull().default(0),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
@@ -2355,6 +2358,26 @@ export const ruleRemovals = pgTable("rule_removals", {
   removedAt: timestamp("removed_at", { withTimezone: true }).notNull(),
   removedBy: text("removed_by"),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.ruleKey] }) }));
+
+// Mail 0179 — A SCHEDULED LETTER'S FILES, kept by the local engine until the appointment ends: one
+// row per 4 MiB piece of a file's base64 (`seq` from 0, written once), under the appointment's
+// `send_key`. The scheduled-send pass reads them back, checks count, size and sha-256, and sends
+// them as the letter's attachments. No foreign key (0170's lock argument); the local drain sweeps
+// rows whose draft no longer carries their key. Servers write none.
+export const scheduledSendFiles = pgTable("scheduled_send_files", {
+  accountId: uuid("account_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull(),
+  draftId: uuid("draft_id").notNull(),
+  sendKey: text("send_key").notNull(),
+  fileNo: integer("file_no").notNull(),
+  seq: integer("seq").notNull().default(0),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  contentSha256: text("content_sha256").notNull(),
+  rawB64: text("raw_b64").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.draftId, t.fileNo, t.seq] }) }));
 
 // Migration 0014 — workflow automation storage. Two additive, account-scoped, REST-only tables:
 // neither writes `change_log` nor grows `EntityType` — clients refetch; the workflow EFFECTS (a

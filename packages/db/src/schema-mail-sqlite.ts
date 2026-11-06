@@ -1903,6 +1903,8 @@ export const drafts = sqliteTable("drafts", {
   forwardOfMessageId: text("forward_of_message_id").references(() => messages.id),
   // Mail 0168, the pg column's twin — see `schema-mail.ts`.
   forwardParts: text("forward_parts", { mode: "json" }).$type<string[]>(),
+  // Mail 0179, appended last — see `schema-mail.ts`.
+  sendFiles: integer("send_files").notNull().default(0),
 }, (t) => ({
   ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
@@ -2432,6 +2434,22 @@ export const ruleRemovals = sqliteTable("rule_removals", {
   removedAt: integer("removed_at", { mode: "timestamp_ms" }).notNull(),
   removedBy: text("removed_by"),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.ruleKey] }) }));
+
+/** Mail 0179: a scheduled letter's files, one row per piece — the pg table's twin. */
+export const scheduledSendFiles = sqliteTable("scheduled_send_files", {
+  accountId: text("account_id").notNull(),
+  mailboxId: text("mailbox_id").notNull(),
+  draftId: text("draft_id").notNull(),
+  sendKey: text("send_key").notNull(),
+  fileNo: integer("file_no").notNull(),
+  seq: integer("seq").notNull().default(0),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  contentSha256: text("content_sha256").notNull(),
+  rawB64: text("raw_b64").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.draftId, t.fileNo, t.seq] }) }));
 
 /**
  * The mail-domain half as one object, for `drizzle(client, { schema })`.

@@ -910,7 +910,10 @@ export function mutationEffects(reader: EntityReader, m: EngineMutation, ctx: Ef
         bcc: m.bcc ?? [],
         rationale: null,
         ...(m.sendAt
-          ? { status: "scheduled" as const, sendAt: m.sendAt }
+          ? {
+            status: "scheduled" as const, sendAt: m.sendAt,
+            ...(m.attachments && m.attachments.length > 0 ? { sendFiles: m.attachments.length } : {}),
+          }
           : { status: "sending" as const }),
         createdAt: iso,
         updatedAt: iso,
