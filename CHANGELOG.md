@@ -21,6 +21,39 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.43] — 2026-11-06
+
+### Adding a large mailbox finishes much sooner
+
+On ohmail Cloud and on your own server, the first sync of a mailbox you add now stores its mail in batches
+instead of one letter at a time, so a mailbox with years of mail is in ohmail in a fraction of the time it
+took. Nothing changes in what is stored or where it goes: every letter, its conversation, its folder and its
+search words come out exactly as before.
+
+### A reply draft you deleted stays deleted
+
+When the message a reply answers was deleted, ohmail saved the reply's unsent words as a new draft, even when you had already deleted that draft on another device or in another browser, so it came back in Drafts (seen on the desktop app with ohmail Cloud). Words you deleted or sent are no longer saved again; words that were never saved are still kept as a draft.
+
+### A worker with half its platform credential pages instead of going quietly dark
+
+For your own server and ohmail Cloud: when the worker holds only one of `TF_SIGNAL_VERCEL_TOKEN` and
+`TF_SIGNAL_VERCEL_TEAM_ID`, its 5xx poll no longer counts as healthy and no longer prunes the readings it
+already has, so the platform poll's stale alert pages and the missing-readings alert stays open until the
+pair is complete. The poll also reads up to 16 log pages per window under a 45 s clock sized for the worker,
+in place of the 12 pages and 40 s that were sized for the API host.
+
+### A Screener decision no longer fails while ohmail is filing your mail
+
+On ohmail Cloud and your own server, letting a sender in or screening one out could fail on the server while
+ohmail was filing mail in the same mailbox, often the letters of the decision made just before. The decision
+stayed on screen and went through on its own 30 seconds to two minutes later, and its letters moved that much
+later. Releasing held mail could fail the same way.
+
+A decision could also fail as ohmail finished a pass over your mailboxes, or beside a Pull new mail, a Move to
+Junk or the reopening of a closed account. Adding, pausing or removing a rule, or changing When a sender goes
+quiet, could fail while ohmail filed mail in a mailbox another install organizes. All of these now wait for
+each other instead.
+
 ## [0.30.42] — 2026-11-06
 
 ### New mail keeps arriving within seconds while a large mailbox is being added
@@ -16988,7 +17021,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.42...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.43...HEAD
+[0.30.43]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.43
 [0.30.42]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.42
 [0.30.41]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.41
 [0.30.40]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.40
