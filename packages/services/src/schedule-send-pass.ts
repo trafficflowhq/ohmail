@@ -4,6 +4,7 @@ import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
+import { readScheduledFiles, SCHEDULED_FILES_UNREADABLE, sweepScheduledSendFiles } from "./scheduled-send-files.js";
 import {
   sendService, SEND_ATTEMPT_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_STALE_AFTER_MS, type SendDeps, type SendService,
 } from "./send-service.js";
@@ -121,6 +122,8 @@ interface ClaimedRow {
    * provably has none yet.
    */
   mayHaveReservation: boolean;
+  /** The files the appointment carries (`drafts.send_files`, mail 0179); 0 on every server. */
+  sendFiles: number;
 }
 
 /** One bounded pass. Never throws for a per-row fault — one broken appointment must not stop the rest. */
@@ -167,16 +170,30 @@ export async function runScheduledSendPass(
       log.warn("scheduled_send_expired", { draftId: row.id, accountId: row.accountId });
       continue;
     }
+    // THE FILES, WHOLE OR NOT AT ALL: a letter that carries files never leaves without them.
+    const files = row.sendFiles > 0
+      ? await readScheduledFiles(db, row.accountId, row.id, row.sendKey, row.sendFiles).catch(() => null)
+      : [];
+    if (files === null) {
+      const closed = await closeAppointment(db, ctx, row, SCHEDULED_FILES_UNREADABLE, log);
+      if (closed) result.failed += 1;
+      else result.deferred += 1;
+      log.warn("scheduled_send_files_unreadable", { draftId: row.id, accountId: row.accountId, count: row.sendFiles });
+      continue;
+    }
     try {
-      const res = await sends.send(ctx, row.id, row.sendKey, {
+      const sendDeps: SendDeps = {
         openSendAdapter: deps.openSendAdapter,
         ...(deps.resolveStorageCap ? { resolveStorageCap: deps.resolveStorageCap } : {}),
-        // No request pipeline carries bytes at send time — the draft row stores none and the
-        // adapter dials from this process — so the truthful surface is the local engine's.
+        // No request pipeline carries bytes at send time — the files, if any, were read from this
+        // store and the adapter dials from this process — so the truthful surface is the local engine's.
         surfaceMaxTotalBytes: null,
         ...(deps.keepOwedCopy !== undefined && deps.keepOwedCopy !== false ? { keepOwedCopy: deps.keepOwedCopy } : {}),
         log,
-      });
+      };
+      const res = files.length > 0
+        ? await sends.send(ctx, row.id, row.sendKey, sendDeps, { attachments: files })
+        : await sends.send(ctx, row.id, row.sendKey, sendDeps);
       if (res.status === "sent") {
         result.sent += 1;
         log.info("scheduled_send_sent", { draftId: row.id, accountId: row.accountId });
@@ -265,6 +282,11 @@ export async function runScheduledSendPass(
     }
   }
 
+  // Files of appointments that ended here (sent, closed or expired) go now, not at the next drain.
+  if (rows.some((r) => r.sendFiles > 0)) {
+    await sweepScheduledSendFiles(db, deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {})
+      .catch((err: unknown) => log.warn("scheduled_send_files_sweep_failed", { err }));
+  }
   return result;
 }
 
@@ -333,7 +355,9 @@ async function claimDue(
      * window every cycle and everything behind it was NEVER claimed — the same starvation the
      * scan factor was added against, standing one shelf higher.
      */
-    interface Candidate { id: string; accountId: string; sendKey: string | null; sendAt: Date | null; status?: string }
+    interface Candidate {
+      id: string; accountId: string; sendKey: string | null; sendAt: Date | null; status?: string; sendFiles: number;
+    }
     const pagedScan = async (base: () => ReturnType<typeof and>, want: number): Promise<Candidate[]> => {
       const taken: Candidate[] = [];
       let after: { sendAt: Date; id: string } | null = null;
@@ -347,7 +371,7 @@ async function claimDue(
         // for the same reason the lock is — one serialized writer, nothing to skip.
         const rows: Candidate[] = await d.skipLocked(tx.select({
           id: drafts.id, accountId: drafts.accountId, sendKey: drafts.sendKey,
-          sendAt: drafts.sendAt, status: drafts.status,
+          sendAt: drafts.sendAt, status: drafts.status, sendFiles: drafts.sendFiles,
         }).from(drafts)
           .where(and(
             base(),
@@ -413,12 +437,12 @@ async function claimDue(
       // Non-null casts on each arm's own predicate; `mayHaveReservation` per its field's note.
       ...due.map((r) => ({
         id: r.id, accountId: r.accountId,
-        sendKey: r.sendKey as string, sendAt: r.sendAt as Date, mayHaveReservation: false,
+        sendKey: r.sendKey as string, sendAt: r.sendAt as Date, mayHaveReservation: false, sendFiles: r.sendFiles,
       })),
       ...recovery.map((r) => ({
         id: r.id, accountId: r.accountId,
         sendKey: r.sendKey as string, sendAt: r.sendAt as Date,
-        mayHaveReservation: r.status === "sending",
+        mayHaveReservation: r.status === "sending", sendFiles: r.sendFiles,
       })),
     ];
   });

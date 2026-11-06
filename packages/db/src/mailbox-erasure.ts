@@ -5,8 +5,8 @@ import {
   approvals, attachments, auditLog, awayReplies, awayResponderSent, drafts, flagState, folderOps,
   folderState, junkRescues, mailboxCredentials, mailboxFolders, mailboxProfileMirror, mailboxes,
   messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messageTags, messages,
-  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, routingDecisions, threadNotes,
-  threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
+  organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends, routingDecisions, scheduledSendFiles,
+  threadNotes, threads, trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "./schema-mail.js";
 import { recordChanges, recordMailboxRemoved, type LedgerTx, type Tx } from "./change-log.js";
 import { eraseIdempotentResponses } from "./idempotency.js";
@@ -166,6 +166,9 @@ export async function sweepMailboxStep(
   await recomputeAccountStorage(tx, d, accountId, now);
   await drop("outbound_sent_copies", tx.delete(outboundSentCopies).where(and(
     eq(outboundSentCopies.accountId, accountId), eq(outboundSentCopies.mailboxId, mailboxId),
+  )));
+  await drop("scheduled_send_files", tx.delete(scheduledSendFiles).where(and(
+    eq(scheduledSendFiles.accountId, accountId), eq(scheduledSendFiles.mailboxId, mailboxId),
   )));
   await drop("outbound_send_fingerprints", tx.delete(outboundSendFingerprints).where(and(
     eq(outboundSendFingerprints.accountId, accountId), eq(outboundSendFingerprints.mailboxId, mailboxId),

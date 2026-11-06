@@ -63,6 +63,7 @@ import {
   ruleRemovalKey,
   ruleRemovals,
   rules,
+  scheduledSendFiles,
   SCREENER_SUGGESTION_PROVENANCE,
   SCREENER_SUGGESTION_STATUS,
   sessions,
@@ -540,6 +541,11 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   // A delivered message's owed Sent copy (mail 0170): its bytes, deleted by the account and the mailbox.
   await db.insert(outboundSentCopies).values({
     sendId: send!.id, accountId, mailboxId, rawB64: Buffer.from("Subject: owed\r\n\r\nwords").toString("base64"),
+  });
+  // A scheduled letter's kept file (mail 0179): its bytes, deleted by the account and the mailbox.
+  await db.insert(scheduledSendFiles).values({
+    accountId, mailboxId, draftId: draft!.id, sendKey: `sk-${u}`, fileNo: 0, filename: "a.pdf",
+    contentType: "application/pdf", sizeBytes: 4, contentSha256: "ab".repeat(32), rawB64: "JVBERg==",
   });
   const [unsubRecord] = await db.insert(unsubscribeRecords).values({
     accountId, mailboxId, listKey: `list-${u}`, state: "sent", httpStatus: 202, messageId,

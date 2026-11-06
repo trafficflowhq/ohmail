@@ -282,6 +282,10 @@ export {
   runScheduledSendPass, SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS, SCHEDULED_SEND_SCAN_FACTOR,
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
+export {
+  readScheduledFiles, scheduledFilesMeta, sweepScheduledSendFiles, scheduledFileRows,
+  SCHEDULED_FILE_PIECE_CHARS, SCHEDULED_FILES_UNREADABLE, type ScheduledFile, type ScheduledFileMeta,
+} from "./scheduled-send-files.js";
 // The away responder's pass. MAIL-HALF, by the same test as the scheduled sender beside it: it
 // names no cloud table (the suspension gate is injected) and imports only the mail schema and
 // core's mail entry point — so the desktop engine, which is the standalone door's whole runtime,

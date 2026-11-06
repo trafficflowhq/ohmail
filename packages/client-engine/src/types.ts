@@ -813,6 +813,11 @@ export interface EngineDraft {
    * as a quotation (`SendState.reason`'s treatment). Cleared by the next edit or schedule.
    */
   sendError?: string | null;
+  /**
+   * The files a scheduled send keeps on this computer (mail 0179): waiting while `scheduled`, not
+   * kept once the row is a plain draft again. Absent: none.
+   */
+  sendFiles?: number;
   /** Client-local: the user took the AI draft into the editor. */
   accepted?: boolean;
   /** The server's version of the row's words; absent from an older server or an overlay. */

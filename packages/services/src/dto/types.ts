@@ -1234,6 +1234,12 @@ export interface DraftDTO {
    * treatment `SendState.reason` gives a live refusal); cleared by the next edit or schedule.
    */
   sendError: string | null;
+  /**
+   * How many files a scheduled send carries, kept on this computer until it goes (mail 0179).
+   * While `status` is `scheduled` they are waiting; on a plain draft they were not kept and must be
+   * attached again. Absent when there are none, which is every server's row.
+   */
+  sendFiles?: number;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   /**

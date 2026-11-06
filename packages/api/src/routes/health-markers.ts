@@ -885,6 +885,11 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0178_rule_removals — the rules a person removed, published beside the rules in the settings
   // copy. A new table: deploy order migration → API → worker.
   ["rule_removals", "rule_key"],
+  // mail 0179_scheduled_send_files — a scheduled letter's file count, and its files kept on the
+  // desktop's store. LOUD: `select().from(drafts)` on every draft read and in the pass. Deploy order
+  // migration → API → worker.
+  ["drafts", "send_files"],
+  ["scheduled_send_files", "send_key"],
 ] as const;
 
 /**
@@ -1314,7 +1319,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0178_rule_removals";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0179_scheduled_send_files";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

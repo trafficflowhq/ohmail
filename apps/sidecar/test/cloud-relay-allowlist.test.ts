@@ -102,6 +102,21 @@ describe("a non-member never reaches the network", () => {
   });
 });
 
+describe("Send later with files is this computer's own (mail 0179)", () => {
+  it("the files route is never forwarded to Cloud: a 404 the window reads as unsupported, and no request", async () => {
+    const { call, sent } = proxyWith(false);
+    const res = await call("POST", "/drafts/abc/schedule-with-files");
+    expect(res.status).toBe(404);
+    expect(sent).toEqual([]);
+  });
+
+  it("while /hello is, so the window reads Cloud's own answer about keeping files", async () => {
+    const { call, sent } = proxyWith(false);
+    await call("GET", "/hello");
+    expect(sent).toEqual([{ path: "/hello", method: "GET" }]);
+  });
+});
+
 describe("the hand-off routes get the sentence, on the door where it helps", () => {
   it("409 on a server the person runs themselves", async () => {
     const { call, sent } = proxyWith(true);

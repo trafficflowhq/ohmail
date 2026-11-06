@@ -945,6 +945,10 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.forwardPartsAnnounced
           ? { forwardPartsAnnounced: gatedRead(adapter.forwardPartsAnnounced.bind(adapter), "whether your server sends only the files you kept") }
           : {}),
+        /* Whether Send later may carry files: the same rule, or the live window never offers it. */
+        ...(adapter.scheduleFilesAnnounced
+          ? { scheduleFilesAnnounced: gatedRead(adapter.scheduleFilesAnnounced.bind(adapter), "whether your server keeps files for a later send") }
+          : {}),
 
         /**
          * MAIL HELD AT THE GATE — the pair, forwarded and spread for the reasons above, and gated

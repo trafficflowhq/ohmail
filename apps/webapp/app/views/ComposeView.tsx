@@ -47,6 +47,7 @@ import { SIG_FOLLOWING } from "../shell/signature";
 import { useFocusFollows } from "../shell/focus-follows";
 import { ForwardFiles } from "../shell/ForwardFiles";
 import type { ForwardFilesPlan } from "../shell/forward-files";
+import { useScheduleFiles } from "../shell/schedule-files";
 
 /**
  * The id the From control points `aria-describedby` at when the sender was matched to the
@@ -96,6 +97,7 @@ export function ComposeView({
   onClose,
   closeNote = null,
   heldResolve = null,
+  filesNotKept = null,
 }: {
   engine: OhmailEngine;
   draft: EngineDraft | null;
@@ -215,6 +217,8 @@ export function ComposeView({
     draftId: string;
     onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
   } | null;
+  /** The row on screen was scheduled with this many files and they were not kept (mail 0179). */
+  filesNotKept?: number | null;
 }) {
   const t = useTranslations("compose");
   const toast = useToast();
@@ -414,9 +418,10 @@ export function ComposeView({
    * the send row, never a modal (the form was moved OUT of a dialog the keyboard could not leave), `role="dialog"`
    * with focus moving in and Escape closing it first (the cascade rule below). `openedAt` freezes "now" at the moment
    * the panel opens, so the three presets and the custom floor are computed once per opening rather than drifting
-   * under the reader mid-decision. A DRAFT ROW STORES NO BYTES AND NO FORWARD REFERENCE (§13.2/§14), so a message
-   * carrying either cannot be scheduled — the affordance says so in its title instead of failing after the pick; the
-   * http adapter refuses the same combination where it cannot be bypassed.
+   * under the reader mid-decision. A DRAFT ROW STORES NO BYTES AND NO FORWARD REFERENCE (§13.2/§14): a forward cannot
+   * be scheduled (the toggle says so in its title), and files only where the door keeps them itself (the desktop's
+   * engine, mail 0179) — elsewhere the panel says so before the pick. The http adapter refuses the same combinations
+   * where they cannot be bypassed.
    */
 
   /**
@@ -434,9 +439,27 @@ export function ComposeView({
   useEffect(() => {
     if (sendLaterOpen) sendLaterRef.current?.focus();
   }, [sendLaterOpen]);
-  const sendLaterBlocked = (fields.attachments?.length ?? 0) > 0 || fields.forwardOf
-    ? t("sendLaterUnavailable")
+  /* A FORWARD stays unschedulable, the toggle disabled with its reason as before. FILES go with the
+     letter where this door keeps them (`/hello` `scheduleFiles`, the desktop's own engine); anywhere
+     else the toggle stays pressable and the panel SAYS so in place of the times, before any pick. */
+  const hasFiles = (fields.attachments?.length ?? 0) > 0;
+  const filesKept = useScheduleFiles(engine, hasFiles || sendLaterOpen);
+  const sendLaterBlocked = fields.forwardOf ? t("sendLaterUnavailable") : null;
+  const sendLaterFilesRefused = sendLaterBlocked === null && hasFiles && filesKept !== true
+    ? t(filesKept === false ? "sendLaterFilesNotHere" : "sendLaterUnavailable")
     : null;
+  /**
+   * SEND NEVER SNAPSHOTS A MESSAGE WITH AN ATTACHMENT PENDING. A pick decodes, re-encodes and
+   * commits in one `onChange` at the end; between the press and that commit the form holds a
+   * message without the file the person just chose, and Send took exactly that. The names are
+   * what the refusal sentence states — a disabled button with no reason is a form that stopped
+   * working. No clock: the pick's own end is the release, so there is no deadline to invent and
+   * no window in which the file could be dropped silently.
+   */
+  const [attaching, setAttaching] = useState<readonly string[]>([]);
+  /* A file still being read holds a pick as it holds Send: the schedule would go without it. */
+  const sendLaterHeld = sendLaterFilesRefused
+    ?? (attaching.length > 0 ? t("stillAttaching", { name: attaching[0]!, count: attaching.length }) : null);
   const toggleSendLater = useCallback(() => {
     setSendLaterOpen((open) => {
       if (!open) {
@@ -468,9 +491,10 @@ export function ComposeView({
     rootRef.current?.querySelector<HTMLButtonElement>(".send-later-toggle")?.focus();
   }, []);
   const pickSendLater = useCallback((iso: string) => {
+    if (sendLaterHeld !== null) return;
     setSendLaterOpen(false);
     onSendLater(iso);
-  }, [onSendLater]);
+  }, [onSendLater, sendLaterHeld]);
   // The evening preset is offered only while it is meaningfully ahead — past ~17:45 "this evening at
   // 18:00" is a promise measured in seconds, and the honest menu simply omits it.
   const eveningIso = todayEvening(openedAt).instant.toISOString();
@@ -519,7 +543,7 @@ export function ComposeView({
       group: "message",
       label: t("keySchedule"),
       inInput: true,
-      disabled: !sendLaterOpen || !customUsable || !canSend(send, plan.mutation),
+      disabled: !sendLaterOpen || sendLaterHeld !== null || !customUsable || !canSend(send, plan.mutation),
       run: () => { if (customIso) pickSendLater(customIso); },
     },
     {
@@ -625,15 +649,6 @@ export function ComposeView({
      reason it is on its way does not change either fact. Adding a third state here is how a
      surface comes to disagree with itself about one question. */
   const held = locked ?? null;
-  /**
-   * SEND NEVER SNAPSHOTS A MESSAGE WITH AN ATTACHMENT PENDING. A pick decodes, re-encodes and
-   * commits in one `onChange` at the end; between the press and that commit the form holds a
-   * message without the file the person just chose, and Send took exactly that. The names are
-   * what the refusal sentence states — a disabled button with no reason is a form that stopped
-   * working. No clock: the pick's own end is the release, so there is no deadline to invent and
-   * no window in which the file could be dropped silently.
-   */
-  const [attaching, setAttaching] = useState<readonly string[]>([]);
   /**
    * THE REFUSAL WITH ITS REASON — one reading, three consumers: the lock, the button's stated
    * reason, and the sentence a refused press earns. `needsContent` is true only when content is
@@ -1087,6 +1102,15 @@ export function ComposeView({
                 aria-label={t("sendLaterTitle")}
                 tabIndex={-1}
               >
+                {sendLaterHeld !== null ? (
+                  <>
+                    {/* No times to pick: the letter would go without its files. */}
+                    <p className="send-note" role="status">{sendLaterHeld}</p>
+                    <div className="gate-actions">
+                      <Button variant="ghost" onClick={closeSendLater}>{t("sendLaterClose")}</Button>
+                    </div>
+                  </>
+                ) : <>
                 <p className="set-note-inline">{t("sendLaterWhat")}</p>
                 <div className="gate-actions">
                   {eveningUsable ? (
@@ -1142,6 +1166,9 @@ export function ComposeView({
                   </p>
                 ) : null}
                 <p className="send-note">{t("sendLaterZone", { zone: activeFormatZone() })}</p>
+                {/* The desktop's own engine keeps the appointment, so it waits for the app. */}
+                {filesKept === true ? <p className="send-note">{t("sendLaterThisComputer")}</p> : null}
+                </>}
               </div>
             ) : null}
             <div className="send-row">
@@ -1174,8 +1201,8 @@ export function ComposeView({
               {/* SEND LATER — beside Send because it is the same act on a different clock. The
                   SAME lock (`sendBlocked`) gates it: a message that may not be sent now may not be
                   scheduled either, and the one predicate must own both buttons. Disabled with
-                  its reason in the title when the message carries what a draft row cannot hold
-                  (files, a forward) — see the state block above. */}
+                  its reason in the title for a forward; files are answered inside the panel —
+                  see the state block above. */}
               <Button
                 variant="ghost"
                 className="send-later-toggle"
@@ -1253,6 +1280,10 @@ export function ComposeView({
                   keeping the moment the body crosses the ceiling, and a false promise beside a
                   true refusal is worse than either alone. Read from the SAME predicate the save
                   door reads, so the sentence and the behaviour cannot disagree. */}
+              {/* A schedule that ended unsent took its files with it (mail 0179): said until they are back. */}
+              {filesNotKept && !hasFiles ? (
+                <span className="send-note" role="status">{t("filesNotKept", { count: filesNotKept })}</span>
+              ) : null}
               {draftNoteKey(fields) === "bodyTooLong" ? (
                 <span className="send-note" role="status">
                   {/* The sentence names the ceiling now that one formatter can say it — the

@@ -399,6 +399,8 @@ describe("armed with origin and port — the door the phone reaches", () => {
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
       remoteImages: true, accountHeader: true, forwardParts: true,
+      // Same store and the same pass: a scheduled letter's files wait here (mail 0179).
+      scheduleFiles: true,
     });
 
     // Graceful shutdown: stop admitting, release the socket, and be idempotent about it.

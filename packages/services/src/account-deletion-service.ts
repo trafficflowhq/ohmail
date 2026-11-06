@@ -44,6 +44,7 @@ import {
   refreshTokens,
   routingDecisions,
   ruleRemovals,
+  scheduledSendFiles,
   rules,
   sessions,
   snippets,
@@ -291,6 +292,11 @@ export async function deleteAccount(
     await drop(
       "outbound_sent_copies",
       tx.delete(outboundSentCopies).where(eq(outboundSentCopies.accountId, accountId)),
+    );
+    // A scheduled letter's kept files, before the drafts that name them.
+    await drop(
+      "scheduled_send_files",
+      tx.delete(scheduledSendFiles).where(eq(scheduledSendFiles.accountId, accountId)),
     );
     await drop(
       "outbound_send_fingerprints",

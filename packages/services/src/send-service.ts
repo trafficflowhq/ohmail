@@ -20,6 +20,7 @@ import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
 type SentTxRepo = RepoPort & RoutingPort & Pick<WorkerRepo, "completeFolderState" | "adoptFolderState" | "applyExternalFlag">;
 import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { draftContentRevision } from "./draft-revision.js";
+import { scheduledFilesMeta, type ScheduledFileMeta } from "./scheduled-send-files.js";
 import {
   readerFor, repairedPart, REPAIRS_PER_REQUEST, type FetchedBytes, type OpenAdapter, type RepairBudget,
 } from "./attachments-service.js";
@@ -881,7 +882,14 @@ export function sendContentFingerprint(input: {
  * message" is. The STORED text, not the assembled one: a forward's quote is covered by `forwardOf`.
  * Inline files are digested by content; a send carrying staged files takes no claim at all.
  */
-function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): string {
+function contentFingerprintOf(
+  d: typeof drafts.$inferSelect, input: SendInput,
+  /** The files as stored for an appointment (mail 0179), when the bytes are not in hand. */
+  files: readonly ScheduledFileMeta[] = (input.attachments ?? []).map((a) => ({
+    filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
+    contentSha256: createHash("sha256").update(a.content).digest("hex"),
+  })),
+): string {
   const forwardParts = forwardPartsOf(d, input);
   return sendContentFingerprint({
     to: (d.to as EmailAddress[]) ?? [],
@@ -894,10 +902,7 @@ function contentFingerprintOf(d: typeof drafts.$inferSelect, input: SendInput): 
     forwardOf: input.forwardOf ?? d.forwardOfMessageId ?? null,
     ...(forwardParts ? { forwardParts } : {}),
     sendAt: d.sendAt ?? null,
-    attachments: (input.attachments ?? []).map((a) => ({
-      filename: a.filename, contentType: a.contentType, sizeBytes: a.content.byteLength,
-      contentSha256: createHash("sha256").update(a.content).digest("hex"),
-    })),
+    attachments: files,
   });
 }
 
@@ -3910,15 +3915,18 @@ export class SendService {
 
   /**
    * A HELD SEND LATER KEEPS A CLAIM SEND AGAIN CAN PROVE: the hold clears the appointment, so the
-   * claim the scheduled send took (its digest includes `send_at`, and it carried no files) is
-   * re-keyed to the digest without it. Left alone when another claim already holds that digest.
+   * claim the scheduled send took (its digest includes `send_at` and its files) is re-keyed to the
+   * digest without `send_at`, the files still folded. Left alone when another claim holds that digest.
    */
   private async rekeyScheduledClaim(tx: LedgerTx, ctx: ServiceContext, sendId: string, draftId: string): Promise<void> {
     const [d] = await tx.select().from(drafts)
       .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId), eq(drafts.status, "sending"))).limit(1);
     if (!d || d.sendAt === null) return;
-    const held = contentFingerprintOf(d, {});
-    const unscheduled = contentFingerprintOf({ ...d, sendAt: null }, {});
+    // The claim the pass took folded the appointment's files; read while the key still stands.
+    const files = d.sendFiles > 0 && d.sendKey !== null
+      ? await scheduledFilesMeta(tx, ctx.accountId, draftId, d.sendKey) : [];
+    const held = contentFingerprintOf(d, {}, files);
+    const unscheduled = contentFingerprintOf({ ...d, sendAt: null }, {}, files);
     const [taken] = await tx.select({ id: outboundSendFingerprints.id }).from(outboundSendFingerprints)
       .where(and(
         eq(outboundSendFingerprints.accountId, ctx.accountId), eq(outboundSendFingerprints.mailboxId, d.mailboxId),

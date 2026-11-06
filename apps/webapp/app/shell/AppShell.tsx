@@ -106,6 +106,7 @@ import { DormancyRow } from "./DormancyRow";
 import {
   useComposeAutosave, reopenWouldOverwrite, type ComposeFate, type ComposeFlush,
 } from "./compose-autosave";
+import { filesNotKeptFor } from "./schedule-files";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
@@ -3187,6 +3188,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                   const row = readComposeRow();
                   return row === null ? null : { draftId: row, onResolve: resolveHeldSend };
                 })()}
+                /* A schedule that ended unsent left its files behind (mail 0179): the row says how many. */
+                filesNotKept={filesNotKeptFor(drafts, readComposeRow())}
               />
               </Suspense>
             ) : null}

@@ -61,7 +61,7 @@ import {
 import { oncePerLaunch } from "./once-per-launch.js";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
-  kbService, runAwayResponderPass, runScheduledSendPass, runSendReconcilePass,
+  kbService, runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, sweepScheduledSendFiles,
   scheduleService, tagsService,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
@@ -2716,6 +2716,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              pictures here and Settings may draw the switch. It was `false` in effect for as long
              as the egress was a refusal, and the route being mounted never said otherwise. */
           remoteImages: true,
+          // Files wait in this store for the pass that keeps the appointment; a phone keeps none.
+          scheduleFiles: runsPass(organizerKind, "scheduled-send"),
         },
       },
     });
@@ -3363,6 +3365,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           sse: false, staging: false, ai: ai.drafter() !== undefined, pairing: true,
           // Same composition, same armed egress as the window's own door above.
           remoteImages: true,
+          // Same store and the same pass as the window's own door.
+          scheduleFiles: runsPass(organizerKind, "scheduled-send"),
         },
       },
     });
@@ -5225,6 +5229,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           // Only when something closed: an install with no appointments — the overwhelming case —
           // stays silent on every stand-down and every launch, the rule every pass here follows.
           if (r.closed > 0) log("scheduled_sends_stood_down", { closed: r.closed, disabledReason: reason });
+          // The closed appointments' kept files go with them (mail 0179).
+          if (r.closed > 0) await sweepScheduledSendFiles(db as never, { mailboxIds: [mb.id] }).catch(() => 0);
         } catch (err) {
           log("scheduled_sends_stand_down_failed", {
             err,

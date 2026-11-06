@@ -1,13 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { dialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
-import { assertOrganizerRole, drafts, mailboxes, recordChange, type Tx } from "@trafficflow/db";
+import { assertOrganizerRole, drafts, mailboxes, recordChange, scheduledSendFiles, type Tx } from "@trafficflow/db";
 import type { EmailAddress } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
 import { instantRefusal, readInstant } from "./instant.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftMutation } from "./drafts-service.js";
+import { dropScheduledFiles, scheduledFileRows, type ScheduledFile } from "./scheduled-send-files.js";
+import { fenceErasedScope } from "./erasure-fence.js";
+import { effectiveAttachmentCap } from "./send-service.js";
 
 const asTx = (ctx: ServiceContext): Tx => bridgeTx(ctx.db);
 
@@ -33,11 +36,30 @@ export const SCHEDULE_MAX_AHEAD_MS = 365 * 24 * 60 * 60 * 1000;
  * first ⇒ 409 "already being sent" (`send-later-claim-race.pg.test.ts` pins both).
  */
 export class ScheduleService {
-  /** `POST /drafts/:id/schedule` — put an appointment on a draft (or move an existing one). */
-  async schedule(ctx: ServiceContext, draftId: string, sendAtRaw: unknown): Promise<DraftMutation> {
+  /**
+   * `POST /drafts/:id/schedule` — put an appointment on a draft (or move an existing one). With
+   * `withFiles` (`POST /drafts/:id/schedule-with-files`, the local door alone) the appointment keeps
+   * its files in this store until it ends (`scheduled-send-files.ts`); a plain schedule keeps none.
+   */
+  async schedule(
+    ctx: ServiceContext, draftId: string, sendAtRaw: unknown,
+    withFiles?: { files: readonly ScheduledFile[]; surfaceMaxTotalBytes?: number | null },
+  ): Promise<DraftMutation> {
     const sendAt = this.validSendAt(sendAtRaw, ctx.now());
+    const files = withFiles?.files ?? [];
 
     const seq = await asTx(ctx).transaction(async (tx) => {
+      // FILES ARE ROWS THE ERASURE SWEEPS: fenced first (account, then the draft's mailbox), before
+      // the draft lock, in the sweeps' own order. A plain schedule writes none and asks nothing.
+      let fencedMailbox: string | null = null;
+      if (files.length > 0) {
+        const [target] = await tx.select({ mailboxId: drafts.mailboxId }).from(drafts)
+          .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId))).limit(1);
+        if (target) {
+          await fenceErasedScope(tx, dialect(ctx.db), { accountId: ctx.accountId, mailboxId: target.mailboxId });
+          fencedMailbox = target.mailboxId;
+        }
+      }
       // FOR UPDATE for the same reason `SendService.reserve` takes it: this read decides
       // whether an appointment may be made, and the send path flips `status` in its own
       // transaction. Locking serializes the two — schedule either waits and sees what the
@@ -46,6 +68,9 @@ export class ScheduleService {
         .where(and(eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId)))
         .limit(1));
       if (!d) throw new ServiceError("not_found", 404, "draft not found");
+      if (fencedMailbox !== null && d.mailboxId !== fencedMailbox) {
+        throw new ServiceError("conflict", 409, "the sender changed while scheduling; schedule it again");
+      }
 
       // A row PAST the appointment lifecycle cannot be (re-)scheduled: `sending`/`sent`/
       // `unverified` are the ordinary send-path refusals, and a 'draft' row still carrying
@@ -76,8 +101,8 @@ export class ScheduleService {
       if (recipients === 0) {
         throw new ServiceError("validation_failed", 400, "draft has no recipients");
       }
-      const [mb] = await tx.select({ status: mailboxes.status }).from(mailboxes)
-        .where(eq(mailboxes.id, d.mailboxId)).limit(1);
+      const [mb] = await tx.select({ status: mailboxes.status, smtpMaxSizeBytes: mailboxes.smtpMaxSizeBytes })
+        .from(mailboxes).where(eq(mailboxes.id, d.mailboxId)).limit(1);
       if (mb?.status === "disabled") {
         throw new ServiceError(
           "mailbox_disabled", 409,
@@ -96,13 +121,38 @@ export class ScheduleService {
        */
       await assertOrganizerRole(bridgeTx(tx), dialect(ctx.db), ctx.accountId, d.mailboxId);
 
+      // A PLAIN MOVE NEVER DROPS FILES: an appointment that carries files is moved only by a
+      // schedule that carries them again; otherwise it would leave without them.
+      if (withFiles === undefined && d.status === "scheduled" && d.sendFiles > 0) {
+        throw new ServiceError(
+          "schedule_has_files", 409,
+          "this scheduled message carries files; cancel the schedule and schedule it again with them",
+        );
+      }
+      // The send's own cap, at the press rather than at send time: the person is still looking.
+      const total = files.reduce((n, f) => n + f.content.byteLength, 0);
+      if (files.length > 0) {
+        const cap = effectiveAttachmentCap(withFiles?.surfaceMaxTotalBytes, mb?.smtpMaxSizeBytes ?? null);
+        if (total > cap) {
+          throw new ServiceError("payload_too_large", 413, `attachments total ${total} bytes; the limit is ${cap}`);
+        }
+      }
+      const sendKey = randomUUID();
+      // Rows exist only where an appointment had files, so a plain schedule elsewhere costs nothing.
+      if (files.length > 0 || d.sendFiles > 0) await dropScheduledFiles(tx, ctx.accountId, draftId);
+      for (const row of scheduledFileRows({ accountId: ctx.accountId, mailboxId: d.mailboxId, draftId, sendKey }, files)) {
+        // scoped-by: the account and mailbox fenced above; d is this account's draft, locked
+        await tx.insert(scheduledSendFiles).values(row);
+      }
+
       // scoped-by: d is the draft loaded by (id, accountId) above; the organizer was just asserted
       await tx.update(drafts).set({
         status: "scheduled",
         sendAt,
         // A FRESH key per appointment — see the class header. `randomUUID` and not anything
         // derived from the time: two appointments at the same instant are still two intents.
-        sendKey: randomUUID(),
+        sendKey,
+        sendFiles: files.length,
         // A new appointment answers an old failure; a stale sentence over a live schedule
         // would be the row contradicting itself.
         sendError: null,
@@ -129,7 +179,9 @@ export class ScheduleService {
           eq(drafts.id, draftId), eq(drafts.accountId, ctx.accountId),
           eq(drafts.status, "scheduled"),
         ))
-        .returning({ id: drafts.id });
+        .returning({ id: drafts.id, sendFiles: drafts.sendFiles });
+      // The files go with the appointment; `send_files` stays as the mark that they were not kept.
+      if (cancelled.length > 0 && cancelled[0]!.sendFiles > 0) await dropScheduledFiles(tx, ctx.accountId, draftId);
 
       if (cancelled.length === 0) {
         // Zero rows is four different answers. The row lock so the read waits out whichever

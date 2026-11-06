@@ -903,6 +903,8 @@ export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAda
     sendEchoLater: true,
     // /hello reaches the server that sends: the local engine, or Cloud through the relay.
     forwardPartsCheck: true,
+    // Send later with files where /hello says the door keeps them: the local engine, never Cloud.
+    scheduleFilesCheck: true,
     ...(stage ? { stageAttachments: true } : {}),
   });
 }

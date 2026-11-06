@@ -181,3 +181,164 @@ describe("the button's word and its state attribute come from one derivation", (
     }
   });
 });
+
+/**
+ * SEND LATER WITH FILES (mail 0179) — the composer offers the times only where the door keeps the
+ * files (`/hello` `scheduleFiles`, the desktop's own engine). Elsewhere the panel says why in
+ * visible words, in place of the times, before any pick.
+ */
+describe("Send later on a letter with files says what it can do before the pick", () => {
+  const FILE = { filename: "photo.png", contentType: "image/png", contentBase64: "aGk=" };
+
+  async function compose(o: { kept: boolean | null; files: boolean; onSendLater?: (iso: string) => void; filesNotKept?: number }): Promise<{
+    setFiles: (files: boolean) => Promise<void>;
+  }> {
+    const { ComposeView } = await import("../app/views/ComposeView.js");
+    const { EMPTY_COMPOSE, composePlan } = await import("../app/shell/compose.js");
+    const { FixturesAdapter, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { ToastHost } = await import("@ohmail/ui");
+    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const adapter = Object.assign(new FixturesAdapter(), { scheduleFilesAnnounced: async () => o.kept });
+    const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore() });
+    const from = {
+      mailboxId: "mb-1", address: "me@fake.test", choices: [], substituted: false, substitutedFrom: null,
+      maxMessageBytes: null, domainMatched: false,
+    };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const draw = async (files: boolean): Promise<void> => {
+      const fields = { ...EMPTY_COMPOSE, to: "ada@fake.test", subject: "later", body: "words", attachments: files ? [FILE] : [] };
+      await act(async () => {
+        root!.render(
+          <NextIntlClientProvider locale="en" messages={en as never} timeZone="UTC">
+            <ToastHost><KeymapProvider>
+            <ComposeView
+              engine={engine} draft={null} fields={fields} onFields={() => {}} from={from as never}
+              plan={composePlan(fields, "mb-1")} send={{ phase: "idle" }} showing={null}
+              onSend={() => {}} onSendLater={o.onSendLater ?? (() => {})} onCancel={() => {}} onClose={() => {}}
+              filesNotKept={o.filesNotKept ?? null}
+            />
+            </KeymapProvider></ToastHost>
+          </NextIntlClientProvider>,
+        );
+      });
+      for (let i = 0; i < 4; i += 1) await act(async () => { await Promise.resolve(); });
+    };
+    await draw(o.files);
+    return { setFiles: draw };
+  }
+  const toggle = (): HTMLButtonElement => host!.querySelector<HTMLButtonElement>(".send-later-toggle")!;
+  const presets = (): string[] => [...host!.querySelectorAll(".send-later .gate-actions button")].map((b) => b.textContent ?? "");
+  const panelText = (): string => host!.querySelector(".send-later")?.textContent ?? "";
+
+  it("where the door keeps files, a pick schedules the letter with them", async () => {
+    const picked: string[] = [];
+    await compose({ kept: true, files: true, onSendLater: (iso) => picked.push(iso) });
+    expect(toggle().disabled).toBe(false);
+    await act(async () => { toggle().click(); });
+    const tomorrow = [...host!.querySelectorAll<HTMLButtonElement>(".send-later .gate-actions button")]
+      .find((b) => b.textContent?.startsWith("Tomorrow"));
+    expect(tomorrow, "no times were offered").toBeDefined();
+    expect(panelText()).toContain(en.compose.sendLaterThisComputer);
+    await act(async () => { tomorrow!.click(); });
+    expect(picked).toHaveLength(1);
+  });
+
+  for (const kept of [false, null] as const) {
+    it(`where the door ${kept === false ? "says it keeps none" : "cannot say"}, the panel says so in words and offers no time`, async () => {
+      const picked: string[] = [];
+      await compose({ kept, files: true, onSendLater: (iso) => picked.push(iso) });
+      expect(toggle().disabled, "the reason must be reachable, not hidden in a title").toBe(false);
+      await act(async () => { toggle().click(); });
+      expect(panelText()).toContain(kept === false ? en.compose.sendLaterFilesNotHere : en.compose.sendLaterUnavailable);
+      expect(presets()).toEqual([en.compose.sendLaterClose]);
+      expect(host!.querySelector("#compose-send-at")).toBeNull();
+      expect(picked).toEqual([]);
+    });
+  }
+
+  it("a file attached while the panel is open swaps the times for the sentence", async () => {
+    const view = await compose({ kept: false, files: false });
+    await act(async () => { toggle().click(); });
+    expect(presets().some((p) => p.startsWith("Tomorrow"))).toBe(true);
+    await view.setFiles(true);
+    expect(panelText()).toContain(en.compose.sendLaterFilesNotHere);
+    expect(presets()).toEqual([en.compose.sendLaterClose]);
+  });
+
+  it("a pick while a file is still being read waits for it, then carries both files", async () => {
+    // The probe's form: onFields re-renders, so a committed read reaches the form as it does live.
+    const { ComposeView } = await import("../app/views/ComposeView.js");
+    const { EMPTY_COMPOSE, composePlan } = await import("../app/shell/compose.js");
+    const { FixturesAdapter, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { ToastHost } = await import("@ohmail/ui");
+    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+    const adapter = Object.assign(new FixturesAdapter(), { scheduleFilesAnnounced: async () => true });
+    const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore() });
+    const from = { mailboxId: "mb-1", address: "me@fake.test", choices: [], substituted: false, substitutedFrom: null, maxMessageBytes: null, domainMatched: false };
+    const picks: string[][] = [];
+    let fields = { ...EMPTY_COMPOSE, to: "ada@fake.test", subject: "later", body: "words", attachments: [FILE] };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const draw = (): void => root!.render(
+      <NextIntlClientProvider locale="en" messages={en as never} timeZone="UTC">
+        <ToastHost><KeymapProvider>
+        <ComposeView
+          engine={engine} draft={null} fields={fields} from={from as never}
+          onFields={(next) => { fields = next as typeof fields; draw(); }}
+          plan={composePlan(fields, "mb-1")} send={{ phase: "idle" }} showing={null}
+          onSend={() => {}} onSendLater={() => picks.push((fields.attachments ?? []).map((a) => a.filename))}
+          onCancel={() => {}} onClose={() => {}} filesNotKept={null}
+        />
+        </KeymapProvider></ToastHost>
+      </NextIntlClientProvider>,
+    );
+    const settle = async (): Promise<void> => { for (let i = 0; i < 4; i += 1) await act(async () => { await Promise.resolve(); }); };
+    const key = async (k: string, mods: KeyboardEventInit = {}): Promise<void> => {
+      await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...mods })); });
+    };
+    await act(async () => { draw(); });
+    await settle();
+    await act(async () => { toggle().click(); });
+    expect(presets().some((p) => p.startsWith("Tomorrow"))).toBe(true);
+
+    let held: FileReader | null = null;
+    const read = vi.spyOn(FileReader.prototype, "readAsDataURL").mockImplementation(function (this: FileReader) { held = this; });
+    const input = host!.querySelector<HTMLInputElement>(".compose-attach input[type=file]")!;
+    const pdf = new File([new Uint8Array([37, 80, 68, 70])], "invoice.pdf", { type: "application/pdf" });
+    Object.defineProperty(input, "files", { configurable: true, get: () => [pdf] });
+    await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+    await settle();
+    expect(held, "the read is in flight").not.toBeNull();
+
+    expect(panelText()).toContain("Still attaching invoice.pdf.");
+    expect(presets().some((p) => p.startsWith("Tomorrow")), "no time is offered over a file still being read").toBe(false);
+    expect(host!.querySelector("#compose-send-at")).toBeNull();
+    await key("2");
+    await key("Enter", { ctrlKey: true });
+    await key("Enter", { metaKey: true });
+    expect(picks, "nothing scheduled while the file is still being read").toEqual([]);
+
+    Object.defineProperty(held!, "result", { configurable: true, get: () => "data:application/pdf;base64,JVBERg==" });
+    await act(async () => { held!.onload?.(new ProgressEvent("load") as ProgressEvent<FileReader>); });
+    await settle();
+    read.mockRestore();
+    const tomorrow = [...host!.querySelectorAll<HTMLButtonElement>(".send-later .gate-actions button")]
+      .find((b) => b.textContent?.startsWith("Tomorrow"));
+    expect(tomorrow, "the times come back once the read commits").toBeDefined();
+    await act(async () => { tomorrow!.click(); });
+    expect(picks).toEqual([["photo.png", "invoice.pdf"]]);
+  });
+
+  it("a row whose schedule ended unsent says its files were not kept, until they are attached again", async () => {
+    const view = await compose({ kept: true, files: false, filesNotKept: 2 });
+    const said = "This message was scheduled with 2 files that were not kept. Attach them again before you send.";
+    expect(host!.textContent).toContain(said);
+    await view.setFiles(true);
+    expect(host!.textContent).not.toContain(said);
+  });
+});

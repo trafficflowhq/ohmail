@@ -1,16 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints, outboundSentCopies,
+  accounts, changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints, outboundSentCopies, scheduledSendFiles,
 } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
 import {
   DraftsService, ScheduleService, SendService, ServiceError, runScheduledSendPass,
   SCHEDULE_MAX_AHEAD_MS,
   SCHEDULED_SEND_EXPIRY_MS, SEND_FAILED_SENTENCE, SEND_STALE_AFTER_MS,
-  SEND_DUPLICATE_WINDOW_MS,
+  SEND_DUPLICATE_WINDOW_MS, SCHEDULED_FILES_UNREADABLE, sendContentFingerprint,
 } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 
@@ -1015,5 +1015,152 @@ describe("the duplicate refusal's TIME", () => {
     expect(refusal.message).toMatch(/could not be confirmed/i);
     expect(refusal.message, "an unconfirmed attempt is never reported as a delivery")
       .not.toMatch(/already sent/i);
+  });
+});
+
+/**
+ * SEND LATER WITH FILES (mail 0179): the appointment keeps its files in the store until it goes.
+ * A picture and a PDF of random bytes, the PDF past one 4 MiB piece of base64, so it is read back
+ * from two rows.
+ */
+describe("a scheduled letter keeps its files", () => {
+  const picture = { filename: "photo.png", contentType: "image/png", content: randomBytes(48 * 1024) };
+  const pdf = { filename: "invoice.pdf", contentType: "application/pdf", content: randomBytes(3_200_000) };
+  const sha = (b: Buffer): string => createHash("sha256").update(b).digest("hex");
+  const due = (): Date => new Date(AT.getTime() + 60_000);
+
+  it("the pass sends every file byte-equal and in order, once, and the kept bytes go after", async () => {
+    const { db, ctx, draftId } = await setup();
+    const { draft } = await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null });
+    expect(draft).toMatchObject({ status: "scheduled", sendFiles: 2 });
+    expect((await db.select().from(scheduledSendFiles)).length, "the PDF takes two pieces").toBe(3);
+
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due }))
+      .toMatchObject({ claimed: 1, sent: 1, failed: 0 });
+    expect(fake.state.delivered).toHaveLength(1);
+    const sent = fake.state.delivered[0]!.attachments!;
+    expect(sent.map((a) => [a.filename, a.contentType, sha(a.content as Buffer)]))
+      .toEqual([[picture.filename, picture.contentType, sha(picture.content)], [pdf.filename, pdf.contentType, sha(pdf.content)]]);
+    expect(await db.select().from(scheduledSendFiles), "the bytes outlived the send").toHaveLength(0);
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due })).toMatchObject({ claimed: 0 });
+    expect(fake.state.delivered).toHaveLength(1);
+  });
+
+  it("a cancel takes the files and sends nothing; the row keeps the count as the mark; a plain schedule keeps none", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null });
+    const { draft } = await schedules.cancel(ctx, draftId);
+    expect(draft).toMatchObject({ status: "draft", sendFiles: 1 });
+    expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due })).toMatchObject({ claimed: 0 });
+    expect(fake.state.delivered).toHaveLength(0);
+    const plain = await schedules.schedule(ctx, draftId, iso(AT));
+    expect(plain.draft.sendFiles, "a schedule without files rewrites the mark").toBeUndefined();
+  });
+
+  it("a plain move of an appointment with files is refused, and nothing changes", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null });
+    await expect(schedules.schedule(ctx, draftId, iso(new Date(AT.getTime() + 3_600_000))))
+      .rejects.toMatchObject({ httpStatus: 409, code: "schedule_has_files" });
+    const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(row).toMatchObject({ sendAt: AT, sendFiles: 1 });
+    expect(await db.select().from(scheduledSendFiles)).toHaveLength(1);
+  });
+
+  it("files over the mailbox's size are refused at the press, before anything is marked", async () => {
+    const { db, ctx, mb, draftId } = await setup();
+    await db.update(mailboxes).set({ smtpMaxSizeBytes: 1_000_000 }).where(eq(mailboxes.id, mb));
+    await expect(schedules.schedule(ctx, draftId, iso(AT), { files: [pdf], surfaceMaxTotalBytes: null }))
+      .rejects.toMatchObject({ httpStatus: 413 });
+    const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(row).toMatchObject({ status: "draft", sendFiles: 0 });
+    expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+  });
+
+  for (const [what, spoil] of [
+    ["a count that does not match", async (db: Awaited<ReturnType<typeof makeTestDb>>, id: string) => {
+      await db.update(drafts).set({ sendFiles: 3 }).where(eq(drafts.id, id));
+    }],
+    ["a missing piece", async (db: Awaited<ReturnType<typeof makeTestDb>>) => {
+      await db.delete(scheduledSendFiles).where(and(eq(scheduledSendFiles.fileNo, 1), eq(scheduledSendFiles.seq, 1)));
+    }],
+    ["bytes that are not the ones written", async (db: Awaited<ReturnType<typeof makeTestDb>>) => {
+      await db.update(scheduledSendFiles).set({ rawB64: Buffer.alloc(48 * 1024, 7).toString("base64") })
+        .where(eq(scheduledSendFiles.fileNo, 0));
+    }],
+  ] as const) {
+    it(`${what} closes the appointment with the sentence and never dials`, async () => {
+      const { db, ctx, draftId } = await setup();
+      await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null });
+      await spoil(db, draftId);
+      const fake = fakeAdapter();
+      expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due }))
+        .toMatchObject({ claimed: 1, failed: 1, sent: 0 });
+      expect(fake.state.opened, "a letter with files left without them").toHaveLength(0);
+      const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(row).toMatchObject({ status: "draft", sendKey: null, sendError: SCHEDULED_FILES_UNREADABLE });
+      expect(await db.select().from(outboundSends)).toHaveLength(0);
+      expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+    });
+  }
+
+  for (const gone of ["account", "mailbox"] as const) {
+    it(`an erased ${gone} refuses a schedule with files, and no file is written`, async () => {
+      const { db, A, mb, ctx, draftId } = await setup();
+      if (gone === "account") await db.insert(accounts).values({ id: A, name: "erased", erasedAt: NOW });
+      else await db.update(mailboxes).set({ erasedAt: NOW }).where(eq(mailboxes.id, mb));
+      await expect(schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null }))
+        .rejects.toMatchObject({ httpStatus: 410 });
+      expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+      const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(row).toMatchObject({ status: "draft", sendFiles: 0 });
+    });
+  }
+
+  it("a claim that died before reserving is sent once, with its files, under the stored key", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null });
+    await db.update(drafts).set({ status: "draft" }).where(eq(drafts.id, draftId));
+    const [before] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    const fake = fakeAdapter();
+    const wayPast = new Date(AT.getTime() + SEND_STALE_AFTER_MS + 60_000);
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: () => wayPast }))
+      .toMatchObject({ claimed: 1, sent: 1 });
+    expect(fake.state.delivered).toHaveLength(1);
+    expect(fake.state.delivered[0]!.attachments!.map((a) => sha(a.content as Buffer))).toEqual([sha(picture.content), sha(pdf.content)]);
+    const sendsRows = await db.select().from(outboundSends);
+    expect(sendsRows.map((r) => r.idempotencyKey)).toEqual([before!.sendKey]);
+  });
+
+  it("an appointment closed as a day late keeps the mark and loses the bytes", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null });
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, {
+      openSendAdapter: fake.factory, now: () => new Date(AT.getTime() + SCHEDULED_SEND_EXPIRY_MS + 60_000),
+    })).toMatchObject({ claimed: 1, failed: 1 });
+    const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(row).toMatchObject({ status: "draft", sendFiles: 1 });
+    expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+  });
+
+  it("a held send later keeps a claim that folds its files", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null });
+    const ambiguous = fakeAdapter({ sendThrows: () => new Error("write EPIPE after DATA"), probeThrows: () => new Error("no folder") });
+    await runScheduledSendPass(db, { openSendAdapter: ambiguous.factory, now: due });
+    const healed = fakeAdapter({ inSent: false });
+    expect(await runScheduledSendPass(db, {
+      openSendAdapter: healed.factory, now: () => new Date(AT.getTime() + SEND_STALE_AFTER_MS + 120_000),
+    })).toMatchObject({ claimed: 1, unverified: 1 });
+    const [claim] = await db.select().from(outboundSendFingerprints);
+    expect(claim!.fingerprint).toBe(sendContentFingerprint({
+      to: [{ name: null, address: "you@example.com" }], cc: [], bcc: [], subject: "later", html: null, body: "the words",
+      inReplyToMessageId: null, forwardOf: null, sendAt: null,
+      attachments: [{ filename: picture.filename, contentType: picture.contentType, sizeBytes: picture.content.byteLength, contentSha256: sha(picture.content) }],
+    }));
   });
 });
