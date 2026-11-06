@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -22,7 +23,7 @@ type Bridge = { emit: (e: string, ...a: unknown[]) => void; on: (e: string, f: (
 type Shim = {
   connect: (o: Options, l?: () => void) => unknown;
   withNameOrNoSni: (o: Options) => Options;
-  confirmUpgrade: (n: unknown, b: Bridge, attempts?: number, waitMs?: number) => void;
+  confirmUpgrade: (n: unknown, b: Bridge, settled: () => boolean, waitMs?: number) => void;
 };
 
 /** Load the shim with the native package answered by a recorder. */
@@ -95,9 +96,9 @@ describe("the phone's TLS shim and SNI", () => {
  *
  * The platform emits `secureConnect` for a fresh TLS dial only: an upgrade emits nothing, so
  * imapflow's upgrade callback never ran, the dial died on its own timeout and the app reported a
- * closed connection. Measured on a device against a STARTTLS server. The completion is asked of
- * the platform — a peer certificate exists only after the handshake — and the refusal arm is what
- * keeps that from being a timer that always says yes.
+ * closed connection. Measured on a device against a STARTTLS server. Android's end is asked of it
+ * (a peer certificate exists only after its handshake); iOS says its end as the upgraded socket's
+ * own `connect` and shows no certificate at all, so a poll with a bound refused every iOS upgrade.
  */
 describe("the phone's TLS shim and the STARTTLS upgrade", () => {
   const bridge = () => {
@@ -114,8 +115,21 @@ describe("the phone's TLS shim and the STARTTLS upgrade", () => {
     const { tls } = loadShim();
     const b = bridge();
     const native = { getPeerCertificate: () => Promise.resolve({ subject: { CN: "mail.example.com" } }) };
-    tls.confirmUpgrade(native, b, 3, 1);
+    tls.confirmUpgrade(native, b, () => false, 1);
     await vi.waitFor(() => expect(b.events).toContain("secureConnect"));
+    expect(b.errors).toHaveLength(0);
+  });
+
+  it("takes the upgraded socket's own connect as the end, with no certificate to show", async () => {
+    const { tls } = loadShim();
+    const b = bridge();
+    const native = Object.assign(new EventEmitter(), { getPeerCertificate: () => Promise.resolve(null) });
+    tls.confirmUpgrade(native, b, () => false, 1);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(b.events, "secured before the platform said so").not.toContain("secureConnect");
+    native.emit("connect");
+    native.emit("connect");
+    expect(b.events.filter((e) => e === "secureConnect")).toHaveLength(1);
     expect(b.errors).toHaveLength(0);
   });
 
@@ -128,23 +142,28 @@ describe("the phone's TLS shim and the STARTTLS upgrade", () => {
     await vi.waitFor(() => expect(called).toBe(1));
   });
 
-  it("refuses, bounded, when no peer certificate ever appears", async () => {
+  it("asks again after an empty or null answer, never reads one as secured, and stops once supervision settles", async () => {
     const { tls } = loadShim();
     const b = bridge();
     let asked = 0;
-    const native = { getPeerCertificate: () => { asked += 1; return Promise.resolve({}); } };
-    tls.confirmUpgrade(native, b, 3, 1);
-    await vi.waitFor(() => expect(b.errors).toHaveLength(1));
+    let settled = false;
+    const native = { getPeerCertificate: () => { asked += 1; return Promise.resolve(asked % 2 === 0 ? null : {}); } };
+    tls.confirmUpgrade(native, b, () => settled, 1);
+    await vi.waitFor(() => expect(asked).toBeGreaterThanOrEqual(6));
     expect(b.events).not.toContain("secureConnect");
-    expect(asked).toBe(3);
-    expect(String((b.errors[0] as Error).message)).toMatch(/not secured/);
+    expect(b.errors, "an answer with no certificate is not a verdict; the deadline is").toHaveLength(0);
+    settled = true;
+    await new Promise((r) => setTimeout(r, 20));
+    const after = asked;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(asked, "still asking after supervision settled").toBe(after);
   });
 
   it("carries a platform refusal out as an error rather than as silence", async () => {
     const { tls } = loadShim();
     const b = bridge();
     const native = { getPeerCertificate: () => Promise.reject(new Error("socket is closed")) };
-    tls.confirmUpgrade(native, b, 3, 1);
+    tls.confirmUpgrade(native, b, () => false, 1);
     await vi.waitFor(() => expect(b.errors).toHaveLength(1));
     expect(b.events).not.toContain("secureConnect");
   });

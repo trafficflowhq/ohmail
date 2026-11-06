@@ -96,8 +96,21 @@ class NativeSocketBridge extends Duplex {
      */
     this._connectionGone = false;
     this._handedToTls = false;
+    /**
+     * WHILE A STARTTLS HANDSHAKE IS UNCONFIRMED, why a byte that arrives is refused (`tls.js` arms and
+     * clears it). The server sends nothing between its go-ahead and our ClientHello, so such a byte
+     * was injected, and pushed it would be read as the first words of the encrypted session.
+     */
+    this._refuseBeforeSecure = null;
 
     native.on("data", (chunk) => {
+      if (this._refuseBeforeSecure !== null) {
+        if (!this.destroyed) {
+          this.emit("error", Object.assign(new Error(this._refuseBeforeSecure), { code: "STARTTLS_INJECTION" }));
+          this.destroy();
+        }
+        return;
+      }
       // `push` returning false means the consumer is behind. Pausing the NATIVE side is the only
       // thing that applies real pressure — a Duplex's own buffer would otherwise grow without
       // bound while the server keeps sending.

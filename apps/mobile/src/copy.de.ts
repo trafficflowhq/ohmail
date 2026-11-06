@@ -298,6 +298,8 @@ export const DE: Deck = {
     "Dein Mailserver hat beim Wechsel auf eine verschlüsselte Verbindung unerwartete Daten geschickt, wir haben also abgebrochen, bevor das Passwort rausging. Etwas in diesem Netz könnte stören: Versuch es in einem anderen Netz oder mit Port 993.",
   standaloneStarttlsTimeout:
     "Der Wechsel auf eine verschlüsselte Verbindung zu deinem Mailserver wurde nicht rechtzeitig fertig, wir haben also abgebrochen, bevor das Passwort rausging. Versuch es erneut oder nimm Port 993.",
+  standaloneStarttlsFailed:
+    "Der Wechsel auf eine verschlüsselte Verbindung zu deinem Mailserver ist fehlgeschlagen, wir haben also abgebrochen, bevor das Passwort rausging. Versuch es erneut oder nimm Port 993.",
   standaloneOffline:
     "Dieses Handy hat kein Netz, deshalb hat ohmail deinen Mailserver nicht erreicht. Versuch es erneut, sobald es wieder da ist. Es wurde nichts gespeichert.",
   standaloneRefused: (detail: string) =>

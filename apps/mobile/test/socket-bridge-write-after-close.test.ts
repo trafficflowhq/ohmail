@@ -295,13 +295,15 @@ describe.each<Refusal>(["throws", "callback"])(
       upgraded.native.destroy();
       upgraded.native.emit("close", false);
       await settle();
+      // Closed before its handshake was confirmed: the upgrade failing, said once (`tls.js`).
+      expect(seen.errors.map((e) => (e as { upgradeFailed?: boolean }).upgradeFailed)).toEqual([true]);
 
       let handed: unknown = NEVER;
       upgraded.write(CHUNK, (err) => { handed = err ?? null; });
       await called(() => handed);
       await settle();
       expect(handed, "the upgraded connection's caller was not told").toBeInstanceOf(Error);
-      expect(seen.errors, "the upgraded connection emitted an unlistened `error`").toHaveLength(0);
+      expect(seen.errors, "the write after the close emitted an `error` of its own").toHaveLength(1);
     }, CASE_MS);
 
     it("CARRIES AN ORDINARY WRITE to the platform, and writes no line — the positive control", async () => {

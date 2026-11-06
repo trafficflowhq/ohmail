@@ -479,6 +479,21 @@ describe("the fourth door's refusals, worded and ranked", () => {
     expect(await said(Object.assign(new Error("Server does not support STARTTLS"), { tlsFailed: true }))).toBe("standaloneNoEncryption");
   });
 
+  it("names an upgrade that broke off as the switch to encryption failing, never as a server without it", async () => {
+    // What the TLS shim stamps on any failure before the upgrade's handshake is confirmed (`shims/tls.js`).
+    const broke = Object.assign(new Error("The operation couldn’t be completed. (kCFStreamErrorDomainSSL error -9806.)"),
+      { tlsFailed: true, upgradeFailed: true });
+    expect(await said(broke)).toBe("standaloneStarttlsFailed");
+    expect(await said(new Error("wrapped", { cause: broke }))).toBe("standaloneStarttlsFailed");
+    // The narrower readings keep their own sentences: a certificate, a tampered upgrade, the deadline.
+    expect(await said(Object.assign(certificate("untrusted"), { upgradeFailed: true }))).toBe("standaloneCertificateUntrusted");
+    expect(await said(Object.assign(broke, { code: "STARTTLS_INJECTION" }))).toBe("standaloneStarttlsInjected");
+    expect(await said(Object.assign(new Error("deadline"), { tlsFailed: true, upgradeFailed: true, code: "UPGRADE_TIMEOUT" }))).toBe("standaloneStarttlsTimeout");
+    // CONTROL: imapflow's own refusal (no STARTTLS offered) carries no such flag.
+    expect(await said(Object.assign(new Error("Server does not support STARTTLS"), { tlsFailed: true }))).toBe("standaloneNoEncryption");
+    expect(EN.standaloneStarttlsFailed).toBe("Switching the connection to your mail server to encryption failed, so we stopped before sending the password. Try again, or use port 993.");
+  });
+
   it("names the outgoing server's refused certificate as the incoming one's, and keeps 'no encryption' for a server without it", async () => {
     const smtp = (certificate?: string) => Object.assign(new Error("outgoing"), {
       submissionRefused: "tls", ...(certificate !== undefined ? { submissionCertificate: certificate } : {}),

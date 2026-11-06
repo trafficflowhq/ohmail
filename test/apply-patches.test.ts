@@ -490,7 +490,13 @@ describe("markers", () => {
     expect(web.appleMarkers).toEqual(["ohmail-webview-document-height-ios"]);
     expect(web.markers).not.toContain("ohmail-webview-document-height-ios");
     expect(web.markers).toContain("ohmail-webview-document-height");
-    expect(table[TCP]!.appleMarkers).toEqual([]);
+    // The transport's iOS half (its STARTTLS upgrade): words a Release binary carries, never a dex.
+    expect(table[TCP]!.appleMarkers).toEqual([
+      "the TLS upgrade failed: refusing the TLS upgrade: plaintext arrived after the STARTTLS command and would be read as though it came from the encrypted session",
+      "the TLS upgrade failed: refusing the TLS upgrade: a write was still in flight on the plaintext connection",
+      "the TLS upgrade failed: the connection could not be handed to TLS",
+    ]);
+    for (const m of table[TCP]!.appleMarkers) expect(table[TCP]!.markers).not.toContain(m);
   });
 
   it("are the literals the patch adds, which upstream lacks and our installed copy carries", () => {
