@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.43" date="2026-11-06">
+      <description>
+        <ul>
+          <li>Adding a large mailbox finishes much sooner</li>
+          <li>A reply draft you deleted stays deleted</li>
+          <li>A worker with half its platform credential pages instead of going quietly dark</li>
+          <li>A Screener decision no longer fails while ohmail is filing your mail</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.42" date="2026-11-06">
       <description>
         <ul>
@@ -107,20 +117,6 @@
         <ul>
           <li>The invitation page removes a signed-out browser's mail as it opens</li>
           <li>The address confirmation page removes a signed-out browser's mail as it opens</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.38" date="2026-11-05">
-      <description>
-        <ul>
-          <li>The desktop app on ohmail Cloud keeps checking every 8 seconds while you read</li>
-          <li>The desktop app forgets a mailbox's Sent folder name when its account ended while the app was closed</li>
-          <li>A sent reply is brought into view on the desktop paired to Cloud as well</li>
-          <li>The phone's Servers screen always has a way back after a pairing ends</li>
-          <li>The reply editor's tests wait for it by time, not by a count of ticks</li>
-          <li>A sign-in ended elsewhere takes its unsent replies even while another account is signed in</li>
-          <li>A later copy of the same settings is asked about again</li>
-          <li>On the web, a link in a plain letter asks before it opens when its text names another site</li>
         </ul>
       </description>
     </release>
