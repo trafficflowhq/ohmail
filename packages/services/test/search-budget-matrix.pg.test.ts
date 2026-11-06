@@ -11,7 +11,7 @@ import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import {
   D, D_SALT, MATRIX_REST, NOISE, NOISE_SALT, autovacuum, coldReads, isExplain, isSession, matrixCells, matrixOldest, matrixOver, matrixWalk, matrixWork,
-  plantMatrix, recording, seedDocumented, vocabWord, type BudgetHandle, type MatrixBounds,
+  matrixFolderBounds, plantMatrix, recording, seedDocumented, vocabWord, type BudgetHandle, type MatrixBounds,
 } from "./_search-budget-fixture.js";
 
 /**
@@ -51,7 +51,24 @@ const MATRIX_BOUNDS: MatrixBounds = {
   "typo old sender": { guesses: 100 }, "typo spread sender": { guesses: 100 }, "pair spread sender": { buffers: 1_900, guesses: 100 },
   "typo old unread": { history: N / 10 }, "typo spread unread": { history: N / 10 },
   "typo old attachments": { history: N / 10 }, "typo spread attachments": { history: N / 10 },
-  "typo old folder": { folderPasses: 2 }, "typo spread folder": { folderPasses: 2 },
+  ...matrixFolderBounds(),
+  // COMMON WORDS UNDER A FOLDER (`MATRIX_COMMON`), each the page's work and about a tenth: Archive's walk of the newest
+  // 48,000 letters, and past it the index read of a common word's subject matches, each asked its folder by key; Old
+  // and INBOX walk. The typo walks Archive on past that bound to its newest 200 guesses, a folder row a letter of this
+  // account. Main read 0.4 to 2.1 million folder rows a cell (one to eight passes over the table), and the folder
+  // filter asked of each match read up to 3.6 million buffers (a pair in Archive), 0.7-1.7 s.
+  "plain common Archive": { folderPasses: 0, buffers: 326_000, folderRows: 72_300 },
+  "plain common Old": { folderPasses: 0, buffers: 186_900, folderRows: 29_900 },
+  "plain common INBOX": { folderPasses: 0, buffers: 195_700, folderRows: 30_100 },
+  "pair common Archive": { folderPasses: 0, buffers: 164_600, folderRows: 32_600 },
+  "pair common Old": { folderPasses: 0, buffers: 82_000, folderRows: 10_200 },
+  "pair common INBOX": { folderPasses: 0, buffers: 74_700, folderRows: 7_500 },
+  "beside common Archive": { folderPasses: 0, buffers: 730_600, folderRows: 166_000 },
+  "beside common Old": { folderPasses: 0, buffers: 138_500, folderRows: 15_200 },
+  "beside common INBOX": { folderPasses: 0, buffers: 103_100, folderRows: 7_800 },
+  "typo common Archive": { buffers: 928_400, folderRows: 228_500 },
+  "typo common Old": { folderPasses: 0, buffers: 52_500, folderRows: 9_300 },
+  "typo common INBOX": { folderPasses: 0, buffers: 27_600, folderRows: 3_100 },
   "typo old dateTo": { history: N / 10, buffers: 12_100 }, "typo spread dateTo": { history: N / 10, buffers: 12_200 },
   "typo old none": { history: MATRIX_REST.typo + matrixOldest(2_606, 2_600, 1_500), lookups: 200 },
   "typo spread none": { history: MATRIX_REST.typo + matrixWalk(32_000, 1_529), lookups: 200 },
@@ -165,12 +182,12 @@ describe("the shape matrix on a 240,000-letter mailbox (real Postgres)", () => {
       const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
       expect(reads, c.label).toHaveLength(1);
       const f = await matrixWork(reads[0]!, seen.filter(isSession), h, counted!.n);
-      read.push(`${c.label} ${f.buffers}/${f.history}/${f.lookups}/${f.folderPasses}/${f.guesses}`);
+      read.push(`${c.label} ${f.buffers}/${f.history}/${f.lookups}/${f.folderPasses}/${f.folderRows}/${f.guesses}`);
       expect(f.scans, c.label).toEqual([]);
       expect(f.guessReads, `${c.label}: reads of the typo arm's guesses`).toBeLessThanOrEqual(1);
       over.push(...matrixOver(c.label, f, MATRIX_BOUNDS), ...(f.temp > 0 ? [`${c.label} temp ${f.temp} of 0`] : []));
     }
-    console.log(`search-budget matrix on ${N} letters (buffers/History letters/lookups/folder passes/guesses read): ${read.join(", ")}`);
+    console.log(`search-budget matrix on ${N} letters (buffers/History letters/lookups/folder passes/folder rows/guesses read): ${read.join(", ")}`);
     expect(over).toEqual([]);
   }, 600_000);
 

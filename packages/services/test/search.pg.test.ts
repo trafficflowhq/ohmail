@@ -455,26 +455,30 @@ describe("a chosen order answers the exact tier while a match exists (real Postg
  * excluded word) only when no letter matched.
  */
 describe("every order under every filter answers 0.30.19's rows (real Postgres, keyed)", () => {
-  type Acct = { readonly name: string; readonly id: string; readonly n: number; readonly moved: readonly [number, number] };
+  type Acct = { readonly name: string; readonly id: string; readonly n: number; readonly moved: readonly [number, number]; readonly late: readonly [number, number] };
+  // Late: 100 letters a folder of their own names, past the 48,000 letters a page's folder walk reads on 60,000.
   const ACCTS: readonly Acct[] = [
-    { name: "21,000", id: randomUUID(), n: 21_000, moved: [15_001, 15_050] },
-    { name: "60,000", id: randomUUID(), n: 60_000, moved: [40_001, 40_050] },
+    { name: "21,000", id: randomUUID(), n: 21_000, moved: [15_001, 15_050], late: [16_001, 16_100] },
+    { name: "60,000", id: randomUUID(), n: 60_000, moved: [40_001, 40_050], late: [55_001, 55_100] },
   ];
   const keyed = brandDialect(drizzle(client, { schema }), "pg");
   const sctx = (a: Acct): ServiceContext => ({ db: keyed, accountId: a.id, userId: null, now: () => NOW, requestId: "search-sweep" });
   const ageOf = (m: { date: string | null }): number => (m.date === null ? -1 : (NOW.getTime() - Date.parse(m.date)) / 60_000);
   const IN: Record<string, (g: number, n: number) => boolean> = {
-    item: () => true, wren: () => true, heron: (g) => g <= 2_300, osprey: (g) => g >= 501 && g <= 2_700,
+    item: () => true, wren: () => true, finch: () => true, heron: (g) => g <= 2_300, osprey: (g) => g >= 501 && g <= 2_700,
     plover: (g, n) => g > n - 2_500, egret: (g) => g % 997 === 0, lark: (g) => g <= 2_300,
   };
   // Single words, two words (one of them across the subject and the body), an excluded word in the subject or the body.
   const QUERIES = ["wren", "osprey", "heron", "egret", "plover", "lark", "wren item", "osprey item", "egret item", "wren lark",
-    "wren -heron", "osprey -heron", "wren -lark"];
+    "wren -heron", "osprey -heron", "wren -lark", "finch -heron"];
   const excludedOf = (q: string): string[] => q.split(" ").filter((w) => w.startsWith("-")).map((w) => w.slice(1));
   const matchOf = (q: string, g: number, n: number): boolean => q.split(" ").every((w) => (w.startsWith("-") ? !IN[w.slice(1)]!(g, n) : IN[w]!(g, n)));
   const FILTERS: Record<string, { filters: SearchFilters; keep: (a: Acct) => (g: number) => boolean }> = {
     none: { filters: {}, keep: () => () => true },
     folder: { filters: { folder: "Archive" }, keep: (a) => (g) => (g >= 5_001 && g <= 5_100) || (g >= a.moved[0] && g <= a.moved[1]) },
+    // A folder holding nearly every letter is walked; Archive, one in 140 or 400, is read off the indexes under it.
+    inbox: { filters: { folder: "INBOX" }, keep: (a) => (g) => !((g >= 5_001 && g <= 5_100) || (g >= a.moved[0] && g <= a.moved[1]) || (g >= a.late[0] && g <= a.late[1])) },
+    late: { filters: { folder: "Late" }, keep: (a) => (g) => g >= a.late[0] && g <= a.late[1] },
     unread: { filters: { unread: true }, keep: () => (g) => g % 3 === 0 },
     from: { filters: { sender: "p3@sweep.example" }, keep: () => (g) => g % 5 === 3 },
     file: { filters: { hasAttachments: true }, keep: () => (g) => g % 50 === 0 },
@@ -508,14 +512,14 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
           'item ' || g || ' wren' || case when g <= 2300 then ' heron' else '' end || case when g between 501 and 2700 then ' osprey' else '' end
             || case when g > ${a.n - 2_500} then ' plover' else '' end || case when g % 997 = 0 then ' egret' else '' end,
           'p' || (g % 5) || '@sweep.example', ${NOW.toISOString()}::timestamptz - make_interval(mins => g), g % 3 = 0, g % 50 = 0,
-          jsonb_build_object('folder', case when g between 5001 and 5100 then 'Archive' else 'INBOX' end, 'ref', '1:' || g)
+          jsonb_build_object('folder', case when g between 5001 and 5100 then 'Archive' when g between ${a.late[0]} and ${a.late[1]} then 'Late' else 'INBOX' end, 'ref', '1:' || g)
         from generate_series(${a.n}, 1, -1) g`);
       await db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
         select m.id, 'Archive', 'INBOX', 'us' from messages m cross join lateral (select split_part(m.dedup_key, ':', 2)::int as g) x
         where m.account_id = ${a.id}::uuid and x.g between ${a.moved[0]} and ${a.moved[1]}`);
       await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
         select m.id, m.account_id, to_tsvector('english', m.subject),
-          to_tsvector('english', 'nothing here' || case when split_part(m.dedup_key, ':', 2)::int <= 2300 then ' lark' else '' end), lower(m.subject), 'text'
+          to_tsvector('english', 'nothing here finch' || case when split_part(m.dedup_key, ':', 2)::int <= 2300 then ' lark' else '' end), lower(m.subject), 'text'
         from messages m where m.account_id = ${a.id}::uuid order by m.date asc nulls first`);
       await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${a.id}::uuid, ${NOW.toISOString()}::timestamptz)
         on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
@@ -578,6 +582,15 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
     }
     expect(wrong).toEqual([]);
   }, 1_200_000);
+
+  it("a folder past the page's walk of it, on 60,000 letters: a body word beside an excluded word lists a full page of its letters", async () => {
+    const a = ACCTS[1]!;
+    for (const q of ["finch -heron", "finch"]) {
+      const r = await svc.search(sctx(a), { q, parts: "page", filters: { folder: "Late" } });
+      expect(r.tier, q).toBe("exact");
+      expect(r.items.map(ageOf).filter((g) => g >= a.late[0] && g <= a.late[1]), q).toHaveLength(50);
+    }
+  }, 120_000);
 
   it.each([
     ["osprey", "sender", "none"], ["wren", "sender", "folder"], ["plover", "mailbox", "unread"], ["heron", "mailbox", "file"],
