@@ -349,11 +349,34 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
           provider?: string | null;
           anthropic?: { apiKey?: string };
           openai?: { apiKey?: string };
+          customLocal?: {
+            baseUrl?: string;
+            classifyModel?: string;
+            draftModel?: string;
+            apiKey?: string | null;
+          };
         };
         const provider = (write.provider ?? null) as LocalAiStatus["provider"];
         const settings = { ...current.settings, provider };
         if (write.anthropic?.apiKey) settings.anthropic = { ...settings.anthropic, hasKey: true };
         if (write.openai?.apiKey) settings.openai = { ...settings.openai, hasKey: true };
+        if (write.customLocal) {
+          const prev = settings.customLocal ?? {
+            baseUrl: "http://127.0.0.1:1235/v1",
+            classifyModel: "google/gemma-4-e2b",
+            draftModel: "google/gemma-4-e2b",
+            hasKey: false,
+          };
+          settings.customLocal = {
+            baseUrl: write.customLocal.baseUrl ?? prev.baseUrl,
+            classifyModel: write.customLocal.classifyModel ?? prev.classifyModel,
+            draftModel: write.customLocal.draftModel ?? prev.draftModel,
+            hasKey:
+              write.customLocal.apiKey !== undefined
+                ? Boolean(write.customLocal.apiKey && write.customLocal.apiKey.trim())
+                : prev.hasKey,
+          };
+        }
         current = {
           ...current,
           provider,
@@ -675,6 +698,54 @@ describe("the AI provider form never sends a key to the vendor it was not typed 
     paneEngine(READY);
     const el = await render(h(DesktopAiSettings, { door: "cloud" as const }));
     expect(el.textContent?.trim()).toBe("");
+  });
+
+  it("renders Custom Local Endpoint inputs (Base URL, Model Name, API Key) and saves them", async () => {
+    const { el, asked } = await paneWith(UNSET);
+
+    await act(async () => {
+      choiceSaying(el, /Custom Local Endpoint/)!.click();
+    });
+    await settle();
+
+    const baseUrlInput = el.querySelector("#ai-custom-base-url") as HTMLInputElement;
+    const modelInput = el.querySelector("#ai-custom-model") as HTMLInputElement;
+    const keyInput = el.querySelector("#ai-custom-key") as HTMLInputElement;
+
+    expect(baseUrlInput, "Base URL input must be rendered").toBeTruthy();
+    expect(modelInput, "Model Name input must be rendered").toBeTruthy();
+    expect(keyInput, "API Key input must be rendered").toBeTruthy();
+    expect(baseUrlInput.value).toBe("http://127.0.0.1:1235/v1");
+    expect(modelInput.value).toBe("google/gemma-4-e2b");
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(baseUrlInput, "http://127.0.0.1:1235/v1");
+      baseUrlInput.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(modelInput, "google/gemma-4-e2b");
+      modelInput.dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(keyInput, "local-dummy-token");
+      keyInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    asked.length = 0;
+    await act(async () => {
+      buttonSaying(el, /Save and test endpoint/)!.click();
+    });
+    await settle();
+
+    const puts = asked.filter((a) => a.command === "engine_request" && a.method === "PUT");
+    expect(puts).toHaveLength(1);
+    expect(JSON.parse(puts[0]!.body)).toEqual({
+      provider: "custom-local",
+      customLocal: {
+        baseUrl: "http://127.0.0.1:1235/v1",
+        model: "google/gemma-4-e2b",
+        classifyModel: "google/gemma-4-e2b",
+        draftModel: "google/gemma-4-e2b",
+        apiKey: "local-dummy-token",
+      },
+    });
   });
 });
 
