@@ -721,6 +721,13 @@ export interface HelloConfig {
      * over a capability nothing can serve is worse than no control.
      */
     remoteImages: boolean;
+    /**
+     * Send later keeps a letter's files here until it goes (`POST /drafts/:id/schedule-with-files`,
+     * mail 0179): true only where that route is mounted and this host runs the scheduled pass that
+     * reads them back — the desktop's own engine. A server keeps no files at rest, so it says false
+     * and the composer says so before the person picks a time.
+     */
+    scheduleFiles: boolean;
   };
 }
 

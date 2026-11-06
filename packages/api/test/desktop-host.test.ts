@@ -37,7 +37,7 @@ const DESKTOP_HOST_HELLO: HelloConfig = {
   flavor: "desktop-host",
   needsSetup: false,
   auth: { password: false, totp: false, webauthn: false, publicSignup: false },
-  features: { sse: false, staging: false, ai: false, pairing: true, remoteImages: true },
+  features: { sse: false, staging: false, ai: false, pairing: true, remoteImages: true, scheduleFiles: true },
 };
 
 /**

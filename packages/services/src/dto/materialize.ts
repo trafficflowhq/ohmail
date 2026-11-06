@@ -123,6 +123,8 @@ export function draftRowToDTO(d: typeof drafts.$inferSelect): DraftDTO {
     // Idempotency-Key, and handing it to clients would let one replay a reservation it never made.
     sendAt: d.sendAt ? d.sendAt.toISOString() : null,
     sendError: d.sendError ?? null,
+    // Mail 0179: only where an appointment carried files (the desktop's store), so no server row changes.
+    ...(d.sendFiles > 0 ? { sendFiles: d.sendFiles } : {}),
     createdAt: d.createdAt.toISOString(),
     updatedAt: d.updatedAt.toISOString(),
     // WHICH VERSION OF THIS DRAFT THE READER IS HOLDING — see `draftContentRevision`. Carried

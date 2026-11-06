@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { drafts, outboundSends } from "@trafficflow/db";
+import { drafts, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
+import { localRoutes } from "@trafficflow/api/local";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/helpers.js";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
@@ -24,6 +25,8 @@ import {
  */
 
 const app = createApp(apiRoutes);
+/* The desktop engine's own table: the one that keeps a scheduled letter's files (mail 0179). */
+const localApp = createApp(localRoutes);
 
 function makeSendSpy() {
   const spy = {
@@ -40,24 +43,31 @@ function makeSendSpy() {
   return spy;
 }
 
-function bridgeFetch(deps: ApiDeps, token: string): FetchLike {
+function bridgeFetch(deps: ApiDeps, token: string, on = app): FetchLike {
   return async (url, init) => {
     const headers = new Headers(init?.headers as HeadersInit | undefined);
     headers.set("authorization", `Bearer ${token}`);
-    return app.handle(new Request(url, { ...init, headers }), { ...deps, session: null, idempotency: null });
+    return on.handle(new Request(url, { ...init, headers }), { ...deps, session: null, idempotency: null });
   };
 }
 
 const SEND_AT = new Date(FIXED_NOW.getTime() + 6 * 60 * 60 * 1000).toISOString();
 
-async function world() {
+async function world(o: { local?: boolean; scheduleFilesCheck?: boolean; scheduleFiles?: boolean } = {}) {
   const spy = makeSendSpy();
   const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: spy.factory });
+  if (o.scheduleFiles !== undefined) {
+    deps.hello = {
+      flavor: o.local ? "local" : "managed", needsSetup: false,
+      auth: { password: false, totp: false, webauthn: false, publicSignup: false },
+      features: { sse: false, staging: false, ai: false, pairing: false, remoteImages: true, scheduleFiles: o.scheduleFiles },
+    };
+  }
   const s = await seedSession(db, { now: FIXED_NOW });
   const mailboxId = await seedMailbox(db, { accountId: s.accountId });
 
   const calls: string[] = [];
-  const base = bridgeFetch(deps, s.token);
+  const base = bridgeFetch(deps, s.token, o.local ? localApp : app);
   type Intercept = (url: string, pass: () => Promise<Response>) => Promise<Response> | null;
   let intercept: Intercept | null = null;
   const fetchImpl: FetchLike = async (url, init) => {
@@ -66,7 +76,9 @@ async function world() {
     return intercept?.(url, pass) ?? pass();
   };
   const engine = new OhmailEngine({
-    adapter: new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl }),
+    adapter: new HttpAdapter({
+      baseUrl: "http://localhost", fetch: fetchImpl, ...(o.scheduleFilesCheck ? { scheduleFilesCheck: true } : {}),
+    }),
     store: new MemoryMirrorStore(),
   });
   return {
@@ -178,6 +190,49 @@ describe("mail_send with sendAt — an appointment, not a delivery", () => {
     // The one catastrophic fallback — delivering NOW what was asked for LATER — did not happen.
     expect(w.spy.delivered).toHaveLength(0);
     expect(w.calls.some((c) => c.endsWith("/send"))).toBe(false);
+  });
+});
+
+describe("mail_send with sendAt and files — where the door keeps them (mail 0179)", () => {
+  const FILES = [
+    { filename: "photo.png", contentType: "image/png", contentBase64: Buffer.from("a picture").toString("base64") },
+    { filename: "invoice.pdf", contentType: "application/pdf", contentBase64: Buffer.from("%PDF-1.4 a page").toString("base64") },
+  ];
+
+  it("schedules over POST /drafts/:id/schedule-with-files with the files, and the store keeps them", async () => {
+    const w = await world({ local: true, scheduleFilesCheck: true });
+    const res = await w.engine.mutate({ ...COMPOSE(w.mailboxId), attachments: FILES });
+    expect(res.status).toBe("confirmed");
+    const [row] = await w.db.select().from(drafts);
+    expect(row).toMatchObject({ status: "scheduled", sendFiles: 2 });
+    expect(w.calls.filter((c) => c.startsWith("POST"))).toEqual(["POST /drafts", `POST /drafts/${row!.id}/schedule-with-files`]);
+    const kept = await w.db.select().from(scheduledSendFiles);
+    expect(kept.map((f) => [f.fileNo, f.filename, f.contentType, f.rawB64])).toEqual(
+      FILES.map((f, i) => [i, f.filename, f.contentType, f.contentBase64]),
+    );
+    expect(w.spy.delivered).toHaveLength(0);
+    expect(scheduledSendsList(w.engine.read())[0]).toMatchObject({ id: row!.id, sendFiles: 2 });
+  });
+
+  it("a door without the route (Cloud) answers 404: refused by name, nothing scheduled, nothing sent", async () => {
+    const w = await world({ scheduleFilesCheck: true });
+    const res = await w.engine.mutate({ ...COMPOSE(w.mailboxId), attachments: FILES });
+    expect(res.status).toBe("rolled_back");
+    expect(res.error).toMatchObject({ code: "schedule_files_unsupported", retryable: false });
+    const [row] = await w.db.select().from(drafts);
+    expect(row).toMatchObject({ status: "draft", sendAt: null });
+    expect(w.spy.delivered).toHaveLength(0);
+    expect(w.calls.some((c) => c.endsWith("/send"))).toBe(false);
+  });
+
+  it("/hello says which door keeps files: the desktop engine yes, Cloud no; with the check off nothing is asked", async () => {
+    const local = await world({ local: true, scheduleFilesCheck: true, scheduleFiles: true });
+    const cloud = await world({ scheduleFilesCheck: true, scheduleFiles: false });
+    const off = await world({ local: true, scheduleFiles: true });
+    expect(await local.engine.scheduleFilesAnnounced()).toBe(true);
+    expect(await cloud.engine.scheduleFilesAnnounced()).toBe(false);
+    expect(await off.engine.scheduleFilesAnnounced()).toBe(null);
+    expect(off.calls).toEqual([]);
   });
 });
 

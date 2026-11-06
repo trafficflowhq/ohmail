@@ -853,6 +853,7 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     getMessage: async () => { reads.push("getMessage"); return null; },
     withdrawSend: async () => { reads.push("withdrawSend"); return { outcome: "withdrawn" }; },
     forwardPartsAnnounced: async () => { reads.push("forwardPartsAnnounced"); return true; },
+    scheduleFilesAnnounced: async () => { reads.push("scheduleFilesAnnounced"); return true; },
   });
 
   let reads: string[] = [];

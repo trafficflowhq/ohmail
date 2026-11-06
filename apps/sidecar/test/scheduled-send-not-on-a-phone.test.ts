@@ -7,7 +7,7 @@ import type {
   OutboundMessage, SendResult,
 } from "@trafficflow/core/adapters/imap";
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
-import { drafts, mailboxes } from "@trafficflow/db";
+import { drafts, mailboxes, scheduledSendFiles } from "@trafficflow/db";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { COMPOSITION_PASSES, NO_APPOINTMENTS_HERE, runsPass } from "../src/composition-passes.js";
 import { freshDataDir } from "./_datadir.js";
@@ -367,5 +367,43 @@ describe("a composition that keeps no appointments", () => {
     expect(row.status).toBe("draft");
     expect(row.sendAt).toBeNull();
     expect(row.sendKey).toBeNull();
+  });
+
+  /* ── WITH FILES (mail 0179) ─────────────────────────────────────────────────────────────── */
+
+  const withFilesReq = (b: Booted, id: string): Request =>
+    new Request(`http://local/drafts/${id}/schedule-with-files`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${b.sidecar.sessionToken}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        sendAt: new Date(Date.now() + 2 * HOUR).toISOString(),
+        attachments: [{ filename: "a.pdf", contentType: "application/pdf", contentBase64: Buffer.from("%PDF").toString("base64") }],
+      }),
+    });
+  const helloSays = async (b: Booted): Promise<unknown> =>
+    ((await (await b.sidecar.handle(new Request("http://local/hello"))).json()) as { features?: { scheduleFiles?: unknown } })
+      .features?.scheduleFiles;
+
+  it("THE DOOR WITH FILES — a phone refuses it with the sentence, keeps no file, and its /hello says so", async () => {
+    const b = await assemble("mobile");
+    await start(b);
+    const draftId = await plainDraft(b.sidecar);
+    const res = await b.sidecar.handle(withFilesReq(b, draftId));
+    expect(res.status).toBe(409);
+    expect(JSON.stringify(await res.json())).toContain(NO_APPOINTMENTS_HERE);
+    expect(await draftRow(b.sidecar, draftId)).toMatchObject({ status: "draft", sendAt: null, sendFiles: 0 });
+    expect(await b.sidecar.db.select().from(scheduledSendFiles)).toHaveLength(0);
+    expect(await helloSays(b)).toBe(false);
+  });
+
+  it("THE DESKTOP PAIR WITH FILES — the desktop keeps the letter's files with the appointment, and says so", async () => {
+    const b = await assemble();
+    await start(b);
+    const draftId = await plainDraft(b.sidecar);
+    const res = await b.sidecar.handle(withFilesReq(b, draftId));
+    expect(res.status).toBe(200);
+    expect(await draftRow(b.sidecar, draftId)).toMatchObject({ status: "scheduled", sendFiles: 1 });
+    expect((await b.sidecar.db.select().from(scheduledSendFiles)).map((f) => f.filename)).toEqual(["a.pdf"]);
+    expect(await helloSays(b)).toBe(true);
   });
 });

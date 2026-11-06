@@ -204,6 +204,8 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
       remoteImages: true, accountHeader: true, forwardParts: true,
+      // Same store and the same pass: a scheduled letter's files wait here (mail 0179).
+      scheduleFiles: true,
     });
   });
 

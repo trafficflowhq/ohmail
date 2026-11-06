@@ -39,7 +39,7 @@ const MANAGED: HelloConfig = {
   flavor: "managed",
   needsSetup: false,
   auth: { password: true, totp: true, webauthn: true, publicSignup: false },
-  features: { sse: false, staging: true, ai: true, pairing: false, remoteImages: true },
+  features: { sse: false, staging: true, ai: true, pairing: false, remoteImages: true, scheduleFiles: false },
 };
 
 describe("GET /hello — the frozen wire shape", () => {
@@ -56,7 +56,7 @@ describe("GET /hello — the frozen wire shape", () => {
     );
     expect(Object.keys(body.auth).sort()).toEqual(["password", "publicSignup", "totp", "webauthn"]);
     expect(Object.keys(body.features).sort())
-      .toEqual(["accountHeader", "ai", "forwardParts", "pairing", "remoteImages", "sse", "staging"]);
+      .toEqual(["accountHeader", "ai", "forwardParts", "pairing", "remoteImages", "scheduleFiles", "sse", "staging"]);
     expect(body).toEqual({
       product: "ohmail",
       flavor: "managed",
@@ -69,6 +69,8 @@ describe("GET /hello — the frozen wire shape", () => {
         sse: false, staging: true, ai: true, pairing: false, remoteImages: true, accountHeader: true,
         // A forward may name the parts it sends (`forwardParts`); a fixed fact of this build.
         forwardParts: true,
+        // Cloud keeps no letter's files for a later send (mail 0179): the host's own word.
+        scheduleFiles: false,
       },
     });
   });
@@ -95,7 +97,7 @@ describe("GET /hello — the frozen wire shape", () => {
       flavor: "local",
       needsSetup: false,
       auth: { password: false, totp: false, webauthn: false, publicSignup: false },
-      features: { sse: false, staging: false, ai: false, pairing: false, remoteImages: false },
+      features: { sse: false, staging: false, ai: false, pairing: false, remoteImages: false, scheduleFiles: true },
     };
     const selfhost: HelloConfig = {
       flavor: "selfhost",
@@ -103,7 +105,7 @@ describe("GET /hello — the frozen wire shape", () => {
       auth: { password: true, totp: true, webauthn: true, publicSignup: false },
       // `pairing: true` is this composition's truth since the ceremony mounted in its table —
       // the descriptor apps/server injects must say the same; see `routes/self-host.ts`.
-      features: { sse: true, staging: true, ai: false, pairing: true, remoteImages: true },
+      features: { sse: true, staging: true, ai: false, pairing: true, remoteImages: true, scheduleFiles: false },
     };
     // The fourth flavor (Phase 3): the desktop engine's host door — the surface a paired phone
     // reaches. No sign-in ceremony (a device becomes a session through the pairing redeem),
@@ -113,7 +115,7 @@ describe("GET /hello — the frozen wire shape", () => {
       flavor: "desktop-host",
       needsSetup: false,
       auth: { password: false, totp: false, webauthn: false, publicSignup: false },
-      features: { sse: false, staging: false, ai: false, pairing: true, remoteImages: true },
+      features: { sse: false, staging: false, ai: false, pairing: true, remoteImages: true, scheduleFiles: true },
     };
     const localBody = await (await H(req("GET", "/hello"), { ...deps, hello: local })).json();
     expect(localBody.flavor).toBe("local");

@@ -11476,6 +11476,17 @@ export class OhmailEngine {
     }
   }
 
+  /** Does the scheduling server keep a letter's files for a later send? `null`: no answer, or an adapter that cannot ask. */
+  async scheduleFilesAnnounced(): Promise<boolean | null> {
+    const ask = this.adapter.scheduleFilesAnnounced;
+    if (typeof ask !== "function") return null;
+    try {
+      return await ask.call(this.adapter);
+    } catch {
+      return null;
+    }
+  }
+
   attachmentsAvailable(): boolean {
     return typeof this.adapter.listAttachments === "function"
       && typeof this.adapter.fetchAttachment === "function";

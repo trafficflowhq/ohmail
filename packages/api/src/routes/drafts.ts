@@ -20,7 +20,7 @@ import { drafts, schedules, sends, readBody } from "./shared.js";
  * one cap whose surface term depends on the shapes present (`sendSurfaceFor`). Neither is
  * persisted — `ifContentRevision`, the draft version this press saw, included.
  */
-interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
+export interface SendAttachmentWire { filename?: string; contentType?: string; contentBase64?: string }
 interface SendRequestBody {
   attachments?: SendAttachmentWire[];
   /** Upload-ticket ids. Account-scoped in the service; a foreign id is a 404. */
@@ -144,7 +144,7 @@ function shortField(v: unknown, name: string): string | null {
   return v;
 }
 
-function decodeSendAttachments(
+export function decodeSendAttachments(
   items: SendAttachmentWire[] | undefined,
 ): Array<{ filename: string; contentType: string; content: Buffer }> | undefined {
   if (!Array.isArray(items) || items.length === 0) return undefined;
