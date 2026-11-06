@@ -9,6 +9,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { accounts, changeLog, drafts, mailboxes, messages, threadNotes, threads, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { MAX_THREAD_PARTICIPANTS } from "@trafficflow/core/mail";
+import { makeDrizzleRepo, recordAppearedSentFolder } from "@trafficflow/core/adapters/drizzle-repo";
 import { threadJoinHealPass, type ThreadJoinHealResult } from "../src/thread-join-heal.js";
 import { makeThreadJoinHealWalk } from "../src/thread-join-heal-walk.js";
 
@@ -357,6 +358,19 @@ describe.skipIf(!AVAILABLE)("thread-join heal", () => {
       expect(r.merged).toBe(recorded ? 1 : 0);
     });
   }
+
+  it("an 'Envoyés' made after the attach: refused while unrecorded, merged once the cycle's fill wrote it", async () => {
+    const s = await seedAccount(null);
+    const colleague = "colleague@own.example";
+    const a = await seedThread(s, "Zahlung Projekt", new Date(t0));
+    await seedMessage(s, a, { subject: "Zahlung Projekt", date: new Date(t0), from: OWNER, to: [colleague], sent: "Envoyés" });
+    const b = await seedThread(s, "Zahlung Projekt", new Date(t0 + DAY));
+    await seedMessage(s, b, { subject: "AW: Zahlung Projekt", date: new Date(t0 + DAY), from: colleague, to: [OWNER] });
+    expect((await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId })).merged).toBe(0);
+    const adapter = { capabilities: async () => ({ sentFolder: "Envoyés" }) } as never;
+    await recordAppearedSentFolder(adapter, makeDrizzleRepo(db as never), s.accountId, s.mailboxId);
+    expect((await threadJoinHealPass({ db: db as unknown as Tx, apply: true, accountId: s.accountId })).merged).toBe(1);
+  });
 
   /**
    * ═══ A FORGED `From` CANNOT JOIN TWO CONVERSATIONS ════════════════════════════════════════

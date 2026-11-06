@@ -1,11 +1,12 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { IDBFactory } from "fake-indexeddb";
-import { FixturesAdapter, IndexedDbMirrorStore, OhmailEngine, ohboxView } from "@ohmail/client-engine";
+import { ThemeProvider, ToastHost } from "@ohmail/ui";
+import { FixturesAdapter, IndexedDbMirrorStore, MemoryMirrorStore, OhmailEngine, isOwnSent, ohboxView, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;
@@ -295,5 +296,81 @@ describe("own-sent rows name the recipient", () => {
     expect(row.textContent).not.toContain("Me →");
     // the fallback is what the grouped row always showed: the newest member's sender display.
     expect(row.textContent).toContain(OWN.address);
+  });
+});
+
+describe("a reply saved to a Sent folder made after connecting", () => {
+  afterEach(() => { vi.useRealTimers(); });
+  /**
+   * The shell, a real engine and a counting `GET /mailboxes`. The reply's copy lands in 'Envoyés',
+   * which the last mailbox read did not name: the shell reads the mailboxes again at once (no poll
+   * runs, the clock is held), and the answer makes the copy the person's own.
+   */
+  async function sendAndLand(folder: string) {
+    vi.useFakeTimers();
+    setViewport();
+    globalThis.fetch = (async () => new Response("{}", { status: 200, headers: { "content-type": "application/json" } })) as typeof fetch;
+    const NORA = { name: "Nora Lindt", address: "nora@example.net" };
+    const theirs = { ...msg({ id: "theirs", unread: false, threadId: "t-nora", from: NORA, to: [OWN] }), mailboxId: "mb_1" };
+    const store = new MemoryMirrorStore();
+    await store.load();
+    await store.applyChanges([{ type: "message", op: "create", id: "theirs", seq: 1, updatedAt: at(9), entity: theirs }] as SyncChange[]);
+    const pending: SyncChange[] = [];
+    const engine = new OhmailEngine({
+      store, now: () => new Date(at(10)),
+      adapter: {
+        sync: async () => ({
+          changes: { creates: pending.splice(0), updates: [], moves: [], deletes: [] },
+          cursor: "c", hasMore: false, serverTime: at(10),
+        }),
+        mutate: async (m: { kind: string }) => (m.kind === "mail_send"
+          ? { changes: [], seq: null, providerMessageId: "<minted@ohmail.test>" } : { changes: [], seq: null }),
+        fetchBody: async () => null,
+      } as never,
+    });
+    let reads = 0;
+    let named: string | null = null;
+    const probe = async () => {
+      reads += 1;
+      return [{ id: "mb_1", address: OWN.address, status: "connected", lastSyncAt: at(10), pendingMoves: 0, sentFolder: named }];
+    };
+    const { AppShell } = await import("../app/shell/AppShell.js");
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const settle = async (): Promise<void> => { for (let i = 0; i < 20; i++) await act(async () => { await Promise.resolve(); }); };
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages: messages as never, timeZone: "UTC", now: new Date(at(10)),
+        children: h(ThemeProvider, { storageKey: null as never, children: h(ToastHost as never, {
+          children: h(AppShell as never, { engine, mailboxFacts: probe } as never),
+        } as never) }),
+      } as never));
+    });
+    await settle();
+    await act(async () => { await engine.mutate({ kind: "mail_send", inReplyTo: "theirs", body: "Gerne." } as never); });
+    await settle();
+    const before = reads;
+    named = folder === "Sent" ? null : folder;
+    const real = {
+      ...msg({ id: "real", unread: false, threadId: "t-nora", folder, from: OWN, to: [NORA], date: at(10) }),
+      mailboxId: "mb_1", messageIdHeader: "minted@ohmail.test",
+    } as unknown as EngineMessage;
+    pending.push({ type: "message", op: "create", id: "real", seq: 2, updatedAt: at(10), entity: real } as SyncChange);
+    await act(async () => { await engine.syncOnce(); });
+    await settle();
+    const own = isOwnSent(real);
+    engine.setSentFolders([]);
+    return { asked: reads - before, own };
+  }
+
+  it("the mailboxes are read again at once, and the copy in 'Envoyés' becomes the person's own", async () => {
+    const r = await sendAndLand("Envoyés");
+    expect(r.asked, "the mailbox list waited for the next poll").toBe(1);
+    expect(r.own, "the reply still reads as someone else's").toBe(true);
+  });
+
+  it("CONTROL: a copy landing in Sent asks nothing", async () => {
+    expect((await sendAndLand("Sent")).asked).toBe(0);
   });
 });

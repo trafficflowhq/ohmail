@@ -2437,6 +2437,13 @@ export class SendService {
     // No append to project. Not a failure and not logged: a spy adapter is the ordinary case in
     // tests, and an adapter that cannot say what it appended is covered by the Sent-folder watch.
     if (!appended) return;
+    // The folder the copy went to is this mailbox's Sent: written down while none is recorded, before
+    // the row, so a client never drains the copy ahead of the folder that makes it the person's own.
+    try {
+      await makeDrizzleRepo(ctx.db as never).fillMailboxSentFolder(ctx.accountId, mailboxId, appended.locator.folder);
+    } catch (err) {
+      (deps.log ?? defaultLog).warn("sent_folder_record_failed", { accountId: ctx.accountId, mailboxId, err });
+    }
     try {
       // Resolved INSIDE the try: a cap read that fails costs this projection and nothing else —
       // the mail is delivered, the failure is the log line below, and the worker's Sent-folder

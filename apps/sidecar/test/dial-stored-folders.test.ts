@@ -1,6 +1,7 @@
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { mailboxes } from "@trafficflow/db";
+import { recordAppearedSentFolder } from "@trafficflow/core/adapters/drizzle-repo";
 import type { ImapConfig, MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { freshDataDir } from "./_datadir.js";
 import { createSidecar, type AdapterDialContext } from "../src/engine.js";
@@ -50,5 +51,19 @@ describe("the local engine hands its dial the stored Sent, Junk and Trash", () =
     const second = await launch(dir);
     cleanups.push(() => second.sidecar.stop().catch(() => undefined));
     expect(second.cfg.storedFolders).toEqual({ sent: "Gesendete Elemente", junk: "Spam", trash: "Papierkorb" });
+  }, 60_000);
+
+  it("an 'Envoyés' made after the attach and filled by a cycle is the next launch's stored Sent", async () => {
+    const dir = await freshDataDir("ohmail-dial-stored-folders-");
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    const first = await launch(dir);
+    const [mb] = await first.sidecar.db.select({ id: mailboxes.id, accountId: mailboxes.accountId }).from(mailboxes);
+    const adapter = { capabilities: async () => ({ sentFolder: "Envoyés" }) } as never;
+    await recordAppearedSentFolder(adapter, first.sidecar.repo, mb!.accountId, mb!.id);
+    await first.sidecar.stop();
+
+    const second = await launch(dir);
+    cleanups.push(() => second.sidecar.stop().catch(() => undefined));
+    expect(second.cfg.storedFolders?.sent).toBe("Envoyés");
   }, 60_000);
 });

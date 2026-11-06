@@ -673,6 +673,12 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   setMailboxSpecialFolders?(mailboxId: string, f: SpecialFolderColumns): Promise<void>;
   /**
+   * Record the Sent folder found after the attach (one the app files into, made later in another
+   * app) — only while `sent_folder` is empty, and never INBOX. The attach's three-column write
+   * stays the one path that moves or clears a role. OPTIONAL, as above.
+   */
+  fillMailboxSentFolder?(accountId: string, mailboxId: string, path: string): Promise<void>;
+  /**
    * Empty one stored body the way the storage cap does — real headers kept, `text=''`,
    * `html=NULL`, the closed marker, bytes released — for the two 0065 reasons. A row already
    * withheld keeps its first reason (see the column's doc). `'expunged'`, on a tombstoned row, also
@@ -1754,6 +1760,14 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     await this.db.update(mailboxes)
       .set({ junkFolder: f.junkFolder, trashFolder: f.trashFolder, sentFolder: f.sentFolder })
       .where(eq(mailboxes.id, mailboxId));
+  }
+
+  /** See the interface doc: fills an EMPTY `sent_folder` only, scoped to the account. */
+  async fillMailboxSentFolder(accountId: string, mailboxId: string, path: string): Promise<void> {
+    if (path === "" || path.toUpperCase() === "INBOX") return;
+    await this.db.update(mailboxes)
+      .set({ sentFolder: path })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.sentFolder)));
   }
 
   /**
@@ -4219,11 +4233,38 @@ export async function recordSpecialFolders(
   }
   const found = await adapter.findSpecialFolders();
   const caps = typeof adapter.capabilities === "function" ? await adapter.capabilities() : null;
-  await repo.setMailboxSpecialFolders(mailboxId, {
-    junkFolder: found.junk, trashFolder: found.trash,
-    sentFolder: caps?.watchedSentFolder ?? caps?.sentFolder ?? null,
-  });
+  const sentFolder = resolvedSentOf(caps);
+  await repo.setMailboxSpecialFolders(mailboxId, { junkFolder: found.junk, trashFolder: found.trash, sentFolder });
+  recordedSent.set(adapter, sentFolder);
   return true;
+}
+
+/** The Sent path the adapter resolved, as the scan watches it (mail 0132). */
+function resolvedSentOf(
+  caps: { watchedSentFolder?: string | null; sentFolder?: string | null } | null | undefined,
+): string | null {
+  return caps?.watchedSentFolder ?? caps?.sentFolder ?? null;
+}
+
+/** What this adapter's store last holds for Sent, as written here; absent until a write. */
+const recordedSent = new WeakMap<object, string | null>();
+
+/**
+ * A SENT FOLDER THAT APPEARED AFTER THE ATTACH, written down: the adapter's own answer (the one
+ * decision the send files by), filled only where the column is still empty. One statement per newly
+ * resolved folder per adapter; a throw remembers nothing, so the next cycle asks again.
+ */
+export async function recordAppearedSentFolder(
+  adapter: Pick<MailboxAdapter, "capabilities">,
+  repo: Pick<WorkerRepo, "fillMailboxSentFolder">,
+  accountId: string,
+  mailboxId: string,
+): Promise<void> {
+  if (typeof adapter.capabilities !== "function" || typeof repo.fillMailboxSentFolder !== "function") return;
+  const sent = resolvedSentOf(await adapter.capabilities());
+  if (sent === null || recordedSent.get(adapter) === sent) return;
+  await repo.fillMailboxSentFolder(accountId, mailboxId, sent);
+  recordedSent.set(adapter, sent);
 }
 
 /**

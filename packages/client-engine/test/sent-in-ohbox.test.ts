@@ -5,6 +5,7 @@ import {
   FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
+  OPTIMISTIC_SENT_TTL_MS,
   consentPartition,
   ohboxView,
   presentationReader,
@@ -500,5 +501,44 @@ describe("the sent message is in the Ohbox before any drain settles", () => {
     const after = ohboxView(engine.read()).previouslySeen;
     expect(after.filter((m) => m.local === true)).toHaveLength(0);
     expect(after[0]!.id).toBe("real-row");
+  });
+});
+
+describe("a sent copy landing in a folder this client does not know as Sent asks for the mailboxes again", () => {
+  /** Send, then land the real row in `folder` (none: let the copy age out), then drain twice. */
+  async function landIn(folder: string | null, recorded?: string) {
+    let at = DEMO_NOW.getTime();
+    const h = stalledSyncAdapter(new FixturesAdapter());
+    const engine = new OhmailEngine({ adapter: h.adapter, now: () => new Date(at) });
+    await engine.start();
+    await engine.mutate({ kind: "mail_send", inReplyTo: "giulia", body: "Gerne — Donnerstag?" });
+    const copy = ohboxView(engine.read()).previouslySeen.find((m) => m.local === true)!;
+    if (recorded) engine.setSentFolders([{ id: copy.mailboxId, sentFolder: recorded }]);
+    if (folder === null) at += OPTIMISTIC_SENT_TTL_MS + 1;
+    else {
+      const real = { ...copy, id: "real-row", local: undefined, folder: folder as Folder, messageIdHeader: `minted@${managedDomain()}` };
+      await engine.store.applyChanges([
+        { type: "message", op: "create", id: real.id, seq: 9999, updatedAt: real.updatedAt, entity: real },
+      ] as SyncChange[]);
+    }
+    await engine.syncOnce();
+    const first = engine.sentFolderAsks();
+    await engine.syncOnce();
+    const retired = ohboxView(engine.read()).previouslySeen.every((m) => m.local !== true);
+    return { first, second: engine.sentFolderAsks(), retired };
+  }
+
+  it("once for a copy landing in 'Envoyés' that no mailbox read named, and not again on the next drain", async () => {
+    const r = await landIn("Envoyés");
+    expect(r.retired).toBe(true);
+    expect([r.first, r.second]).toEqual([1, 1]);
+  });
+
+  it("CONTROLS: never for a Sent-shaped folder, a recorded one, or a copy retired by its time limit", async () => {
+    expect((await landIn("Sent")).second).toBe(0);
+    expect((await landIn("Envoyés", "Envoyés")).second).toBe(0);
+    const aged = await landIn(null);
+    expect(aged.retired, "the copy did not age out; the case measures nothing").toBe(true);
+    expect(aged.second).toBe(0);
   });
 });

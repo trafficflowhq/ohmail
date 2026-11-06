@@ -8,12 +8,13 @@ import {
 import { dialect } from "@trafficflow/db/dialect";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { ImapAdapter, ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { MessageService, SearchService, SyncService, buildSeedReview, type ServiceContext } from "@trafficflow/services";
 import { MemoryMirrorStore } from "@ohmail/client-engine";
 import { runSyncCycle } from "../src/sync.js";
 import { goneLetterTidyAccounts, goneLetterTidyPass } from "../src/gone-letter-tidy.js";
 import { FIXTURE_LEASE } from "./_door.js";
+import { FakeAdapterFleet } from "./_fakeadapter.js";
 
 /**
  * A SENT MESSAGE DELETED IN ANOTHER MAIL APP LEAVES OHMAIL.
@@ -422,4 +423,101 @@ describe("letters emptied before deleted mail took its words keep none of them",
     expect(await goneLetterTidyPass(db, disconnected.accountId)).toMatchObject({ tidied: 1, done: true });
     expect(await wordsOf(db, gone), "a disconnected account's gone letter kept its words").toEqual(NONE);
   });
+});
+
+describe("a Sent folder made after the attach is written down by the cycle (off-box)", () => {
+  const ACCOUNT = "00000000-0000-4000-8000-0000000005e7";
+
+  async function rig() {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const [mb] = await db.insert(mailboxes).values({ accountId: ACCOUNT, provider: "imap", address: "me@x.test" }).returning();
+    const real = makeDrizzleRepo(db as never);
+    const fills: string[] = [];
+    const repo = new Proxy(real, {
+      get(target, prop, recv) {
+        const v = Reflect.get(target, prop, recv) as unknown;
+        if (prop !== "fillMailboxSentFolder" || typeof v !== "function") return v;
+        return (...a: [string, string, string]) => { fills.push(a[2]); return (v as (...x: unknown[]) => Promise<void>).apply(target, a); };
+      },
+    });
+    const fleet = new FakeAdapterFleet();
+    const fake = fleet.factory(
+      { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
+      { accountId: ACCOUNT, mailboxId: mb!.id, onConnectionError: () => undefined },
+    );
+    const state = { sent: null as string | null, scanned: false, overrun: false, askedRetired: 0 };
+    const breach = new ImapBoundExceeded("body_overrun", 1_048_576, 1_600_000, "INBOX");
+    // One dial: a breach in its pass retires it, and any later ask of it is counted and refused.
+    const dial = () => {
+      let retired = false;
+      return new Proxy(fake, {
+        get(target, prop, recv) {
+          const v = Reflect.get(target, prop, recv) as unknown;
+          if (retired && typeof v === "function") return () => { state.askedRetired += 1; throw breach; };
+          if (prop === "capabilities") {
+            return async () => ({ ...(await (v as () => Promise<object>).call(target)), sentFolder: state.sent });
+          }
+          if (prop === "changesSince") {
+            return async (...a: unknown[]) => {
+              state.scanned = true;
+              const batch = await (v as (...x: unknown[]) => Promise<object>).apply(target, a);
+              if (!state.overrun) return batch;
+              state.overrun = false;
+              retired = true;
+              return { ...batch, overrun: { folder: "INBOX", breach } };
+            };
+          }
+          return typeof v === "function" ? (v as (...x: unknown[]) => unknown).bind(target) : v;
+        },
+      });
+    };
+    let adapter = dial();
+    const column = async () =>
+      (await db.select({ f: mailboxes.sentFolder }).from(mailboxes).where(eq(mailboxes.id, mb!.id)))[0]!.f;
+    const cycle = (extra: object = {}) => runSyncCycle({
+      writeAuthority: FIXTURE_LEASE, repo, adapter, accountId: ACCOUNT, mailboxId: mb!.id,
+      storageCap: UNMETERED_STORAGE_CAP, role: "organizer", trustedAuthservIds: new Set<string>(), ...extra,
+    } as never);
+    return { real, fills, state, column, cycle, breach, redial: () => { adapter = dial(); } };
+  }
+
+  it("no statement while no Sent folder resolves; one when 'Envoyés' does; none on the next cycle", async () => {
+    const r = await rig();
+    await r.cycle();
+    expect(r.fills).toEqual([]);
+    r.state.sent = "Envoyés";
+    await r.cycle();
+    expect(r.fills).toEqual(["Envoyés"]);
+    expect(await r.column()).toBe("Envoyés");
+    await r.cycle();
+    expect(r.fills, "a known folder was written again").toEqual(["Envoyés"]);
+  }, 60_000);
+
+  it("a cycle that has lost its lease writes no Sent folder", async () => {
+    const r = await rig();
+    r.state.sent = "Envoyés";
+    const fence = {
+      lost: () => r.state.scanned,
+      stillLeader: async () => !r.state.scanned,
+      transaction: (fn: (x: unknown) => Promise<unknown>) =>
+        r.real.transaction(async (x) => ({ fenced: false, result: await fn(x) })),
+    };
+    await r.cycle({ fence }).catch((err: unknown) => err);
+    expect(r.state.scanned, "the cycle never reached the scan; the case measures nothing").toBe(true);
+    expect(r.fills).toEqual([]);
+    expect(await r.column()).toBeNull();
+  }, 60_000);
+
+  it("a pass stopped by an overrun asks its retired connection nothing; the re-dial records the folder", async () => {
+    const r = await rig();
+    r.state.sent = "Envoyés";
+    r.state.overrun = true;
+    expect(await r.cycle().catch((err: unknown) => err), "the overrun did not end the cycle").toBe(r.breach);
+    expect(r.state.askedRetired, "a connection the breach had retired was asked again").toBe(0);
+    expect(r.fills).toEqual([]);
+    r.redial();
+    await r.cycle();
+    expect(r.fills, "the re-dialled connection did not record the late Sent folder").toEqual(["Envoyés"]);
+    expect(await r.column()).toBe("Envoyés");
+  }, 60_000);
 });

@@ -8,6 +8,7 @@ import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   SendService, SEND_COPY_OWED_MAX_ATTEMPTS, SEND_COPY_OWED_WAITS_MS, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE,
   OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_OWED_DEFER_MS, SEND_COPY_OWED_HOLD_MS, SEND_COPY_OWED_SETTLE_MS,
@@ -1688,5 +1689,72 @@ describe("Send again: the held message, once, under its own Message-ID", () => {
     ]);
     expect((await h.draft()).status).toBe("unverified");
     expect(h.mail.s.taken).toHaveLength(1);
+  });
+});
+
+describe("a Sent folder made after connecting is recorded by the send that files into it", () => {
+  /** A send whose copy the adapter appended to `folder`; `seenAtTx` is the column at each transaction's start. */
+  async function sendInto(folder: string, over: { recorded?: string; failFill?: boolean } = {}) {
+    const s = await setup();
+    if (over.recorded) await s.db.update(mailboxes).set({ sentFolder: over.recorded }).where(eq(mailboxes.id, s.mailboxId));
+    const column = async () =>
+      (await s.db.select({ f: mailboxes.sentFolder }).from(mailboxes).where(eq(mailboxes.id, s.mailboxId)))[0]!.f;
+    const seenAtTx: Array<string | null> = [];
+    const db = s.db as unknown as { transaction: (...a: unknown[]) => unknown; update: (t: unknown) => unknown };
+    const tx = db.transaction.bind(db);
+    db.transaction = async (...a: unknown[]) => { seenAtTx.push(await column()); return tx(...a); };
+    if (over.failFill) {
+      const update = db.update.bind(db);
+      db.update = (t: unknown) => { if (t === mailboxes) throw new Error("store gone"); return update(t); };
+    }
+    const warns: string[] = [];
+    const draftId = await s.newDraft();
+    const factory: OpenSendAdapter = async () => ({
+      async send(msg: OutboundMessage) {
+        const raw = Buffer.from(`Message-ID: ${msg.messageId!}\r\nFrom: mila@lichtgrat.example\r\nTo: you@example.com\r\nSubject: Re: hi\r\n\r\nThanks!\r\n`);
+        return { providerMessageId: msg.messageId!, appended: { locator: { folder, ref: "9:1" }, raw } };
+      },
+      async messageInSent() { return false; },
+      async close() { /* nothing open */ },
+    });
+    const res = await svc.send(s.ctx, draftId, "k-sent-folder", {
+      openSendAdapter: factory, resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
+      log: { info: () => undefined, warn: (e: string) => { warns.push(e); }, error: () => undefined } as never,
+    });
+    const projected = await s.db.select({ id: messages.id }).from(messages)
+      .where(eq(messages.messageIdHeader, res.providerMessageId!.replace(/^<|>$/g, "")));
+    return { res, column: await column(), seenAtTx, projected, warns, s };
+  }
+
+  it("an append to 'Envoyés' fills the empty column before the projection's transaction runs", async () => {
+    const o = await sendInto("Envoyés");
+    expect(o.res.status).toBe("sent");
+    expect(o.column).toBe("Envoyés");
+    expect(o.seenAtTx.at(-1), "the projection ran before the folder was recorded").toBe("Envoyés");
+    expect(o.projected).toHaveLength(1);
+  });
+
+  it("CONTROL: a recorded 'Sent Items' is kept", async () => {
+    expect((await sendInto("Envoyés", { recorded: "Sent Items" })).column).toBe("Sent Items");
+  });
+
+  it("a fill that throws still projects the row, and the send answers sent", async () => {
+    const o = await sendInto("Envoyés", { failFill: true });
+    expect(o.res.status).toBe("sent");
+    expect(o.projected).toHaveLength(1);
+    expect(o.warns).toContain("sent_folder_record_failed");
+  });
+
+  it("INBOX is never written, in any spelling; another account's id writes nothing", async () => {
+    expect((await sendInto("INBOX")).column).toBeNull();
+    const { s } = await sendInto("INBOX");
+    const repo = makeDrizzleRepo(s.db as never);
+    await repo.fillMailboxSentFolder(s.A, s.mailboxId, "Inbox");
+    await repo.fillMailboxSentFolder(s.B, s.mailboxId, "Envoyés");
+    const [row] = await s.db.select({ f: mailboxes.sentFolder }).from(mailboxes).where(eq(mailboxes.id, s.mailboxId));
+    expect(row!.f, "an account that does not own the mailbox recorded its Sent folder").toBeNull();
+    await repo.fillMailboxSentFolder(s.A, s.mailboxId, "Envoyés");
+    const [own] = await s.db.select({ f: mailboxes.sentFolder }).from(mailboxes).where(eq(mailboxes.id, s.mailboxId));
+    expect(own!.f).toBe("Envoyés");
   });
 });

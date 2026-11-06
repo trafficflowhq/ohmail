@@ -2760,6 +2760,8 @@ export class OhmailEngine {
    * reconcileOptimisticSent} drops each when its header appears in the mirror or its TTL passes.
    */
   private readonly optimisticSent = new Map<string, { header: string; expiresAtMs: number }>();
+  /** See {@link sentFolderAsks}. */
+  private sentFolderAskCount = 0;
   private readonly queue: PendingMutation[] = [];
   /**
    * See {@link OhmailEngine.abandoned} — a stable snapshot for `useSyncExternalStore`, keyed on
@@ -9746,13 +9748,20 @@ export class OhmailEngine {
     // BOTH sides through `messageIdKey`: the confirmation carries `<id@domain>`, the ingested row
     // carries `id@domain`, and the raw compare that stood here retired copies by TTL alone — see
     // the helper's docblock in `mutations.ts`.
-    const landed = new Set<string>();
+    // Each landed header, and whether any of its rows reads as the account's own.
+    const landed = new Map<string, boolean>();
     for (const { entity } of this.store.entries<EngineMessage>("message")) {
       const h = entity.messageIdHeader;
-      if (h) landed.add(messageIdKey(h));
+      if (h) {
+        const key = messageIdKey(h);
+        landed.set(key, landed.get(key) === true || isOwnSent(entity));
+      }
     }
+    let asks = 0;
     for (const [overlayId, meta] of this.optimisticSent) {
-      if (landed.has(messageIdKey(meta.header)) || nowMs >= meta.expiresAtMs) {
+      const own = landed.get(messageIdKey(meta.header));
+      if (own === false) asks += 1;
+      if (own !== undefined || nowMs >= meta.expiresAtMs) {
         this.overlays.delete(overlayId);
         this.optimisticSent.delete(overlayId);
         // The copy is retired, so its attachment seed stops being load-bearing: clearing `live`
@@ -9763,6 +9772,20 @@ export class OhmailEngine {
         if (seed) seed.live = false;
       }
     }
+    if (asks > 0) {
+      this.sentFolderAskCount += asks;
+      this.notify();
+    }
+  }
+
+  /**
+   * HOW OFTEN A SENT COPY LANDED IN A FOLDER THIS CLIENT DOES NOT KNOW AS SENT — a confirmed send's
+   * real row arrived, and no row under its Message-ID reads as the account's own. The mailbox's Sent
+   * folder was recorded after the last mailbox read (one made after connecting), so a surface reads
+   * `GET /mailboxes` again once per rise rather than at its next poll.
+   */
+  sentFolderAsks(): number {
+    return this.sentFolderAskCount;
   }
 
   /** Free every sent-copy attachment seed whose TTL has passed. See {@link sentAttachmentSeeds}. */

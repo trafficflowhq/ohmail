@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { noteReplyPress } from "../app/shell/sent-reveal";
 
 /**
@@ -550,4 +551,32 @@ describe("the reply you sent is brought into view", () => {
       expect(top).toBe(TALL * 1 - 14);
     });
   }
+
+  /* A Sent folder made after connecting: the copy lands in 'Envoyés' before any mailbox read named it,
+     then the read the copy asks for records it (the engine's statement, as the shell makes it). */
+  const Fr = { ...S, id: "fr", folder: "Envoyés" };
+  async function landThenRecord(scrolled: boolean): Promise<number> {
+    const engine = new OhmailEngine({ adapter: new FixturesAdapter() });
+    try {
+      await open([A, B]);
+      top = 700;
+      await pressSend();
+      if (scrolled) await act(async () => { window.dispatchEvent(new Event("wheel")); });
+      await confirm([A, B, Fr]);
+      expect(top, "a copy nobody knew as Sent moved the view").toBe(700);
+      engine.setSentFolders([{ id: "mb", sentFolder: "Envoyés" }]);
+      await confirm([A, B, Fr]);
+      return top;
+    } finally {
+      engine.setSentFolders([]);
+    }
+  }
+
+  it("a reply saved to an 'Envoyés' recorded after it landed eases in", async () => {
+    expect(await landThenRecord(false)).toBe(TALL * 2 - 16);
+  });
+
+  it("CONTROL: the person scrolled after Send: the recorded 'Envoyés' reply moves nothing", async () => {
+    expect(await landThenRecord(true)).toBe(700);
+  });
 });
