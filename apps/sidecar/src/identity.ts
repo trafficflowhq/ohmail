@@ -80,6 +80,8 @@ export interface EnsureLocalWorldInput {
   address: string | null;
   displayName?: string;
   now: Date;
+  /** Which door builds the world; a cloud door serves a mailbox it holds before minting one. */
+  door?: "local" | "cloud";
 }
 
 /**
@@ -183,6 +185,8 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
     activeSeedRow: seedRow !== null,
     tombstonedSeed,
     rosterEmpty: nonTombstoned.length === 0,
+    door: input.door ?? "local",
+    servableRow: nonTombstoned.some((r) => r.status !== "disabled"),
   });
 
   if (!seed) {
@@ -568,6 +572,10 @@ export interface SeedDecisionInput {
   tombstonedSeed: boolean;
   /** Are there NO live rows at all — not merely none for this address? */
   rosterEmpty: boolean;
+  /** The door asking; absent is `local`. */
+  door?: "local" | "cloud";
+  /** Is there a row this launch could serve (`status <> 'disabled'`)? */
+  servableRow?: boolean;
 }
 
 /** Whether this launch should create the seed mailbox row. See the header's six cases. */
@@ -577,6 +585,10 @@ export function shouldSeedMailbox(input: SeedDecisionInput): boolean {
   if (!address) return false;
   // Case 2 — the row is already there. This is every ordinary launch after the first.
   if (input.activeSeedRow) return false;
+  /* A cloud door whose address is none of the account's mailboxes (an operator login) serves the
+     row it holds: a minted one is retired by the next mailbox refresh, so every launch would
+     serve a new id and the window's per-mailbox state would not survive a relaunch. */
+  if (input.door === "cloud" && input.servableRow === true) return false;
   /* Cases 3 and 4, which are the same tombstone and different answers. An empty roster is an
      install at first-run whatever the store remembers, so the seed is made; a roster with anything
      live in it is an install whose seed was REMOVED, and re-minting it is the resurrection. */

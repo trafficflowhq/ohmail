@@ -860,6 +860,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       address: config.address,
       ...(config.displayName ? { displayName: config.displayName } : {}),
       now: now(),
+      door: "cloud",
     });
     const session = await mintLaunchBearer(db, world, now(), log);
     // One phase, both identity writes — see the same two lines in `engine.ts`.
@@ -891,6 +892,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           address: config.address,
           ...(config.displayName ? { displayName: config.displayName } : {}),
           now: now(),
+          door: "cloud",
         });
         if (again.mailboxId === "" || served !== "") return;
         served = again.mailboxId;
