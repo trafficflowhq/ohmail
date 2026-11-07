@@ -78,6 +78,17 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.48" date="2026-11-08">
+      <description>
+        <ul>
+          <li>Checking for moves and read marks to send to the mail server costs almost nothing</li>
+          <li>Cloud storage says what your mailboxes need</li>
+          <li>Settings → Storage shows what your mail needs, and a letter emptied for space opens on request</li>
+          <li>Screener decisions made just before quitting are no longer lost</li>
+          <li>The phone shows your Cloud storage and loads an emptied letter</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.47" date="2026-11-07">
       <description>
         <ul>
@@ -110,16 +121,6 @@
           <li>The iPhone connects to a mail server that encrypts with STARTTLS</li>
           <li>Replies saved to a Sent folder made after connecting read as yours</li>
           <li>Searching inside one folder is faster</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.43" date="2026-11-06">
-      <description>
-        <ul>
-          <li>Adding a large mailbox finishes much sooner</li>
-          <li>A reply draft you deleted stays deleted</li>
-          <li>A worker with half its platform credential pages instead of going quietly dark</li>
-          <li>A Screener decision no longer fails while ohmail is filing your mail</li>
         </ul>
       </description>
     </release>
