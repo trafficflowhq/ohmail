@@ -80,8 +80,11 @@ describe("bodyCeilingFor — the ceiling is the ROUTE's, decided before a byte i
       .toBe(JSON_BODY_MAX_BYTES);
   });
 
-  it("is the host's large ceiling for the one route that carries inline attachment bytes", () => {
+  it("is the host's large ceiling for the routes that carry inline attachment bytes", () => {
     expect(bodyCeilingFor(selfHostRoutes, "POST", "/drafts/abc/send", BODY_MAX_BYTES))
+      .toBe(BODY_MAX_BYTES);
+    // Send later with files takes the send's own transports (mail 0180).
+    expect(bodyCeilingFor(selfHostRoutes, "POST", "/drafts/abc/schedule-with-files", BODY_MAX_BYTES))
       .toBe(BODY_MAX_BYTES);
   });
 
@@ -160,6 +163,13 @@ describe("normalizeRequest — the self-host door, driven with the hostile reque
 
     expect(pulled()).toBe(big);
     expect(new URL(normalized.url).pathname).toBe("/drafts/abc/send");
+  });
+
+  it("so does a letter scheduled with its files", async () => {
+    const big = JSON_BODY_MAX_BYTES * 2;
+    const { request, pulled } = streamingRequest("http://h/drafts/abc/schedule-with-files", big);
+    await normalizeRequest(request);
+    expect(pulled()).toBe(big);
   });
 
   it("still strips one `/api` prefix and still drops an empty body", async () => {

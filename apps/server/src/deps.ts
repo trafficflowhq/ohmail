@@ -27,7 +27,7 @@ import {
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, draftsService, draftingService, sendService,
-  FolderOpsService, scheduleService,
+  FolderOpsService, scheduleService, keepScheduledFilesSealed,
   workflowsService, proposalsService, redeemInviteGrant,
   makeAttachmentStagingPort, MailService, SmtpMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter,
   OWED_COPY_SELF_HOST, throttleKeysFor,
@@ -316,6 +316,8 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
     drafts: draftsService,
     // Send later's two verbs (mail 0077) — this host's own worker lane runs the sender pass.
     schedules: scheduleService,
+    // A scheduled letter's files, sealed under this server's key ring until the letter goes (mail 0180).
+    scheduledFiles: keepScheduledFilesSealed(keyProvider),
     drafting: draftingService,
     sends: sendService,
     workflows: workflowsService,
@@ -680,7 +682,7 @@ export function buildDeps(req: Request, rt: ServerRuntime): ApiDeps {
         // egress a few lines down (`makePrivacyService({ remote: nodeRemoteFetch, … })`), so
         // `GET /img` here fetches rather than refusing.
         remoteImages: true,
-        // The schedule-with-files route is mounted (localRoutes) but this server keeps no files at rest.
+        // False for clients that predate the horizon; `/hello` adds `scheduleFilesDays` from `scheduledFiles`.
         scheduleFiles: false,
       },
     },

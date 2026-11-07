@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { drafts, outboundSends, scheduledSendFiles } from "@trafficflow/db";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
+import { SCHEDULED_FILES_PLAIN, type ScheduledFilesKeeping } from "@trafficflow/services/mail";
+import { keepScheduledFilesSealed, runScheduledSendPass } from "@trafficflow/services";
+import { StaticKeyProvider } from "@trafficflow/core";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../api/test/helpers.js";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
 import {
@@ -53,9 +56,14 @@ function bridgeFetch(deps: ApiDeps, token: string, on = app): FetchLike {
 
 const SEND_AT = new Date(FIXED_NOW.getTime() + 6 * 60 * 60 * 1000).toISOString();
 
-async function world(o: { local?: boolean; scheduleFilesCheck?: boolean; scheduleFiles?: boolean } = {}) {
+async function world(o: {
+  local?: boolean; scheduleFilesCheck?: boolean; scheduleFiles?: boolean; sealed?: ScheduledFilesKeeping;
+} = {}) {
   const spy = makeSendSpy();
   const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: spy.factory });
+  // The desktop engine declares where it keeps a letter's files; a bag that declares nothing keeps none.
+  if (o.local) deps.services = { ...deps.services!, scheduledFiles: SCHEDULED_FILES_PLAIN };
+  if (o.sealed) deps.services = { ...deps.services!, scheduledFiles: o.sealed };
   if (o.scheduleFiles !== undefined) {
     deps.hello = {
       flavor: o.local ? "local" : "managed", needsSetup: false,
@@ -254,5 +262,33 @@ describe("the demo world (FixturesAdapter)", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0]!.status).toBe("scheduled");
     expect(listed[0]!.sendAt).toBe(SEND_AT);
+  });
+});
+
+/**
+ * SEND LATER WITH FILES ON THE HOSTED DOOR (mail 0180), engine to delivery: the same client presses
+ * schedule on the hosted table, the server keeps the file sealed, and its pass sends it once.
+ */
+describe("the hosted door keeps a scheduled letter's files sealed until its pass sends them", () => {
+  it("the engine's press is kept as ciphertext and leaves once, byte-equal, with no row left", async () => {
+    const sealed = keepScheduledFilesSealed(new StaticKeyProvider({ 1: Buffer.alloc(32, 9) }));
+    if (sealed.atRest !== "sealed") throw new Error("a server keeps its files sealed");
+    const w = await world({ scheduleFilesCheck: true, scheduleFiles: false, sealed });
+    const file = { filename: "plan.pdf", contentType: "application/pdf", contentBase64: Buffer.from("%PDF-1.4 the plan").toString("base64") };
+    const res = await w.engine.mutate({ ...COMPOSE(w.mailboxId), attachments: [file] });
+    expect(res.status).toBe("confirmed");
+    const kept = await w.db.select().from(scheduledSendFiles);
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.dekKeyVersion).toBe(1);
+    expect(kept[0]!.rawB64).not.toBe(file.contentBase64);
+    expect(w.spy.delivered, "a press scheduled to the hosted door dialled at once").toHaveLength(0);
+
+    await runScheduledSendPass(w.db as never, {
+      openSendAdapter: w.spy.factory, now: () => new Date(Date.parse(SEND_AT) + 60_000),
+      files: { open: sealed.sealer.open.bind(sealed.sealer), tidy: true },
+    });
+    expect(w.spy.delivered).toHaveLength(1);
+    expect(w.spy.delivered[0]!.attachments!.map((a) => Buffer.from(a.content).toString("base64"))).toEqual([file.contentBase64]);
+    expect(await w.db.select().from(scheduledSendFiles)).toHaveLength(0);
   });
 });
