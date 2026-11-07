@@ -135,7 +135,7 @@ const stranger = {
   triage: null, labels: [], remoteContent: "none", updatedAt: "2026-10-09T10:50:00.000Z",
 };
 
-async function ohbox(notOrganizingYet: NotOrganizingYet | null): Promise<HTMLElement> {
+async function ohbox(notOrganizingYet: NotOrganizingYet | null, more: Record<string, unknown> = {}): Promise<HTMLElement> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
   return mount(h(OhboxView as never, {
     owed: false, demo: false, settled: true,
@@ -146,7 +146,7 @@ async function ohbox(notOrganizingYet: NotOrganizingYet | null): Promise<HTMLEle
     onMarkSeen: () => {},
     bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
     doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    notOrganizingYet,
+    notOrganizingYet, ...more,
   } as never));
 }
 
@@ -227,6 +227,12 @@ describe("the Ohbox doorbell over a mailbox nothing organizes", () => {
     const bell = doorbell(el)!;
     expect(bell.classList.contains("gone")).toBe(true);
     expect(bell.textContent).toContain("All clear");
+  });
+
+  it("draws no bell, not even 'All clear', while the Screener's queue is not read yet", async () => {
+    const el = await ohbox(null, { doorbellSettled: false });
+    expect(doorbell(el)).toBeNull();
+    expect(text(el)).not.toContain("All clear");
   });
 
   it("a mixed account names the mailbox nothing organizes rather than 'All clear', and its press is that mailbox's", async () => {

@@ -207,6 +207,7 @@ export function OhboxView({
   doorbellInitials,
   doorbellHues,
   doorbellCount,
+  doorbellSettled = true,
   notOrganizingYet = null,
   settled,
   owed,
@@ -382,6 +383,8 @@ export function OhboxView({
   /** Per-sender tint hues for the doorbell stack, index-aligned with `doorbellInitials`. */
   doorbellHues?: number[];
   doorbellCount: number;
+  /** Has the Screener's queue been read (`ScreenerState.queueSettled`)? Until then no bell, not even "All clear". */
+  doorbellSettled?: boolean;
   /** Mailboxes nobody agreed to organize (`notOrganizingYetOf`): where it is every one, "All clear" is not said. */
   notOrganizingYet?: NotOrganizingYet | null;
   /**
@@ -2483,7 +2486,7 @@ export function OhboxView({
               onPress={() => goSettings("mailboxes")}
             />
             )
-            ) : !mayState && doorbellCount === 0 ? null : (
+            ) : (!mayState || !doorbellSettled) && doorbellCount === 0 ? null : (
             <Doorbell
               initials={doorbellInitials}
               hues={doorbellHues}
