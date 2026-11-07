@@ -123,6 +123,31 @@ describe("the mailbox a paired launch serves", () => {
     expect(s.servedMailboxId()).toBe(seeded);
   });
 
+  it("a door whose address is none of the account's mailboxes serves one mailbox across relaunches", async () => {
+    // A self-host operator login: the window's journal is keyed by this id, so a fresh one per
+    // launch lost a Screener decision pressed just before a quit.
+    const dir = await freshDataDir("ohmail-pair-served-operator-");
+    dirs.push(dir);
+    const first = await boot(dir, [], { address: "operator@ohmail.test" });
+    expect((await pair(first)).status).toBe(200);
+    await first.start();
+    await first.stop();
+    sidecars.splice(sidecars.indexOf(first), 1);
+
+    const served: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const events: string[] = [];
+      const s = await boot(dir, [], { address: "operator@ohmail.test", events });
+      expect(s.signedIn(), "the relaunch did not resume from the seal").toBe(true);
+      served.push(s.servedMailboxId());
+      await s.start();
+      expect(events, "a relaunch minted a mailbox the refresh then retired").not.toContain("cloud_mailboxes_refreshed");
+      await s.stop();
+      sidecars.splice(sidecars.indexOf(s), 1);
+    }
+    expect(served).toEqual([OLDER, OLDER]);
+  });
+
   it("a list with no mailbox leaves it unnamed, and the answer still goes at the bound", async () => {
     const dir = await freshDataDir("ohmail-pair-served-none-");
     dirs.push(dir);

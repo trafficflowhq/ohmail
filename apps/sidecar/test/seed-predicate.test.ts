@@ -85,6 +85,15 @@ describe("the seed predicate", () => {
     expect(shouldSeedMailbox({ ...base, rosterEmpty: false })).toBe(false);
   });
 
+  /** A cloud door serves a mailbox the account already has rather than mint one the refresh retires. */
+  it("a cloud door with a servable row does not seed an address the store has never heard of", () => {
+    const fresh = { seedAddress: "a@example.test", activeSeedRow: false, tombstonedSeed: false };
+    expect(shouldSeedMailbox({ ...fresh, rosterEmpty: false, door: "cloud", servableRow: true })).toBe(false);
+    expect(shouldSeedMailbox({ ...fresh, rosterEmpty: true, door: "cloud", servableRow: false })).toBe(true);
+    expect(shouldSeedMailbox({ ...fresh, rosterEmpty: false, door: "local", servableRow: true })).toBe(true);
+    expect(shouldSeedMailbox({ ...fresh, rosterEmpty: false, servableRow: true })).toBe(true);
+  });
+
   /** A null or whitespace address is the absent case, not an address of its own. */
   it("treats a blank address as no address", () => {
     for (const seedAddress of [null, undefined, "", "   "]) {

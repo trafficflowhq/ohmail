@@ -11,6 +11,7 @@ import {
   type EngineMutation,
   type Folder,
   type MirrorStore,
+  type ScreenerWaitingWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
@@ -73,6 +74,8 @@ let sent: EngineMutation[] = [];
 let undoAction: (() => void) | null = null;
 /** Every sentence the hook raised, in order. */
 let said: string[] = [];
+/** `waitingCount` at every render — the badge as the rail draws it. */
+let counts: number[] = [];
 
 function msg(id: string, from: string, folder: Folder): EngineMessage {
   return {
@@ -101,8 +104,13 @@ async function seed(store: MirrorStore): Promise<void> {
   }]);
 }
 
-/** An engine over `store` whose every dispatched verb is recorded in `sent`. */
-function engineOver(store: MirrorStore): OhmailEngine {
+/**
+ * An engine over `store` whose every dispatched verb is recorded in `sent`. `door.queue` is the store's
+ * queue; `door.answered` holds each verb's answer, as a server door's round trip does.
+ */
+function engineOver(
+  store: MirrorStore, door: { queue?: () => Promise<ScreenerWaitingWire>; answered?: Promise<void> } = {},
+): OhmailEngine {
   return new OhmailEngine({
     store,
     now: () => NOW,
@@ -113,6 +121,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
       }),
       mutate: async (m) => {
         sent.push(m);
+        await door.answered;
         const changes: SyncChange[] = mutationEffects(store, m, {
           now: () => NOW, uuid: () => `id-${++seq}`,
         }).map((e) => ({
@@ -127,6 +136,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
         text: "body", html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,
       }),
+      ...(door.queue ? { screenerWaiting: door.queue } : {}),
     },
   });
 }
@@ -164,6 +174,7 @@ async function mountState(engine: OhmailEngine): Promise<{
         if (opts?.onAction) undoAction = opts.onAction;
       }) as never,
     ) as unknown as StateLike;
+    counts.push(latest.waitingCount);
     return null;
   }
 
@@ -219,6 +230,7 @@ beforeEach(() => {
   sent = [];
   undoAction = null;
   said = [];
+  counts = [];
   window.localStorage.clear();
 });
 
@@ -652,5 +664,44 @@ describe("a decided sender stays decided on screen", () => {
     await act(async () => { await Promise.resolve(); });
     expect(decides()).toHaveLength(1);
     expect(second.get().waiting).toHaveLength(0);
+  });
+
+  it("the store's first answer, asked before the replay reached it, never counts the decided sender", async () => {
+    const store = await freshStore(true);
+    const first = await mountState(engineOver(store));
+    await act(async () => {
+      first.get().decide(first.get().waiting[0], "screened", { read: false, scope: "sender" });
+    });
+    await killTab();
+    counts = [];
+
+    // The relaunch asks the store at mount; every answer waits until this case lets it go.
+    const answers: Array<() => void> = [];
+    const listed: ScreenerWaitingWire = {
+      items: [{ messageId: HELD.id, address: HELD.from.address, name: null, receivedAt: HELD.date!,
+        subject: HELD.subject, snippet: HELD.snippet, mailboxId: "mb" }],
+      nextCursor: null, total: 1, inFlight: [],
+    };
+    let asks = 0;
+    let answer!: () => void;
+    const engine = engineOver(store, {
+      queue: () => {
+        const wire = asks++ === 0 ? listed : { ...listed, items: [], total: 0 };
+        return new Promise((r) => { answers.push(() => r(wire)); });
+      },
+      answered: new Promise((r) => { answer = r; }),
+    });
+    const second = await mountState(engine);
+    await second.bump();
+    await act(async () => { await Promise.resolve(); });
+    expect(decides(), "the replay was not sent before the answer").toHaveLength(1);
+
+    // The first answer lands after the decide, before the server's, and still lists the sender.
+    await act(async () => { answers.shift()!(); await vi.advanceTimersByTimeAsync(10); });
+    expect(engine.screenerWaitingSettled()).toBe(true);
+    await act(async () => { answer(); await vi.advanceTimersByTimeAsync(10); });
+    for (const r of answers.splice(0)) await act(async () => { r(); await vi.advanceTimersByTimeAsync(10); });
+    expect(Math.max(...counts), `a decided sender was counted at the start (${counts.join(",")})`).toBe(0);
+    expect(decides(), "the decision was sent more than once").toHaveLength(1);
   });
 });
