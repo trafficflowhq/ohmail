@@ -1,15 +1,19 @@
 import { deleteAccount, erasureOutcome, throttleKeysFor } from "@trafficflow/services";
-import { planHintOf, storageEmptyingNow, storageFactsOf, storageUpgradeOf, type ReleaseOutcome, type Tx } from "@trafficflow/db";
+import { planHintOf, storageEmptyingNow, storageFactsOf, type ReleaseOutcome, type Tx } from "@trafficflow/db";
 /* Hosted-only, like `internal.ts`'s cloud imports: `accountRoutes` is mounted by `routes/index.ts`
    and deliberately NOT by the local door ("deleting the data directory IS the erasure"), so the
    cloud table the reopening reads never enters a standalone bundle. */
 import { reopenedCatchUp, resumeAfterReopen } from "../account-reopen.js";
-import { heldStorageLimitOf } from "@trafficflow/db/cloud";
+import {
+  heldStorageLimitOf, isStorageCardLevel, recordStorageDismissal, setStorageMail, storageDismissalOf,
+  storageReadingOf,
+} from "@trafficflow/db/cloud";
 import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { clearSessionCookies } from "../cookies.js";
 import { isDbBusy } from "../middleware.js";
 import { sessionEnded } from "../session-end.js";
+import { storageBlockOf } from "../storage-block.js";
 import { accessFor, cookieSurface, entitlementsPort, json, readBody } from "./shared.js";
 import type { ApiDeps } from "../deps.js";
 import type { Route } from "../router.js";
@@ -165,7 +169,15 @@ export const accountRoutes: Route[] = [
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const verdict = await accessFor(deps, ctx.accountId, { fresh: true });
+      // THE STORAGE READING FIRST, where a program meters, so the one read of the program carries
+      // what the mail needs and its answer the offer sized to it. Five indexed reads and no count
+      // of the mail tables (the worker's snapshot is where those are counted). A failed reading
+      // asks without the need and leaves the storage block out; it never fails the wall's read.
+      const reading = entitlementsPort(deps) !== null
+        ? await storageReadingOf(ctx.db as unknown as Tx, ctx.accountId).catch(() => null)
+        : null;
+      const verdict = await accessFor(deps, ctx.accountId,
+        reading !== null ? { fresh: true, storageNeed: reading.need } : { fresh: true });
       // `null` = this host declared no program. Not an error, and not a refusal.
       if (verdict === null) return json({ metered: false }, 200);
       if (!verdict.ok) {
@@ -184,14 +196,13 @@ export const accountRoutes: Route[] = [
       // records them before it spends them.
       const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
       if (caughtUp !== "fault") await resumeAfterReopen(deps, ctx);
-      // THE PERSON'S OWN STORAGE, where a cap is a number: one primary-key read of their counter
-      // row, and the limit as every cap reader applies it (a lower one held 14 days, cloud 0055). A
-      // failed read leaves the block out (nothing drawn); it never fails the wall's read.
-      const storage = typeof verdict.limits.storageBytes === "number"
-        ? await storageFactsOf(ctx.db, ctx.accountId).then(async (f) => {
-          const limit = await heldStorageLimitOf(ctx.db as unknown as Tx, ctx.accountId, verdict, deps.now());
-          return limit === null ? null : { ...f, limitBytes: limit.capBytes, plan: limit };
-        }).catch(() => null)
+      // THE PERSON'S OWN STORAGE, where a cap is a number: the reading above, and the limit as every
+      // cap reader applies it (a lower one held 14 days, cloud 0055). A failed read leaves the block
+      // out (nothing drawn); it never fails the wall's read.
+      const storage = typeof verdict.limits.storageBytes === "number" && reading !== null
+        ? await heldStorageLimitOf(ctx.db as unknown as Tx, ctx.accountId, verdict, deps.now())
+          .then((limit) => (limit === null ? null : storageBlockOf(reading, verdict, limit, deps.now())))
+          .catch(() => null)
         : null;
       return json({
         metered: true,
@@ -207,18 +218,52 @@ export const accountRoutes: Route[] = [
         ...(verdict.lifecycle ? { lifecycle: verdict.lifecycle } : {}),
         exportPath: "/account/export",
         ...(caughtUp !== null && caughtUp !== "fault" ? { caughtUp } : {}),
-        ...(storage !== null ? {
-          storage: {
-            usedBytes: storage.usedBytes, limitBytes: storage.limitBytes, emptiedForSpace: storage.emptiedForSpace,
-            firstEmptiedAt: storage.firstEmptiedAt, keptFrom: storage.keptFrom, withheldOnArrival: storage.withheldOnArrival,
-            upgrade: storageUpgradeOf(storage.plan.planBytes ?? storage.limitBytes),
-            emptyingNow: storageEmptyingNow(storage, storage.limitBytes, deps.now()),
-            // The trial's floor or a held drop: the plan's own, lower limit and when it applies.
-            ...(storage.plan.planBytes !== null
-              ? { planLimitBytes: storage.plan.planBytes, limitDropsAt: storage.plan.dropsAt } : {}),
-          },
-        } : {}),
+        ...(storage !== null ? { storage } : {}),
       }, 200);
+    },
+  },
+  /**
+   * `PATCH /account/storage` — the person's storage choices: `{dismiss: "near"|"full"|"drop"}` hides
+   * that card at the facts it was dismissed at (`storage-card.ts` says until when), `{mail: false}`
+   * turns the storage mails off and `{mail: true}` on again. Exactly one of the two. 404 on a host
+   * with no storage limit. A dismissal reads the cap through the cached verdict, as every cap reader.
+   */
+  {
+    method: "PATCH",
+    pattern: "/account/storage",
+    relay: true,
+    cost: "work",
+    replay: "state",
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const body = await readBody<Record<string, unknown> | null>(req);
+      const keys = body !== null && typeof body === "object" && !Array.isArray(body) ? Object.keys(body) : [];
+      const dismiss = body?.dismiss;
+      const mail = body?.mail;
+      const valid = keys.length === 1
+        && ((keys[0] === "dismiss" && isStorageCardLevel(dismiss)) || (keys[0] === "mail" && typeof mail === "boolean"));
+      if (!valid) {
+        throw new ServiceError("validation_failed", 400, "name one of dismiss (near, full or drop) or mail (true or false)");
+      }
+      const noCap = (): ServiceError => new ServiceError("no_storage_limit", 404, "This deployment keeps no storage limit.");
+      if (entitlementsPort(deps) === null) throw noCap();
+      const db = ctx.db as unknown as Tx;
+      const now = deps.now();
+      if (typeof mail === "boolean") {
+        await setStorageMail(db, ctx.accountId, mail, now);
+        return json({ mail }, 200);
+      }
+      const verdict = await accessFor(deps, ctx.accountId);
+      if (!verdict?.ok || typeof verdict.limits.storageBytes !== "number") throw noCap();
+      const limit = await heldStorageLimitOf(db, ctx.accountId, verdict, now);
+      if (limit === null) throw noCap();
+      const counter = await storageFactsOf(db, ctx.accountId);
+      const level = dismiss as Parameters<typeof storageDismissalOf>[0];
+      await recordStorageDismissal(db, ctx.accountId, storageDismissalOf(level, {
+        usedBytes: counter.usedBytes, capBytes: limit.capBytes, planBytes: limit.planBytes, dropsAt: limit.dropsAt,
+        emptiedForSpace: counter.emptiedForSpace, emptyingNow: storageEmptyingNow(counter, limit.capBytes, now),
+      }, now));
+      return json({ dismissed: level }, 200);
     },
   },
   /**
@@ -256,6 +301,39 @@ export const accountRoutes: Route[] = [
           "no_manage_surface", 404,
           "This deployment has no subscription management page.",
         );
+      }
+      return json(link, 200);
+    },
+  },
+  /**
+   * `POST /account/manage-link/change` — the subscription page that may change the plan and the
+   * storage add-on, where Change plan and Add storage lead. `paid` on `manage-link`'s terms, and
+   * `stepUp`: that page charges the card on file, so a recent second factor is the floor, and only
+   * this door asks the program for an elevated page. The mail's need rides along so the page can size
+   * its offer; a failed reading sends none. Not open while refused: a closed account's way back is
+   * `manage-link`. The body names the page's language and nothing else.
+   */
+  {
+    method: "POST",
+    pattern: "/account/manage-link/change",
+    relay: true,
+    cost: "paid",
+    replay: "ephemeral",
+    options: { stepUp: true },
+    handler: async (req, deps) => {
+      const ctx = serviceContext(deps, req);
+      const lang = (await readBody<{ lang?: unknown } | null>(req))?.lang;
+      const port = entitlementsPort(deps);
+      if (!port) {
+        throw new ServiceError("no_manage_surface", 404, "This deployment has no subscription management page.");
+      }
+      const reading = await storageReadingOf(ctx.db as unknown as Tx, ctx.accountId).catch(() => null);
+      const link = await port.manageLink(
+        ctx.accountId, lang === "de" || lang === "en" ? lang : undefined, undefined,
+        { elevated: true, ...(reading !== null ? { storageNeed: reading.need } : {}) },
+      );
+      if (!link) {
+        throw new ServiceError("no_manage_surface", 404, "This deployment has no subscription management page.");
       }
       return json(link, 200);
     },

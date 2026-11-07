@@ -192,6 +192,7 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "alert_drills.driver": { not: "a driver name the product writes" },
   "alert_drills.sink": { not: "a sink name the product writes, held to a shape by a CHECK" },
   "alert_drills.ack_token_hash": { not: "a sha256 the product computes, 43 characters by a CHECK" },
+  "storage_mail_sent.level": { not: "a closed set of levels, held by a CHECK" },
   "alert_state.alert_key": { not: "an alert key the product writes" },
   "api_faults.route": { not: "a route pattern the product writes" },
   "platform_signals.provider": { not: "a provider name the product writes" },

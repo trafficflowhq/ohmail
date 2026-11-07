@@ -9,7 +9,9 @@ import {
   authThrottle, AUTH_THROTTLE_RETENTION_MS, PROBE_BUDGET, probeRowsOfAccount, spendProbeBudget,
 } from "@trafficflow/db/cloud";
 import { eq } from "drizzle-orm";
-import { deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, type ServiceContext } from "../src/index.js";
+import {
+  deleteAccount, makeTestAuthDeps, throttleKeysFor, DEFAULT_AUTH_CONFIG, LIVE_BODY_WINDOW_MS, type ServiceContext,
+} from "../src/index.js";
 import { NOTICE_EVERY_MS } from "../src/auth/auth-service.js";
 import { NOW, seedFullAccount } from "./helpers/erasure-fixture.js";
 
@@ -36,6 +38,8 @@ function families(accountId: string, userId: string, email: string): string[] {
     `mail:unsolicited:${hA}`, `mail:transactional:${hA}`,
     // The connect probes' slots, IMAP and SMTP (`imap-probe.ts`).
     `imap:mailbox:probe:${typed}:${accountId}`, `imap:mailbox:probe:smtp:${typed}:${accountId}`,
+    // Load it now's admission, by the account's keyed hash (`live-body-admit.ts`).
+    `live-body:${keys.client(accountId)}`,
   ];
 }
 
@@ -112,6 +116,7 @@ describe("erasure and the sign-in throttle", () => {
       notice: NOTICE_EVERY_MS,
       mail: 60 * 60_000,
       probe: Math.max(...[...PROBE_BUDGET.target, ...PROBE_BUDGET.account].map((w) => w.windowMs)),
+      liveBody: LIVE_BODY_WINDOW_MS,
     };
     for (const [name, ms] of Object.entries(spans)) expect(ms, name).toBeLessThanOrEqual(AUTH_THROTTLE_RETENTION_MS);
   });

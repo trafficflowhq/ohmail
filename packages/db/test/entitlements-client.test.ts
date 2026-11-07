@@ -1319,6 +1319,83 @@ describe("access — the trialStorage block", () => {
   }
 });
 
+describe("access — the storage offer and the confirmed decrease (cloud 0057's open half)", () => {
+  const NEED = { expectedBytes: 12_500_000_000, expectedLetters: 500_000, importing: true };
+  const OFFER = {
+    currency: "usd", interval: "month",
+    plans: [
+      { plan: "solo", mailboxes: 2, roomBytes: 2_000_000_000, amount: 900 },
+      { plan: "plus", mailboxes: 5, roomBytes: 5_000_000_000, amount: 1_500 },
+      { plan: "pro", mailboxes: 10, roomBytes: 10_000_000_000, amount: 2_900 },
+    ],
+    addon: { unitBytes: 10_000_000_000, amount: 1_000, maxUnits: 10 },
+    current: { plan: "solo", addonUnits: 0, roomBytes: 4_000_000_000, roomFrom: "now" },
+    fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, amount: 2_500, keepsAll: true },
+    canChange: true, reason: null,
+  };
+  const withBlocks = (blocks: Record<string, unknown>): Record<string, unknown> =>
+    ({ ...(wire("access-200-trialing") as Record<string, unknown>), ...blocks });
+
+  it("a read carrying the need sends it, and the offer the program sized comes back narrowed", async () => {
+    const c = client([{ status: 200, body: withBlocks({ storageOffer: { ...OFFER, extra: "dropped" } }) }]);
+    const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });
+    expect(JSON.parse(c.bodies[0]!)).toEqual({ accountId: ACC, storageNeed: NEED });
+    expect(v.ok && v.storageOffer).toEqual(OFFER);
+    expect(c.faults).toEqual([]);
+    // A read without the need asks for nothing more than it always did.
+    await c.port.access(ACC, { fresh: true });
+    expect(JSON.parse(c.bodies[1]!)).toEqual({ accountId: ACC });
+  });
+
+  it("a read carrying the need never rides a call in flight that did not ask", async () => {
+    const plane = countedPlane(30, [{ status: 200, body: withBlocks({}) }]);
+    const bodies: string[] = [];
+    const { port } = onPlane((url, init) => { bodies.push(init.body); return plane.impl(url, init); });
+    const shared = port.access(ACC);
+    const own = port.access(ACC, { fresh: true, storageNeed: NEED });
+    await Promise.all([shared, own]);
+    expect(plane.accounts, "two calls: the need is not folded into the shared one").toHaveLength(2);
+    expect(bodies.map((b) => JSON.parse(b) as Record<string, unknown>).filter((b) => "storageNeed" in b)).toHaveLength(1);
+  });
+
+  for (const [what, block, field] of [
+    ["a price that is not a whole count", { ...OFFER, fit: { ...OFFER.fit, amount: 25.5 } }, "storageOffer.fit"],
+    ["an unknown plan", { ...OFFER, plans: [{ plan: "gold", mailboxes: 1, roomBytes: 1, amount: 1 }] }, "storageOffer.plans"],
+    ["a currency that is not a code", { ...OFFER, currency: "US dollars" }, "storageOffer.currency"],
+    ["a reason in prose", { ...OFFER, canChange: false, reason: "Your payment is overdue." }, "storageOffer.reason"],
+    ["a block that is not an object", [OFFER], "storageOffer"],
+  ] as const) {
+    it(`${what} is a drift, named, read as no offer — and the verdict stands`, async () => {
+      const c = client([{ status: 200, body: withBlocks({ storageOffer: block }) }]);
+      const v = await c.port.access(ACC, { fresh: true, storageNeed: NEED });
+      expect(v.ok).toBe(true);
+      expect("storageOffer" in v).toBe(false);
+      expect(c.faults).toEqual([{ path: "/v1/access", status: 200, field }]);
+    });
+  }
+
+  it("the confirmed decrease rides every answer; one that cannot be read is a drift and none", async () => {
+    const told = { planBytesLimit: 2_000_000_000, at: "2026-11-07T10:00:00.000Z" };
+    const c = client([{ status: 200, body: withBlocks({ storageTold: told }) }]);
+    const v = await c.port.access(ACC);
+    expect(v.ok && v.storageTold).toEqual(told);
+    const bad = client([{ status: 200, body: withBlocks({ storageTold: { planBytesLimit: -1, at: told.at } }) }]);
+    const w = await bad.port.access(ACC);
+    expect("storageTold" in w).toBe(false);
+    expect(bad.faults).toEqual([{ path: "/v1/access", status: 200, field: "storageTold.planBytesLimit" }]);
+  });
+
+  it("the change door's mint asks for an elevated page with the need; the plain mint never does", async () => {
+    const c = client([{ status: 200, body: wire("manage-link-200") }]);
+    await c.port.manageLink(ACC, "de", undefined, { elevated: true, storageNeed: NEED });
+    await c.port.manageLink(ACC, "en");
+    expect(c.bodies.map((b) => JSON.parse(b))).toEqual([
+      { accountId: ACC, lang: "de", elevated: true, storageNeed: NEED },
+      { accountId: ACC, lang: "en" },
+    ]);
+  });
+});
+
 describe("`aiPricing` — /health's reading of where a quote's price comes from", () => {
   it("probes ONCE, for the nil account, and latches `plane` when the answer carries the card", async () => {
     const c = client([{ status: 200, body: wire("access-200-active") }]);

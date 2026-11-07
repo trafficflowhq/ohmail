@@ -300,6 +300,9 @@ const CLOUD_TABLES = [
   "connect_attempts",
   // Cloud 0055 — a lower storage limit's hold. CLOUD: only the hosted worker and API meter storage.
   "account_storage_holds",
+  // Cloud 0057 — the storage estimate's snapshot, the card's dismissal and mail switch, the storage
+  // mails sent. CLOUD: only the hosted worker and API meter storage, estimate it and mail about it.
+  "mailbox_storage_stats", "account_storage_prefs", "storage_mail_sent",
   // the funnel
   "waitlist", "invites",
   // always-on push — named in §7 as part of the moat
@@ -4374,7 +4377,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 107 → 108 for `account_storage_holds` (cloud 0055) — a lower storage limit's hold, CLOUD.
     // 108 → 109 for `rule_removals` (mail 0178) — the rules a person removed, MAIL.
     // 109 → 110 for `scheduled_send_files` (mail 0179) — a scheduled letter's kept files, MAIL.
-    expect(SIDE.size).toBe(110);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 110 → 113 for `mailbox_storage_stats`, `account_storage_prefs` and `storage_mail_sent` (cloud 0057), CLOUD.
+    expect(SIDE.size).toBe(113);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
     expect(MAIL_TABLES).toHaveLength(60);   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
@@ -4392,7 +4396,8 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 47 → 48: alert_drills (cloud 0051)
     // 48 → 49: connect_attempts (cloud 0054)
     // 49 → 50: account_storage_holds (cloud 0055)
-    expect(CLOUD_TABLES).toHaveLength(50);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
+    // 50 → 53: mailbox_storage_stats + account_storage_prefs + storage_mail_sent (cloud 0057)
+    expect(CLOUD_TABLES).toHaveLength(53);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
   });
 
   it("NO mail statement names a private object — so mail-first is sound, not assumed", () => {

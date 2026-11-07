@@ -871,6 +871,15 @@ REVOKE ALL ON public.connect_attempts FROM ohmail_admin;
 GRANT SELECT (account_id, at, door, preset, outcome, reason, transport)
   ON public.connect_attempts TO ohmail_admin;
 
+-- `mailbox_storage_stats` (cloud 0057) — the storage estimate's snapshot per mailbox: letters, letters
+-- holding text, letters emptied for space, their text bytes, their places on the server, the folder
+-- counts summed, two booleans and the time it was taken. Counts, never content: the console's Expected
+-- figure. SELECT ONLY: the worker writes it. Cloud 0057 grants the same stanza where this role exists.
+REVOKE ALL ON public.mailbox_storage_stats FROM ohmail_admin;
+GRANT SELECT (account_id, mailbox_id, letters, text_letters, emptied, text_bytes, instances,
+  server_letters, counted, imported, at)
+  ON public.mailbox_storage_stats TO ohmail_admin;
+
 -- ── 11. WHAT IS DELIBERATELY NOT GRANTED, and is enforced by the step-2 blanket revoke ────
 --
 --   messages            the ROW is the oracle; §4 has the argument

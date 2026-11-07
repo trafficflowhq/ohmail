@@ -1,9 +1,10 @@
 import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { accounts, accountStorage, devices, mailboxes, sessions, users } from "@trafficflow/db";
-import { accountLifecycleNotices, authEvents, creditRefundObligations } from "@trafficflow/db/cloud";
+import { accountLifecycleNotices, authEvents, creditRefundObligations, mailboxStorageStats } from "@trafficflow/db/cloud";
 import type { ApiDeps } from "@trafficflow/api";
 import {
   WORKER_ROSTER_INTERVAL_SECONDS,
@@ -179,6 +180,22 @@ describe("GET /admin/accounts/:id — the account page", () => {
     });
     // An account with no counter row has no storage block at all.
     expect((await read<AccountDetailV2>(w, `/admin/accounts/${C}`)).storage).toBeNull();
+  });
+
+  it("says what the mailboxes are expected to need, from the worker's snapshot, counts only (cloud 0057)", async () => {
+    const w = await world();
+    const mb = randomUUID();
+    await w.deps.db.insert(mailboxStorageStats).values({
+      accountId: A, mailboxId: mb, letters: 2_000, textLetters: 2_000, emptied: 0, textBytes: 50_000_000, instances: 2_000,
+      serverLetters: 500_000, counted: false, imported: false, at: at(-60),
+    });
+    const d = await read<AccountDetailV2>(w, `/admin/accounts/${A}`);
+    expect(d.storage).toMatchObject({ expectedLetters: 500_000, expectedBytes: 12_500_000_000, complete: false, importing: true });
+    // The snapshot names no mailbox address, no folder and no letter: counts only.
+    expect(Object.keys(d.storage!).sort()).toEqual([
+      "bytes", "checkedAt", "complete", "drift", "emptiedForSpace", "expectedBytes", "expectedLetters", "firstEmptiedAt",
+      "importing", "keptFrom", "lastEmptiedAt", "updatedAt", "withheldOnArrival",
+    ]);
   });
 
   it("masks every login address for ops", async () => {

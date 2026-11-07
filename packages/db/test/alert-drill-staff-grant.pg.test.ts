@@ -64,8 +64,8 @@ function grantsOnTable(text: string, table: RegExp): string[] {
   return out.sort();
 }
 
-/** The harden script as it stood before 0051: the shipped one, its `alert_drills` stanza and cloud 0054's taken out. */
-const scriptBefore0051 = (): string => hardenScriptWithout(TABLE, "connect_attempts");
+/** The harden script as it stood before 0051: the shipped one, its `alert_drills` stanza and cloud 0054's and 0057's taken out. */
+const scriptBefore0051 = (): string => hardenScriptWithout(TABLE, "connect_attempts", "mailbox_storage_stats");
 
 describe("cloud 0051's grant says what the harden script says, and only that", () => {
   it("its grants are the script's alert_drills stanza, verb for verb and column for column", () => {
@@ -225,8 +225,8 @@ describe.skipIf(!PG_UP)("cloud 0051 on real Postgres: a database hardened before
   });
 
   it("re-running the shipped harden script afterwards leaves the same privileges: either order agrees", async () => {
-    // Without the stanzas of tables newer than this database (cloud 0054's), which it would refuse.
-    await owners[DB_GRANTED]!.unsafe(hardenScriptWithout("connect_attempts")).simple();
+    // Without the stanzas of tables newer than this database (cloud 0054's and 0057's), which it would refuse.
+    await owners[DB_GRANTED]!.unsafe(hardenScriptWithout("connect_attempts", "mailbox_storage_stats")).simple();
     expect(await heldByRole(DB_GRANTED)).toEqual(EXPECTED);
   });
 });

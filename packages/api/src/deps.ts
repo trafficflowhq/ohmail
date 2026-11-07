@@ -135,6 +135,31 @@ export interface AttachmentStagingPort {
 export type AttachmentStagingFactory = (db: Db) => AttachmentStagingPort;
 
 /**
+ * WHAT ONE STORAGE MAIL SAYS (cloud 0057), structural for `customerMail`'s reason: numbers, closed
+ * words and the program's fitted choice, never a link or a token. The pass builds it, the mail
+ * service renders it in the account's language.
+ */
+export interface StorageNoticeInput {
+  to: string;
+  locale: "en" | "de";
+  level: "near" | "full";
+  usedBytes: number;
+  capBytes: number;
+  limitReason: "plan" | "trial" | "held";
+  /** When the cap held after a drop ends; null otherwise. */
+  limitDropsAt: string | null;
+  expectedBytes: number;
+  importing: boolean;
+  /** "YYYY-MM": text is kept for letters from this month on; null while none was emptied. */
+  keptFrom: string | null;
+  fit: { plan: "solo" | "plus" | "pro"; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
+  /** The storage the fitted choice adds on top of its plan's own room. */
+  addonBytes: number;
+  currency: string;
+  interval: "month" | "year";
+}
+
+/**
  * The typed service bag on `ApiDeps`. The test helper and each host construct these once and
  * expose them here so handlers never new-up a service.
  * `sync` is optional — the handler falls back to the `syncService` singleton.
@@ -325,7 +350,18 @@ export interface ApiServices {
       ctx: { db: unknown; now: () => Date },
       input: { to: string; locale: "en" | "de"; anchor: Date },
     ): Promise<{ status: "sent" | "skipped" | "failed" }>;
+    /** The storage mail pass's two mails (cloud 0057). Optional: without it they are unmailable. */
+    sendStorageNotice?(
+      ctx: { db: unknown; now: () => Date },
+      input: StorageNoticeInput,
+    ): Promise<{ status: "sent" | "skipped" | "failed" }>;
   };
+  /**
+   * LOAD IT NOW's admission (`GET /messages/:id/live-body`): one load more for the session's account,
+   * or refused (429). The hosted composition's `reserveIpSlot` under `live-body`, keyed by account.
+   * Absent on a host that empties no letter for space: such a host refuses every load first (409).
+   */
+  liveBodyAdmit?: (ctx: ServiceContext) => Promise<boolean>;
   /**
    * This host's platform ceiling on total attachment bytes in one send — or `null` for a host
    * that has none, which is the local engine. Deps-level rather than a route constant because

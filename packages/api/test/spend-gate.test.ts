@@ -219,6 +219,12 @@ const UNAUTHENTICATED = [
   // inside `reapStaleWebSessions` (device-less, full-scope, past its window), never by anything on
   // the wire. Sorted after `alerts/run` (`alerts` < `sessions`).
   "GET /internal/sessions/reap",
+  /**
+   * THE STORAGE MAILS (cloud 0057), on the security notices' exact terms: the worker's api-cron with a
+   * shared secret, no session resolved. One run mails at most `STORAGE_MAILS_PER_RUN` accounts' own
+   * users, each once per level and cap and a week apart, and asks the program once per mail owed.
+   */
+  "GET /internal/storage-mails/run",
   // The screened-out unsubscribe DRAIN, on the away clock's and the send reconciler's exact
   // terms: a scheduler's door behind a shared secret, no session resolved. What one call may
   // cause is bounded by the service's own constants — accounts, targets per account, a wall
@@ -966,7 +972,10 @@ describe("the route table declares what every handler causes", () => {
     // joins `CEREMONY` and this total together and the gated remainder is unchanged.
     // 261 -> 260: `GET /internal/platform-signals/run` left with the 5xx poll, now the worker's. It
     // was `unauthenticated`, so it leaves the exempt list above and this total together.
-    expect(apiRoutes).toHaveLength(260);
+    // 260 -> 264 with the storage program (cloud 0057): `GET /internal/storage-mails/run`
+    // (`unauthenticated`, on the exempt list above) and three gated ones — Load it now (`connection`:
+    // it dials the person's mail server), the storage choices (`work`) and the change door (`paid`).
+    expect(apiRoutes).toHaveLength(264);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1204,7 +1213,9 @@ describe("the route table declares what every handler causes", () => {
     // 259 -> 260 with the reuse sweeps' acknowledgement, a `ceremony`: the remainder does not move.
     // 260 -> 261 with the recovery code's step-up, a `ceremony`: the remainder does not move.
     // 261 -> 260 with the 5xx poll's route gone, `unauthenticated`: the remainder does not move.
-    expect(gated.length).toBe(260 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    // 260 -> 264 with the storage program: the storage mails' clock joins `UNAUTHENTICATED`, and Load
+    // it now, the storage choices and the change door grow the remainder by three.
+    expect(gated.length).toBe(264 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

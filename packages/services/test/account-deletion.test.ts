@@ -21,9 +21,12 @@ import {
 } from "@trafficflow/db";
 import {
   accountStorageHolds,
+  accountStoragePrefs,
   attachmentStaging,
   authThrottle,
   connectAttempts,
+  mailboxStorageStats,
+  storageMailSent,
   credentials,
   erasedBearers,
   invites,
@@ -204,6 +207,13 @@ describe("account deletion — Art. 17 erasure by anonymisation", () => {
     // A lower storage limit's hold (cloud 0055): by count and by row, for the reason above.
     expect(result.deleted.account_storage_holds).toBe(1);
     expect(await db.select().from(accountStorageHolds)).toHaveLength(0);
+    // The storage estimate's snapshot, the card's dismissal and the storage mails (cloud 0057), the same.
+    expect([result.deleted.mailbox_storage_stats, result.deleted.account_storage_prefs, result.deleted.storage_mail_sent])
+      .toEqual([1, 1, 1]);
+    expect([
+      await db.select().from(mailboxStorageStats), await db.select().from(accountStoragePrefs),
+      await db.select().from(storageMailSent),
+    ]).toEqual([[], [], []]);
   });
 
   it("brings staged attachment tickets forward to expire NOW, rather than orphaning the bytes", async () => {

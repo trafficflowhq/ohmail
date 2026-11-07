@@ -39,7 +39,7 @@ import {
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
   MailService, ResendMailer, mailAlertSink, dbFreeMailAlertSink, dbRecipientLimiter, makeWaitlistService,
-  throttleKeysFor,
+  throttleKeysFor, liveBodyAdmitter,
   type ServiceContext,
 } from "@trafficflow/services";
 import {
@@ -168,6 +168,8 @@ function buildServices(cfg: HostConfig): ApiServices {
       const limit = await heldStorageLimitOf(ctx.db as unknown as Tx, ctx.accountId, verdict, ctx.now());
       return limit === null ? UNMETERED_STORAGE_CAP : limit.capBytes;
     },
+    // Load it now's admission: the host that empties letters for space bounds the loads, per account.
+    liveBodyAdmit: liveBodyAdmitter(throttleKeysFor(cfg.keyProvider)),
     // The way around that ceiling: a transport with no request body in it. The browser mints a
     // grant here, PUTs the bytes straight into a private bucket, and the send carries a
     // reference; `SendService` reads the surface as uncapped for such a send and the mailbox's
