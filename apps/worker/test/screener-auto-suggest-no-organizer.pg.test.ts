@@ -7,7 +7,7 @@ import { eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, type Tx,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { fakeSpendPort, type FakeSpendPort } from "./_spendport.js";
@@ -89,17 +89,23 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — no organizer, no spend", () => 
       .where(eq(mailboxes.id, w.mailboxId));
   }
 
+  let nextUid = 1;
   async function held(w: World, from: string): Promise<string> {
+    const uid = nextUid++;
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId,
       bodyHash: "h", dedupKey: `noorg:${randomUUID()}`,
       subject: `hello from ${from}`, fromAddress: from, snippet: "a first message",
       date: new Date("2026-07-20T00:00:00Z"), createdAt: AFTER,
-      nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+      nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+    // Its copy in the Screener, as the ingest records one.
+    await db.insert(messageInstances).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
     });
     return m!.id;
   }

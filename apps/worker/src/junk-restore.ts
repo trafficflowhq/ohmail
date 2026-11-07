@@ -33,6 +33,12 @@ export const JUNK_RESTORE_FETCH_CHUNK = 4;
 export const AT_CAP_RETRY_MS = 60 * 60 * 1000;
 
 /**
+ * How often the untargeted walk runs per mailbox. Each walk reads every `junk_filed` husk of the
+ * database and nearly always finds nothing; a letter un-junked in another client waits at most this.
+ */
+export const JUNK_RESTORE_WALK_EVERY_MS = 15 * 60 * 1000;
+
+/**
  * Per-message byte ceiling for the re-read. Over it the husk stands (its bytes are the one thing
  * we could not read). `redacted-restore.ts`'s 8 MiB — a verdict-filed message can carry an
  * attachment too, and the ceiling is a bound on one FETCH, not a storage decision (the stored
@@ -46,9 +52,9 @@ export const JUNK_RESTORE_MAX_BYTES = 8 * 1024 * 1024;
  * process, the walk finished, the marker landed, and the message stayed redacted for ever (fixed 2026-09-01
  * by splitting decided from undecided refusals). THE RULE: process-scoped progress state is safe exactly
  * while it cannot be LAUNDERED INTO A DURABLE CLAIM — losing it must cost work, never correctness. This
- * pass satisfies it structurally: THERE IS NO COMPLETION MARKER, so a restart clears all three shelves
- * (`refusedByMailbox`, `capDeferredByMailbox`, `resumeAfterByMailbox`) together and re-walks from the top,
- * every loss toward MORE looking. A future durable "done" marker must move these three to disk in the same
+ * pass satisfies it structurally: THERE IS NO COMPLETION MARKER, so a restart clears all four shelves
+ * (`refusedByMailbox`, `capDeferredByMailbox`, `resumeAfterByMailbox`, `walkedAtByMailbox`) together and re-walks from the top,
+ * every loss toward MORE looking. A future durable "done" marker must move these four to disk in the same
  * commit, or it re-creates the sibling's defect one file over. */
 
 const refusedByMailbox = new Map<string, Set<string>>();
@@ -82,6 +88,14 @@ export function capDeferredFor(mailboxId: string): Map<string, number> {
  */
 const resumeAfterByMailbox = new Map<string, string>();
 
+/** mailboxId → when its last untargeted walk finished — the walk's own CLOCK shelf. */
+const walkedAtByMailbox = new Map<string, number>();
+
+/** The next untargeted walk of this mailbox runs whatever its clock says. */
+export function oweJunkWalk(mailboxId: string): void {
+  walkedAtByMailbox.delete(mailboxId);
+}
+
 export interface JunkRestoreDeps {
   repo: WorkerRepo;
   adapter: MailboxAdapter;
@@ -110,6 +124,9 @@ export interface JunkRestoreDeps {
   capDeferred?: Map<string, number>;
   /** Test seam for the rotation cursor (mailboxId → resume-after keyset position). */
   resume?: Map<string, string>;
+  /** Test seam for the walk clock (mailboxId → when the last untargeted walk finished). */
+  walkedAt?: Map<string, number>;
+  walkEveryMs?: number;
   /**
    * AT THE PRESS: refill exactly these messages, which this cycle's reconcile just moved out of
    * Junk — the move's own completion, not the next pass. The rotation cursor is neither read nor
@@ -169,6 +186,12 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
   const targeted = deps.messageIds;
   const resume = targeted !== undefined ? new Map<string, string>() : deps.resume ?? resumeAfterByMailbox;
   if (targeted !== undefined && targeted.length === 0) return { ...EMPTY };
+  // THE WALK'S CLOCK: an untargeted walk that finished runs again only after the interval. A capped
+  // walk (a resume cursor) continues next cycle, and the targeted run at the move is never held.
+  const walkedAt = deps.walkedAt ?? walkedAtByMailbox;
+  const lastWalk = walkedAt.get(mailboxId);
+  if (targeted === undefined && !resume.has(mailboxId) && lastWalk !== undefined
+    && now().getTime() - lastWalk < (deps.walkEveryMs ?? JUNK_RESTORE_WALK_EVERY_MS)) return { ...EMPTY };
 
   const result: JunkRestoreResult = { ...EMPTY };
   // THE ROTATION — see {@link resumeAfterByMailbox}: a bounded exit left a cursor, resume there.
@@ -326,6 +349,12 @@ export async function junkRestorePass(deps: JunkRestoreDeps): Promise<JunkRestor
   // starts from the top and newly un-junked low-id messages wait at most one rotation.
   if (result.capped && after !== undefined) resume.set(mailboxId, after);
   else resume.delete(mailboxId);
+  // A walk that refilled a body looks again next cycle; one that found nothing to do waits. A
+  // targeted run that left letters behind hands them to the next cycle's walk.
+  if (targeted === undefined) {
+    if (!result.capped && result.restored === 0) walkedAt.set(mailboxId, now().getTime());
+    else walkedAt.delete(mailboxId);
+  } else if (result.capped || result.deferred > 0) walkedAt.delete(mailboxId);
 
   if (result.restored > 0 || result.fetched > 0) {
     log?.info("sync_junk_bodies_restored", {

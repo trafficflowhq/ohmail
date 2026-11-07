@@ -82,22 +82,40 @@ export function estimateWireBytes(rows: ReadonlyArray<KnownLocator>): number {
  * thirty-two — and a full roster wanted several times the whole heap.
  *
  * THE ARITHMETIC, so the next heap change is a decision and not a surprise:
- *   heap        512 MiB   `apps/worker/Dockerfile` and `Dockerfile.selfhost` (`--max-old-space-size`)
- *   budget      128 MiB   a QUARTER of it — the rest is the scan window, the adapter's fetch
- *                         buffers, the dead-letter ledgers, the postgres pool and the runtime
+ *   heap        the RUNNING process's JS heap limit (`heap_size_limit`), which the image's
+ *               entrypoint sets from the container's memory (`apps/worker/entrypoint.sh`: half
+ *               of it, 512 to 2048 MiB, plus the young generation) unless NODE_OPTIONS names one
+ *   budget      a QUARTER of it — the rest is the scan window, the adapter's fetch
+ *               buffers, the dead-letter ledgers, the postgres pool and the runtime
  *   entry         374 B   one remembered locator, index included — CHARGED; the same entry
  *                         measured 360 bytes against rows a real Postgres minted, so the charge
  *                         sits about 4% above what the heap actually holds
- *   so the budget holds about three hundred and sixty thousand remembered locators IN TOTAL, over
- *   however many mailboxes are attached: the sixty-fifth costs what the fifth costs, which is the
- *   property the per-attachment version lacked.
- * A heap that moves without this fraction moving reddens `known-set-budget.test.ts`, which reads
- * both Dockerfiles: the ceiling is a deploy setting and is asserted where it is set.
+ *   so a 512 MiB heap holds about three hundred and ninety thousand remembered locators IN TOTAL,
+ *   and a 2 GiB heap about 1.5 million, over however many mailboxes are attached: the sixty-fifth
+ *   costs what the fifth costs, which is the property the per-attachment version lacked.
+ * Derived rather than stated: a constant that the deployed heap outgrew left the budget a quarter
+ * of a heap nobody ran, and one mailbox larger than that quarter is read cold every cycle.
  */
-export const WORKER_HEAP_MIB = 512;
+export const WORKER_HEAP_LIMIT_BYTES = runtimeHeapLimitBytes();
+export const WORKER_HEAP_MIB = WORKER_HEAP_LIMIT_BYTES / (1024 * 1024);
 /** The budget is this fraction of the heap — a quarter. */
 export const KNOWN_SET_BUDGET_DIVISOR = 4;
-export const KNOWN_SET_BUDGET_BYTES = (WORKER_HEAP_MIB / KNOWN_SET_BUDGET_DIVISOR) * 1024 * 1024;
+
+/**
+ * The JS engine's heap limit for this process, asked at run time and never imported: this module
+ * is in the phone's engine, which carries no Node builtin. A runtime that cannot say is charged
+ * the image's 512 MiB floor.
+ */
+function runtimeHeapLimitBytes(): number {
+  const proc = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } }).process;
+  const v8 = proc?.getBuiltinModule?.("node:v8") as { getHeapStatistics?: () => { heap_size_limit: number } } | undefined;
+  return v8?.getHeapStatistics?.().heap_size_limit ?? 512 * 1024 * 1024;
+}
+/** The locator budget a process with this heap limit gives its memos. */
+export function knownSetBudgetBytes(heapLimitBytes: number): number {
+  return Math.floor(heapLimitBytes / KNOWN_SET_BUDGET_DIVISOR);
+}
+export const KNOWN_SET_BUDGET_BYTES = knownSetBudgetBytes(WORKER_HEAP_LIMIT_BYTES);
 
 /**
  * WHAT ONE REMEMBERED LOCATOR COSTS THE HEAP, charged high rather than exactly.
@@ -367,6 +385,14 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Dirty writes that move only the read-state baseline: they never remove an instance, so the
+ * reaper need not follow them. Every other dirty write counts as a possible removal.
+ */
+export const KNOWN_SET_KEEPS_INSTANCES: ReadonlySet<string> = new Set([
+  "applyExternalFlag", "upsertFlagState", "completeFlagState",
+]);
+
+/**
  * ONE mailbox's memoized known-set. Built where {@link DeadLetterLedger} is built and for the same
  * reason: it is per-attachment state, and its lifetime IS the design.
  *
@@ -408,6 +434,8 @@ export class KnownSetCache {
   private writes = 0;
   private cycleReads = 0;
   private cycleHits = 0;
+  /** Writes through the watched repo that may have removed an instance — see {@link removals}. */
+  private removing = 0;
   /**
    * BUMPED WHENEVER THE ENTRIES MOVE — replaced by a read-through, or thrown away by a drop. It is
    * the stamp anything DERIVED from the known set is keyed on, so a derivation can tell "the same
@@ -445,6 +473,13 @@ export class KnownSetCache {
     // this module can see — the scheduler keeps no pass counter the memo could read.
     this.budget.beginCycle(this.mailboxId);
   }
+
+  /**
+   * How many writes that may have left a message without an instance went through the watched
+   * repo, for the life of this memo: the reaper's cue (`sync.ts`). Only grows; a drop keeps it.
+   */
+  get removals(): number { return this.removing; }
+  noteRemovingWrite(): void { this.removing += 1; }
 
   /** Whether the memo currently holds a set. Read by the guards, not by the loop. */
   get warm(): boolean { return this.entries !== null; }
@@ -628,12 +663,17 @@ export class KnownSetCache {
     return this.shape !== null && this.shape.gen === this.gen ? this.shape : null;
   }
 
-  /** Remember a derivation against the set it was taken from. */
+  /**
+   * Remember a derivation against the set it was taken from — only while that set is HELD. A cold
+   * memo (a read the budget refused) is told of no insert or move, so a derivation kept here would
+   * be handed back every cycle without the letters stored since, and the import would stall.
+   */
   rememberFolders(
     byFolder: Map<string, KnownEntry[]>,
     rowEpochs: Map<string, string | null>,
     resolved: Map<string, string>,
   ): void {
+    if (this.entries === null) return;
     this.shape = { gen: this.gen, byFolder, rowEpochs, resolved };
   }
 
@@ -881,6 +921,7 @@ export function watchKnownSet<T extends object>(repo: T, cache: KnownSetCache): 
       // DIRTY, and dropped BEFORE the call — see the header on why eager is the safe order.
       return (...args: unknown[]): unknown => {
         cache.drop(prop);
+        if (!KNOWN_SET_KEEPS_INSTANCES.has(prop)) cache.noteRemovingWrite();
         return (value as (...a: unknown[]) => unknown).apply(obj, args);
       };
     },

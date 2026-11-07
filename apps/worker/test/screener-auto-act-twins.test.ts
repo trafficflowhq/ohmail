@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, routingDecisions, rules,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
 import { screenerAutoActPass, type ScreenerActConsent } from "../src/screener-auto-act.js";
@@ -37,12 +37,16 @@ describe("the auto-act beside a rule written after its page was read", () => {
     await db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `twin:${randomUUID()}`, subject: "hello", fromAddress: WHO,
-      nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+      nativeLocator: { folder: SCREENER, ref: "1:1" },
       authVerdict: o.authVerdict ?? "pass",
     }).returning();
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+    // Its copy in the Screener, as the ingest records one.
+    await db.insert(messageInstances).values({
+      accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: 1, isPrimary: true,
     });
     await db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,

@@ -12,7 +12,10 @@ It is not a multi-tenant hosting kit, and nothing in it meters or bills.
 ## What you need
 
 - **A machine that stays on.** A small VPS, a home server, or a box in a
-  closet. 2 GB of memory and 20 GB of disk are comfortable.
+  closet. 2 GB of memory and 20 GB of disk are comfortable. The organizer
+  sets its memory ceiling to half of what its container may use, between
+  512 MB and 2 GB; put `NODE_OPTIONS=--max-old-space-size=<MB>` on it to
+  choose your own.
 - **An x86_64 or an arm64 machine.** Every image in the stack is published
   for both, so a Raspberry Pi 4 or 5, an Ampere or Graviton instance, or an
   Apple-silicon Mac takes the same commands as an Intel box — `docker pull`
