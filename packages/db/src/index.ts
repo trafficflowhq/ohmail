@@ -68,6 +68,9 @@ export { lockAccountMailboxes, mailboxRowsInIdOrder } from "./mailbox-row-order.
 // (both the services and the worker write it, and the worker may not import services at
 // runtime). Reaches `schema-mail.js` alone, so the closure rule above holds.
 export { upsertDesiredSeen, upsertDesiredSeenMany } from "./flag-intent.js";
+// The reconcile polls' account bound (mail 0181): each queue read at its own account. Reaches
+// `schema-mail.js` alone.
+export { folderQueueOf, flagQueueOf } from "./reconcile-queue.js";
 export {
   PRESS_AGED_MS, PRESS_AGE_MAX_MS, clampPressInstant, decisionInstant, placementDecidedAfter, pressIsAged,
   readDecidedAfter, tagAssignedAfter, triageDecidedAfter,

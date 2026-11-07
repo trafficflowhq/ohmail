@@ -151,9 +151,20 @@ export function withoutAccountBound(text: string, sqlite: boolean): { text: stri
   return { text: out, replaced };
 }
 
-/** The SQLite plan lines that break the budget: every `folder_state` read is the caller's outstanding range. */
+/**
+ * Every `folder_state` read the filing statement may make: a search by the caller's account on a
+ * partial index of the caller's queue. Since mail 0181 there are two, the outstanding filings (mail
+ * 0160) and the reconcile queue's pending rows, which hold the same filings and the account's few
+ * other pending rows; the device store cannot rank them (equal estimates) and reads the newer.
+ */
+const CALLERS_QUEUE = new Set([
+  "SEARCH folder_state USING INDEX folder_state_outstanding_idx (outstanding_account_id=?)",
+  "SEARCH folder_state USING INDEX folder_state_pending_queue_idx (outstanding_account_id=?)",
+]);
+
+/** The SQLite plan lines that break the budget: every `folder_state` read is the caller's queue. */
 export function sqliteFilingFaults(plan: string[]): string[] {
   return plan.filter((l) => /^SCAN /.test(l)
     || l.includes("messages_account_mailbox_unread_idx")
-    || (/\bfolder_state\b/.test(l) && l !== "SEARCH folder_state USING INDEX folder_state_outstanding_idx (outstanding_account_id=?)"));
+    || (/\bfolder_state\b/.test(l) && !CALLERS_QUEUE.has(l)));
 }

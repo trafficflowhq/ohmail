@@ -837,8 +837,8 @@ export const folderState = sqliteTable("folder_state", {
   screenerFloorVersion: integer("screener_floor_version"),
   // Mail 0145: when a decision about the placement was placed — the stale-press floor's stamp.
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
-  // Mail 0160: the message's account while the row is outstanding, written by the two triggers
-  // alone. See the server twin.
+  // Mail 0160: the message's account while the row is outstanding, and since mail 0181 while it is
+  // pending, written by the four triggers alone. See the server twin.
   outstandingAccountId: text("outstanding_account_id"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
@@ -852,6 +852,10 @@ export const folderState = sqliteTable("folder_state", {
   ixOutstanding: index("folder_state_outstanding_idx")
     .on(t.outstandingAccountId, t.messageId)
     .where(sql.raw(OUTSTANDING_FILING_WHERE)),
+  // Mail 0181: the reconcile poll's pending rows, by account and then in its queue order.
+  ixPendingQueue: index("folder_state_pending_queue_idx")
+    .on(t.outstandingAccountId, t.updatedAt, t.messageId)
+    .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
 /**
@@ -880,7 +884,16 @@ export const flagState = sqliteTable("flag_state", {
   nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
   // Mail 0145: when a read-state decision was placed.
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
-}, (t) => ({ uqMessage: unique().on(t.messageId) }));
+  // Mail 0181: the message's account while the row is pending, written by the two triggers alone.
+  // See the server twin.
+  pendingAccountId: text("pending_account_id"),
+}, (t) => ({
+  uqMessage: unique().on(t.messageId),
+  // Mail 0181: the folder queue's twin.
+  ixPendingQueue: index("flag_state_pending_queue_idx")
+    .on(t.pendingAccountId, t.updatedAt, t.messageId)
+    .where(sql.raw(`"reconcile_status" = 'pending'`)),
+}));
 
 export const rules = sqliteTable("rules", {
   id: text("id").default(UUID_V4).primaryKey(),

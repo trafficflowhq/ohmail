@@ -388,7 +388,8 @@ describe.skipIf(!PG_UP)("baseline adoption", () => {
     expect(gained.filter((l) => l.startsWith("CONSTRAINT flag_state "))).toHaveLength(3);
     expect(gained.filter((l) => l === "CONSTRAINT flag_state flag_state_message_id_unique [u] " +
       "deferrable=false deferred=false :: UNIQUE (message_id)")).toHaveLength(1);
-    expect(gained.filter((l) => l.startsWith("INDEX flag_state "))).toHaveLength(2);
+    // Mail 0181 adds the third: the read-state queue's pending rows.
+    expect(gained.filter((l) => l.startsWith("INDEX flag_state "))).toHaveLength(3);
     // 0025: the one column that decides whether a mailbox is HEY-shaped on its next attach.
     expect(gained.filter((l) => l.startsWith("COLUMN mailboxes.") && l.includes(" kickstart_at ")),
       "0025 must add mailboxes.kickstart_at").toHaveLength(1);

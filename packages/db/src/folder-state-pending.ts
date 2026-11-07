@@ -63,12 +63,13 @@ export { OUTSTANDING_FILING_WHERE };
 
 /**
  * The outstanding filings of one account, by `folder_state.outstanding_account_id` (mail 0160): the
- * message's account, copied by a trigger onto every row that is outstanding, never by application
- * code. Read beside {@link ourOutstandingFiling}, which it narrows to the index range; on a row that
- * is not outstanding the column may be stale or NULL, so it never stands alone. Not an account
- * scope: erasure and export stay keyed by message.
+ * message's account, copied by a trigger onto every row that is outstanding (and since mail 0181 onto
+ * every pending row), never by application code. Read beside {@link ourOutstandingFiling}, which it
+ * narrows to the index range, or beside the reconcile poll's pending literal (`reconcile-queue.ts`,
+ * which hands the account in as a subquery); on a settled row the column may be stale or NULL, so it
+ * never stands alone. Not an account scope: erasure and export stay keyed by message.
  */
-export function outstandingFilingsOf(accountId: string): SQL {
+export function outstandingFilingsOf(accountId: string | SQL): SQL {
   return eq(folderState.outstandingAccountId, accountId);
 }
 

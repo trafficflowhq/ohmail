@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
-import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
+import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
   StoredMessage, MessageIdCandidate, InsertedMessage, InsertMessageInput, FolderStateRow, FlagStateRow,
@@ -4074,6 +4074,16 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
   }
 
+  /**
+   * The reconcile polls' mailbox bound, beside the account bound that is mail 0181's index range
+   * (`folderQueueOf`, `flagQueueOf`). On the device store, which keeps no statistics, the plain term
+   * makes SQLite walk every message of the mailbox; the unary `+` leaves it no index, so the read
+   * starts from the account's pending rows instead.
+   */
+  private pendingQueueMailbox(mailboxId: string): SQL {
+    return this.d.name === "sqlite" ? sql`+${messages.mailboxId} = ${mailboxId}` : eq(messages.mailboxId, mailboxId);
+  }
+
   async listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]> {
     const base = this.db.select({
       messageId: folderState.messageId, desiredFolder: folderState.desiredFolder, observedFolder: folderState.observedFolder,
@@ -4086,7 +4096,9 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       trashedFrom: folderState.trashedFrom,
     }).from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(
-        eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending"),
+        // The mailbox's account, then a literal as mail 0181's partial index spells it, so even a
+        // generic plan reads that index at this account and never another account's queue.
+        folderQueueOf(mailboxId), this.pendingQueueMailbox(mailboxId), sql`${folderState.reconcileStatus} = 'pending'`,
         dueNow(folderState.nextAttemptAt),
       ))
       // ORDERED WHETHER OR NOT IT IS LIMITED — see the port's doc. A LIMIT over physical row
@@ -4110,7 +4122,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       attempts: flagState.attempts,
     }).from(flagState).innerJoin(messages, eq(messages.id, flagState.messageId))
       .where(and(
-        eq(messages.mailboxId, mailboxId), eq(flagState.reconcileStatus, "pending"),
+        flagQueueOf(mailboxId), this.pendingQueueMailbox(mailboxId), sql`${flagState.reconcileStatus} = 'pending'`,
         dueNow(flagState.nextAttemptAt),
       ))
       // ORDERED WHETHER OR NOT IT IS LIMITED, and for the folder queue's reason: a LIMIT over

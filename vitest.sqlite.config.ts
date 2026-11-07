@@ -129,6 +129,8 @@ export default defineConfig({
       // stores spell a boolean column differently). The sidecar composes the worker's own cycle
       // over this store, so a server-only spelling is a phone that cannot settle a read mark.
       "packages/core/test/flag-completion-dialect.test.ts",
+      // The reconcile queues' pending reads: the device runs the same polls (mail 0181).
+      "packages/core/test/reconcile-pending-index-dialect.test.ts",
       /* The reaper's candidate read is an EXCEPT, spelled by each dialect's own set-operation form. */
       "packages/core/test/tombstone-instanceless-candidates.test.ts",
       // The own-mail release and the own-address read: the visit runs them on this store too.
@@ -533,6 +535,8 @@ export default defineConfig({
       /* …and at 74k, through mail 0159's outstanding index; and the column its triggers keep. */
       "packages/services/test/mailbox-facts-budget.test.ts",
       "packages/db/test/folder-state-outstanding-account.test.ts",
+      // The account mail 0181's triggers keep on every pending row of both reconcile queues.
+      "packages/db/test/reconcile-queue-account.test.ts",
       // Whether a sender can be confirmed at each mailbox: the local engine answers it from this store.
       "packages/services/test/mailbox-provider-confirms.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",
