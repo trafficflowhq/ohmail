@@ -1,11 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import type { KnownLocator } from "@trafficflow/core/adapters/drizzle-repo";
+import { getHeapStatistics } from "node:v8";
+import type { KnownLocator, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import type { ImapCursor } from "@trafficflow/core/adapters/imap";
+import { buildCursor } from "../src/sync.js";
 import {
-  KnownSetCache, KnownSetBudget, estimateRetainedBytes,
-  KNOWN_SET_BUDGET_BYTES, KNOWN_SET_BUDGET_DIVISOR, WORKER_HEAP_MIB, processKnownSetBudget,
+  KnownSetCache, KnownSetBudget, estimateRetainedBytes, watchKnownSet,
+  KNOWN_SET_BUDGET_BYTES, KNOWN_SET_BUDGET_DIVISOR, knownSetBudgetBytes, processKnownSetBudget,
 } from "../src/known-set.js";
+
+const MIB = 1024 * 1024;
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -55,26 +60,32 @@ const ONE = estimateRetainedBytes(fixtureRows(0, ROWS));
 
 describe("the locator budget: the bound is a fraction of the deployed heap", () => {
   /**
-   * THE HEAP IS A DEPLOY SETTING AND IS ASSERTED WHERE IT IS SET. Raising the heap is never the fix
-   * for a cache that grows with the roster, but a heap that moves without this fraction moving
-   * leaves the budget stating an arithmetic that is no longer true — so the two Dockerfiles that
-   * set it are read here, and a change to either reddens this case with the consequence printed.
+   * THE HEAP IS THE RUNNING PROCESS'S. A stated constant outlived the heap it was a quarter of; the
+   * budget is now read off the engine's own limit, so a deployment that raises the heap raises the budget.
    */
-  it("reads 512 MiB from both worker Dockerfiles and takes a quarter of it", () => {
-    const read = (name: string) =>
-      readFileSync(fileURLToPath(new URL(`../${name}`, import.meta.url)), "utf8");
-    for (const name of ["Dockerfile", "Dockerfile.selfhost"]) {
-      const m = /--max-old-space-size=(\d+)/.exec(read(name));
-      expect(m, `${name} must set --max-old-space-size`).not.toBeNull();
-      expect(Number(m![1]), `${name} sets the heap this budget is a fraction of`).toBe(WORKER_HEAP_MIB);
-    }
+  it("takes a quarter of the running process's heap limit", () => {
+    const limit = getHeapStatistics().heap_size_limit;
     expect(KNOWN_SET_BUDGET_DIVISOR).toBe(4);
-    expect(KNOWN_SET_BUDGET_BYTES).toBe((512 / 4) * 1024 * 1024);
-    expect(KNOWN_SET_BUDGET_BYTES).toBe(134217728);
+    expect(knownSetBudgetBytes(512 * MIB)).toBe(128 * MIB);
+    expect(KNOWN_SET_BUDGET_BYTES).toBe(Math.floor(limit / 4));
     // The default is the BOUNDED one: a memo built without a budget is bounded, so the composition
     // root cannot forget to pass it.
     expect(processKnownSetBudget.limitBytes).toBe(KNOWN_SET_BUDGET_BYTES);
     expect(new KnownSetCache("m").census().processBudgetBytes).toBe(KNOWN_SET_BUDGET_BYTES);
+  });
+
+  /**
+   * THE CLIFF. One mailbox importing toward 600k copies outgrows a 512 MiB heap's quarter, and a
+   * projection over the whole budget is never kept: every cycle re-reads it. A 2 GiB heap holds it.
+   */
+  it("admits a 600k-entry projection at a 2 GiB heap, and not at 512 MiB", () => {
+    const charge = estimateRetainedBytes(fixtureRows(0, 1)) * 600_000;
+    const at = (heapMib: number): boolean => {
+      const budget = new KnownSetBudget(knownSetBudgetBytes(heapMib * MIB));
+      return budget.offer(new KnownSetCache("importing", budget), charge);
+    };
+    expect(at(512), "a 512 MiB heap's budget held the importing mailbox").toBe(false);
+    expect(at(2048), "a 2 GiB heap's budget refused the importing mailbox").toBe(true);
   });
 });
 
@@ -191,6 +202,37 @@ describe("the locator budget: the refusals", () => {
     // And it reads cold every cycle rather than silently answering stale rows.
     await huge.cycle();
     expect(huge.dbReads).toBe(2);
+  });
+
+  /**
+   * THROUGH THE CURSOR, not `list()` alone: a mailbox over the budget is read cold, and the cursor
+   * built from that read must not be kept as a derivation the memo cannot follow (it holds no
+   * entries, so the import's appends never reach it). Kept, the next cycle hands the adapter the
+   * same known list and the import fetches the same newest batch for ever.
+   */
+  it("a refused mailbox's next cursor names the letters stored since, so the import advances", async () => {
+    const budget = new KnownSetBudget(ONE);
+    const rows = fixtureRows(0, ROWS * 2).map((r) => ({ ...r, folder: "INBOX" }));
+    const epoch = rows[0]!.uidValidity;
+    let reads = 0;
+    const repo = {
+      getMailboxFolders: async () => [{ folder: "INBOX", uidValidity: epoch, uidNext: 0, highestModseq: "0" }],
+      listKnownLocators: async () => { reads += 1; return [...rows]; },
+    } as unknown as WorkerRepo;
+    const cache = new KnownSetCache("mb", budget);
+    const watched = watchKnownSet(repo, cache);
+    const knownUids = (c: ImapCursor) => c.folders["INBOX"]!.known.map((k) => k.uid);
+
+    expect(knownUids(await buildCursor(watched, "mb", undefined, undefined, cache))).toHaveLength(ROWS * 2);
+    expect(cache.census().droppedBy).toBe("not admitted: one projection over the whole process locator budget");
+    for (const uid of [9001, 9002]) {
+      // One creates-only cycle: the ingest stores a letter and tells the memo, as `insertMessage` does.
+      const stored: KnownLocator = { folder: "INBOX", uid, uidValidity: epoch, messageId: `<${uid}@fixture.invalid>`, seen: false };
+      rows.push(stored);
+      cache.noteInserted(stored);
+      expect(knownUids(await buildCursor(watched, "mb", undefined, undefined, cache))).toContain(uid);
+    }
+    expect(reads).toBe(3);
   });
 
   it("gives the bytes back when the memo is dropped", async () => {

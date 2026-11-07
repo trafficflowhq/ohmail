@@ -64,6 +64,10 @@ beforeAll(async () => {
   for (let s = 0; s < HELD_SKEWED; s++) await insert(`skew${s}@x.test`, "ohmail/Screener", new Date(NOW - 500 * DAY), false, 1, `sk${s}`, new Date(NOW - 200 * DAY));
   // An Ohbox of strangers nobody decided about.
   for (let s = 0; s < 50; s++) await insert(`ohbox${s}@y.test`, "INBOX", new Date(NOW - (s + 2) * DAY), false, OHBOX / 50, `ob${s}`);
+  // Each letter's copy on the server, as the ingest records one: one statement for the whole store.
+  await o.db.execute(sql`insert into message_instances (account_id, mailbox_id, message_id, folder, uidvalidity, uid, is_primary)
+    select m.account_id, m.mailbox_id, m.id, f.observed_folder, 1, row_number() over (order by m.id), true
+      from messages m join folder_state f on f.message_id = m.id where m.account_id = ${accountId}`);
   // The search tables' statistics, as the store keeps them; `mailboxes` is left as every store had it.
   await o.analyzeSearchIfStale();
 });
@@ -164,10 +168,11 @@ describe("the Screener's reads, by plan", () => {
     await o.db.execute(sql`insert into account_settings (account_id, auto_suggest_at)
       values (${accountId}, ${new Date(NOW - 1000 * DAY).toISOString()}::timestamptz)`);
     const seen = await recorded(async () => {
-      await screenerAutoActPass(o.db as unknown as Tx, {
+      const acted = await screenerAutoActPass(o.db as unknown as Tx, {
         accountId, consent: { stillGiven: async () => true },
         settings: { screeningBaselineAt: null, dormancyDays: null, screeningScope: "window", screenerAutoActAt: new Date(NOW) },
       }, new Date(NOW));
+      expect(acted.examined, "the act found no waiting sender, so its plan proves nothing").toBeGreaterThan(0);
       // No model: the pass stops at its first call, after choosing its candidates.
       await screenerAutoSuggestPass(o.db as unknown as Tx, {
         accountId, classifier: {} as never, unmetered: true, now: () => new Date(NOW),

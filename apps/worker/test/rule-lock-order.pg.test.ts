@@ -108,6 +108,9 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
+    await base.db.insert(messageInstances).values({
+      accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: 200, isPrimary: true,
+    });
     await base.db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
       destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
@@ -167,6 +170,9 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       await base.db.insert(folderState).values({
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
+      await base.db.insert(messageInstances).values({
+        accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: 300 + i, isPrimary: true,
+      });
       await base.db.insert(routingDecisions).values({
         accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
         destination: SPAM, confidence: 0.95, rationale: "", spam: true, status: SCREENER_SUGGESTION_STATUS, senderReason: "none",
@@ -209,6 +215,9 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       await base.db.insert(folderState).values({
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      await base.db.insert(messageInstances).values({
+        accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: ref, isPrimary: true,
       });
       return m!.id;
     };

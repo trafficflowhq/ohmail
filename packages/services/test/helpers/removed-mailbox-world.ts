@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, contacts, folderState, mailboxes, messageBodies, messages, routingDecisions, rules, threads,
+  accountSettings, accounts, contacts, folderState, mailboxes, messageBodies, messageInstances, messages, routingDecisions, rules, threads,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
 } from "@trafficflow/db";
 import { screenerRoutesGroup, type ApiDeps } from "@trafficflow/api";
@@ -132,18 +132,25 @@ export async function removedMailboxWorld(second: SecondMailbox): Promise<Remove
   const byName = new Map<string, string>();
   const byId = new Map<string, string>();
   const [thread] = await db.insert(threads).values({ accountId, subject: "The thread" }).returning();
+  let uid = 0;
   for (const l of LETTERS) {
     if (l.second && second === "deleted") continue;
     const at = new Date(NOW.getTime() - l.daysAgo * DAY);
+    const mailboxId = l.second ? old!.id : live!.id;
+    uid++;
     const [m] = await db.insert(messages).values({
-      accountId, mailboxId: l.second ? old!.id : live!.id, bodyHash: randomUUID(), dedupKey: `rm:${randomUUID()}`,
+      accountId, mailboxId, bodyHash: randomUUID(), dedupKey: `rm:${randomUUID()}`,
       subject: `About ${l.name}`, snippet: "", fromAddress: l.who === "own" ? own : SENDERS[l.who],
       ...(l.who === "own" ? { toAddresses: [{ name: null, address: SENDERS.A }] } : {}),
       ...(l.thread ? { threadId: thread!.id } : {}),
       fromName: l.claim ? "PostFinance" : null, senderCheck: l.claim ? "impersonation" : "none",
       senderCheckBrand: l.claim ? "PostFinance" : null, date: at, arrivedAt: at, createdAt: at, unread: l.unread,
-      nativeLocator: { folder: l.folder, ref: `1:${randomUUID().slice(0, 6)}` },
+      nativeLocator: { folder: l.folder, ref: `1:${uid}` },
     }).returning();
+    // Its copy on the server, as the ingest records one: the removal, not a missing copy, is what is asked.
+    await db.insert(messageInstances).values({
+      accountId, mailboxId, messageId: m!.id, folder: l.folder, uidvalidity: 1n, uid, isPrimary: true,
+    });
     await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: l.folder, observedFolder: l.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,

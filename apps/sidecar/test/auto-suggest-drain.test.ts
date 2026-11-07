@@ -63,8 +63,9 @@ import { grantOrganizeConsent } from "./_consent.js";
  * `unmetered: true` from the sidecar's call and the pass returns EMPTY, because an absent gate
  * alone is never permission. That one is asserted from the other side in the worker's pg test.
  *
- * And mail the drain finds gone from the server is no candidate: drop `isNull(messages.deletedAt)`
- * from `selectCandidates` → the letter the drain's reaper just tombstoned is sent to the model.
+ * And mail the server no longer holds is no candidate, whether or not the reaper has run yet: drop
+ * the copy-on-record arm from `selectCandidates` → a letter whose copy went where no read saw it
+ * is sent to the model while it waits for the reaper's hour.
  */
 
 /** An empty `ohmail/_meta` that accepts this install's claim — `readMailboxLease` requires one. */
@@ -93,15 +94,18 @@ const EMPTY_BATCH: ChangeBatch = {
   creates: [], moves: [], flagChanges: [], deletes: [], newCursor: { folders: {} },
 };
 
+/** The expunges a case arms, each reported by the drain's next read only. */
+interface Server { expunged: NativeLocator[] }
+
 /**
- * A mailbox where nothing changes: no arrival, no expunge.
+ * A mailbox where nothing changes: no arrival, and no expunge unless a case arms one.
  *
  * The senders under test are seeded straight into the local store, because what is being proved is
  * what the PASS does with a queue and not how a queue comes to exist — the ingest half has its own
  * suites. A quiet mailbox also settles the drain in one cycle, so "within one drain" is a claim
  * about the pass rather than about how long a backlog took.
  */
-function quietMailbox(): (cfg: ImapConfig) => MailboxAdapter & { leaseIo(): LeaseIo } {
+function quietMailbox(server: Server = { expunged: [] }): (cfg: ImapConfig) => MailboxAdapter & { leaseIo(): LeaseIo } {
   const meta = new MemoryMetaFolder();
   return (_cfg) => ({
     leaseIo: () => meta,
@@ -115,7 +119,14 @@ function quietMailbox(): (cfg: ImapConfig) => MailboxAdapter & { leaseIo(): Leas
     },
     async ensureFolders(): Promise<void> {},
     async changesSince(): Promise<ChangeBatch> {
-      return { ...EMPTY_BATCH };
+      const gone = server.expunged.splice(0);
+      if (gone.length === 0) return { ...EMPTY_BATCH };
+      // Under the epoch the seeded copies carry, so the drain believes the expunge.
+      return {
+        ...EMPTY_BATCH,
+        deletes: gone.map((locator) => ({ type: "delete" as const, locator })),
+        newCursor: { folders: { [SCREENER]: { uidValidity: "1", uidNext: 10_000, highestModseq: "1" } } },
+      };
     },
     async move(locator: NativeLocator): Promise<NativeLocator> {
       return locator;
@@ -192,7 +203,7 @@ describe("automatic suggestions at the standalone drain's tail", () => {
     for (const c of cleanups.splice(0).reverse()) await c();
   });
 
-  async function boot(m: Model): Promise<Sidecar> {
+  async function boot(m: Model, server?: Server): Promise<Sidecar> {
     // `realpathSync` because macOS hands out `/var/…` for a `/private/var/…` directory and PGlite
     // records the resolved path in its lock file.
     const dataDir = await freshDataDir("ohmail-autosuggest-");
@@ -209,7 +220,7 @@ describe("automatic suggestions at the standalone drain's tail", () => {
       // so a purchase is never a coincidence of scheduling.
       pollIntervalMs: 60 * 60 * 1000,
       leaseStaleAfterMs: 60_000,
-      adapterFactory: quietMailbox(),
+      adapterFactory: quietMailbox(server),
       // A durable key, because storing an API key is refused without one and this install has to be
       // able to have a model at all.
       keks: { 1: aKek() },
@@ -266,14 +277,15 @@ describe("automatic suggestions at the standalone drain's tail", () => {
    * reads it.
    *
    * ON THE SERVER by default: held at arrival in INBOX with a watched instance, as the ingest records
-   * it, and the drain files it. `onServer: false` is a letter filed into the Screener earlier whose
-   * copy is gone: no instance, so the drain's reaper (`tombstoneInstanceless`) tombstones it.
+   * it, and the drain files it. `copy: "screener"` was filed into the Screener earlier and is there;
+   * `copy: "none"` was filed earlier and its copy is gone with no read having seen it go: no instance.
    */
   async function seedHeld(
-    s: Sidecar, address: string, createdAt: Date, o: { onServer?: boolean } = {},
+    s: Sidecar, address: string, createdAt: Date, o: { copy?: "inbox" | "screener" | "none" } = {},
   ): Promise<string> {
-    const onServer = o.onServer !== false;
-    const folder = onServer ? "INBOX" : SCREENER;
+    const copy = o.copy ?? "inbox";
+    const onServer = copy !== "none";
+    const folder = copy === "inbox" ? "INBOX" : SCREENER;
     const dedup = `mid:${address}@auto.test`;
     const uid = nextUid++;
     const [m] = await s.db.insert(messages).values({
@@ -301,10 +313,15 @@ describe("automatic suggestions at the standalone drain's tail", () => {
       // `us`, because the gate is OUR decision: the pipeline held this first-contact sender, which
       // is the same value `ScreenerService` writes when it places one.
       lastSetBy: "us",
-      reconcileStatus: onServer ? "pending" : "reconciled",
+      reconcileStatus: copy === "inbox" ? "pending" : "reconciled",
     });
     return m!.id;
   }
+
+  const locatorOf = async (s: Sidecar, id: string): Promise<NativeLocator> => {
+    const [r] = await s.db.select({ at: messages.nativeLocator }).from(messages).where(eq(messages.id, id));
+    return r!.at as NativeLocator;
+  };
 
   const suggestionsOf = async (s: Sidecar) =>
     s.db.select().from(routingDecisions).where(and(
@@ -353,12 +370,15 @@ describe("automatic suggestions at the standalone drain's tail", () => {
 
   it("never sends a letter the drain found gone from the server — the live one beside it still goes", async () => {
     const m = model();
-    const s = await boot(m);
+    const server: Server = { expunged: [] };
+    const s = await boot(m, server);
     await giveItAModel(s);
     const since = await armIt(s);
     const after = new Date(Date.parse(since!) + 60_000);
     const live = await seedHeld(s, "still-here@example.test", after);
-    const gone = await seedHeld(s, "gone-away@example.test", after, { onServer: false });
+    const gone = await seedHeld(s, "gone-away@example.test", after, { copy: "screener" });
+    // Expunged on the server: the drain's read reports it, and the reaper follows.
+    server.expunged.push(await locatorOf(s, gone));
 
     const before = m.completions.length;
     await s.syncUntilQuiet();
@@ -371,6 +391,29 @@ describe("automatic suggestions at the standalone drain's tail", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("still-here@example.test");
     expect(sent[0]).toContain("a short extract of the mail");
+    expect((await suggestionsOf(s)).map((r) => r.messageId)).toEqual([live]);
+  }, 120_000);
+
+  it("never sends a letter whose copy went where no read saw it, before the reaper's hour — the live one still goes", async () => {
+    const m = model();
+    const s = await boot(m);
+    await giveItAModel(s);
+    const since = await armIt(s);
+    const after = new Date(Date.parse(since!) + 60_000);
+    const live = await seedHeld(s, "still-here@example.test", after);
+    const unseen = await seedHeld(s, "gone-unseen@example.test", after, { copy: "none" });
+
+    const before = m.completions.length;
+    await s.syncUntilQuiet();
+    const sent = m.completions.slice(before);
+
+    // The premise: nothing this drain read removed a copy, so the reaper waits for its hour.
+    const [row] = await s.db.select({ deletedAt: messages.deletedAt }).from(messages).where(eq(messages.id, unseen));
+    expect(row!.deletedAt, "the reaper ran, so this case proves nothing about the candidate read").toBeNull();
+    expect(sent.join("\n"), "a letter with no copy on record was sent to the model")
+      .not.toContain("gone-unseen@example.test");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain("still-here@example.test");
     expect((await suggestionsOf(s)).map((r) => r.messageId)).toEqual([live]);
   }, 120_000);
 
