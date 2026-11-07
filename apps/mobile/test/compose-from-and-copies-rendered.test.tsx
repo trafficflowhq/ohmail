@@ -101,6 +101,7 @@ function composer() {
     actions: {
       sendNew, sendSurface: () => undefined, keepEnvelope: () => null, draftLeft: () => null,
       sendAndDoneOffered: () => false, draftKeep: async () => "kept", holdFiles: () => undefined, releaseFiles: () => undefined,
+      scheduleFilesKept: () => null,
     },
   };
   const closed: number[] = [];

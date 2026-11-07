@@ -141,6 +141,12 @@ function DraftRow({ row, onPress }: { row: WorldDraft; onPress: () => void }) {
           {heldSentence(row.heldSays)}
         </Txt>
       ) : null}
+      {/* Its schedule ended unsent and the files it kept went with it (the web's note). */}
+      {row.filesNotKept !== null ? (
+        <Txt variant="caption" tone="ink" style={{ paddingTop: 2 }}>
+          {Copy.draftsFilesNotKept(row.filesNotKept)}
+        </Txt>
+      ) : null}
     </TapRow>
   );
 }

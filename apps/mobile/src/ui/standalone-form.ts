@@ -543,15 +543,15 @@ export function sendLaterOffered(o: {
   standalone: boolean;
   forward: boolean;
   /**
-   * A draft row stores no attachment bytes (`ComposeAttachment`'s contract: nothing filed
-   * against the account), so a scheduled send could not carry them — the webapp withholds the
-   * affordance (`sendLaterUnavailable`) and this phone follows. REQUIRED, so TypeScript is the
-   * census over every caller: optional, a surface that gained attachments would keep offering
-   * an appointment the server refuses.
+   * A draft row stores no attachment bytes, so a scheduled letter's files go only where the door
+   * keeps them ({@link filesKept}). REQUIRED, both, so TypeScript is the census over every caller:
+   * optional, a surface that gained attachments would keep offering an appointment the server refuses.
    */
   hasAttachments: boolean;
+  /** The door keeps a letter's files for a later send (`/hello`, mail 0180): a server naming its days, or the desktop host. */
+  filesKept: boolean;
 }): boolean {
-  return !o.standalone && !o.forward && !o.hasAttachments;
+  return !o.standalone && !o.forward && (!o.hasAttachments || o.filesKept);
 }
 
 /**
