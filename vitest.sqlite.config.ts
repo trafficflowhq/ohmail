@@ -129,6 +129,8 @@ export default defineConfig({
       // stores spell a boolean column differently). The sidecar composes the worker's own cycle
       // over this store, so a server-only spelling is a phone that cannot settle a read mark.
       "packages/core/test/flag-completion-dialect.test.ts",
+      // The reconcile queues' pending reads: the device runs the same polls (mail 0181).
+      "packages/core/test/reconcile-pending-index-dialect.test.ts",
       /* The reaper's candidate read is an EXCEPT, spelled by each dialect's own set-operation form. */
       "packages/core/test/tombstone-instanceless-candidates.test.ts",
       // The own-mail release and the own-address read: the visit runs them on this store too.

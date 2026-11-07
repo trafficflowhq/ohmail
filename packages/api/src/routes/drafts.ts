@@ -101,7 +101,7 @@ function refuseOverLongList(kind: "attachments" | "staged attachments", n: numbe
  * service's own function — the two must not disagree. The count is checked before the dedupe
  * ({@link refuseOverLongList}).
  */
-function readStagedIds(raw: unknown): string[] | undefined {
+export function readStagedIds(raw: unknown): string[] | undefined {
   if (!Array.isArray(raw)) return undefined;
   refuseOverLongList("staged attachments", raw.length);
   const ids = dedupeStagedIds(

@@ -5,12 +5,12 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "../src/dialect/index.js";
 import { and, eq, sql } from "drizzle-orm";
 import { schema } from "../src/schema.js";
-import { accounts, users, mailboxes, mailboxCredentials } from "../src/schema-mail.js";
+import { accounts, users, mailboxes, mailboxCredentials, scheduledSendFiles } from "../src/schema-mail.js";
 import {
   totpSecrets, staffUsers, mailboxOauthCeremonies, oauthProviderConfig,
 } from "../src/schema-cloud.js";
 import {
-  runKekRewrap, kekRewrapCensus, WRAPPED_SECRET_SITES, type RewrapKeyProvider,
+  runKekRewrap, kekRewrapCensus, kekRetiredReferences, WRAPPED_SECRET_SITES, type RewrapKeyProvider,
 } from "../src/kek-rewrap.js";
 import type { Tx } from "../src/change-log.js";
 import { realPgAvailable } from "../src/testing.js";
@@ -131,6 +131,7 @@ async function reset(): Promise<void> {
   await db.delete(mailboxOauthCeremonies);
   await db.delete(oauthProviderConfig);
   await db.delete(staffUsers);
+  await db.delete(scheduledSendFiles);
 }
 
 /** N mailbox credentials at `version`, plaintext `pass-<i>`. Returns their mailbox ids in order. */
@@ -481,5 +482,36 @@ describe.skipIf(!PG_UP)("CRYPTO-4 — the whole population, all five sites, agai
     expect(r.failures.every((f) => f.reason === "no_kek_for_version")).toBe(true);
     expect(await credentialRows()).toEqual(before);
     expect((await kekRewrapCensus(db as unknown as Tx, 3)).versionsInUse).toEqual([1]);
+  });
+});
+
+describe.skipIf(!PG_UP)("CRYPTO-4 — a scheduled letter's sealed pieces (mail 0180) move with the ring", () => {
+  it("re-wraps every piece key and never the bytes, leaves a plain row alone, and counts the pieces until then", async () => {
+    const [a] = await db.insert(accounts).values({ name: "kek-pieces" }).returning();
+    const [m] = await db.insert(mailboxes).values({
+      accountId: a!.id, provider: "imap", address: `kek-pieces-${randomUUID()}@example.test`,
+    }).returning();
+    const draftId = randomUUID();
+    const piece = (seq: number) => ({
+      accountId: a!.id, mailboxId: m!.id, draftId, sendKey: "sk", fileNo: 0, seq, filename: "a.pdf",
+      contentType: "application/pdf", sizeBytes: 3, contentSha256: "ab".repeat(32), rawB64: `sealed-${seq}`,
+    });
+    await db.insert(scheduledSendFiles).values([
+      { ...piece(0), dekEnc: seal(1, "key-0"), dekKeyVersion: 1 },
+      { ...piece(1), dekEnc: seal(1, "key-1"), dekKeyVersion: 1 },
+      { ...piece(0), draftId: randomUUID(), rawB64: "cGxhaW4=" },
+    ]);
+    const before = await kekRetiredReferences(db as unknown as Tx, 1);
+    expect(before.sites.find((x) => x.site === "scheduled_send_files.dek_enc")?.rows).toBe(2);
+
+    const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: provider(2), apply: true });
+    expect(r.failed).toBe(0);
+    expect(r.rewrapped).toBe(2);
+    const rows = await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.accountId, a!.id));
+    const sealed = rows.filter((x) => x.dekEnc !== null).sort((x, y) => x.seq - y.seq);
+    expect(sealed.map((x) => [x.dekKeyVersion, open(x.dekEnc!), x.rawB64])).toEqual([[2, "key-0", "sealed-0"], [2, "key-1", "sealed-1"]]);
+    expect(rows.find((x) => x.dekEnc === null)).toMatchObject({ dekKeyVersion: null, rawB64: "cGxhaW4=" });
+    expect((await kekRewrapCensus(db as unknown as Tx, 2)).outstanding).toBe(0);
+    expect((await kekRetiredReferences(db as unknown as Tx, 1)).total).toBe(0);
   });
 });

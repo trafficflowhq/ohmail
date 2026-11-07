@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
@@ -8,9 +8,9 @@ import { drafts, mailboxes, outboundSends, scheduledSendFiles } from "@trafficfl
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { ScheduleService, runScheduledSendPass } from "../src/index.js";
-import type { ServiceContext } from "../src/index.js";
+import { StaticKeyProvider, type OpenSendAdapter, type OutboundMessage } from "@trafficflow/core";
+import { ScheduleService, keepScheduledFilesSealed, runScheduledSendPass } from "../src/index.js";
+import type { ScheduledFilesKeeping, ServiceContext } from "../src/index.js";
 
 /**
  * SEND LATER's CANCEL vs the worker's CLAIM, under a genuinely HELD cross-connection row lock —
@@ -55,7 +55,9 @@ function fakeAdapter() {
   return { factory, state };
 }
 
-async function seeded(files?: { filename: string; contentType: string; content: Buffer }[]) {
+async function seeded(
+  files?: { filename: string; contentType: string; content: Buffer }[], keeping?: ScheduledFilesKeeping, sendAt = DUE,
+) {
   const accountId = randomUUID();
   const tag = randomUUID().slice(0, 8);
   const [mb] = await dbA.insert(mailboxes).values({
@@ -67,7 +69,7 @@ async function seeded(files?: { filename: string; contentType: string; content: 
     createdAt: NOW, updatedAt: NOW,
   }).returning();
   const ctx: ServiceContext = { db: dbA, accountId, userId: null, now: () => NOW, requestId: "r" };
-  await schedules.schedule(ctx, d!.id, DUE.toISOString(), files ? { files, surfaceMaxTotalBytes: null } : undefined);
+  await schedules.schedule(ctx, d!.id, sendAt.toISOString(), files ? { files, surfaceMaxTotalBytes: null, ...(keeping ? { keeping } : {}) } : undefined);
   return { ctx, accountId, draftId: d!.id };
 }
 
@@ -199,5 +201,26 @@ describe.skipIf(!PG_UP)("cancel vs the scheduled-send claim, across two real con
     expect(await dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId))).toHaveLength(0);
     await runScheduledSendPass(dbA, { openSendAdapter: fakeAdapter().factory, now: () => new Date(DUE.getTime() + 60_000) });
     expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(0);
+  });
+
+  it("SEALED (mail 0180): two passes at once over a server's sealed letter deliver it once, with its file", async () => {
+    const keeping = keepScheduledFilesSealed(new StaticKeyProvider({ 1: randomBytes(32) }));
+    if (keeping.atRest !== "sealed") throw new Error("a server's keeping is sealed");
+    const content = randomBytes(200_000);
+    // A minute ahead of every other appointment here, so the claim's (send_at, id) order reaches it first.
+    const w = await seeded([{ filename: "c.pdf", contentType: "application/pdf", content }], keeping, new Date(DUE.getTime() - 60_000));
+    const fake = fakeAdapter();
+    const files = { open: keeping.sealer.open.bind(keeping.sealer), tidy: true };
+    const at = (): Date => new Date(DUE.getTime() + 60_000);
+    await Promise.all([
+      runScheduledSendPass(dbA, { openSendAdapter: fake.factory, now: at, files }),
+      runScheduledSendPass(dbA, { openSendAdapter: fake.factory, now: at, files }),
+    ]);
+    const mine = fake.state.delivered.filter((m) => m.attachments?.some((a) => a.filename === "c.pdf"));
+    expect(mine, "the sealed letter was delivered other than once").toHaveLength(1);
+    const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+    expect(sha(mine[0]!.attachments![0]!.content)).toBe(sha(content));
+    expect(await dbA.select().from(outboundSends).where(eq(outboundSends.accountId, w.accountId))).toHaveLength(1);
+    expect(await dbA.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, w.draftId))).toHaveLength(0);
   });
 });

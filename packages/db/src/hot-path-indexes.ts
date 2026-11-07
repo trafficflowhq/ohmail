@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
-  ARRIVAL_ORDER_INDEX_DDL, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
-  RECIPIENT_KEYS_PREBUILD_SPEC, SENDER_DATE_PREBUILD_SPEC,
+  ARRIVAL_ORDER_INDEX_DDL, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC,
+  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
+  SENDER_DATE_PREBUILD_SPEC,
 } from "./search-setup.js";
 import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
@@ -112,6 +113,9 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   // and the list read's mailboxes by account.
   FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC,
   MAILBOXES_ACCOUNT_PREBUILD_SPEC,
+  // THE RECONCILE POLLS (mail 0181): each queue's pending rows, in its order.
+  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC,
+  FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
   {
     // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0148), by account then id. Every row is NULL
     // when the column lands, so the build is a pass over all of `messages`: here, CONCURRENTLY,

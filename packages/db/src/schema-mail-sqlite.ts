@@ -852,6 +852,10 @@ export const folderState = sqliteTable("folder_state", {
   ixOutstanding: index("folder_state_outstanding_idx")
     .on(t.outstandingAccountId, t.messageId)
     .where(sql.raw(OUTSTANDING_FILING_WHERE)),
+  // Mail 0181: the reconcile poll's pending rows in its queue order.
+  ixPendingQueue: index("folder_state_pending_queue_idx")
+    .on(t.updatedAt, t.messageId)
+    .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
 /**
@@ -880,7 +884,13 @@ export const flagState = sqliteTable("flag_state", {
   nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }),
   // Mail 0145: when a read-state decision was placed.
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
-}, (t) => ({ uqMessage: unique().on(t.messageId) }));
+}, (t) => ({
+  uqMessage: unique().on(t.messageId),
+  // Mail 0181: the folder queue's twin.
+  ixPendingQueue: index("flag_state_pending_queue_idx")
+    .on(t.updatedAt, t.messageId)
+    .where(sql.raw(`"reconcile_status" = 'pending'`)),
+}));
 
 export const rules = sqliteTable("rules", {
   id: text("id").default(UUID_V4).primaryKey(),
@@ -2449,6 +2459,9 @@ export const scheduledSendFiles = sqliteTable("scheduled_send_files", {
   contentSha256: text("content_sha256").notNull(),
   rawB64: text("raw_b64").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // Mail 0180: a server's sealed piece; NULL on a device.
+  dekEnc: text("dek_enc"),
+  dekKeyVersion: integer("dek_key_version"),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.draftId, t.fileNo, t.seq] }) }));
 
 /**

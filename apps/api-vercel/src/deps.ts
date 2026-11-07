@@ -34,7 +34,7 @@ import {
   syncService, makePushService, rulesService, messageService, threadService, triageService,
   searchService, contactsService, snippetsService, notifyRulesService, awayResponderService,
   attachmentsService, kbService, tagsService, FolderOpsService, draftsService, makeDraftingService, sendService,
-  scheduleService,
+  scheduleService, keepScheduledFilesSealed,
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, OWED_COPY_CLOUD,
   makeAttachmentStagingPort,
   workflowsService, proposalsService,
@@ -199,6 +199,8 @@ function buildServices(cfg: HostConfig): ApiServices {
     drafts: draftsService,
     // Send later's two verbs (mail 0077) — the worker's scheduled-send pass is the sender.
     schedules: scheduleService,
+    // A scheduled letter's files, sealed under this host's key ring until the letter goes (mail 0180).
+    scheduledFiles: keepScheduledFilesSealed(keyProvider),
     /* The drafting call is cut before this host's kill, so a charge that bought nothing is
        returned by the request that took it (`draftWindow`); the ceiling is the route's own. */
     drafting: makeDraftingService({ invocationBudgetMs: API_MAX_DURATION_MS, usageHost: USAGE_HOST }),
@@ -766,7 +768,7 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
         // able to load a picture through; it says so now instead of the client inferring it
         // from its own build.
         remoteImages: true,
-        // Cloud keeps no letter's files at rest: Send later with files is the desktop's own (mail 0179).
+        // False for clients that predate the horizon; `/hello` adds `scheduleFilesDays` from `scheduledFiles`.
         scheduleFiles: false,
       },
     },

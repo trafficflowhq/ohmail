@@ -4074,6 +4074,15 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     }
   }
 
+  /**
+   * The reconcile polls' mailbox bound. On the device store, which keeps no statistics, the plain
+   * term makes SQLite walk every message of the mailbox; the unary `+` leaves it no index, so the
+   * read starts from mail 0181's small pending index instead.
+   */
+  private pendingQueueMailbox(mailboxId: string): SQL {
+    return this.d.name === "sqlite" ? sql`+${messages.mailboxId} = ${mailboxId}` : eq(messages.mailboxId, mailboxId);
+  }
+
   async listPendingFolderStates(mailboxId: string, limit?: number): Promise<PendingFolderState[]> {
     const base = this.db.select({
       messageId: folderState.messageId, desiredFolder: folderState.desiredFolder, observedFolder: folderState.observedFolder,
@@ -4086,7 +4095,8 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       trashedFrom: folderState.trashedFrom,
     }).from(folderState).innerJoin(messages, eq(messages.id, folderState.messageId))
       .where(and(
-        eq(messages.mailboxId, mailboxId), eq(folderState.reconcileStatus, "pending"),
+        // A literal, as mail 0181's partial index spells it, so a generic plan can read that index too.
+        this.pendingQueueMailbox(mailboxId), sql`${folderState.reconcileStatus} = 'pending'`,
         dueNow(folderState.nextAttemptAt),
       ))
       // ORDERED WHETHER OR NOT IT IS LIMITED — see the port's doc. A LIMIT over physical row
@@ -4110,7 +4120,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       attempts: flagState.attempts,
     }).from(flagState).innerJoin(messages, eq(messages.id, flagState.messageId))
       .where(and(
-        eq(messages.mailboxId, mailboxId), eq(flagState.reconcileStatus, "pending"),
+        this.pendingQueueMailbox(mailboxId), sql`${flagState.reconcileStatus} = 'pending'`,
         dueNow(flagState.nextAttemptAt),
       ))
       // ORDERED WHETHER OR NOT IT IS LIMITED, and for the folder queue's reason: a LIMIT over
