@@ -4239,8 +4239,13 @@ export class OhmailEngine {
           await this.adoptOrphanedOutbox();
           // The wipe took the held-release answer too; the settle's bell asks for it again.
           this.heldRelease.owed = true;
-          // …and the queue's page, for the same reason.
+          // …and the queue's page: withheld until the store speaks again, asked now rather than at the
+          // rebuild's settle, or each rebuilt page of gate mail would count as the queue (6, 7, 8).
           this.screenerWait.dirty = true;
+          if (this.screenerWait.armed) {
+            this.screenerWait.settled = false;
+            this.reaskScreenerWaiting();
+          }
           // The instant index is an index of the mail that just went. A build walking the old
           // rows would install it over the new mirror and hand back hits that open nothing.
           this.invalidateSearchIndex();
