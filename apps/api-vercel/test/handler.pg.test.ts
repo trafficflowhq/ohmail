@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { sql as raw } from "drizzle-orm";
+import { eq, sql as raw } from "drizzle-orm";
 import {
   API_MAX_DURATION_MS, closePooledDbs, makePooledDb, POOLED_ACQUIRE_TIMEOUT_MS, POOLED_IDLE_TIMEOUT_S,
   POOLED_MAX_CONNECTIONS, SESSION_ACQUIRE_TIMEOUT_MS,
 } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, refreshTokens, sessions, users } from "@trafficflow/db";
+import { accounts, drafts, mailboxes, refreshTokens, scheduledSendFiles, sessions, users } from "@trafficflow/db";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { generateToken, hashToken } from "@trafficflow/services";
 import { EVENTS_MAX_DURATION_S, PROD_SSE_LIFETIME_MS, loadHostConfig, resetHostState } from "../src/config.js";
@@ -436,6 +436,74 @@ describe.skipIf(!PG_UP)("apps/api-vercel — handleApiRequest against real Postg
         method: "DELETE", headers: { ...browser, cookie: second.cookie, "x-csrf-token": second.csrf },
       })), 200, "the erase");
     });
+  });
+});
+
+/**
+ * SEND LATER WITH FILES ON THE HOSTED DOOR (mail 0180), through the shipped host: the files route
+ * is mounted, the letter's file is kept sealed under this host's key ring, and an account whose
+ * address is unproven reaches nothing (`work`).
+ */
+describe.skipIf(!PG_UP)("apps/api-vercel — Send later keeps a letter's files sealed", () => {
+  beforeAll(async () => { await runMigrations(PG_TEST_URL); }, 60_000);
+  afterAll(async () => { await closePooledDbs(); resetHostState(); resetServices(); });
+  beforeEach(() => { install(envFor()); });
+
+  async function letter(verified: boolean): Promise<{ token: string; draftId: string }> {
+    const db = makePooledDb(PG_TEST_URL);
+    const now = new Date();
+    const token = generateToken();
+    const [acct] = await db.insert(accounts).values({ name: `files-${randomUUID().slice(0, 8)}` }).returning();
+    const [user] = await db.insert(users).values({
+      accountId: acct!.id, email: `files-${randomUUID()}@files.example`, displayName: "Files",
+      emailVerifiedAt: verified ? now : null,
+    }).returning();
+    await db.insert(sessions).values({
+      accountId: acct!.id, userId: user!.id, familyId: randomUUID(), accessTokenHash: hashToken(token),
+      accessExpiresAt: new Date(now.getTime() + 3_600_000), refreshExpiresAt: new Date(now.getTime() + 7_200_000),
+      lastTwofaAt: now,
+    });
+    const [mb] = await db.insert(mailboxes).values({
+      accountId: acct!.id, provider: "imap", address: `files-${randomUUID()}@files.example`,
+    }).returning();
+    const [d] = await db.insert(drafts).values({
+      accountId: acct!.id, mailboxId: mb!.id, subject: "later", body: "words",
+      to: [{ name: null, address: "you@example.com" }],
+    }).returning();
+    return { token, draftId: d!.id };
+  }
+  const file = Buffer.from("%PDF-1.4 the page, kept until the letter goes");
+  const schedule = (token: string, draftId: string): Promise<Response> => handleApiRequest(at(`/drafts/${draftId}/schedule-with-files`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      sendAt: new Date(Date.now() + 2 * 3_600_000).toISOString(),
+      attachments: [{ filename: "a.pdf", contentType: "application/pdf", contentBase64: file.toString("base64") }],
+    }),
+  }));
+
+  it("schedules the letter and keeps its file as ciphertext under this host's key ring", async () => {
+    const { token, draftId } = await letter(true);
+    const res = await schedule(token, draftId);
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect(await res.json()).toMatchObject({ status: "scheduled", sendFiles: 1 });
+    const db = makePooledDb(PG_TEST_URL);
+    const rows = await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, draftId));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.dekKeyVersion, "the piece's key is wrapped by the ring").toBe(1);
+    expect(rows[0]!.dekEnc).not.toBeNull();
+    expect(rows[0]!.rawB64).not.toContain(file.toString("base64"));
+    expect(Buffer.from(rows[0]!.rawB64, "base64").includes(file)).toBe(false);
+  });
+
+  it("an account whose address is unproven is refused, and nothing is kept", async () => {
+    const { token, draftId } = await letter(false);
+    const res = await schedule(token, draftId);
+    expect(res.status).toBe(403);
+    const db = makePooledDb(PG_TEST_URL);
+    expect(await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, draftId))).toHaveLength(0);
+    const [d] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(d!.status).toBe("draft");
   });
 });
 

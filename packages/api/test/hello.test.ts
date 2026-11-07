@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { StaticKeyProvider } from "@trafficflow/core";
+import { keepScheduledFilesSealed, SCHEDULED_FILES_PLAIN } from "@trafficflow/services";
 import { createApp, apiRoutes, authRoutes, API_VERSION, type ApiDeps, type HelloConfig } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
 import { selfHostRoutes } from "@trafficflow/api/self-host";
@@ -73,6 +76,25 @@ describe("GET /hello — the frozen wire shape", () => {
         scheduleFiles: false,
       },
     });
+  });
+
+  it("a server keeping a letter's files sealed adds the days ahead it takes one; the desktop's own store adds none", async () => {
+    const { deps } = await makeDeps();
+    const sealed = keepScheduledFilesSealed(new StaticKeyProvider({ 1: randomBytes(32) }));
+    const server = await (await H(req("GET", "/hello"), {
+      ...deps, hello: MANAGED, services: { ...deps.services!, scheduledFiles: sealed },
+    })).json();
+    // `scheduleFiles` stays false, so a client that predates the horizon keeps refusing.
+    expect(server.features).toMatchObject({ scheduleFiles: false, scheduleFilesDays: 7 });
+    expect(Object.keys(server.features).sort()).toEqual(
+      ["accountHeader", "ai", "forwardParts", "pairing", "remoteImages", "scheduleFiles", "scheduleFilesDays", "sse", "staging"],
+    );
+    const desktop = await (await H(req("GET", "/hello"), {
+      ...deps, hello: { ...MANAGED, flavor: "local", features: { ...MANAGED.features, scheduleFiles: true } },
+      services: { ...deps.services!, scheduledFiles: SCHEDULED_FILES_PLAIN },
+    })).json();
+    expect(desktop.features.scheduleFiles).toBe(true);
+    expect(desktop.features).not.toHaveProperty("scheduleFilesDays");
   });
 
   it("never caches — a capability answer is a statement about the present", async () => {

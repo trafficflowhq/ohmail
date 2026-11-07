@@ -11,8 +11,8 @@ import { matchRoute, type Route } from "./router.js";
  */
 
 /**
- * The ceiling for every JSON-body route — every route but one (`POST /drafts/:id/send` carries
- * attachment bytes; see LARGE_BODY_ROUTES). Derived from the largest body the table declares
+ * The ceiling for every JSON-body route — every route but the two that carry attachment bytes
+ * (see LARGE_BODY_ROUTES). Derived from the largest body the table declares
  * legal so the door never refuses a request the service would serve: `POST /drafts` is the
  * largest (`DRAFT_HTML_CAP_BYTES`, the bounded recipient total, `DRAFT_SUBJECT_MAX_CHARS`);
  * `input-bounds-census.test.ts` recomputes the product. Every character counts at six bytes —
@@ -26,14 +26,16 @@ export const JSON_BODY_MAX_BYTES = 4 * 1024 * 1024;
  * The routes whose body may legitimately carry attachment BYTES inline (base64), and so may not
  * be held to {@link JSON_BODY_MAX_BYTES}.
  *
- * Exactly one, and it is derived-checked rather than asserted: `POST /drafts/:id/send` decodes
- * `contentBase64` entries in `routes/drafts.ts#decodeSendAttachments`. The per-request TOTAL of
- * those bytes is bounded separately and more tightly by `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (or a
- * self-host deployment's own `SELF_HOST_SEND_MAX_TOTAL_BYTES`) inside `SendService.reserve`;
- * this is only the door's permission for the request to be big at all.
+ * Derived-checked rather than asserted: both decode `contentBase64` entries in
+ * `routes/drafts.ts#decodeSendAttachments` — the send, and Send later with files, which takes the
+ * send's own transports. The per-request TOTAL of those bytes is bounded separately and more
+ * tightly by `SEND_ATTACHMENT_MAX_TOTAL_BYTES` (or a self-host deployment's own
+ * `SELF_HOST_SEND_MAX_TOTAL_BYTES`) in the services; this is only the door's permission for the
+ * request to be big at all.
  */
 export const LARGE_BODY_ROUTES: ReadonlySet<string> = new Set<string>([
   "POST /drafts/:id/send",
+  "POST /drafts/:id/schedule-with-files",
 ]);
 
 /** A body that crossed its route's ceiling. Both hosts answer it as 413. */

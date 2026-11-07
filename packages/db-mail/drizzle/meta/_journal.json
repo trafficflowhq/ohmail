@@ -1233,6 +1233,13 @@
       "when": 1791602600080,
       "tag": "0179_scheduled_send_files",
       "breakpoints": true
+    },
+    {
+      "idx": 176,
+      "version": "7",
+      "when": 1791602600081,
+      "tag": "0180_scheduled_send_files_sealed",
+      "breakpoints": true
     }
   ]
 }

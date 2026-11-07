@@ -154,6 +154,7 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/drafts" },
   { method: "POST", pattern: "/drafts/:id/resolve" },
   { method: "POST", pattern: "/drafts/:id/schedule" },
+  { method: "POST", pattern: "/drafts/:id/schedule-with-files" },
   { method: "GET", pattern: "/drafts/:id/send-attempt" },
   { method: "POST", pattern: "/drafts/:id/send" },
   { method: "POST", pattern: "/sends/withdraw" },

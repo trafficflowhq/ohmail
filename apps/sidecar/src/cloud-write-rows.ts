@@ -79,6 +79,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /drafts": verbs("draft_save"),
   "POST /drafts/:id/resolve": verbs("draft_resolve"),
   "POST /drafts/:id/schedule": direct,
+  "POST /drafts/:id/schedule-with-files": direct,
   // The mailbox rows too: a send can record the mailbox's Sent folder (one made after connecting).
   "POST /drafts/:id/send": { rows: "sync+mailboxes", verbs: ["mail_send"] },
   "POST /files/download-all": none,

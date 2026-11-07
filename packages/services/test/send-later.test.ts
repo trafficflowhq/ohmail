@@ -5,14 +5,17 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accounts, changeLog, drafts, mailboxes, outboundSends, outboundSendFingerprints, outboundSentCopies, scheduledSendFiles,
 } from "@trafficflow/db";
-import type { OpenSendAdapter, OutboundMessage, SendOptions } from "@trafficflow/core";
+import { StaticKeyProvider, createLogger, type OpenSendAdapter, type OutboundMessage, type SendOptions } from "@trafficflow/core";
+import { DbAcquireTimeoutError, runKekRewrap } from "@trafficflow/db/cloud";
 import {
   DraftsService, ScheduleService, SendService, ServiceError, runScheduledSendPass,
   SCHEDULE_MAX_AHEAD_MS,
   SCHEDULED_SEND_EXPIRY_MS, SEND_FAILED_SENTENCE, SEND_STALE_AFTER_MS,
   SEND_DUPLICATE_WINDOW_MS, SCHEDULED_FILES_UNREADABLE, sendContentFingerprint,
+  keepScheduledFilesSealed, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_UNREADABLE_KEPT,
+  SCHEDULED_SEND_EXPIRED_SENTENCE, SCHEDULED_FILES_OVERDUE_MS, SCHEDULED_FILES_MAX_AGE_MS,
 } from "../src/index.js";
-import type { ServiceContext } from "../src/index.js";
+import type { ScheduledFilesKeeping, ServiceContext, StagedAttachmentSource } from "../src/index.js";
 
 /**
  * SEND LATER (mail 0077) — the schedule verbs and the pass, one interleaving at a time.
@@ -1162,5 +1165,286 @@ describe("a scheduled letter keeps its files", () => {
       inReplyToMessageId: null, forwardOf: null, sendAt: null,
       attachments: [{ filename: picture.filename, contentType: picture.contentType, sizeBytes: picture.content.byteLength, contentSha256: sha(picture.content) }],
     }));
+  });
+});
+
+/**
+ * SEND LATER WITH FILES ON A SERVER (mail 0180): Cloud and self-host keep a scheduled letter's files
+ * sealed under the key ring, seven days ahead at most, inside a quota, and nothing outlives its letter.
+ */
+describe("a server keeps a scheduled letter's files sealed", () => {
+  const picture = { filename: "photo.png", contentType: "image/png", content: randomBytes(48 * 1024) };
+  // Past one 3 MiB sealed piece, so the PDF is read back from two rows.
+  const pdf = { filename: "invoice.pdf", contentType: "application/pdf", content: randomBytes(3_200_000) };
+  const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
+  const due = (): Date => new Date(AT.getTime() + 60_000);
+  const K1 = randomBytes(32);
+  const K2 = randomBytes(32);
+  type Sealed = Extract<ScheduledFilesKeeping, { atRest: "sealed" }>;
+  const sealed = (keys: Record<number, Buffer> = { 1: K1 }): Sealed =>
+    keepScheduledFilesSealed(new StaticKeyProvider(keys)) as Sealed;
+  const opener = (k: Sealed) => ({ open: k.sealer.open.bind(k.sealer), tidy: true });
+  const to = [{ name: null, address: "you@example.com" }];
+
+  /** A staging source over a map, counting downloads; clearing the map is the 24-hour copy expiring. */
+  function staging(files: Array<{ id: string; filename: string; contentType: string; content: Buffer }>) {
+    const store = new Map(files.map((f) => [f.id, f]));
+    const state = { fetched: 0 };
+    const source: StagedAttachmentSource = {
+      async declare(_accountId, ids) {
+        return ids.flatMap((id) => {
+          const f = store.get(id);
+          return f ? [{ id, sizeBytes: f.content.byteLength, expiresAt: new Date(NOW.getTime() + 86_400_000), filename: f.filename, contentType: f.contentType }] : [];
+        });
+      },
+      async fetch(_accountId, ids) {
+        state.fetched += 1;
+        return ids.map((id) => {
+          const f = store.get(id);
+          if (!f) throw new ServiceError("not_found", 404, "an uploaded attachment was not found");
+          return { filename: f.filename, contentType: f.contentType, content: f.content };
+        });
+      },
+    };
+    return { source, store, state };
+  }
+
+  /** The first statement matching `match` fails with `fault`, as a busy pool or a dropped connection fails it. */
+  function failOnce(db: unknown, match: RegExp, fault: Error): void {
+    const client = (db as { $client: { query: (...a: unknown[]) => Promise<unknown> } }).$client;
+    const inner = client.query.bind(client);
+    let armed = true;
+    client.query = async (...a: unknown[]) => {
+      if (armed && typeof a[0] === "string" && match.test(a[0])) { armed = false; throw fault; }
+      return inner(...a);
+    };
+  }
+
+  it("the pass sends every file byte-equal from the letter's own sender, once, and the sealed rows go after", async () => {
+    const { db, ctx, draftId } = await setup();
+    const keeping = sealed();
+    const { draft } = await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null, keeping });
+    expect(draft).toMatchObject({ status: "scheduled", sendFiles: 2 });
+    const rows = await db.select().from(scheduledSendFiles);
+    expect(rows.length, "the PDF takes two sealed pieces").toBe(3);
+    expect(rows.every((r) => r.dekEnc !== null && r.dekKeyVersion === 1)).toBe(true);
+
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+      .toMatchObject({ claimed: 1, sent: 1, failed: 0 });
+    const [sent] = fake.state.delivered;
+    expect(sent!.from, "the letter's own sender").toBe("me@later.test");
+    expect(sent!.attachments!.map((a) => [a.filename, a.contentType, sha(a.content)]))
+      .toEqual([[picture.filename, picture.contentType, sha(picture.content)], [pdf.filename, pdf.contentType, sha(pdf.content)]]);
+    expect(await db.select().from(scheduledSendFiles), "the sealed bytes outlived the send").toHaveLength(0);
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) })).toMatchObject({ claimed: 0 });
+    expect(fake.state.delivered).toHaveLength(1);
+  });
+
+  it("what is stored is ciphertext: no piece is, holds or decodes to the file's own bytes", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null, keeping: sealed() });
+    const rows = await db.select().from(scheduledSendFiles);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const r of rows) {
+      for (const f of [picture, pdf]) {
+        const plain = f.content.toString("base64");
+        expect(plain.includes(r.rawB64), `${f.filename}: a stored piece is the plain base64`).toBe(false);
+        expect(r.rawB64.includes(plain.slice(0, 4096))).toBe(false);
+        expect(Buffer.from(r.rawB64, "base64").includes(f.content.subarray(0, 1024))).toBe(false);
+      }
+    }
+  });
+
+  it("a piece bound to another letter or account does not open: the pass closes the letter as unreadable and never dials", async () => {
+    const { db, ctx, mb, draftId } = await setup();
+    const keeping = sealed();
+    const other = await draftsSvc.create(ctx, { mailboxId: mb, subject: "other", body: "b", to });
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null, keeping });
+    await schedules.schedule(ctx, other.draft.id, iso(new Date(AT.getTime() + 3_600_000)), { files: [picture], surfaceMaxTotalBytes: null, keeping });
+    const [theirs] = await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, other.draft.id));
+    const piece = { rawB64: theirs!.rawB64, dekEnc: theirs!.dekEnc!, dekKeyVersion: theirs!.dekKeyVersion! };
+    const place = { accountId: ctx.accountId, draftId: other.draft.id, fileNo: 0, seq: 0 };
+    expect(sha(await keeping.sealer.open(piece, place))).toBe(sha(picture.content));
+    await expect(keeping.sealer.open(piece, { ...place, accountId: randomUUID() })).rejects.toThrow();
+    // The same file under another draft's seal, moved onto this letter's row.
+    await db.update(scheduledSendFiles).set(piece).where(eq(scheduledSendFiles.draftId, draftId));
+
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+      .toMatchObject({ claimed: 1, failed: 1, sent: 0 });
+    expect(fake.state.opened).toHaveLength(0);
+    const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(row).toMatchObject({ status: "draft", sendKey: null, sendError: SCHEDULED_FILES_UNREADABLE_KEPT });
+  });
+
+  it("the desktop's pass meeting a sealed letter fails closed with its own sentence", async () => {
+    const { db, ctx, draftId } = await setup();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null, keeping: sealed() });
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due }))
+      .toMatchObject({ claimed: 1, failed: 1, sent: 0 });
+    expect(fake.state.opened).toHaveLength(0);
+    const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(row).toMatchObject({ status: "draft", sendError: SCHEDULED_FILES_UNREADABLE });
+  });
+
+  for (const midSend of [false, true]) {
+    it(midSend
+      ? "a database fault reading a letter mid-send leaves it to the recovery with its files, and it is never sent twice"
+      : "a database fault reading the files back puts the letter back on schedule with its files, and the next pass sends it once", async () => {
+      const { db, ctx, draftId } = await setup();
+      const keeping = sealed();
+      await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null, keeping });
+      const [before] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+      if (midSend) {
+        // The crash after the reservation: the draft `sending`, its reservation `pending`.
+        await db.update(drafts).set({ status: "sending" }).where(eq(drafts.id, draftId));
+        await db.insert(outboundSends).values({
+          accountId: ctx.accountId, idempotencyKey: before!.sendKey!, draftId, mintedMessageId: "<crashed@later.test>", status: "pending", createdAt: AT,
+        });
+      }
+      failOnce(db, /^select "raw_b64"/, new DbAcquireTimeoutError(15_000));
+      const lines: string[] = [];
+      const log = createLogger({ service: "scheduled-send", sink: (l) => { lines.push(l); } });
+      const at = (): Date => new Date(AT.getTime() + SEND_STALE_AFTER_MS + 60_000);
+      const fake = fakeAdapter({ inSent: true });
+      expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: at, files: opener(keeping), log }))
+        .toMatchObject({ claimed: 1, sent: 0, failed: 0, deferred: 1 });
+      const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+      expect(row).toMatchObject({ status: midSend ? "sending" : "scheduled", sendKey: before!.sendKey, sendError: null });
+      expect(await db.select().from(scheduledSendFiles), "the files went as unreadable").toHaveLength(3);
+      // The operator's line names the fault, so a busy pool does not read as damaged files.
+      expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>))
+        .toContainEqual(expect.objectContaining({ event: "scheduled_send_files_read_failed", errorClass: "DbAcquireTimeoutError" }));
+
+      expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: at, files: opener(keeping) }))
+        .toMatchObject({ claimed: 1, sent: 1 });
+      // A letter mid-send is found in Sent and never sent again.
+      expect(fake.state.delivered.map((m) => m.attachments!.map((a) => sha(a.content))))
+        .toEqual(midSend ? [] : [[sha(picture.content), sha(pdf.content)]]);
+      expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+    });
+  }
+
+  it("staged files are copied at the press, so the letter still goes once the upload is gone", async () => {
+    const { db, ctx, draftId } = await setup();
+    const keeping = sealed();
+    const up = staging([{ id: "t1", ...pdf }]);
+    await schedules.schedule(ctx, draftId, iso(AT), {
+      staged: { ids: ["t1"], source: up.source }, surfaceMaxTotalBytes: 3 * 1024 * 1024, keeping,
+    });
+    expect(up.state.fetched).toBe(1);
+    up.store.clear();
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) }))
+      .toMatchObject({ claimed: 1, sent: 1 });
+    expect(fake.state.delivered[0]!.attachments!.map((a) => sha(a.content))).toEqual([sha(pdf.content)]);
+  });
+
+  it("a cancel deletes the sealed rows and nothing is sent", async () => {
+    const { db, ctx, draftId } = await setup();
+    const keeping = sealed();
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture, pdf], surfaceMaxTotalBytes: null, keeping });
+    await schedules.cancel(ctx, draftId);
+    expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(keeping) })).toMatchObject({ claimed: 0 });
+    expect(fake.state.delivered).toHaveLength(0);
+  });
+
+  it("more than seven days ahead is refused in words before any download; exactly seven days is taken; a letter without files keeps its year", async () => {
+    const { db, ctx, draftId } = await setup();
+    const keeping = sealed();
+    const up = staging([{ id: "t1", ...pdf }]);
+    await expect(schedules.schedule(ctx, draftId, iso(new Date(NOW.getTime() + SCHEDULE_FILES_MAX_AHEAD_MS + 1000)), {
+      staged: { ids: ["t1"], source: up.source }, surfaceMaxTotalBytes: null, keeping,
+    })).rejects.toMatchObject({
+      httpStatus: 400, code: "schedule_files_too_far",
+      message: "A message with files can be scheduled at most 7 days ahead. Pick a closer time.",
+    });
+    expect(up.state.fetched).toBe(0);
+    expect(await db.select().from(scheduledSendFiles)).toHaveLength(0);
+    const { draft } = await schedules.schedule(ctx, draftId, iso(new Date(NOW.getTime() + SCHEDULE_FILES_MAX_AHEAD_MS)), {
+      staged: { ids: ["t1"], source: up.source }, surfaceMaxTotalBytes: null, keeping,
+    });
+    expect(draft).toMatchObject({ status: "scheduled", sendFiles: 1 });
+    const bare = await setup();
+    expect((await schedules.schedule(bare.ctx, bare.draftId, iso(new Date(NOW.getTime() + 30 * 24 * 3_600_000)))).draft.status)
+      .toBe("scheduled");
+  });
+
+  it("past the account's quota is a 429 that is not retried, and past the size a 413, both before any download", async () => {
+    const { db, ctx, mb, draftId } = await setup();
+    const keeping = { ...sealed(), quota: { maxBytes: 10_000_000, maxFiles: 2 } };
+    const held = await draftsSvc.create(ctx, { mailboxId: mb, subject: "held", body: "b", to });
+    await schedules.schedule(ctx, held.draft.id, iso(AT), { files: [picture, picture], surfaceMaxTotalBytes: null, keeping });
+    const up = staging([{ id: "t1", ...pdf }]);
+    await expect(schedules.schedule(ctx, draftId, iso(AT), { staged: { ids: ["t1"], source: up.source }, surfaceMaxTotalBytes: null, keeping }))
+      .rejects.toMatchObject({ httpStatus: 429, code: "schedule_files_quota", retryable: false });
+    await db.update(mailboxes).set({ smtpMaxSizeBytes: 1_000_000 }).where(eq(mailboxes.id, mb));
+    await expect(schedules.schedule(ctx, draftId, iso(AT), { staged: { ids: ["t1"], source: up.source }, surfaceMaxTotalBytes: null, keeping: sealed() }))
+      .rejects.toMatchObject({ httpStatus: 413 });
+    expect(up.state.fetched, "a refused letter was downloaded").toBe(0);
+    const [row] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(row).toMatchObject({ status: "draft", sendFiles: 0 });
+    expect(await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, draftId))).toHaveLength(0);
+  });
+
+  it("the tidy closes a paused account's overdue letter, sweeps orphaned and aged files, and leaves a letter mid-send alone", async () => {
+    const { db, ctx, mb, draftId } = await setup();
+    const keeping = sealed();
+    const letter = (subject: string) => draftsSvc.create(ctx, { mailboxId: mb, subject, body: "b", to });
+    const [sending, claimed, orphan] = await Promise.all([letter("sending"), letter("claimed"), letter("orphan")]);
+    for (const id of [draftId, sending.draft.id, claimed.draft.id, orphan.draft.id]) {
+      await schedules.schedule(ctx, id, iso(AT), { files: [picture], surfaceMaxTotalBytes: null, keeping });
+    }
+    await db.update(drafts).set({ status: "sending" }).where(eq(drafts.id, sending.draft.id));
+    await db.update(drafts).set({ status: "draft" }).where(eq(drafts.id, claimed.draft.id));
+    await db.update(drafts).set({ sendKey: randomUUID() }).where(eq(drafts.id, orphan.draft.id));
+    const kept = async (id: string) => (await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, id))).length;
+    const pass = (at: Date) => runScheduledSendPass(db, {
+      openSendAdapter: fakeAdapter().factory, now: () => at, accountEligible: async () => false, files: opener(keeping),
+    });
+
+    // A day and an hour past its time: the overdue letter closes, the orphan's files go.
+    await pass(new Date(AT.getTime() + SCHEDULED_FILES_OVERDUE_MS + 60_000));
+    const [closed] = await db.select().from(drafts).where(eq(drafts.id, draftId));
+    expect(closed).toMatchObject({ status: "draft", sendAt: null, sendKey: null, sendError: SCHEDULED_SEND_EXPIRED_SENTENCE, sendFiles: 1 });
+    expect(await kept(draftId)).toBe(0);
+    expect(await kept(orphan.draft.id)).toBe(0);
+    expect(await kept(sending.draft.id)).toBe(1);
+    expect(await kept(claimed.draft.id), "the claim window is not the tidy's").toBe(1);
+    const changes = await db.select().from(changeLog).where(and(eq(changeLog.accountId, ctx.accountId), eq(changeLog.entityId, draftId)));
+    expect(changes.length).toBeGreaterThan(1);
+
+    // Past the oldest a piece may be: the claim window's files go, the letter mid-send keeps its own.
+    await pass(new Date(NOW.getTime() + SCHEDULED_FILES_MAX_AGE_MS + 60_000));
+    expect(await kept(claimed.draft.id)).toBe(0);
+    expect(await kept(sending.draft.id)).toBe(1);
+    const [stillSending] = await db.select().from(drafts).where(eq(drafts.id, sending.draft.id));
+    expect(stillSending!.status).toBe("sending");
+  });
+
+  it("the key ring gains a version: a letter sent before the re-wrap goes, and one after it goes with the old key retired", async () => {
+    const { db, ctx, mb, draftId } = await setup();
+    const v1 = sealed({ 1: K1 });
+    const later = await draftsSvc.create(ctx, { mailboxId: mb, subject: "later", body: "b", to });
+    const at2 = new Date(AT.getTime() + 3_600_000);
+    await schedules.schedule(ctx, draftId, iso(AT), { files: [picture], surfaceMaxTotalBytes: null, keeping: v1 });
+    await schedules.schedule(ctx, later.draft.id, iso(at2), { files: [pdf], surfaceMaxTotalBytes: null, keeping: v1 });
+
+    const fake = fakeAdapter();
+    expect(await runScheduledSendPass(db, { openSendAdapter: fake.factory, now: due, files: opener(sealed({ 1: K1, 2: K2 })) }))
+      .toMatchObject({ claimed: 1, sent: 1 });
+    const moved = await runKekRewrap({ db: db as never, keyProvider: new StaticKeyProvider({ 1: K1, 2: K2 }), apply: true });
+    expect(moved.failed).toBe(0);
+    const rows = await db.select().from(scheduledSendFiles).where(eq(scheduledSendFiles.draftId, later.draft.id));
+    expect(rows.map((r) => r.dekKeyVersion)).toEqual([2, 2]);
+    expect(await runScheduledSendPass(db, {
+      openSendAdapter: fake.factory, now: () => new Date(at2.getTime() + 60_000), files: opener(sealed({ 2: K2 })),
+    })).toMatchObject({ claimed: 1, sent: 1 });
+    expect(fake.state.delivered.map((m) => m.attachments!.map((a) => sha(a.content))))
+      .toEqual([[sha(picture.content)], [sha(pdf.content)]]);
   });
 });

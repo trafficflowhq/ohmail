@@ -129,6 +129,15 @@ describe("a send's upload is bounded as a staged file's is, not as a write's", (
     expect(d.connectivity).toEqual([]);
   });
 
+  it("Send later with files uploads them inline too, on the send's bound, and its own timeout leaves the door online", async () => {
+    vi.useFakeTimers();
+    const d = slowDoor();
+    expect(await d.settle("/drafts/d-1/schedule-with-files", REQUEST_DEADLINE_MS + 1_000)).toBe("still pending");
+    expect(d.connectivity).toEqual([]);
+    expect(await d.settle("/drafts/d-2/schedule-with-files", STAGED_UPLOAD_TIMEOUT_MS)).toBe("answered 503");
+    expect(d.connectivity).toEqual([]);
+  });
+
   it("control: any other write keeps its deadline, and a forward that fails marks the door offline", async () => {
     vi.useFakeTimers();
     const d = slowDoor();

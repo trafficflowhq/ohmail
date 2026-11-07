@@ -1729,10 +1729,12 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     sendId: stuck!.id, accountId, mailboxId, rawB64: Buffer.from(`owed copy ${tag}`).toString("base64"),
   });
 
-  // A scheduled letter's kept file (mail 0179): its name and bytes are mail, seeded and swept as such.
+  // A scheduled letter's kept file (mail 0179): its name and bytes are mail, seeded and swept as such;
+  // sealed as a server keeps it (mail 0180), so the wrapped piece key is swept too.
   await db.insert(scheduledSendFiles).values({
     accountId, mailboxId, draftId: draft!.id, sendKey: `sk-${tag}`, fileNo: 0, filename: `kept ${tag}.pdf`,
     contentType: "application/pdf", sizeBytes: 4, contentSha256: "cd".repeat(32), rawB64: Buffer.from(`kept ${tag}`).toString("base64"),
+    dekEnc: `piece key ${tag}`, dekKeyVersion: 1,
   });
 
   // A rule the person removed (mail 0178): its key is their words, seeded and swept as mail.

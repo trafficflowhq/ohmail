@@ -42,6 +42,9 @@ export const helloRoutes: Route[] = [
       } else {
         needsSetup = hello.needsSetup;
       }
+      // Where a server keeps a scheduled letter's files sealed, how many days ahead it takes one.
+      const kept = deps.services?.scheduledFiles;
+      const scheduleFilesDays = kept?.atRest === "sealed" ? Math.floor(kept.maxAheadMs / DAY_MS) : null;
       return helloResponse(200, {
         product: "ohmail",
         flavor: hello.flavor,
@@ -60,6 +63,7 @@ export const helloRoutes: Route[] = [
           pairing: hello.features.pairing,
           remoteImages: hello.features.remoteImages,
           scheduleFiles: hello.features.scheduleFiles,
+          ...(scheduleFilesDays !== null ? { scheduleFilesDays } : {}),
           // Not `hello.features.accountHeader` — see the header. This composition sets the
           // account header because `createApp.handle` does, and that is not the host's to choose.
           accountHeader: true,
@@ -70,6 +74,8 @@ export const helloRoutes: Route[] = [
     },
   },
 ];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Same discipline as `/health`'s responder: JSON, and never cached. */
 function helloResponse(status: number, body: Record<string, unknown>): Response {
