@@ -78,6 +78,14 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.46" date="2026-11-07">
+      <description>
+        <ul>
+          <li>Clicking a link while writing a letter no longer opens it</li>
+          <li>The Screener no longer flashes a waiting count at start when nothing is waiting</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.45" date="2026-11-07">
       <description>
         <ul>
@@ -109,14 +117,6 @@
       <description>
         <ul>
           <li>New mail keeps arriving within seconds while a large mailbox is being added</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.41" date="2026-11-05">
-      <description>
-        <ul>
-          <li>Escape in a reply's subject goes back to the reply</li>
-          <li>Searching a common word answers faster again</li>
         </ul>
       </description>
     </release>

@@ -21,6 +21,21 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.46] — 2026-11-07
+
+### Clicking a link while writing a letter no longer opens it
+
+In the desktop app, clicking an address or a web link in the text of the letter you are writing opened a
+new message or the browser. A click there now only places the cursor, so you can edit the link's text.
+Links in the letters you read open as before.
+
+### The Screener no longer flashes a waiting count at start when nothing is waiting
+
+On the desktop app, the Ohbox showed a Screener strip such as "7 waiting" for a moment after every start and then
+dropped it, while the Screener itself was empty. The strip, the sidebar's Screener count and the Screener now wait
+until ohmail has checked who is really waiting, and show only those senders. The Ohbox's unread count waits for
+that check too, so it no longer changes a moment after the start.
+
 ## [0.30.45] — 2026-11-07
 
 ### Send later works with attachments on the desktop
@@ -17073,7 +17088,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.45...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.46...HEAD
+[0.30.46]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.46
 [0.30.45]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.45
 [0.30.44]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.44
 [0.30.43]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.43
