@@ -67,6 +67,8 @@ const SUB_HINT_ID = "compose-from-substituted";
  */
 const SEND_LATER_MIN_LEAD_MS = 3 * 60 * 1000;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /** Under this many px of To input the placeholder is the bare example address. */
 export const TO_PLACEHOLDER_SHORT_BELOW_PX = 300;
 export const toPlaceholderIsShort = (inputWidthPx: number): boolean => inputWidthPx < TO_PLACEHOLDER_SHORT_BELOW_PX;
@@ -440,14 +442,17 @@ export function ComposeView({
     if (sendLaterOpen) sendLaterRef.current?.focus();
   }, [sendLaterOpen]);
   /* A FORWARD stays unschedulable, the toggle disabled with its reason as before. FILES go with the
-     letter where this door keeps them (`/hello` `scheduleFiles`, the desktop's own engine); anywhere
-     else the toggle stays pressable and the panel SAYS so in place of the times, before any pick. */
+     letter where this door keeps them (`/hello`: the desktop's own engine, or a server that names its
+     horizon); anywhere else the toggle stays pressable and the panel SAYS so in place of the times,
+     before any pick — the older server's sentence when it said no, the plain one when nothing answered. */
   const hasFiles = (fields.attachments?.length ?? 0) > 0;
   const filesKept = useScheduleFiles(engine, hasFiles || sendLaterOpen);
-  const sendLaterBlocked = fields.forwardOf ? t("sendLaterUnavailable") : null;
-  const sendLaterFilesRefused = sendLaterBlocked === null && hasFiles && filesKept !== true
-    ? t(filesKept === false ? "sendLaterFilesNotHere" : "sendLaterUnavailable")
+  const sendLaterBlocked = fields.forwardOf ? t("sendLaterNoForwards") : null;
+  const sendLaterFilesRefused = sendLaterBlocked === null && hasFiles && filesKept?.kept !== true
+    ? t(filesKept === null ? "sendLaterUnavailable" : "sendLaterFilesNotHere")
     : null;
+  /* With files, a server keeps them only so far ahead: no later time is offered, and the panel says how far. */
+  const filesHorizon = hasFiles && filesKept?.kept === true ? filesKept.days : null;
   /**
    * SEND NEVER SNAPSHOTS A MESSAGE WITH AN ATTACHMENT PENDING. A pick decodes, re-encodes and
    * commits in one `onChange` at the end; between the press and that commit the form holds a
@@ -495,18 +500,24 @@ export function ComposeView({
     setSendLaterOpen(false);
     onSendLater(iso);
   }, [onSendLater, sendLaterHeld]);
+  /** The latest instant a letter with files may go, from the panel's opening; `null` is no horizon. */
+  const horizonEnd = filesHorizon === null ? null : openedAt.getTime() + filesHorizon * DAY_MS;
+  const withinHorizon = (iso: string): boolean => horizonEnd === null || Date.parse(iso) <= horizonEnd;
   // The evening preset is offered only while it is meaningfully ahead — past ~17:45 "this evening at
   // 18:00" is a promise measured in seconds, and the honest menu simply omits it.
   const eveningIso = todayEvening(openedAt).instant.toISOString();
-  const eveningUsable = Date.parse(eveningIso) - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
+  const eveningUsable = Date.parse(eveningIso) - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS && withinHorizon(eveningIso);
   const mornings = sendLaterMornings(openedAt);
+  const tomorrowUsable = withinHorizon(mornings.tomorrow);
+  const monday = mornings.monday !== null && withinHorizon(mornings.monday) ? mornings.monday : null;
   /* THE TYPED CLOCK, COMPOSED — the presets name hours no transition crosses, this field names
      any hour at all, so it is the one appointment on this screen whose wall clock can be missing
      or doubled. It carries the verdict; the sentence below states it before the press. */
   const custom = composedLocalInput(customAt, new Date(openedAt.getTime() + SEND_LATER_MIN_LEAD_MS));
   const customIso = custom?.instant.toISOString() ?? null;
+  const customTooFar = customIso !== null && !withinHorizon(customIso);
   const customUsable = customIso !== null
-    && Date.parse(customIso) - openedAt.getTime() >= SEND_LATER_MIN_LEAD_MS;
+    && Date.parse(customIso) - openedAt.getTime() >= SEND_LATER_MIN_LEAD_MS && !customTooFar;
 
   useKeyBindings([
     /* ONE Escape binding, branching — never two competing ones. It is the escape cascade's own
@@ -585,7 +596,9 @@ export function ComposeView({
       label: t("keyLaterTomorrow"),
       inWriting: true,
       disabled: !sendLaterOpen,
-      run: () => pickSendLater(mornings.tomorrow),
+      run: () => {
+        if (tomorrowUsable) pickSendLater(mornings.tomorrow);
+      },
     },
     {
       chord: "3",
@@ -593,7 +606,10 @@ export function ComposeView({
       label: t("keyLaterMonday"),
       inWriting: true,
       disabled: !sendLaterOpen,
-      run: () => pickSendLater(mornings.monday ?? mornings.tomorrow),
+      run: () => {
+        if (monday) pickSendLater(monday);
+        else if (mornings.monday === null && tomorrowUsable) pickSendLater(mornings.tomorrow);
+      },
     },
     {
       chord: "4",
@@ -1118,12 +1134,14 @@ export function ComposeView({
                       {t("sendLaterTonight", { when: scheduleLabel(eveningIso, openedAt) })}
                     </Button>
                   ) : null}
-                  <Button variant="ghost" onClick={() => pickSendLater(mornings.tomorrow)}>
-                    {t("sendLaterTomorrow", { when: scheduleLabel(mornings.tomorrow, openedAt) })}
-                  </Button>
-                  {mornings.monday ? (
-                    <Button variant="ghost" onClick={() => pickSendLater(mornings.monday!)}>
-                      {t("sendLaterMonday", { when: scheduleLabel(mornings.monday, openedAt) })}
+                  {tomorrowUsable ? (
+                    <Button variant="ghost" onClick={() => pickSendLater(mornings.tomorrow)}>
+                      {t("sendLaterTomorrow", { when: scheduleLabel(mornings.tomorrow, openedAt) })}
+                    </Button>
+                  ) : null}
+                  {monday ? (
+                    <Button variant="ghost" onClick={() => pickSendLater(monday)}>
+                      {t("sendLaterMonday", { when: scheduleLabel(monday, openedAt) })}
                     </Button>
                   ) : null}
                 </div>
@@ -1134,6 +1152,7 @@ export function ComposeView({
                     type="datetime-local"
                     value={customAt}
                     min={localInputValue(new Date(openedAt.getTime() + SEND_LATER_MIN_LEAD_MS).toISOString())}
+                    max={horizonEnd === null ? undefined : localInputValue(new Date(horizonEnd).toISOString())}
                     onChange={(e) => setCustomAt(e.currentTarget.value)}
                   />
                   <Button
@@ -1151,7 +1170,9 @@ export function ComposeView({
                 {/* A PAST PICK IS REFUSED HERE, in words, before anything goes on the wire —
                     and the zone is stated plainly, because "18:00" is only half a fact. */}
                 {customAt && !customUsable ? (
-                  <p className="send-note" role="status">{t("sendLaterPast")}</p>
+                  <p className="send-note" role="status">
+                    {customTooFar ? t("sendLaterFilesTooFar", { days: filesHorizon ?? 0 }) : t("sendLaterPast")}
+                  </p>
                 ) : null}
                 {/* THE NIGHT THE TYPED HOUR IS MISSING, SAID OUT LOUD — the strip's own rule on
                     the other surface: only a booking that DIFFERS from the request earns a
@@ -1166,8 +1187,10 @@ export function ComposeView({
                   </p>
                 ) : null}
                 <p className="send-note">{t("sendLaterZone", { zone: activeFormatZone() })}</p>
+                {/* How far ahead a server keeps this letter's files. */}
+                {filesHorizon !== null ? <p className="send-note">{t("sendLaterFilesDays", { days: filesHorizon })}</p> : null}
                 {/* The desktop's own engine keeps the appointment, so it waits for the app. */}
-                {filesKept === true ? <p className="send-note">{t("sendLaterThisComputer")}</p> : null}
+                {filesKept?.kept === true && filesKept.days === null ? <p className="send-note">{t("sendLaterThisComputer")}</p> : null}
                 </>}
               </div>
             ) : null}

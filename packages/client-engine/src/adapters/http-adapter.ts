@@ -33,7 +33,7 @@ import type {
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
   UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer,
+  MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer, ScheduleFilesAnswer,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import { OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE } from "./refusal-shape.js";
@@ -162,10 +162,11 @@ export interface HttpAdapterOptions {
    */
   forwardPartsCheck?: boolean;
   /**
-   * SEND LATER MAY CARRY FILES where the server says it keeps them (`features.scheduleFiles` on
-   * `GET /hello`, mail 0179): a letter with files is scheduled at `/drafts/:id/schedule-with-files`.
-   * Off by default, and then such a schedule is refused before any request, as before. On,
-   * {@link HttpAdapter.scheduleFilesAnnounced} exists too. The desktop window sets it.
+   * SEND LATER MAY CARRY FILES where the door says it keeps them (`GET /hello`: `scheduleFiles` on
+   * the desktop's own engine, `scheduleFilesDays` on a server, mail 0179, 0180): a letter with files
+   * is scheduled at `/drafts/:id/schedule-with-files`, inside the announced horizon, the door asked
+   * on every attempt. Off by default, and then such a schedule is refused before any request. On,
+   * {@link HttpAdapter.scheduleFilesAnnounced} exists too. Every door's client sets it.
    */
   scheduleFilesCheck?: boolean;
 }
@@ -563,17 +564,22 @@ export class HttpAdapter implements EngineAdapter {
   }
 
   /** See {@link HttpAdapterOptions.scheduleFilesCheck}; present only where it is on. */
-  scheduleFilesAnnounced?: () => Promise<boolean | null>;
+  scheduleFilesAnnounced?: () => Promise<ScheduleFilesAnswer | null>;
   private readonly scheduleFilesCheck: boolean;
 
-  /** `features.scheduleFiles` from this adapter's own `/hello`; `null` when there is no answer. */
-  private async askScheduleFiles(): Promise<boolean | null> {
+  /** What this adapter's own `/hello` says about keeping a letter's files; `null` when there is no answer. */
+  private async askScheduleFiles(): Promise<ScheduleFilesAnswer | null> {
     try {
       return await this.withDeadline(FORWARD_PARTS_HELLO_MS, async (signal) => {
         const res = await this.request("GET", "/hello", signal ? { signal } : {});
         if (!res.ok) return null;
-        const body = await res.json().catch(() => null) as { product?: unknown; features?: { scheduleFiles?: unknown } } | null;
-        return body?.product === "ohmail" ? body.features?.scheduleFiles === true : null;
+        const body = await res.json().catch(() => null) as {
+          product?: unknown; features?: { scheduleFiles?: unknown; scheduleFilesDays?: unknown };
+        } | null;
+        if (body?.product !== "ohmail") return null;
+        const days = body.features?.scheduleFilesDays;
+        const horizon = typeof days === "number" && Number.isInteger(days) && days > 0 ? days : null;
+        return { kept: body.features?.scheduleFiles === true || horizon !== null, days: horizon };
       });
     } catch {
       return null;
@@ -2404,6 +2410,31 @@ export class HttpAdapter implements EngineAdapter {
         );
       }
     }
+    /* SEND LATER WITH FILES GOES ONLY TO A DOOR THAT SAYS IT KEEPS THEM, inside the horizon it names —
+       asked on every attempt, outbox replays included, before anything is written. A server that
+       predates its horizon mounts the files route and keeps the bytes unsealed, so a door that did
+       not announce is never sent them (mail 0180). No answer waits in the queue. */
+    const filesLater = Boolean(m.sendAt) && m.again !== true && !m.forwardOf && (m.attachments?.length ?? 0) > 0;
+    if (filesLater && this.scheduleFilesCheck) {
+      const said = await this.askScheduleFiles();
+      if (said === null) {
+        throw new MutationRejectedError("ohmail could not ask your server whether it keeps files for a later send", {
+          code: "network", retryable: true,
+        });
+      }
+      if (!said.kept) {
+        this.forgetSendKey(idempotencyKey);
+        throw new MutationRejectedError(SCHEDULE_FILES_NOT_KEPT_SENTENCE, { code: "schedule_files_unsupported", retryable: false });
+      }
+      if (said.days !== null && Date.parse(m.sendAt!) - Date.now() > said.days * DAY_MS) {
+        this.forgetSendKey(idempotencyKey);
+        throw new MutationRejectedError(scheduleFilesTooFarSentence(said.days), {
+          code: "schedule_files_too_far", retryable: false, details: { days: said.days },
+        });
+      }
+    }
+    /* An earlier attempt under this key, read before this attempt seeds anything. */
+    const replayed = createAttemptedBefore || createdRow !== undefined || this.draftForKey.has(idempotencyKey);
     /* THE ROW THIS KEY ALREADY MADE, handed back after a reload: this adapter's memory of it is
        seeded as the adapter that made it would hold it — the row, the revision it was written at,
        and which words it holds. */
@@ -2414,6 +2445,16 @@ export class HttpAdapter implements EngineAdapter {
         this.noteDraftRevision(createdRow.id, createdRow.revision);
       }
       if (createdRow.fingerprint) this.fingerprintForKey.set(idempotencyKey, createdRow.fingerprint);
+    }
+    /* A REPLAY OF SEND LATER WITH FILES READS THE ROW FIRST: the earlier attempt may have scheduled
+       it, a scheduled row refuses the save, and staged uploads cannot be put to the same place again.
+       Only the press the key's row was written with is confirmed so; other or unknown words are not. */
+    if (filesLater && replayed && this.scheduleFilesCheck) {
+      const row = this.draftForKey.get(idempotencyKey) ?? m.draftId;
+      if (row && this.fingerprintForKey.get(idempotencyKey) === sendFingerprint(m) && await this.scheduledAsPressed(row, m)) {
+        this.forgetSendKey(idempotencyKey);
+        return { changes: [], seq: null, entityId: row };
+      }
     }
     /**
      * A RESUMED KEY WHOSE WORDS CHANGED WRITES THEM FIRST. Equal words replay the row as it stands;
@@ -2755,23 +2796,43 @@ export class HttpAdapter implements EngineAdapter {
     // `status: 'scheduled'` and dials nothing; the server's scheduled-send pass runs the
     // ordinary gated send when the time comes.
     if (m.sendAt) {
-      // A draft row stores no attachment bytes (they ride the SEND request, §13.2/§14), and the
-      // scheduled pass cannot stream a forward's original, so an appointment carries neither —
-      // except files on a door that keeps them itself (`scheduleFilesCheck`, the desktop's engine).
-      // The compose surface says so before the pick; this is the same rule where it cannot be
-      // bypassed, refused before any request rather than after the row is marked.
+      // The scheduled pass cannot stream a forward's original, so a forward carries no
+      // appointment; a letter's files go with it to a door that keeps them (`scheduleFilesCheck`,
+      // asked above), in the transport its send would take. The compose surface says so before the
+      // pick; this is the same rule where it cannot be bypassed, refused before the row is marked.
       const withFiles = (m.attachments?.length ?? 0) > 0;
-      if ((withFiles && !this.scheduleFilesCheck) || m.forwardOf) {
+      if (m.forwardOf) {
+        this.forgetSendKey(idempotencyKey);
+        throw new MutationRejectedError(
+          "Send later isn't available for forwarded messages. Send it now.",
+          { code: "schedule_unsupported_content", retryable: false },
+        );
+      }
+      if (withFiles && !this.scheduleFilesCheck) {
         this.forgetSendKey(idempotencyKey);
         throw new MutationRejectedError(
           "Send later isn't available for messages with attachments or forwards yet.",
           { code: "schedule_unsupported_content", retryable: false },
         );
       }
+      /* THE SEND'S OWN TRANSPORT: staged above the inline ceiling where this client stages, inline otherwise. */
+      let files: { attachments?: typeof m.attachments; stagedAttachmentIds?: string[] } = {};
+      if (withFiles && this.willStage(m)) {
+        const staged = await this.stagedIdsFor(m, idempotencyKey).catch((err: unknown) => {
+          if (!(err instanceof MutationRejectedError)) throw err;
+          throw new MutationRejectedError(err.message, {
+            status: err.status, code: err.code, retryable: err.retryable, retryAfterMs: err.retryAfterMs,
+            details: err.details, createAttempted: err.createAttempted, entityId: draftId ?? null,
+          });
+        });
+        files = { stagedAttachmentIds: staged ?? [] };
+      } else if (withFiles) {
+        files = { attachments: m.attachments };
+      }
 
       const res = withFiles
         ? await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule-with-files`, {
-          body: { sendAt: m.sendAt, attachments: m.attachments },
+          body: { sendAt: m.sendAt, ...files },
           idempotencyKey,
         })
         : await this.request("POST", `/drafts/${encodeURIComponent(draftId)}/schedule`, {
@@ -2780,13 +2841,12 @@ export class HttpAdapter implements EngineAdapter {
         });
       const seq = this.noteSeq(res);
       if (res.status === 404 && withFiles) {
-        // A door that keeps no files (Cloud, an older engine) has no such route: the draft stands,
-        // nothing was scheduled, and nothing leaves without its files.
+        // A door that keeps no files answers 404: the draft stands, nothing was scheduled, and
+        // nothing leaves without its files.
         this.forgetSendKey(idempotencyKey);
-        throw new MutationRejectedError(
-          "This message was not scheduled: this server can't keep files for a later send. Send it now, or remove the files.",
-          { status: 404, code: "schedule_files_unsupported", retryable: false },
-        );
+        throw new MutationRejectedError(SCHEDULE_FILES_NOT_KEPT_SENTENCE, {
+          status: 404, code: "schedule_files_unsupported", retryable: false,
+        });
       }
       if (res.status === 404) {
         // VERSION SKEW: a server that predates scheduling answers its ordinary 404 here. The
@@ -3172,6 +3232,21 @@ export class HttpAdapter implements EngineAdapter {
       : { outcome };
   }
 
+  /**
+   * IS THE ROW ALREADY SCHEDULED AS THIS PRESS ASKED — at its time, with as many files? Read before a
+   * replay writes or stages anything; any uncertain answer is `false`, and the replay goes on as a
+   * first attempt would.
+   */
+  private async scheduledAsPressed(draftId: string, m: Extract<EngineMutation, { kind: "mail_send" }>): Promise<boolean> {
+    try {
+      const res = await this.request("GET", `/drafts/${encodeURIComponent(draftId)}`);
+      if (!res.ok) return false;
+      const row = (await res.json()) as { status?: unknown; sendAt?: unknown; sendFiles?: unknown };
+      return row.status === "scheduled" && typeof row.sendAt === "string" && Date.parse(row.sendAt) === Date.parse(m.sendAt!)
+        && row.sendFiles === (m.attachments?.length ?? 0);
+    } catch { return false; }
+  }
+
   private async keyWasPresented(draftId: string, sendKey: string): Promise<boolean> {
     let res: Response;
     try {
@@ -3325,6 +3400,17 @@ export class HttpAdapter implements EngineAdapter {
  * nothing accepts.
  */
 export const SEND_INLINE_MAX_TOTAL_BYTES = 3 * 1024 * 1024;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Send later with files refused by a door that keeps none. */
+export const SCHEDULE_FILES_NOT_KEPT_SENTENCE =
+  "This message was not scheduled: this server can't keep files for a later send. Send it now, or remove the files.";
+
+/** Send later with files refused past the door's horizon, before anything is sent. */
+export function scheduleFilesTooFarSentence(days: number): string {
+  return `This message was not scheduled: a message with files can be scheduled at most ${days} days ahead. Pick a closer time.`;
+}
 
 /**
  * `sha256(bytes)` as lowercase hex, or null where this runtime cannot compute one.

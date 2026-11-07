@@ -42,6 +42,10 @@ import {
   sendLaterMornings,
   todayEvening,
   usableHours,
+  horizonDays,
+  horizonHours,
+  inSendLaterHorizon,
+  sendLaterHorizon,
   type LiveWorldActions,
 } from "../src/state/live";
 import { Copy } from "../src/copy";
@@ -195,6 +199,55 @@ describe("a Send-later press is an appointment, never a delivery", () => {
     expect(res.outcome).toBe("failed");
     expect(live.toasts).toEqual([Copy.replyFailed]);
     expect(liveScheduled(live.engine.read(), { now: new Date(), zone: "UTC" })).toEqual([]);
+    live.store.close();
+    live.fake.server.close();
+  });
+});
+
+describe("Send later with files, on a paired door (mail 0180)", () => {
+  const FILE = { filename: "plan.pdf", contentType: "application/pdf", contentBase64: Buffer.alloc(32, 7).toString("base64") };
+  const later = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+
+  it("a server that names its horizon takes the letter with its files, and nothing reaches /send", async () => {
+    const live = await scene((fake) => fake.setHello({ forwardParts: true, staging: false, scheduleFiles: false, scheduleFilesDays: 7 }));
+    const at = soon();
+    const res = await live.actions.sendReply("m-1", "with the plan", false, null, at, [FILE]);
+    expect(res.outcome).toBe("sent");
+    const posted = wire(live.fake, "POST", /^\/drafts\/[^/]+\/schedule-with-files$/);
+    expect(posted).toHaveLength(1);
+    expect(JSON.parse(posted[0]!.body)).toEqual({ sendAt: at, attachments: [FILE] });
+    expect(wire(live.fake, "POST", /^\/drafts\/[^/]+\/(schedule|send)$/)).toHaveLength(0);
+    expect(live.fake.draftRows().find((d) => d.status === "scheduled")).toMatchObject({ sendAt: at, sendFiles: 1 });
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("an older server that names none is not sent the files: refused, and nothing is scheduled", async () => {
+    const live = await scene((fake) => fake.setHello({ forwardParts: true, staging: false, scheduleFiles: false }));
+    const res = await live.actions.sendReply("m-1", "with the plan", false, null, soon(), [FILE]);
+    expect(res.outcome).toBe("failed");
+    expect(wire(live.fake, "POST", /^\/drafts\/[^/]+\/schedule-with-files$/)).toHaveLength(0);
+    expect(wire(live.fake, "POST", "/drafts"), "the refusal came after the row was written").toHaveLength(0);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("past the server's horizon is refused before anything goes on the wire", async () => {
+    const live = await scene((fake) => fake.setHello({ forwardParts: true, staging: false, scheduleFiles: false, scheduleFilesDays: 7 }));
+    const res = await live.engine.mutate({
+      kind: "mail_send", inReplyTo: "m-1", mailboxId: "mb-1", subject: "Re: Invoice 12", body: "next week",
+      to: [{ name: null, address: "ada@fake.test" }], sendAt: later(8), attachments: [FILE],
+    });
+    expect(res.status).toBe("rolled_back");
+    expect(res.error).toMatchObject({ code: "schedule_files_too_far", retryable: false });
+    expect(live.fake.seen.filter((r) => r.method !== "GET"), "a request left past the horizon").toEqual([]);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("the session's answer reaches the composer: kept, with the days a server names", async () => {
+    const live = await scene((fake) => fake.setHello({ forwardParts: true, staging: false, scheduleFiles: false, scheduleFilesDays: 7 }));
+    expect(await live.engine.scheduleFilesAnnounced()).toEqual({ kept: true, days: 7 });
     live.store.close();
     live.fake.server.close();
   });
@@ -464,6 +517,23 @@ describe("the picker's rows can never name a moment already gone", () => {
     expect(usableHours(lateTonight, 0)).toEqual([]);
     expect(usableHours(lateTonight, 1)).toEqual([...SEND_LATER_HOURS]);
   });
+
+  it("WITH FILES a server keeps only so far ahead: no day or hour past its horizon is drawn (mail 0180)", () => {
+    const end = sendLaterHorizon(openedAt, 7)!;
+    expect(end - openedAt.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
+    expect(horizonDays(openedAt, end).at(-1), "the last day is the seventh").toBe(7);
+    // On the seventh day only the hours before 10:17 are inside it.
+    expect(horizonHours(openedAt, 7, end)).toEqual([8, 9]);
+    for (const offset of horizonDays(openedAt, end)) {
+      for (const hour of horizonHours(openedAt, offset, end)) {
+        expect(inSendLaterHorizon(dayAtHour(openedAt, offset, hour).instant, end), `${offset} ${hour}`).toBe(true);
+      }
+    }
+    // Without files, or on a door with no horizon, nothing changes.
+    expect(sendLaterHorizon(openedAt, null)).toBeNull();
+    expect(horizonDays(openedAt, null)).toEqual(DAY_OFFSETS);
+    expect(horizonHours(openedAt, 90, null)).toEqual([...SEND_LATER_HOURS]);
+  });
 });
 
 describe("the evening preset is offered only while it is meaningfully ahead", () => {
@@ -536,7 +606,7 @@ describe("the composer's affordance and the Scheduled screen — the shapes that
        in the markup. The forward half is driven directly in
        `test/send-later-not-on-this-phone.test.ts`; what is asserted HERE is that the markup asks
        that predicate, which is what makes the forward rule reach the button at all. */
-    expect(actions).toMatch(/const laterOffered = sendLaterOffered\(\{ standalone: w\.standalone, forward, hasAttachments: attachments\.length > 0 \}\)/);
+    expect(actions).toMatch(/const laterOffered = sendLaterOffered\(\{\s*standalone: w\.standalone, forward, hasAttachments: attachments\.length > 0, filesKept: filesKept\?\.kept === true,\s*\}\)/);
     expect(actions).toMatch(/\{laterOffered \? \(\s*<Button\s*label=\{Copy\.sendLater\}/);
   });
 
