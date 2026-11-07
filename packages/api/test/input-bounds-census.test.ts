@@ -16,7 +16,7 @@ import {
   SEND_MAX_ATTACHMENT_PARTS,
   PROXY_URL_MAX_CHARS, RECIPIENT_ADDRESS_MAX_CHARS, RECIPIENT_NAME_MAX_CHARS,
   SEND_MAX_RECIPIENTS, THREAD_MERGE_MAX_IDS, READER_ZONE_MAX_CHARS, READER_LOCALE_MAX_CHARS,
-  WHY_STAYED_IDS_MAX,
+  WHY_STAYED_IDS_MAX, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_QUOTA,
 } from "@trafficflow/services/mail";
 import { FOLDER_PATH_MAX, MAX_WORKFLOW_STEPS } from "@trafficflow/core/mail";
 import { drillKinds } from "@trafficflow/db/cloud";
@@ -804,6 +804,12 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
       DRAFT_SUBJECT_MAX_CHARS, DRAFT_HTML_CAP_BYTES, DRAFT_BODY_MAX_BYTES, FORWARD_MAX_PARTS],
   },
   "POST /drafts/:id/schedule": { bounds: [SCHEDULE_MAX_AHEAD_MS] },
+  // Send later with files (mail 0180): the send's two transports with their own bounds, the year,
+  // a server's seven days and its per-account quota, each refused before any download.
+  "POST /drafts/:id/schedule-with-files": {
+    bounds: [SEND_MAX_ATTACHMENT_PARTS, SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
+      SCHEDULE_MAX_AHEAD_MS, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_QUOTA.maxBytes, SCHEDULED_FILES_QUOTA.maxFiles],
+  },
   // The resolution verb. Its body carries ONE field, `outcome`, a two-member enum
   // (`arrived` | `not_arrived`) refused by shape before the transaction opens — so there is no
   // caller-chosen count and no caller-chosen size, which is what this file is about. It is not

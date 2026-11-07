@@ -245,10 +245,13 @@ async function main(): Promise<void> {
       sendPassInFlight = (async () => {
         try {
           const passDeps = buildDeps(new Request(cfg.origin), rt);
+          const kept = rt.services.scheduledFiles;
           const r = await runScheduledSendPass(owned.db, {
             openSendAdapter: (mailboxId) => makeSendAdapter(passDeps, mailboxId),
             resolveStorageCap: async () => UNMETERED_STORAGE_CAP,
             keepOwedCopy: OWED_COPY_SELF_HOST,
+            // This server's sealed files (mail 0180): opened for the send, tidied before the claim.
+            ...(kept?.atRest === "sealed" ? { files: { open: kept.sealer.open.bind(kept.sealer), tidy: true } } : {}),
             log: logger,
           });
           if (r.claimed > 0) {

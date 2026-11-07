@@ -243,6 +243,23 @@ describe("known-set memo: what it serves and what drops it", () => {
     expect(calls.recordExternalOverride, "the neutral path still CALLS through").toBe(1);
   });
 
+  /* The reaper's cue (`sync.ts`): a write that may leave a message without an instance is counted,
+     inside a transaction too; a read-state write, a neutral one and an insert are not. */
+  it("counts the writes that may remove an instance, and only those", async () => {
+    const { repo } = stubRepo([loc("INBOX", 1)]);
+    const cache = new KnownSetCache("mb-1");
+    const watched = watchKnownSet(repo, cache);
+    await watched.upsertFlagState();
+    await watched.applyExternalFlag();
+    await watched.recordAudit();
+    await watched.insertMessage();
+    await watched.recordInstance("m", { folder: "INBOX", ref: "1:9" });
+    expect(cache.removals).toBe(0);
+    await watched.forgetInstanceAt();
+    await watched.transaction(async (tx) => { await (tx as typeof repo).forgetInstanceAt(); });
+    expect(cache.removals).toBe(2);
+  });
+
   /* THE ONE THAT MATTERS MOST STRUCTURALLY. Nearly every write in `sync.ts` happens inside
      `fencedIngest`/`fencedGroup`, which hand their callback a repo built over the transaction's own
      connection. A memo that only watched the outer object would be written straight past. */

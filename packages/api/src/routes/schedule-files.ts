@@ -2,33 +2,48 @@ import { ServiceError } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
-import { decodeSendAttachments, type SendAttachmentWire } from "./drafts.js";
+import { decodeSendAttachments, readStagedIds, type SendAttachmentWire } from "./drafts.js";
 import { readBody, schedules } from "./shared.js";
 
 /**
- * SEND LATER WITH FILES (mail 0179) — `POST /drafts/:id/schedule-with-files`, `{ sendAt,
- * attachments: [{ filename, contentType, contentBase64 }] }`. The appointment keeps its files in
- * this engine's own store until it is sent, cancelled or closed, so the files never reach a server
- * of ours. Mounted by `localRoutes` alone, never relayed: a Cloud door, and any server predating it,
- * answers 404 instead of scheduling the letter without its files (the `send-attempt` precedent).
- * `/hello`'s `scheduleFiles` says where it is kept.
+ * SEND LATER WITH FILES (mail 0179, 0180) — `POST /drafts/:id/schedule-with-files`, `{ sendAt,
+ * attachments?: [{ filename, contentType, contentBase64 }], stagedAttachmentIds?: [...] }`, the same
+ * two transports the send takes (inline first). The appointment keeps its files until it is sent,
+ * cancelled or closed, as the host declares (`ApiServices.scheduledFiles`): plain in the desktop's
+ * own store, sealed on a server, which copies staged files at the press. A host that declares
+ * nothing answers 404, so nothing is ever scheduled without its files. Relayed, so a desktop paired
+ * to a server reaches that server's. `/hello` says where files are kept (`scheduleFiles`,
+ * `scheduleFilesDays`).
  */
 export const scheduleFilesRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/drafts/:id/schedule-with-files",
-    relay: false,
+    relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps, params) => {
-      const body = await readBody<{ sendAt?: unknown; attachments?: SendAttachmentWire[] }>(req);
+      const keeping = deps.services?.scheduledFiles;
+      if (!keeping) throw new ServiceError("not_found", 404, "this server keeps no files for a later send");
+      const body = await readBody<{ sendAt?: unknown; attachments?: SendAttachmentWire[]; stagedAttachmentIds?: unknown }>(req);
       const files = decodeSendAttachments(body.attachments);
-      if (!files) {
+      const stagedIds = readStagedIds(body.stagedAttachmentIds);
+      if (!files && !stagedIds) {
         throw new ServiceError("validation_failed", 400, "attachments are required here; a letter without files is scheduled at /drafts/:id/schedule");
+      }
+      const staging = deps.services?.attachmentStaging;
+      if (stagedIds && !staging) {
+        // References on a host with no staging are refused, never scheduled without the files.
+        throw new ServiceError("validation_failed", 400, "this server does not accept staged attachments");
       }
       const { draft, seq } = await schedules(deps).schedule(
         serviceContext(deps, req), params.id!, body.sendAt,
-        { files, surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes },
+        {
+          ...(files ? { files } : {}),
+          ...(stagedIds && staging ? { staged: { ids: stagedIds, source: staging(deps.db).source } } : {}),
+          surfaceMaxTotalBytes: deps.services?.sendSurfaceMaxTotalBytes,
+          keeping,
+        },
       );
       return jsonResponse(draft, { status: 200, seq });
     },

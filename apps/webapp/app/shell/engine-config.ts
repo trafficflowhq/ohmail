@@ -305,6 +305,8 @@ export function createEngine(
           syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },
           // A forward naming its kept files asks /hello first: an older server would send them all.
           forwardPartsCheck: true,
+          // Send later with files asks /hello too: only a server that names its horizon keeps them.
+          scheduleFilesCheck: true,
         }),
       ),
       ...(persist ? { store: new IndexedDbMirrorStore({ owner: owner! }) } : {}),

@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, isNull, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, folderState, messages,
+  accountSettings, folderState, messageInstances, messages,
   resolveCutline, senderIsActiveSql, heldArrivedInsideSql, senderIsDecidedSql, senderIsOwnSql, heldSortKey, type ResolvedCutline,
   notGoneSql, readGoneMailboxIds,
   screenerAttemptKey, storeScreenerSuggestion,
@@ -691,6 +691,11 @@ async function selectCandidates(
       sql`not ${senderIsOwnSql(d, opts.accountId, sql`lower(${reps.fromAddress})`)}`,
       // (7) A RECENT DECLINE — held out before the limit, so the page reaches the senders behind it.
       opts.exclude && opts.exclude.length > 0 ? notInArray(reps.messageId, [...opts.exclude]) : undefined,
+      // (8) A COPY ON RECORD — the server held the letter at the last read. The reaper tombstones one
+      // left without only after a read saw it go, or hourly; the row on screen is still this letter,
+      // so the test sits outside the window and its sender waits for the reaper.
+      sql`exists (select 1 from ${messageInstances} cr
+        where cr.message_id = ${sql.identifier("reps")}.${sql.identifier(messages.id.name)})`,
     ))
     .orderBy(asc(reps.createdAt), asc(reps.messageId))
     .limit(opts.limit);

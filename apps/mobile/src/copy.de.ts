@@ -1703,6 +1703,8 @@ export const DE: Deck = {
   sendLaterPast: "Diese Zeit ist vorbei. Wähle eine Zeit in der Zukunft.",
   sendLaterZone: (zone: string) => `Zeiten in deiner Zeitzone (${zone}).`,
   sendLaterUnavailable: "Später senden ist für Nachrichten mit Anhängen oder Weiterleitungen noch nicht verfügbar.",
+  sendLaterFilesNotHere: "Dieser Server kann Dateien nicht für einen späteren Versand aufbewahren, darum lässt sich diese Nachricht mit ihnen nicht planen. Sende sie jetzt, oder entferne die Dateien, um sie zu planen.",
+  sendLaterFilesDays: (days: number) => `Eine Nachricht mit Dateien lässt sich bis zu ${days} ${days === 1 ? "Tag" : "Tage"} im Voraus planen.`,
   scheduledFor: (when: string) => `Geplant für ${when}.`,
 
   scheduled: "Geplant",
@@ -1815,6 +1817,9 @@ export const DE: Deck = {
   draftsDiscard: "Verwerfen",
   draftsDiscardWhat: "Das löscht die einzige Kopie.",
   draftsWaiting: "Wartet auf den Versand",
+  draftsFilesNotKept: (n: number) => (n === 1
+    ? "Ihre Datei wurde nicht aufbewahrt. Hänge sie vor dem Senden erneut an."
+    : `Ihre ${n} Dateien wurden nicht aufbewahrt. Hänge sie vor dem Senden erneut an.`),
   draftsDiscardWaitingWhat: "Das bricht das Senden ab und löscht die einzige Kopie.",
   draftsDiscardedNotSent: "Verworfen. Es wurde nichts gesendet.",
   draftsDiscardConfirm: "Verwerfen",

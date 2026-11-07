@@ -903,7 +903,7 @@ export function createEngineAdapter(options: EngineAdapterOptions = {}): HttpAda
     sendEchoLater: true,
     // /hello reaches the server that sends: the local engine, or Cloud through the relay.
     forwardPartsCheck: true,
-    // Send later with files where /hello says the door keeps them: the local engine, never Cloud.
+    // Send later with files where /hello says the door keeps them: the local engine, or a server naming its days.
     scheduleFilesCheck: true,
     ...(stage ? { stageAttachments: true } : {}),
   });
@@ -932,8 +932,11 @@ export const STAGED_UPLOAD_PATH_PREFIX = "/cloud/staged-upload/";
  */
 export const STAGED_UPLOAD_DEADLINE_MS = 5 * 60_000 + 15_000;
 
-/** A send, which carries its attachments inline on every door but the hosted one: the upload bound too. */
-const INLINE_SEND_PATH = /^\/drafts\/[^/?#]+\/send(?:[?#]|$)/;
+/**
+ * A send, and Send later with its files, which carry the attachments inline on every door but the
+ * hosted one: the upload bound too.
+ */
+const INLINE_SEND_PATH = /^\/drafts\/[^/?#]+\/(?:send|schedule-with-files)(?:[?#]|$)/;
 
 /** One attachment's bytes, `GET /attachments/<id>`: what a PDF's preview reads, as a browser does. */
 const ATTACHMENT_BYTES_PATH = /^\/attachments\/[^/?#]+$/;

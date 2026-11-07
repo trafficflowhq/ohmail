@@ -62,7 +62,7 @@ import { oncePerLaunch } from "./once-per-launch.js";
 import {
   attachmentsService, awayResponderService, contactsService, draftingService, draftsService,
   kbService, runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, sweepScheduledSendFiles,
-  scheduleService, tagsService,
+  scheduleService, tagsService, SCHEDULED_FILES_PLAIN,
   makeApprovalService, makeAuthConfig, makeMailboxService, makePrivacyService,
   makeScreenerService, makeUnsubscribeService, messageService, nodeHostResolver,
   nodeOneClickPost, nodeRemoteFetch, notifyRulesService, resolveSession,
@@ -1266,6 +1266,8 @@ function localServices(
     schedules: runsPass(organizerKind, "scheduled-send")
       ? scheduleService
       : new AppointmentsRefused(),
+    // A scheduled letter's files stay in this install's own store, plain, until it goes (mail 0179).
+    scheduledFiles: SCHEDULED_FILES_PLAIN,
     workflows: workflowsService,
   };
 }

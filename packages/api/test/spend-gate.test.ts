@@ -966,7 +966,9 @@ describe("the route table declares what every handler causes", () => {
     // joins `CEREMONY` and this total together and the gated remainder is unchanged.
     // 261 -> 260: `GET /internal/platform-signals/run` left with the 5xx poll, now the worker's. It
     // was `unauthenticated`, so it leaves the exempt list above and this total together.
-    expect(apiRoutes).toHaveLength(260);
+    // 260 -> 261: `POST /drafts/:id/schedule-with-files` (mail 0180) mounted here, `work` like the
+    // schedule beside it, so it joins the gated remainder and no exempt list moves.
+    expect(apiRoutes).toHaveLength(261);
 
     for (const r of apiRoutes) {
       expect(ALL_CLASSES, `${key(r)} declares an unrecognised cost ${JSON.stringify(r.cost)}`)
@@ -1204,7 +1206,7 @@ describe("the route table declares what every handler causes", () => {
     // 259 -> 260 with the reuse sweeps' acknowledgement, a `ceremony`: the remainder does not move.
     // 260 -> 261 with the recovery code's step-up, a `ceremony`: the remainder does not move.
     // 261 -> 260 with the 5xx poll's route gone, `unauthenticated`: the remainder does not move.
-    expect(gated.length).toBe(260 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
+    expect(gated.length).toBe(261 - UNAUTHENTICATED.length - CEREMONY.length - READ.length);
 
     expect(gated.length).toBeGreaterThan(50);
   });

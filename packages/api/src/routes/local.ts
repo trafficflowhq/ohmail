@@ -25,7 +25,7 @@ import { attachmentRoutes } from "./attachments.js";
 import { kbRoutes } from "./kb.js";
 import { tagsRoutes } from "./tags.js";
 import { draftsRoutes } from "./drafts.js";
-// Send later with files: kept in this engine's store, so this table alone mounts it (mail 0179).
+// Send later with files, kept as the composition's `scheduledFiles` declares (mail 0179, 0180).
 import { scheduleFilesRoutes } from "./schedule-files.js";
 import { workflowsRoutes } from "./workflows.js";
 import { healthRoutes } from "./health.js";

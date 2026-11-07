@@ -890,6 +890,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // migration → API → worker.
   ["drafts", "send_files"],
   ["scheduled_send_files", "send_key"],
+  // mail 0180_scheduled_send_files_sealed — a server's kept piece sealed under its own wrapped key.
+  // LOUD: the schedule route writes it and the pass reads it on every letter with files. Deploy order
+  // migration → API → worker.
+  ["scheduled_send_files", "dek_enc"],
 ] as const;
 
 /**
@@ -1319,7 +1323,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0179_scheduled_send_files";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0180_scheduled_send_files_sealed";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

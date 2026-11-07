@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CursorExpiredError,
   MemoryMirrorStore,
   OhmailEngine,
   screenerSegments,
@@ -141,6 +142,54 @@ describe("the store's queue page in the mirror", () => {
     expect(screenerSegments(engine.read(), NOW).source).toBe("mirror");
     expect(engine.screenerWaitingSettled()).toBe(true);
     expect(told).toBeGreaterThan(0);
+  });
+
+  it("a 410 re-bootstrap withholds the queue it wiped until the store speaks again, never the device's guess", async () => {
+    const ids = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    let n = 0;
+    const creates = (of: string[]): SyncChange[] => of.map((id) => (
+      { type: "message", op: "create", id, seq: ++n, updatedAt: NOW.toISOString(), entity: msg(id, { folder: "ohmail/Screener" }) }));
+    const res = (of: string[], hasMore: boolean): SyncResponse => (
+      { changes: { creates: creates(of), updates: [], moves: [], deletes: [] }, cursor: `c${n}`, hasMore, serverTime: NOW.toISOString() });
+    let engine!: OhmailEngine;
+    let mid: { settled: boolean; source: string; total: number; asks: number } | null = null;
+    const answers: Array<() => void> = [];
+    let asks = 0;
+    const script: Array<() => SyncResponse> = [
+      () => res(ids, false),
+      () => { throw new CursorExpiredError(); },
+      () => res(ids.slice(0, 6), true),
+      () => {
+        const s = screenerSegments(engine.read(), NOW);
+        mid = { settled: engine.screenerWaitingSettled(), source: s.source, total: s.waitingTotal, asks };
+        return res(ids.slice(6), false);
+      },
+    ];
+    const adapter = {
+      sync: async () => (script.shift() ?? (() => res([], false)))(),
+      mutate: async () => ({ changes: [], seq: null }),
+      fetchBody: async () => null,
+      screenerWaiting: async () => {
+        if (++asks > 1) await new Promise<void>((r) => { answers.push(r); });
+        return page(["a", "b"]);
+      },
+    } as unknown as EngineAdapter;
+    engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), now: () => NOW, storePolicy: { mode: "full" } });
+    await engine.start(); // the first drain: eight senders at the gate
+    await engine.refreshScreenerWaiting();
+    expect(screenerSegments(engine.read(), NOW).waitingTotal).toBe(2);
+    await engine.syncOnce();
+    expect(mid, "the rebuild's second page was never asked").not.toBeNull();
+    expect(mid!.settled, `the wiped queue still read as the store's word (${mid!.source}, ${mid!.total})`).toBe(false);
+    expect(mid!.asks, "the wipe did not ask the store again at once").toBe(2);
+    let told = 0;
+    engine.subscribe(() => { told += 1; });
+    for (const r of answers) r();
+    await flush();
+    expect(engine.screenerWaitingSettled()).toBe(true);
+    expect(told, "the answer was not published").toBeGreaterThan(0);
+    const s = screenerSegments(engine.read(), NOW);
+    expect([s.source, s.waitingTotal]).toEqual(["store", 2]);
   });
 
   it("the settle asks again when a page touched the gate, and not for unrelated mail", async () => {

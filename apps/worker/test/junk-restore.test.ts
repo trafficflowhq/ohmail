@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { UNMETERED_STORAGE_CAP, type StorageCap } from "@trafficflow/core/mail";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import type { JunkFiledHuskRow, JunkUnhuskOutcome, WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
-import { junkRestorePass } from "../src/junk-restore.js";
+import { junkRestorePass, oweJunkWalk } from "../src/junk-restore.js";
 import { runSyncCycle } from "../src/sync.js";
 
 /**
@@ -122,6 +122,7 @@ const run = (
   refused: new Set<string>(),
   capDeferred: new Map<string, number>(),
   resume: new Map<string, string>(),
+  walkedAt: new Map<string, number>(),
   ...over,
 });
 
@@ -312,6 +313,66 @@ describe("junkRestorePass — what is fetched and what the outcome does", () => 
     const r = await run(rec, repoOf(rec, { husks: [husk("m-10"), husk("m-11")] }), adapterOf(rec, { fail: true }));
     expect(r).toMatchObject({ deferred: 2, fetched: 2, restored: 0, refused: 0 });
     expect(rec.unhusks).toEqual([]);
+  });
+
+  it("THE WALK'S CLOCK: within the interval an untargeted call reads nothing; after it the walk runs", async () => {
+    const rec = fresh();
+    let t = 1_000_000;
+    const over = { walkedAt: new Map<string, number>(), now: () => new Date(t), walkEveryMs: 15 * 60_000 };
+    const repo = repoOf(rec, { husks: [] });
+    await run(rec, repo, adapterOf(rec), over);
+    expect(rec.lists).toHaveLength(1);
+    t += 14 * 60_000;
+    await run(rec, repo, adapterOf(rec), over);
+    expect(rec.lists, "a walk that found nothing walked again within the interval").toHaveLength(1);
+    t += 60_000;
+    await run(rec, repo, adapterOf(rec), over);
+    expect(rec.lists).toHaveLength(2);
+  });
+
+  it("THE WALK'S CLOCK holds neither the targeted run at the move nor the walk after a refill", async () => {
+    const rec = fresh();
+    const now = () => new Date(1_000_000);
+    const repo = repoOf(rec, { husks: [husk("m-10")] });
+    const clocked = { walkedAt: new Map<string, number>(), now };
+    await run(rec, repoOf(rec, { husks: [] }), adapterOf(rec), clocked);
+    const targeted = await run(rec, repo, adapterOf(rec), { ...clocked, messageIds: ["m-10"] });
+    expect(targeted.restored, "the targeted run waited for the walk's clock").toBe(1);
+    const refilled = { walkedAt: new Map<string, number>(), now };
+    expect((await run(rec, repo, adapterOf(rec), refilled)).restored).toBe(1);
+    expect((await run(rec, repo, adapterOf(rec), refilled)).restored,
+      "a walk that refilled a body did not look again next cycle").toBe(1);
+  });
+
+  it("THE WALK'S CLOCK is cleared by a targeted run that left letters behind", async () => {
+    let t = 1_000_000;
+    const now = () => new Date(t);
+    const moved = [husk("m-10"), husk("m-11"), husk("m-12")];
+    for (const arm of ["capped", "deferred"] as const) {
+      const rec = fresh();
+      const clocked = { walkedAt: new Map<string, number>(), now };
+      await run(rec, repoOf(rec, { husks: [] }), adapterOf(rec), clocked);
+      const targeted = await run(rec, repoOf(rec, { husks: moved }), adapterOf(rec, { fail: arm === "deferred" }), {
+        ...clocked, messageIds: moved.map((h) => h.messageId),
+        ...(arm === "capped" ? { fetchesPerCycle: 1, fetchChunk: 1 } : {}),
+      });
+      expect(targeted.capped || targeted.deferred > 0, arm).toBe(true);
+      t += 60_000;
+      const next = await run(rec, repoOf(rec, { husks: moved }), adapterOf(rec), clocked);
+      expect(next.restored, `the walk after a ${arm} targeted run waited out the clock`).toBeGreaterThan(0);
+    }
+  });
+
+  it("THE WALK'S CLOCK is cleared by oweJunkWalk, the refill at the move's failure arm", async () => {
+    const rec = fresh();
+    const now = () => new Date(1_000_000);
+    const shared = { walkedAt: undefined, mailboxId: "mb-owe", now };
+    await run(rec, repoOf(rec, { husks: [] }), adapterOf(rec), shared);
+    await run(rec, repoOf(rec, { husks: [] }), adapterOf(rec), shared);
+    expect(rec.lists).toHaveLength(1);
+    oweJunkWalk("mb-owe");
+    await run(rec, repoOf(rec, { husks: [] }), adapterOf(rec), shared);
+    expect(rec.lists).toHaveLength(2);
   });
 
   it("THE WIRING: a plain sync cycle runs the pass — an unwired pass is a decorative module", async () => {

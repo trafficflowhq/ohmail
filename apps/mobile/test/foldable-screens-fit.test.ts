@@ -71,7 +71,7 @@ describe("the New mail sheet keeps Send on screen", () => {
       "connectionSaid(w.boot.connection)",
     ]) expect(notes, `${needle} is not in the bounded block`).toContain(needle);
     // The why-no-Send-later hints explain a control, not a press: they end the letter, in the scroller.
-    for (const needle of ["scheduledNotHereSentence(", "{Copy.sendLaterUnavailable}"]) {
+    for (const needle of ["scheduledNotHereSentence(", "Copy.sendLaterUnavailable", "Copy.sendLaterFilesNotHere"]) {
       expect(modal.slice(open, close), `${needle} takes pinned room`).toContain(needle);
       expect(notes).not.toContain(needle);
     }

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, routingDecisions, rules,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
 import { applyScreenerDecision, changeLog, contacts, learningSignals, listAddresses } from "@trafficflow/db";
@@ -85,16 +85,21 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     });
   }
 
-  /** One message held at the gate, its sender confirmed by the provider (`pass`). */
+  let nextUid = 1;
+  /** One message held at the gate, its copy in the Screener, its sender confirmed by the provider (`pass`). */
   async function held(w: World, from: string): Promise<string> {
+    const uid = nextUid++;
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: `act:${randomUUID()}`,
       subject: "hello there", fromAddress: from, authVerdict: "pass",
-      nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+      nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    });
+    await db.insert(messageInstances).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
     });
     return m!.id;
   }
@@ -1029,6 +1034,61 @@ describe("SCR-AUTOACT — the Screener acts on a confident suggestion", () => {
     expect(pressed.skipped).toBeUndefined();
     expect(await desiredOf(forged)).toBe("INBOX");
     expect(await desiredOf(genuine)).toBe("INBOX");
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+  //  (o) NO COPY ON RECORD — the act reads only letters the server held at the last read, so a
+  //      copy gone where no read saw it is out before the reaper's hour tombstones it.
+  // ══════════════════════════════════════════════════════════════════════════════════════════
+
+  /** The letter's copy went where no read saw it: no instance, and no tombstone yet. */
+  const copyGone = (id: string) => db.delete(messageInstances).where(eq(messageInstances.messageId, id));
+
+  it("MUTATION-WATCH (o): a sender whose held letter has no copy on record is not filed; the one beside it is", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const live = await held(w, "live@spam.test");
+    const gone = await held(w, "gone@spam.test");
+    await suggest(w, live, SPAM, 0.95);
+    await suggest(w, gone, SPAM, 0.95);
+    await copyGone(gone);
+    const r = await act(w);
+    expect(await desiredOf(live)).toBe(SPAM);
+    expect(await desiredOf(gone), "a letter the server no longer holds was filed").toBe(SCREENER);
+    expect(await rulesFor(w, "gone@spam.test"), "a rule was written on a letter the server no longer holds").toHaveLength(0);
+    expect(r).toMatchObject({ examined: 1, filed: 1 });
+  });
+
+  it("MUTATION-WATCH (o): advice on a letter with no copy on record files nothing alone, and the live letter waits", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "billing@shop.test";
+    const advised = await heldWithVerdict(w, sender, "unavailable");
+    const live = await held(w, sender);
+    await later(live);
+    await suggest(w, advised, SPAM, 0.95);
+    await copyGone(advised);
+    const r = await act(w);
+    expect(await desiredOf(advised), "a letter the server no longer holds was filed alone").toBe(SCREENER);
+    expect(await desiredOf(live)).toBe(SCREENER);
+    expect(await rulesFor(w, sender)).toHaveLength(0);
+    expect(r).toMatchObject({ examined: 1, filed: 0, kept: 1, unconfirmedDenies: 1 });
+  });
+
+  it("MUTATION-WATCH (o): the check the act runs first marks no letter the server no longer holds", async () => {
+    const w = await newWorld();
+    await settingsRow(w, false);
+    const sender = "news@quiet.test";
+    const gone = await held(w, sender);
+    // Older than the column: the check never reached it, so a pass that reads it writes `none`.
+    await db.update(messages).set({ senderCheck: null }).where(eq(messages.id, gone));
+    await copyGone(gone);
+    const benign = await held(w, sender);
+    await later(benign);
+    await suggest(w, benign, SPAM, 0.95);
+    await act(w);
+    const [row] = await db.select({ c: messages.senderCheck }).from(messages).where(eq(messages.id, gone));
+    expect(row!.c, "the act checked a letter the server no longer holds").toBeNull();
   });
 });
 

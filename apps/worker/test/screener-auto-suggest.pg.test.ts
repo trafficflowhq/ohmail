@@ -9,7 +9,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, contacts, folderState, mailboxes, messages, routingDecisions,
+  accountSettings, accounts, contacts, folderState, mailboxes, messageInstances, messages, routingDecisions,
   rules, screenerLedgerSource, SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS,
   type Tx,
 } from "@trafficflow/db";
@@ -124,8 +124,18 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
   /** What the sender check reads beside the address, when a case has something to say about it. */
   interface HeldOpts { subject?: string; snippet?: string; fromName?: string; authVerdict?: string }
 
+  /** UIDs for the seeded copies, unique per mailbox as a server numbers them. */
+  let nextUid = 1;
+  /** The letter's copy in the Screener, as the ingest records one: what the pass reads as held. */
+  async function copyOnRecord(w: World, messageId: string, uid: number): Promise<void> {
+    await db.insert(messageInstances).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageId, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
+    });
+  }
+
   /** One first-contact sender HELD at the gate, ingested at `at`. Returns its message id. */
   async function held(w: World, from: string, at: Date, o: HeldOpts = {}): Promise<string> {
+    const uid = nextUid++;
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId,
       bodyHash: "h", dedupKey: `sug:${randomUUID()}`,
@@ -138,12 +148,13 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
       // through. See `selectCandidates` — the sender does not get to hold our clock.
       date: BEFORE,
       createdAt: at,
-      nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+      nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
+    await copyOnRecord(w, m!.id, uid);
     return m!.id;
   }
 
@@ -580,6 +591,47 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
     expect(spy.screened.map((i) => i.subject)).toEqual(["the letter still held"]);
     expect((await suggestionsOf(w)).map((r) => r.messageId)).toEqual([older]);
     expect(await debitsOf(w)).toEqual([{ delta: -1, source: screenerLedgerSource(older) }]);
+  });
+
+  /* ── 1d. NO COPY ON RECORD — out before the reaper tombstones it ───────────────────────── *
+   * The reaper runs only after a read saw a copy go, or hourly. Mutation: drop the copy-on-record
+   * arm from `selectCandidates` and both cases go red. */
+
+  /** The letter's copy went where no read saw it: no instance, and no tombstone yet. */
+  const copyGone = (id: string) => db.delete(messageInstances).where(eq(messageInstances.messageId, id));
+
+  it("a held letter with no copy on record is never asked about or charged for", async () => {
+    const w = await newWorld({ credits: 50 });
+    const live = await held(w, "live@example.test", AFTER);
+    const gone = await held(w, "unseen@example.test", new Date(AFTER.getTime() + 1000));
+    await copyGone(gone);
+    const spy = spyClassifier();
+
+    const result = await screenerAutoSuggestPass(db, {
+      accountId: w.accountId, classifier: spy, credits: w.gate,
+    });
+
+    expect(spy.screened.map((i) => i.from.address), "a letter with no copy on record was sent to the model")
+      .toEqual(["live@example.test"]);
+    expect(w.gate.spends.some((c) => c.source === screenerLedgerSource(gone))).toBe(false);
+    expect(result.examined).toBe(1);
+    expect((await suggestionsOf(w)).map((r) => r.messageId)).toEqual([live]);
+  });
+
+  /* The row on screen is still that letter, so the sender waits for the reaper rather than being
+     asked about a letter the queue does not show. */
+  it("a sender whose newest held letter has no copy on record is asked about nothing", async () => {
+    const w = await newWorld({ credits: 50 });
+    await held(w, "mixed@example.test", AFTER, { subject: "the letter still held" });
+    const newer = await held(w, "mixed@example.test", new Date(AFTER.getTime() + 5000), { subject: "the letter gone" });
+    await db.update(messages).set({ date: new Date(AFTER.getTime() + 5000) }).where(eq(messages.id, newer));
+    await copyGone(newer);
+    const spy = spyClassifier();
+
+    await screenerAutoSuggestPass(db, { accountId: w.accountId, classifier: spy, credits: w.gate });
+
+    expect(spy.screened.map((i) => i.subject)).toEqual([]);
+    expect(await debitsOf(w)).toEqual([]);
   });
 
   /* ── 2. THE GATE ──────────────────────────────────────────────────────────────────────── */
@@ -1247,6 +1299,7 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 
     await db.delete(routingDecisions).where(eq(routingDecisions.messageId, first));
     await db.delete(folderState).where(eq(folderState.messageId, first));
+    await db.delete(messageInstances).where(eq(messageInstances.messageId, first));
     await db.delete(messages).where(eq(messages.id, first));
     const back = await resent(w, "cleared@example.test", 2);
     const spy = spyClassifier();
@@ -1348,17 +1401,19 @@ describe.skipIf(!AVAILABLE)("SCR-AUTOSUGGEST — the worker's auto-suggest pass"
 
   /** `held` with the header date under the caller's control — the cutline's only input. */
   async function heldDated(w: World, from: string, at: Date, date: Date, receivedAt?: Date): Promise<string> {
+    const uid = nextUid++;
     const [m] = await db.insert(messages).values({
       accountId: w.accountId, mailboxId: w.mailboxId,
       bodyHash: "h", dedupKey: `sug:${randomUUID()}`,
       subject: `hello from ${from}`, fromAddress: from, snippet: "a first message",
       date, createdAt: at, ...(receivedAt === undefined ? {} : { arrivedAt: receivedAt }),
-      nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+      nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
     }).returning();
     await db.insert(folderState).values({
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
+    await copyOnRecord(w, m!.id, uid);
     return m!.id;
   }
 

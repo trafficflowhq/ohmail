@@ -1,10 +1,13 @@
-import { and, eq, inArray, isNotNull, lte, notInArray, sql } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, lt, lte, notInArray, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { drafts, outboundSends, recordChange, type Tx } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type StorageCap } from "@trafficflow/core/mail";
 import { bridgeTx, bridgeDb, type Db, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
-import { readScheduledFiles, SCHEDULED_FILES_UNREADABLE, sweepScheduledSendFiles } from "./scheduled-send-files.js";
+import {
+  readScheduledFiles, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_UNREADABLE, SCHEDULED_FILES_UNREADABLE_KEPT,
+  sweepAgedScheduledFiles, sweepScheduledSendFiles, type ScheduledFile, type ScheduledFileSealer,
+} from "./scheduled-send-files.js";
 import {
   sendService, SEND_ATTEMPT_CEILING_MS, SEND_COPY_DEADLINE_MS, SEND_STALE_AFTER_MS, type SendDeps, type SendService,
 } from "./send-service.js";
@@ -44,6 +47,23 @@ export const SCHEDULED_SEND_ROW_MS = SEND_ATTEMPT_CEILING_MS + SEND_COPY_DEADLIN
  * strand a `pending` reservation for the stuck-send alarm to page on for ever.
  */
 export const SCHEDULED_SEND_EXPIRY_MS = 24 * 60 * 60 * 1000;
+
+/** The sentence an appointment closed for lateness carries. */
+export const SCHEDULED_SEND_EXPIRED_SENTENCE =
+  "The scheduled time passed more than a day ago, so this was not sent. Review the message and send it again.";
+
+/**
+ * A SERVER'S KEPT FILES NEVER OUTLIVE THEIR LETTER (mail 0180). The pass's own expiry above reaches
+ * only an account the eligibility gate lets through, so a paused account's appointment with files
+ * would stand for as long as the pause: the tidy closes it an hour past that day instead.
+ */
+export const SCHEDULED_FILES_OVERDUE_MS = SCHEDULED_SEND_EXPIRY_MS + 60 * 60 * 1000;
+
+/** The age past which a server's kept piece goes whatever holds it, a letter mid-send excepted. */
+export const SCHEDULED_FILES_MAX_AGE_MS = SCHEDULE_FILES_MAX_AHEAD_MS + SCHEDULED_FILES_OVERDUE_MS + 60 * 60 * 1000;
+
+/** Appointments one tidy closes; any beyond wait for the next minute's pass. */
+export const SCHEDULED_FILES_TIDY_BATCH = 100;
 
 const defaultLog = createLogger({ service: "scheduled-send" });
 
@@ -92,6 +112,12 @@ export interface ScheduledSendPassDeps {
   mailboxIds?: readonly string[];
   /** A delivered appointment's owed Sent copy is kept in the store (`SendDeps.keepOwedCopy`): the host's own value. */
   keepOwedCopy?: SendDeps["keepOwedCopy"];
+  /**
+   * A SERVER'S KEPT FILES (mail 0180): `open` reads a sealed piece, without which a sealed letter is
+   * never sent; `tidy` closes overdue appointments with files and sweeps files no letter carries,
+   * before the claim. Absent on the desktop, whose files are plain and whose own drain sweeps them.
+   */
+  files?: { open: ScheduledFileSealer["open"]; tidy: boolean };
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
@@ -137,6 +163,7 @@ export async function runScheduledSendPass(
   const result: ScheduledSendPassResult = { claimed: 0, sent: 0, unverified: 0, failed: 0, deferred: 0 };
 
   const startedAt = now().getTime();
+  if (deps.files?.tidy) await tidyKeptFiles(db, now(), log);
   const rows = await claimDue(db, now(), batch, deps.accountEligible, log, deps.mailboxIds);
   result.claimed = rows.length;
 
@@ -163,19 +190,28 @@ export async function runScheduledSendPass(
     // because verify-by-Sent is what resolves its reservation terminally.
     if (!row.mayHaveReservation
       && now().getTime() - row.sendAt.getTime() > SCHEDULED_SEND_EXPIRY_MS) {
-      await closeAppointment(db, ctx, row,
-        "The scheduled time passed more than a day ago, so this was not sent. Review the message and send it again.",
-        log);
+      await closeAppointment(db, ctx, row, SCHEDULED_SEND_EXPIRED_SENTENCE, log);
       result.failed += 1;
       log.warn("scheduled_send_expired", { draftId: row.id, accountId: row.accountId });
       continue;
     }
-    // THE FILES, WHOLE OR NOT AT ALL: a letter that carries files never leaves without them.
-    const files = row.sendFiles > 0
-      ? await readScheduledFiles(db, row.accountId, row.id, row.sendKey, row.sendFiles).catch(() => null)
-      : [];
+    // THE FILES, WHOLE OR NOT AT ALL: a letter that carries files never leaves without them. Only
+    // files that are not whole close it; a failed statement re-arms it as the transient arm below
+    // does (a recovered `sending` row is left as found), so a busy pool never cancels a letter.
+    let files: ScheduledFile[] | null = [];
+    if (row.sendFiles > 0) {
+      try {
+        files = await readScheduledFiles(db, row.accountId, row.id, row.sendKey, row.sendFiles, deps.files?.open);
+      } catch (err) {
+        await bridgeTx(db).update(drafts).set({ status: "scheduled", updatedAt: now() })
+          .where(and(eq(drafts.id, row.id), eq(drafts.status, "draft"), eq(drafts.sendKey, row.sendKey)));
+        result.deferred += 1;
+        log.warn("scheduled_send_files_read_failed", { draftId: row.id, accountId: row.accountId, count: row.sendFiles, err });
+        continue;
+      }
+    }
     if (files === null) {
-      const closed = await closeAppointment(db, ctx, row, SCHEDULED_FILES_UNREADABLE, log);
+      const closed = await closeAppointment(db, ctx, row, deps.files ? SCHEDULED_FILES_UNREADABLE_KEPT : SCHEDULED_FILES_UNREADABLE, log);
       if (closed) result.failed += 1;
       else result.deferred += 1;
       log.warn("scheduled_send_files_unreadable", { draftId: row.id, accountId: row.accountId, count: row.sendFiles });
@@ -284,10 +320,54 @@ export async function runScheduledSendPass(
 
   // Files of appointments that ended here (sent, closed or expired) go now, not at the next drain.
   if (rows.some((r) => r.sendFiles > 0)) {
-    await sweepScheduledSendFiles(db, deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {})
+    await sweepScheduledSendFiles(db, { ...(deps.mailboxIds ? { mailboxIds: deps.mailboxIds } : {}), vacuum: !deps.files })
       .catch((err: unknown) => log.warn("scheduled_send_files_sweep_failed", { err }));
   }
   return result;
+}
+
+/**
+ * THE SERVER'S TIDY, before every claim: appointments with files more than
+ * {@link SCHEDULED_FILES_OVERDUE_MS} past their time are closed with the late sentence (one
+ * transaction each, on drafts alone), then the files no appointment carries go, and any piece older
+ * than {@link SCHEDULED_FILES_MAX_AGE_MS} unless its letter is mid-send. The deletes are their own
+ * statements: account deletion locks files and then drafts, so no transaction here holds both. A
+ * draft in the claim window or `sending` is never closed here. Never throws.
+ */
+async function tidyKeptFiles(db: Db, now: Date, log: Logger): Promise<void> {
+  try {
+    const overdue = await bridgeTx(db).select({ id: drafts.id, accountId: drafts.accountId }).from(drafts)
+      .where(and(
+        eq(drafts.status, "scheduled"), gt(drafts.sendFiles, 0),
+        lt(drafts.sendAt, new Date(now.getTime() - SCHEDULED_FILES_OVERDUE_MS)),
+      ))
+      .limit(SCHEDULED_FILES_TIDY_BATCH);
+    for (const row of overdue) {
+      await bridgeTx(db).transaction(async (tx) => {
+        // scoped-by: the row's own (id, account_id), read above; the status predicate is the race guard
+        const closed = await tx.update(drafts)
+          .set({ status: "draft", sendAt: null, sendKey: null, sendError: SCHEDULED_SEND_EXPIRED_SENTENCE, updatedAt: now })
+          .where(and(
+            eq(drafts.id, row.id), eq(drafts.accountId, row.accountId), eq(drafts.status, "scheduled"),
+            gt(drafts.sendFiles, 0), lt(drafts.sendAt, new Date(now.getTime() - SCHEDULED_FILES_OVERDUE_MS)),
+          ))
+          .returning({ id: drafts.id });
+        if (closed.length > 0) {
+          await recordChange(tx, { accountId: row.accountId, entityType: "draft", entityId: row.id, op: "update", meta: null });
+        }
+      });
+    }
+    if (overdue.length > 0) log.warn("scheduled_files_overdue_closed", { count: overdue.length });
+  } catch (err) {
+    log.warn("scheduled_files_tidy_failed", { err });
+  }
+  try {
+    const swept = await sweepScheduledSendFiles(db, { vacuum: false })
+      + await sweepAgedScheduledFiles(db, new Date(now.getTime() - SCHEDULED_FILES_MAX_AGE_MS));
+    if (swept > 0) log.info("scheduled_files_swept", { rows: swept });
+  } catch (err) {
+    log.warn("scheduled_send_files_sweep_failed", { err });
+  }
 }
 
 /**
