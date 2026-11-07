@@ -285,12 +285,19 @@ export interface ScreenerState {
   rereadWaiting: () => void;
   /**
    * Has the queue's FIRST derivation run? False for the paint renders — the cold pass is
-   * deferred to idle — and true for ever after. While false the three segments are WITHHELD
+   * deferred to idle — and, on a door that reads the queue from the store, until the store's
+   * first answer (or a kept page) is in; true for ever after. While false the three segments are WITHHELD
    * (empty by fiat, not by derivation), so an empty-state sentence gated on this cannot call
    * an unknown queue empty, and the suggestion engine classifies the settle's delivery as the
    * activation set rather than a sender gain (`screener-suggest.ts#forSenders`).
    */
   queueSettled: boolean;
+  /**
+   * Has the store spoken for the queue (an answer, a refusal or a kept page; true where there is
+   * no store queue)? The Ohbox holds back gate mail the store has not ruled on until then, so its
+   * count waits on this, not on the idle deferral.
+   */
+  storeSettled: boolean;
   /**
    * How many of those rows actually carry a suggestion. Never assume this
    * tracks `waitingCount`: `selectors.ts` mints `ai: null` for every derived
@@ -751,8 +758,17 @@ export function useScreenerState(
      so until the flip the queue is WITHHELD ({@link ScreenerState.queueSettled}), never
      derived-empty: the Screener's empty sentence and the suggestion engine's gain counter both
      key on that distinction (an unknown queue read as empty is the lie this withholds). */
-  const [queueSettled, setQueueSettled] = useState(false);
-  useEffect(() => scheduleFirstDerivation(() => setQueueSettled(true)), []);
+  /* The store's queue page as the mirror holds it, read by the settle below and the onward walk. */
+  const firstPage = useMemo(() => screenerWaitingOf(reader), [reader, version]);
+  const [firstDerived, setFirstDerived] = useState(false);
+  useEffect(() => scheduleFirstDerivation(() => setFirstDerived(true)), []);
+  /* …AND FOR THE STORE, where the door reads the queue there: a mirror rebuilt at launch (the
+     desktop window) holds no page, and its own derivation lists senders the store does not (a
+     contact, a sender decided elsewhere), which flashed "7 waiting" at every start. A page kept
+     from the last answer (a persisted mirror) is the store's word already. */
+  const storeSettled = firstPage !== null
+    || typeof engine.screenerWaitingSettled !== "function" || engine.screenerWaitingSettled();
+  const queueSettled = firstDerived && storeSettled;
   const segments = useMemo(
     () => (queueSettled
       ? screenerSegments(queueReader, undefined, locale, activeFormatZone(), ownAddresses)
@@ -766,7 +782,6 @@ export function useScreenerState(
 
   /* THE QUEUE PAST ITS FIRST PAGE — asked a page per press, held here and never in the mirror.
      Keyed to the first page's `ask`: a new first page restarts the walk from its own cursor. */
-  const firstPage = useMemo(() => screenerWaitingOf(reader), [reader, version]);
   const firstAsk = firstPage?.page.ask ?? -1;
   const [onward, setOnward] = useState<Onward>(ONWARD_NONE);
   const onwardLive = onward.ask === firstAsk ? onward : ONWARD_NONE;
@@ -2422,6 +2437,7 @@ export function useScreenerState(
     },
     rereadWaiting,
     queueSettled,
+    storeSettled,
     suggestedCount,
     spamAllCount: undecided.length,
     suggestedDests,

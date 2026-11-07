@@ -155,6 +155,15 @@ function openInBrowser(url: string): void {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
+/**
+ * Whether this element sits in an editable region (the composer's body, any contenteditable):
+ * the nearest `contenteditable` ancestor decides, as the platform's own inheritance does.
+ */
+function insideEditable(el: Element): boolean {
+  const host = el.closest("[contenteditable]");
+  return host !== null && host.getAttribute("contenteditable")?.toLowerCase() !== "false";
+}
+
 /** Documents already carrying the listener, so a second install is not a second handler. */
 const installed = new WeakSet<Document>();
 
@@ -202,6 +211,11 @@ export function interceptLinkClicks(doc: Document, opts: InterceptOptions): () =
       | (Element & { getAttribute(name: string): string | null })
       | null;
     if (!anchor) return;
+    // A link in text being written is text: the click places the caret, and nothing is followed.
+    if (insideEditable(anchor)) {
+      ev.preventDefault();
+      return;
+    }
 
     const href = anchor.getAttribute("href") ?? "";
     // An in-page jump is this document's own business in either document.

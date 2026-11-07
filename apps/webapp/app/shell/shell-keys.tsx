@@ -135,7 +135,7 @@ export interface ShellKeysInput {
   seedOwed: boolean;
   /** The folder rail's own verbs (`folder-verbs.ts`), handed over on a live folders account. */
   folderVerbs: FolderVerbs;
-  screener: Pick<ScreenerState, "queueSettled" | "waiting" | "waitingCount">;
+  screener: Pick<ScreenerState, "queueSettled" | "storeSettled" | "waiting" | "waitingCount">;
   /** What the rail foot may say about the provider's Junk folder, or nothing. */
   junkSaid: { named: string } | "unnamed" | null;
   /** Can this build open that folder — the statement without the pointer where it cannot. */
@@ -1055,8 +1055,10 @@ export function useShellKeys({
   /* ── the rail ── */
   /* THE PANES' OWN GATE AT THE RAIL (`countWhen`): mid-catch-up a mirror count is a number the
      catch-up is still changing, so the three streams' badges and tooltips say nothing until the
-     views may state theirs. An absent count renders nothing, never a zero. */
-  const mayCount = countWhen({ settled: mailState.settled, count: 0, pending: mailState.owed }, true) === true;
+     views may state theirs. An absent count renders nothing, never a zero. The Ohbox's also
+     waits for the store's queue answer: gate mail the store does not list joins it then. */
+  const mayCount = countWhen({ settled: mailState.settled, count: 0, pending: mailState.owed }, true) === true
+    && screener.storeSettled;
   // A folder-whole count says so on the rail too (RULING-026): the title carries the sentence.
   const railDegrade = degradeSentence(t, screeningDegrade(consent.screeningByMailbox), "screener.");
   const railGroups: RailGroup[] = useMemo(
