@@ -3036,9 +3036,11 @@ export class OhmailEngine {
    * mailbox, so the settle asks again. `seq`: the newest ask, so an older answer never lands last.
    * `asking`: asks in the air. `caughtUpAt`: the {@link drainEpoch} at which an answer first stopped
    * saying the door's copy is behind, while the page still holds for it ({@link queueStaysBehind}).
+   * `settled`: the newest ask has answered or been refused at least once ({@link screenerWaitingSettled}).
    */
-  private screenerWait: { armed: boolean; dirty: boolean; seq: number; asking: number; caughtUpAt: number | null } =
-    { armed: false, dirty: false, seq: 0, asking: 0, caughtUpAt: null };
+  private screenerWait: {
+    armed: boolean; dirty: boolean; seq: number; asking: number; caughtUpAt: number | null; settled: boolean;
+  } = { armed: false, dirty: false, seq: 0, asking: 0, caughtUpAt: null, settled: false };
   /**
    * The undecided-sender offer's freshness ({@link refreshUnscreened}). `armed`: a surface asked.
    * `owed`: a page changed what it counts (a rule's walk ended, a mailbox or the settings changed),
@@ -7052,6 +7054,23 @@ export class OhmailEngine {
   }
 
   /**
+   * HAS THE STORE SPOKEN FOR THE QUEUE YET? A mirror rebuilt at launch (the desktop window) holds no
+   * page until the first answer, and its own derivation lists senders the store does not, so a
+   * surface withholds the queue until this is true. Also true once the newest ask was refused (the
+   * device's own derivation then stands) and on a door with no store queue at all.
+   */
+  screenerWaitingSettled(): boolean {
+    return !this.screenerWaitingAvailable() || this.screenerWait.settled;
+  }
+
+  /** The first answer or refusal of the newest ask: published, since an empty answer writes nothing. */
+  private settleScreenerWaiting(): void {
+    if (this.screenerWait.settled) return;
+    this.screenerWait.settled = true;
+    this.notify();
+  }
+
+  /**
    * THE SCREENER'S WAITING QUEUE, FROM THE STORE — ask the door for the first page and replace the
    * mirror's copy under ONE version bump. The mirror is windowed and the queue is not, so the set
    * and its count are the store's. An answer that states no count and is not the whole queue (an
@@ -7069,7 +7088,10 @@ export class OhmailEngine {
     try {
       wire = await ask.call(this.adapter, { limit: SCREENER_WAITING_PAGE });
     } catch (err) {
-      if (seq === w.seq) w.dirty = true;
+      if (seq === w.seq) {
+        w.dirty = true;
+        this.settleScreenerWaiting();
+      }
       throw err;
     } finally {
       w.asking -= 1;
@@ -7111,10 +7133,14 @@ export class OhmailEngine {
     // out of the comparison: the web's onward walk keys on the ask, and an unchanged page keeps
     // both it was written under.
     if (gone.length === 0 && sameStoredEntities(stored, puts, PAGE_IS_NOT_CONTENT)) {
-      if (forgot) this.notify();
+      if (forgot || !w.settled) {
+        w.settled = true;
+        this.notify();
+      }
       return;
     }
     await this.store.commitLocal(puts, gone);
+    w.settled = true;
     this.notify();
   }
 

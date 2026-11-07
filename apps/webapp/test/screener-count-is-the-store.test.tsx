@@ -52,7 +52,11 @@ const ONWARD: ScreenerWaitingWire = {
   nextCursor: null, total: null, inFlight: [],
 };
 
-type Door = "answers" | "refuses" | "none";
+type Door = "answers" | "refuses" | "none" | "empty-later";
+/** Opens the "empty-later" door: the store answers that nobody waits, once released. */
+let releaseDoor: () => void = () => {};
+/** Every render's waiting count and rows, as the Ohbox strip and the rail would read them. */
+let seen: string[] = [];
 
 async function engineWith(door: Door): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
@@ -69,6 +73,10 @@ async function engineWith(door: Door): Promise<OhmailEngine> {
       ...(door === "none" ? {} : {
         screenerWaiting: async (p?: { cursor?: string }) => {
           if (door === "refuses") throw new Error("offline");
+          if (door === "empty-later") {
+            await new Promise<void>((r) => { releaseDoor = r; });
+            return { items: [], nextCursor: null, total: 0, inFlight: [] };
+          }
           return p?.cursor ? ONWARD : FIRST;
         },
       }),
@@ -97,9 +105,10 @@ async function mount(door: Door): Promise<void> {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const state = useScreenerState(engine, v, (() => {}) as never);
+    seen.push(`${state.waitingCount}:${state.waiting.map((w) => w.from.address).join(",")}`);
     const [sel, setSel] = React.useState<Record<string, string | null>>({ waiting: null, screened: null, spam: null });
     return h(ScreenerView, {
-      owed: false, state, segment: "waiting", settled: true, selection: sel as never,
+      owed: false, state, segment: "waiting", settled: state.queueSettled, selection: sel as never,
       onSelect: (s: string, id: string | null) => setSel((m) => ({ ...m, [s]: id })),
       hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
     } as never);
@@ -141,6 +150,18 @@ describe("the Screener's count is the store's", () => {
   it("names the count as this device's own while the store has not answered", async () => {
     await mount("refuses");
     expect(text()).toContain("2 first-time senders waiting, counted on this device");
+  });
+
+  it("never states the device's own senders while the store's first answer is on its way", async () => {
+    seen = [];
+    await mount("empty-later");
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.filter((s) => s !== "0:"), "a count or a row before the store answered").toEqual([]);
+    expect(text()).not.toContain("No one’s waiting.");
+    await act(async () => { releaseDoor(); });
+    await flush();
+    expect(seen.filter((s) => s !== "0:"), "a count or a row the store does not hold").toEqual([]);
+    expect(text()).toContain("No one’s waiting.");
   });
 
   it("a client with no store keeps the plain sentence", async () => {

@@ -2678,11 +2678,14 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 doorbellInitials={waitingLive.map((w) => w.initial)}
                 doorbellHues={waitingLive.map((w) => avatarHue(w.from.address))}
                 doorbellCount={screener.waitingCount}
+                doorbellSettled={screener.queueSettled}
                 notOrganizingYet={demo ? null : nothingOrganizesOf(facts)}
                 /* May this view state its emptiness as a fact yet? Derived once in
                    `mail-state.ts`; see `MailState.settled` and `MailState.owed` — the pair the
-                   shared `listSurface` reading asks, never one of them alone. */
-                settled={mailState.settled}
+                   shared `listSurface` reading asks, never one of them alone. The gate mail
+                   of senders the store does not list joins the Ohbox on its queue answer, so the
+                   count waits for that answer too. */
+                settled={mailState.settled && screener.storeSettled}
                 owed={mailState.owed}
                 onDoorbell={() => go("screener")}
                 onAction={onMessageAction}

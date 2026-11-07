@@ -105,6 +105,44 @@ describe("the store's queue page in the mirror", () => {
     expect(screenerSegments(engine.read(), NOW).waiting.map((w) => w.from.address)).toEqual(["new@example.test"]);
   });
 
+  it("is settled only once the newest ask answered or was refused, never by a superseded answer", async () => {
+    const gates: Array<() => void> = [];
+    const { engine } = rig(async () => {
+      await new Promise<void>((r) => { gates.push(r); });
+      return page([]);
+    });
+    await engine.start();
+    let told = 0;
+    engine.subscribe(() => { told += 1; });
+    expect(engine.screenerWaitingSettled(), "settled before any answer").toBe(false);
+    const first = engine.refreshScreenerWaiting();
+    const second = engine.refreshScreenerWaiting();
+    await flush();
+    gates[0]!();
+    await first;
+    expect(engine.screenerWaitingSettled(), "a superseded answer settled the queue").toBe(false);
+    gates[1]!();
+    await second;
+    expect(engine.screenerWaitingSettled()).toBe(true);
+    expect(told, "the first answer was not published").toBeGreaterThan(0);
+    // A refused newest ask settles too: the device's own derivation stands.
+    const { engine: off } = rig(async () => { throw new Error("offline"); });
+    await off.start();
+    await off.refreshScreenerWaiting().catch(() => undefined);
+    expect(off.screenerWaitingSettled()).toBe(true);
+  });
+
+  it("an older server's answer with no page settles the queue and is published", async () => {
+    const { engine } = rig(() => page(["a"], { total: null, nextCursor: "n" }));
+    await engine.start();
+    let told = 0;
+    engine.subscribe(() => { told += 1; });
+    await engine.refreshScreenerWaiting();
+    expect(screenerSegments(engine.read(), NOW).source).toBe("mirror");
+    expect(engine.screenerWaitingSettled()).toBe(true);
+    expect(told).toBeGreaterThan(0);
+  });
+
   it("the settle asks again when a page touched the gate, and not for unrelated mail", async () => {
     const { engine, asks, push } = rig(() => page(["a"]));
     await engine.start();
