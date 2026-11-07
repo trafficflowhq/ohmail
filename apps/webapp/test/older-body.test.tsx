@@ -326,10 +326,9 @@ describe("the reach-past body door, through the shipped shell", () => {
 
     // The storage-cap sentence, verbatim from the catalogue — a terminal state.
     expect(textOf(el)).toContain(en.body.withheld);
-    // It says why and where the letter is, and that its text comes back once there is room.
-    expect(textOf(el)).toContain("to stay within your plan's storage space");
-    expect(textOf(el)).toContain("complete in your mailbox on your mail server");
-    expect(textOf(el)).toContain("When there is room again, ohmail fetches this text back from your mail server.");
+    // It says why and where the letter is.
+    expect(textOf(el)).toContain("isn't kept on Cloud because your storage is full");
+    expect(textOf(el)).toContain("complete on your mail server");
     // And no body-retry control anywhere in the reading column: a retry cannot change a policy.
     const pane = el.querySelector(".view-folder") as HTMLElement;
     const retries = [...pane.querySelectorAll("button")].filter((b) => b.textContent?.trim() === "Retry");
@@ -344,9 +343,8 @@ describe("the reach-past body door, through the shipped shell", () => {
       mailbox({ id: "mb_1" }), mailbox({ id: "mb_gone", address: "gone@example.invalid", status: "disabled" }),
     ]);
     await tick(2_000);
-    expect(textOf(el)).toContain("ohmail no longer reads this mailbox, so this text does not come back here.");
-    expect(textOf(el)).toContain("complete in your mailbox on your mail server");
-    expect(textOf(el)).not.toContain("room again");
+    expect(textOf(el)).toContain("ohmail no longer reads this mailbox, so it does not come back here.");
+    expect(textOf(el)).toContain("complete on your mail server");
   });
 
   it("a row the account no longer holds renders the expunged sentence, with no Retry", async () => {

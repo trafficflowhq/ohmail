@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cpSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
@@ -11,8 +11,9 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { createLocalEngine } from "../src/bridge-fetch.js";
 import messages from "../../webapp/messages/en.json";
-import { createCloudSidecar, type CloudSidecar } from "../../sidecar/src/cloud-engine.js";
+import { createCloudSidecar, MIRROR_OWNER_FILE, type CloudSidecar } from "../../sidecar/src/cloud-engine.js";
 import { openLocalDb, PGDATA_SUBDIR } from "../../sidecar/src/db.js";
+import { ensureLocalWorld } from "../../sidecar/src/identity.js";
 
 /* jsdom's `Blob` has no `arrayBuffer()`; PGlite hands its extensions over as one. A gap in the TEST
    environment only, shimmed as `desktop-first-cloud-door.test.tsx` does. */
@@ -36,6 +37,11 @@ if (typeof (Blob.prototype as { arrayBuffer?: unknown }).arrayBuffer !== "functi
  * mirror stays reachable, the window's reads are forwarded and meet the 402, and the lock rises. A
  * pull that reaches nothing, Cloud's own 503 and the hosting platform's own 404 page are offline: the
  * window's changes are held, uncounted, and land after.
+ *
+ * Over a FRESH store (a new install, an account or server switch, a start-over) the engine names no
+ * mailbox until the account's list lands, and a refused account's list is a 402: no mail is shown,
+ * so the window asks the account itself and the lock rises over no mail. The fake answers the
+ * session read as the real API does for a refused account (`ACCESS_REFUSED_MAY_REACH`: ceremony).
  */
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -117,6 +123,8 @@ function hostedCloud(mode: () => Mode) {
         lifecycle: { state: "closed", closedReason: "suspended", closedAt: "2026-10-07T09:00:00.000Z", erasureAt: null },
       });
     }
+    // A ceremony door: a refused account's session read still answers (`ACCESS_REFUSED_MAY_REACH`).
+    if (url.pathname === "/auth/session") return json({ user: { id: "u-walled", accountId: "acct-walled", email: ADDRESS } });
     return json({
       error: {
         code: "subscription_required", message: "not active",
@@ -127,7 +135,8 @@ function hostedCloud(mode: () => Mode) {
   return { fetchImpl, moves: (): number => moves };
 }
 
-interface Relayed { path: string; status: number; code: string | null }
+/** `access`: the account's own read's word (`/account/access`), else null. */
+interface Relayed { path: string; status: number; code: string | null; access: string | null }
 
 /** The shell's command channel over one serving Cloud engine; every request the window makes is recorded with its answer. */
 function standInShell(engine: CloudSidecar) {
@@ -138,7 +147,7 @@ function standInShell(engine: CloudSidecar) {
     invoke: async (command, payload) => {
       if (command === "engine_status") {
         return {
-          state: "serving", mailboxId: engine.world.mailboxId, accountId: engine.world.accountId,
+          state: "serving", mailboxId: engine.servedMailboxId(), accountId: engine.world.accountId,
           userId: engine.world.userId, baseUrl: "http://sidecar", credentialState: engine.signedIn() ? "ready" : "absent",
           mode: "cloud", address: ADDRESS,
         };
@@ -154,8 +163,13 @@ function standInShell(engine: CloudSidecar) {
         }));
         const body = new Uint8Array(await res.arrayBuffer());
         let code: string | null = null;
-        try { code = (JSON.parse(new TextDecoder().decode(body)) as { error?: { code?: string } }).error?.code ?? null; } catch { /* not JSON */ }
-        relayed.push({ path: path.split("?")[0]!, status: res.status, code });
+        let access: string | null = null;
+        try {
+          const parsed = JSON.parse(new TextDecoder().decode(body)) as { error?: { code?: string }; access?: unknown };
+          code = parsed.error?.code ?? null;
+          access = typeof parsed.access === "string" ? parsed.access : null;
+        } catch { /* not JSON */ }
+        relayed.push({ path: path.split("?")[0]!, status: res.status, code, access });
         return encode(res, body);
       }
       if (command === "plugin:event|listen") return nextId++;
@@ -199,11 +213,27 @@ async function settle(el: HTMLElement, ms: number, done: () => boolean): Promise
   void el;
 }
 const LOCK_TITLE = (messages as unknown as { accessLock: { suspendedTitle: string } }).accessLock.suspendedTitle;
+const DOOR = (messages as unknown as { desktopDoor: { localOpening: string; cloudUnreachableTitle: string } }).desktopDoor;
+const OPENING = DOOR.localOpening;
+const UNREACHABLE = DOOR.cloudUnreachableTitle;
 
-/** A Cloud engine signed in for the suspended account; its mirror's first pull has run and met the 402. */
-async function walledEngine(mode: () => Mode, cloud = hostedCloud(mode)): Promise<CloudSidecar> {
+/**
+ * A Cloud engine signed in for the suspended account; its mirror's first pull has run and met the 402.
+ * `listed`: the store an earlier session's list filled, so a mailbox is served from launch; absent, a
+ * fresh store. `verdict`: this device last found the account open.
+ */
+async function walledEngine(
+  mode: () => Mode, cloud = hostedCloud(mode), { listed = false, verdict = true }: { listed?: boolean; verdict?: boolean } = {},
+): Promise<CloudSidecar> {
   const dataDir = await freshDataDir("ohmail-walled-");
   dirs.push(dataDir);
+  if (listed) {
+    // The account's mailbox and owner record, as an earlier session's list left them.
+    const store = await openLocalDb(dataDir);
+    await ensureLocalWorld(store.db, { address: ADDRESS, now: new Date() });
+    await store.close();
+    writeFileSync(join(dataDir, MIRROR_OWNER_FILE), JSON.stringify({ address: ADDRESS, base: "https://cloud.test" }));
+  }
   const engine = await createCloudSidecar({
     dataDir, cloudUrl: "https://cloud.test", address: ADDRESS,
     tokens: { accessToken: "a", refreshToken: "r" },
@@ -213,21 +243,26 @@ async function walledEngine(mode: () => Mode, cloud = hostedCloud(mode)): Promis
   await engine.start();
   // This device last found the account open: the window paints the mail and asks nothing first.
   // The window's storage owner is the mailbox the engine serves (`DesktopGate`'s `mount.key`).
-  localStorage.setItem(`ohmail.access.${engine.world.mailboxId}`, "open");
+  if (verdict) localStorage.setItem(`ohmail.access.${engine.servedMailboxId()}`, "open");
   return engine;
 }
+
+/** A read the window relayed met the wall: a 402 of the account's, or the account's own read refused. */
+const metTheWall = (r: Relayed): boolean =>
+  (r.status === 402 && r.code === "subscription_required") || (r.path === "/account/access" && r.access === "refused");
 
 /** A Cloud that is down as `failing` says, then up: the window's queued move waits at the door, then lands once. */
 async function heldThenLanded(failing: "outage" | "edge-404"): Promise<void> {
   let mode: Mode = failing;
   const cloud = hostedCloud(() => mode);
-  const engine = await walledEngine(() => mode, cloud);
+  // A move the window queued: a mailbox was on screen, so its store holds the account's list.
+  const engine = await walledEngine(() => mode, cloud, { listed: true });
   const online = async (): Promise<boolean> => ((await (await engine.handle(new Request("http://sidecar/health", {
     headers: { authorization: `Bearer ${engine.sessionToken}` },
   }))).json()) as { online?: unknown }).online === true;
   expect(await online(), `${failing} read as reachable`).toBe(false);
   const shell = standInShell(engine);
-  const local = createLocalEngine(engine.world.mailboxId);
+  const local = createLocalEngine(engine.servedMailboxId());
   await local.hydrate();
   const queued = await local.mutate({ kind: "move", messageId: "m-1", folder: "ohmail/News" });
   expect(queued.status).toBe("queued");
@@ -253,16 +288,52 @@ async function heldThenLanded(failing: "outage" | "edge-404"): Promise<void> {
 }
 
 describe("a suspended account's desktop window meets the wall, not an offline sentence", () => {
-  it("the mirror met the 402 before the window opened: the window's reads are forwarded, meet the 402, and the lock rises", { timeout: 60_000 }, async () => {
+  it("the mirror met the 402 before the window opened: nothing is answered offline, the window meets the wall, and the lock rises", { timeout: 60_000 }, async () => {
     const engine = await walledEngine(() => "walled");
+    const shell = standInShell(engine);
+    const el = await render();
+    await settle(el, 20_000, () => (el.textContent ?? "").includes(LOCK_TITLE));
+    const offline = shell.relayed.filter((r) => r.code === "offline_read_only");
+    expect(offline, `a refused account's reads were answered offline: ${JSON.stringify(shell.relayed)}`).toEqual([]);
+    expect(shell.relayed.filter(metTheWall).length, `no read the window relayed met the wall: ${JSON.stringify(shell.relayed)}`).toBeGreaterThanOrEqual(1);
+    expect(el.textContent, `the window showed no lock for a suspended account; served=${JSON.stringify(engine.servedMailboxId())} text=${JSON.stringify((el.textContent ?? "").slice(0, 120))}`).toContain(LOCK_TITLE);
+  });
+
+  it("a fresh install with no verdict stored asks the account, and the lock rises", { timeout: 60_000 }, async () => {
+    const engine = await walledEngine(() => "walled", undefined, { verdict: false });
+    const shell = standInShell(engine);
+    const el = await render();
+    await settle(el, 20_000, () => (el.textContent ?? "").includes(LOCK_TITLE));
+    expect(el.textContent, `the window showed no lock for a suspended account; served=${JSON.stringify(engine.servedMailboxId())} relayed=${JSON.stringify(shell.relayed)} text=${JSON.stringify((el.textContent ?? "").slice(0, 120))}`).toContain(LOCK_TITLE);
+    expect(el.textContent, "the lock and the opening line both stood").not.toContain(OPENING);
+  });
+
+  it("a store an earlier session filled: the window paints the mail, its reads are forwarded and meet the 402, and the lock rises", { timeout: 60_000 }, async () => {
+    const engine = await walledEngine(() => "walled", undefined, { listed: true });
     const shell = standInShell(engine);
     const el = await render();
     await settle(el, 20_000, () => (el.textContent ?? "").includes(LOCK_TITLE));
     const offline = shell.relayed.filter((r) => r.code === "offline_read_only");
     const walled = shell.relayed.filter((r) => r.status === 402 && r.code === "subscription_required");
     expect(offline, `a refused account's reads were answered offline: ${JSON.stringify(shell.relayed)}`).toEqual([]);
-    expect(walled.length, `no read the window relayed met the wall: ${JSON.stringify(shell.relayed)}`).toBeGreaterThanOrEqual(1);
+    expect(walled.length, `no read the window relayed met the 402: ${JSON.stringify(shell.relayed)}`).toBeGreaterThanOrEqual(1);
     expect(el.textContent, "the window showed no lock for a suspended account").toContain(LOCK_TITLE);
+  });
+
+  it("Cloud out at a fresh store's first pull: the window says so rather than 'Opening your mailbox…', until Cloud answers", { timeout: 60_000 }, async () => {
+    let mode: Mode = "outage";
+    const engine = await walledEngine(() => mode, undefined, { verdict: false });
+    const shell = standInShell(engine);
+    const el = await render();
+    await settle(el, 8_000, () => (el.textContent ?? "").includes(UNREACHABLE));
+    expect(el.textContent, `the window said nothing of the outage: ${JSON.stringify(shell.relayed)}`).toContain(UNREACHABLE);
+    expect(el.textContent).not.toContain(OPENING);
+    expect(el.textContent, "a lock rose with no answer from the account").not.toContain(LOCK_TITLE);
+    mode = "up";
+    // The mirror's failure ladder asks again; Cloud's list names the mailbox and the sentence goes.
+    await settle(el, 30_000, () => engine.servedMailboxId() !== "" && !(el.textContent ?? "").includes(UNREACHABLE));
+    expect(engine.servedMailboxId(), "Cloud answered and no mailbox was named").not.toBe("");
+    expect(el.textContent, "the outage sentence stayed after Cloud answered").not.toContain(UNREACHABLE);
   });
 
   it("a Cloud outage (its own 503) holds a queued move at the door, uncounted, and it lands once after Cloud returns", { timeout: 60_000 }, async () => {
@@ -275,7 +346,7 @@ describe("a suspended account's desktop window meets the wall, not an offline se
 
   it("CONTROL: a pull that reaches nothing still reads offline, and the window's relayed reads are answered offline", { timeout: 60_000 }, async () => {
     let mode: Mode = "unreachable";
-    const engine = await walledEngine(() => mode);
+    const engine = await walledEngine(() => mode, undefined, { listed: true });
     const health = await engine.handle(new Request("http://sidecar/health", { headers: { authorization: `Bearer ${engine.sessionToken}` } }));
     expect(((await health.json()) as { online?: unknown }).online, "a network loss did not read offline").toBe(false);
     const shell = standInShell(engine);

@@ -894,6 +894,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // LOUD: the schedule route writes it and the pass reads it on every letter with files. Deploy order
   // migration → API → worker.
   ["scheduled_send_files", "dek_enc"],
+  // mail 0181_reconcile_pending_queue — the message's account on a pending read mark, which the
+  // worker's `\Seen` poll binds; a worker ahead of the migration 42703s on every cycle. Deploy order
+  // setup → migration → API → worker.
+  ["flag_state", "pending_account_id"],
 ] as const;
 
 /**
@@ -996,6 +1000,11 @@ export const SCHEMA_INDEX_MARKERS: ReadonlyArray<IndexMarker> = [
   // mail 0171_messages_arrival_key. The SILENT kind, 0139's on the key every page walks since: a
   // header after its arrival no longer decides. The needle is that clamp arm.
   ["messages_account_arrival_key_idx", "WHEN ((date <= arrived_at) AND ((arrived_at - date) <= '48:00:00'::interval)) THEN date"],
+  // mail 0181_reconcile_pending_queue. The SILENT kind: without them each reconcile poll reads the
+  // whole of folder_state or flag_state. Keyed by the account, so no reader walks another account's
+  // queue.
+  ["folder_state_pending_queue_idx", "ON public.folder_state USING btree (outstanding_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)"],
+  ["flag_state_pending_queue_idx", "ON public.flag_state USING btree (pending_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)"],
 ];
 
 /**
@@ -1281,9 +1290,14 @@ export const MAIL_FUNCTION_MARKERS: ReadonlyArray<FunctionDefinitionMarker> = [
   // says the migration itself ran: without it the column fills no further and the poll under-counts.
   ["folder_state_outstanding_account", "NEW.outstanding_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
   // Mail 0163_folder_state_fresh_intent — a new filing's schedule reset. Without it a message filed
-  // somewhere new keeps the old refusal's sleep and reason. The newest entry: the sentence about
-  // the tag moves with it.
+  // somewhere new keeps the old refusal's sleep and reason.
   ["folder_state_fresh_intent", "NEW.last_error_class := NULL"],
+  // Mail 0181_reconcile_pending_queue — the trigger function that keeps `flag_state.pending_account_id`.
+  // The prebuild adds the column and both queue indexes ahead of the migrator, so this is the marker
+  // that says the migration itself ran (its triggers and backfills commit with it): without it a
+  // pending row carries no account and the poll, which binds one, never sends it. The newest entry:
+  // the sentence about the tag moves with it.
+  ["flag_state_pending_account", "NEW.pending_account_id := (SELECT m.account_id FROM public.messages m WHERE m.id = NEW.message_id)"],
 ];
 
 /**
@@ -1323,7 +1337,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0180_scheduled_send_files_sealed";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0181_reconcile_pending_queue";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

@@ -970,10 +970,11 @@ export const folderState = pgTable("folder_state", {
   /**
    * The message's account while this row is an outstanding filing of ours (mail 0160), so the
    * mailbox poll reads one account's outstanding filings from a small index instead of every
-   * message of the mailbox. Written by the BEFORE trigger alone, re-derived from `messages` on every
-   * write that leaves the row outstanding; never by application code (a test scans for it). Stale
-   * or NULL on other rows, which every reader excludes with the predicate. Not `account_id`: it is
-   * no account scope, and erasure and export stay keyed by message.
+   * message of the mailbox; since mail 0181 on every other pending row too, so the reconcile poll
+   * reads one account's queue. Written by two BEFORE triggers alone, each re-deriving it from
+   * `messages` on every write that leaves the row pending; never by application code (a test scans
+   * for it). Stale or NULL on settled rows, which every reader excludes with the predicate. Not
+   * `account_id`: it is no account scope, and erasure and export stay keyed by message.
    */
   outstandingAccountId: uuid("outstanding_account_id"),
 }, (t) => ({
@@ -988,6 +989,11 @@ export const folderState = pgTable("folder_state", {
   ixOutstanding: index("folder_state_outstanding_idx")
     .on(t.outstandingAccountId, t.messageId)
     .where(sql.raw(OUTSTANDING_FILING_WHERE)),
+  // Mail 0181: the reconcile poll's pending rows, by account and then in its queue order. Prebuilt
+  // CONCURRENTLY on a server.
+  ixPendingQueue: index("folder_state_pending_queue_idx")
+    .on(t.outstandingAccountId, t.updatedAt, t.messageId)
+    .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
 /**
@@ -1016,7 +1022,20 @@ export const flagState = pgTable("flag_state", {
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
   /** When a read-state DECISION was placed (mail 0145) — `folder_state.decided_at`'s pair. */
   decidedAt: timestamp("decided_at", { withTimezone: true }),
-}, (t) => ({ uqMessage: unique().on(t.messageId) }));
+  /**
+   * The message's account while this row is pending (mail 0181), so the reconcile poll reads one
+   * account's queue: `folder_state.outstanding_account_id`'s twin. Written by the BEFORE trigger
+   * alone, re-derived from `messages` on every write that leaves the row pending; never by
+   * application code. Stale or NULL on settled rows, which the poll excludes with its predicate.
+   */
+  pendingAccountId: uuid("pending_account_id"),
+}, (t) => ({
+  uqMessage: unique().on(t.messageId),
+  // Mail 0181: the folder queue's twin.
+  ixPendingQueue: index("flag_state_pending_queue_idx")
+    .on(t.pendingAccountId, t.updatedAt, t.messageId)
+    .where(sql.raw(`"reconcile_status" = 'pending'`)),
+}));
 
 export const rules = pgTable("rules", {
   id: uuid("id").defaultRandom().primaryKey(),

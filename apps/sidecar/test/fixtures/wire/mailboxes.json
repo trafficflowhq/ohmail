@@ -28,31 +28,37 @@
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
+          "serverExists": 3,
           "updatedAt": "2026-01-01T11:00:00.000Z"
         },
         {
           "folder": "ohmail/News",
           "hasSyncCursor": true,
+          "serverExists": 0,
           "updatedAt": "2026-01-01T11:00:00.000Z"
         },
         {
           "folder": "ohmail/Quarantine",
           "hasSyncCursor": true,
+          "serverExists": 0,
           "updatedAt": "2026-01-01T11:00:00.000Z"
         },
         {
           "folder": "ohmail/Receipts",
           "hasSyncCursor": true,
+          "serverExists": 0,
           "updatedAt": "2026-01-01T11:00:00.000Z"
         },
         {
           "folder": "ohmail/Screened",
           "hasSyncCursor": true,
+          "serverExists": 0,
           "updatedAt": "2026-01-01T11:00:00.000Z"
         },
         {
           "folder": "ohmail/Screener",
           "hasSyncCursor": true,
+          "serverExists": 0,
           "updatedAt": "2026-01-01T11:00:00.000Z"
         }
       ],

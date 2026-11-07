@@ -12,9 +12,10 @@ import { reviveStandingDown } from "../../shell/sync-scheduler";
 import { useResolvedDemoModeFrom } from "../../shell/engine";
 import { sendSurfaceFor } from "./send-surface";
 import {
-  apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
+  ApiError, api, apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
 } from "../../api-client";
+import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "../../shell/live-body";
 import { readOwner } from "../../shell/owner-cookie";
 import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
 import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilings";
@@ -29,6 +30,8 @@ import { AccountLocale } from "./AccountLocale";
 import { AiSection } from "./AiSection";
 import { LifecycleBanner } from "./LifecycleBanner";
 import { CloudStorageNotice } from "./CloudStorageNotice";
+import { StorageSection } from "./StorageSection";
+import { useCloudStorage } from "./storage-change";
 import { ReuseSweepStrip } from "./ReuseSweepStrip";
 import { DevicesSection, useDevicePairing } from "./DevicesSection";
 import { InvitesSection, useUserInvites } from "./InvitesSection";
@@ -66,6 +69,15 @@ beginOAuthReturn();
 
 /** The staged ceiling where this page can PUT the files, else none (`send-surface.ts`). Compiled. */
 const SEND_SURFACE = sendSurfaceFor(SELF_HOST_BUILD, process.env.NEXT_PUBLIC_STAGING_ORIGIN);
+
+/** Load it now on the Cloud API: the letter's text for this view, from `GET /messages/:id/live-body`. */
+const liveBodyOverApi: LiveBodyWire = async (messageId) => {
+  try {
+    return liveBodyLoaded(await api<unknown>(liveBodyPath(messageId)));
+  } catch (err) {
+    return liveBodyRefused(err instanceof ApiError ? err.status : 0);
+  }
+};
 
 /** Settings → Mailboxes' waiting filings, on the Cloud API. Module scope: one identity per load. */
 const filingsApi: MailboxFilingsApi = {
@@ -184,6 +196,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
    * {@link useManageOffer}.
    */
   const { manageOffered, withdrawManage } = useManageOffer(resolvedDemo);
+  /** Settings → Storage exists where the access answer carries a storage block (a metered cap). */
+  const storageOffered = useCloudStorage() !== null;
 
   /**
    * Does this server pair devices? ONE gate, the server's runtime `features.pairing` word —
@@ -332,6 +346,10 @@ export function CloudShell({ demo }: { demo: boolean }) {
            out. Same absence rule as `invitesSection` below — see `manageOffered`. `withdrawManage`
            is the press's other answer: a mint with nowhere to go takes the entry away. */
         billingSection={manageOffered ? <SubscriptionSection onNowhere={withdrawManage} /> : undefined}
+        /* SETTINGS → STORAGE, the card atop the Ohbox and Load it now: where a cap meters the text. */
+        storageSection={!resolvedDemo && storageOffered ? <StorageSection /> : undefined}
+        storageCard={resolvedDemo ? undefined : <CloudStorageNotice />}
+        liveBodyWire={resolvedDemo || SELF_HOST_BUILD ? undefined : liveBodyOverApi}
         /* THE ACCOUNT'S OWN STRIP — a trial running out, a payment that failed, the catch-up
            after a closure lifts. Cloud-only by the same absence rule as the panes: the shared
            shell renders the node and cannot read `GET /account/access` itself, and the demo has
@@ -342,9 +360,8 @@ export function CloudShell({ demo }: { demo: boolean }) {
            cannot disagree. That is what licenses it here and nowhere the node paints at once —
            measured, not assumed: on a prerendered demo page this was a live `GET /account/access`
            the row that found the other five never named. */
-        /* …and under it the one-time notice that letter text was emptied for space, from the same feed,
-           and the sign-ins ohmail ended because an older copy used them again (Cloud and self-host). */
-        accountNotice={resolvedDemo ? undefined : <><LifecycleBanner /><CloudStorageNotice /><ReuseSweepStrip /></>}
+        /* …and under it the sign-ins ohmail ended because an older copy used them again (Cloud and self-host). */
+        accountNotice={resolvedDemo ? undefined : <><LifecycleBanner /><ReuseSweepStrip /></>}
         /* SELF-HOST ONLY — see `userInvites` above. `undefined` (managed, an old server, the
            answer still pending) means no nav entry, never an empty pane. */
         invitesSection={userInvites ? <InvitesSection /> : undefined}

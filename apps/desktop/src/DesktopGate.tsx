@@ -68,10 +68,11 @@ import { BUILD_PLATFORM } from "./platform.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
-import { DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
+import { DesktopStorage, DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
+import { liveBodyVia } from "../../webapp/app/shell/live-body";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
-import { useDesktopFirstPaint } from "./desktop-first-paint.js";
+import { useDesktopFirstPaint, useDesktopUnnamedWall } from "./desktop-first-paint.js";
 import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
@@ -88,6 +89,10 @@ import { profileImportOverBridge } from "./local-profile-import.js";
 import { localImageDoor } from "./local-images.js";
 import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
+
+/** Load it now over the bridge: the hosted door forwards `GET /messages/:id/live-body`. */
+function liveBodyBridge(path: string): Promise<Response> { return bridgeFetch(path); }
+const liveBodyOverBridge = liveBodyVia(liveBodyBridge);
 import { junkOverBridge } from "./local-junk.js";
 import { trashOverBridge } from "./local-trash.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
@@ -604,10 +609,12 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * on some paths only ("Rendered more hooks than during the previous render"). `accountDoor`
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
-  const { manageOffered, withdrawManage, storage, lifecycleState } = useDesktopManageOffer(accountDoor);
+  const { manageOffered, withdrawManage, storage, reread: rereadAccess } = useDesktopManageOffer(accountDoor);
   const { accountId: hostedAccountId, reuseSweeps, recheck: recheckHostedSession } = useHostedSession(accountDoor);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
-  const billingLinksOut = accountDoor && manageOffered && linksOutToBilling();
+  /** May this build point at a purchase at all (not the Mac App Store)? */
+  const mayLinkOut = linksOutToBilling();
+  const billingLinksOut = accountDoor && manageOffered && mayLinkOut;
 
   /**
    * HAS THE SERVICE REFUSED THIS ACCOUNT — subscribed once, for the whole window.
@@ -874,6 +881,11 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
      mailbox, under the same storage owner the bridge keeps the verdict for. */
   const firstPaint = useDesktopFirstPaint(
     accountDoor && mount.kind === "engine" ? mount.key : null,
+    (facts) => setAccessRefused((held) => held ?? facts),
+  );
+  /* …and while no mailbox is named: a refused account's list never names one (`useDesktopUnnamedWall`). */
+  const unnamed = useDesktopUnnamedWall(
+    accountDoor && mount.kind === "opening" && accessRefused === null,
     (facts) => setAccessRefused((held) => held ?? facts),
   );
   // One window, one composer, across restarts — see `setComposerScope`.
@@ -1313,11 +1325,15 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
        behind its own grace, so the ordinary launch stays a quiet frame; the wait it exists
        for is the one-off recovery launch (`SETTLE_MS` in `doors.ts`). The words sit at the
        foot of the rail where the sync line will sit: `BootStatus` renders the engine's own
-       `status.bootPhase` ("Replaying recent changes…"); the settling poll refreshes it. */
+       `status.bootPhase` ("Replaying recent changes…"); the settling poll refreshes it. An account
+       door whose engine names no mailbox and answers offline says its server is not answering. */
+    const outage = unnamed === "unreachable"
+      ? { sentence: isManagedDoor(status) ? DOOR_COPY.cloudUnreachableTitle : DOOR_COPY.serverUnreachableTitle }
+      : {};
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
-        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
+        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} {...outage} />
       </div>
     );
   }
@@ -1433,27 +1449,25 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
            `Notification.requestPermission()` resolves here without granting anything: the master
            switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
         notificationHost={desktopNotificationHost}
-        /* THE STORAGE NOTICE, on the Cloud door only: the same answer the Subscription offer
-           reads carries the storage block. Standalone has none and draws nothing. Beside it, the
-           reuse sweeps the account's session read lists, acknowledged over the bridge. */
-        {...(accountDoor && (storage !== null || reuseSweeps.length > 0)
+        /* THE REUSE SWEEPS the account's session read lists, acknowledged over the bridge. */
+        {...(accountDoor && reuseSweeps.length > 0
           ? {
               accountNotice: (
-                <>
-                  {storage !== null ? (
-                    <DesktopStorageNotice
-                      facts={storage}
-                      lifecycleState={lifecycleState}
-                      linksOut={billingLinksOut}
-                    />
-                  ) : null}
-                  {reuseSweeps.length > 0
-                    ? <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} onRecheck={recheckHostedSession} />
-                    : null}
-                </>
+                <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} onRecheck={recheckHostedSession} />
               ),
             }
           : {})}
+        /* STORAGE, on the Cloud door only: the card atop the Ohbox and Settings → Storage, from the
+           storage block the same access answer carries, and Load it now for a letter emptied for
+           space. Standalone holds every body and has no storage block. A store build gets the
+           numbers with no purchase (`linksOutToBilling`). */
+        {...(accountDoor && storage !== null
+          ? {
+              storageCard: <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} />,
+              storageSection: <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} />,
+            }
+          : {})}
+        {...(accountDoor ? { liveBodyWire: liveBodyOverBridge } : {})}
         /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
            facts a standalone install has to answer are not the hosted service's. */
         {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}

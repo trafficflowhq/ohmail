@@ -1,7 +1,7 @@
 import {
-  AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, UNMETERED_ACCESS,
+  AI_USAGE_LINES_PER_POST, AI_USAGE_LINES_PER_RELEASE, PLAN_HINT_INTERVALS, PLAN_HINT_PLANS, UNMETERED_ACCESS,
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial, type ActionPrices,
-  type TrialStorageCarry,
+  type TrialStorageCarry, type StorageNeed, type StorageOffer, type StorageOfferPlan, type StorageTold,
   type AccessReadOpts, type AccessRefusal, type AccessVerdict, type AiUsageLine, type EntitlementsPort,
   type ReleaseOutcome, type ReleaseReceipt, type UsageReceipt, type SpendAction, type SpendMeta, type SpendOutcome,
   type SpendRelease, type ReturnConfirmOutcome, type PlanHint, planHintOf, type PlaneOpsReading,
@@ -350,6 +350,70 @@ function trialStorageOf(raw: unknown): TrialStorageCarry | null | { bad: string 
   return { planBytesLimit: limit, until };
 }
 
+/** A whole count of bytes, letters, units or minor currency units. */
+const isCount = (v: unknown): v is number => typeof v === "number" && Number.isSafeInteger(v) && v >= 0;
+const isPlan = (v: unknown): v is StorageOfferPlan["plan"] => (PLAN_HINT_PLANS as readonly unknown[]).includes(v);
+/** A reason the program names in one lower-case word; free text never reaches a screen. */
+const REASON_WORD = /^[a-z][a-z_]{0,31}$/;
+
+/**
+ * The `storageOffer` block, read field by field: absent or null is no offer. One that cannot be read
+ * is a drift, named, and reads as no offer; the verdict stands, and no price is ever guessed.
+ */
+function storageOfferOf(raw: unknown): StorageOffer | null | { bad: string } {
+  if (raw === undefined || raw === null) return null;
+  const o = obj(raw);
+  if (!o) return { bad: "storageOffer" };
+  if (typeof o.currency !== "string" || !/^[a-z]{3}$/.test(o.currency)) return { bad: "storageOffer.currency" };
+  if (!(PLAN_HINT_INTERVALS as readonly unknown[]).includes(o.interval)) return { bad: "storageOffer.interval" };
+  if (!Array.isArray(o.plans) || o.plans.length === 0 || o.plans.length > PLAN_HINT_PLANS.length) {
+    return { bad: "storageOffer.plans" };
+  }
+  const plans: StorageOfferPlan[] = [];
+  for (const raw of o.plans) {
+    const p = obj(raw);
+    if (!p || !isPlan(p.plan) || plans.some((q) => q.plan === p.plan) || !isCount(p.mailboxes)
+      || !isCount(p.roomBytes) || !isCount(p.amount)) return { bad: "storageOffer.plans" };
+    plans.push({ plan: p.plan, mailboxes: p.mailboxes, roomBytes: p.roomBytes, amount: p.amount });
+  }
+  let addon: StorageOffer["addon"] = null;
+  if (o.addon !== undefined && o.addon !== null) {
+    const a = obj(o.addon);
+    if (!a || !isCount(a.unitBytes) || a.unitBytes === 0 || !isCount(a.amount) || !isCount(a.maxUnits)) {
+      return { bad: "storageOffer.addon" };
+    }
+    addon = { unitBytes: a.unitBytes, amount: a.amount, maxUnits: a.maxUnits };
+  }
+  const c = obj(o.current);
+  if (!c || !isPlan(c.plan) || !isCount(c.addonUnits) || !isCount(c.roomBytes)
+    || (c.roomFrom !== "now" && c.roomFrom !== "first_payment")) return { bad: "storageOffer.current" };
+  const f = obj(o.fit);
+  if (!f || !isPlan(f.plan) || !isCount(f.addonUnits) || !isCount(f.roomBytes) || !isCount(f.amount)
+    || typeof f.keepsAll !== "boolean") return { bad: "storageOffer.fit" };
+  if (typeof o.canChange !== "boolean") return { bad: "storageOffer.canChange" };
+  const reason = o.reason ?? null;
+  if (reason !== null && (typeof reason !== "string" || !REASON_WORD.test(reason))) return { bad: "storageOffer.reason" };
+  return {
+    currency: o.currency, interval: o.interval as StorageOffer["interval"], plans, addon,
+    current: { plan: c.plan, addonUnits: c.addonUnits, roomBytes: c.roomBytes, roomFrom: c.roomFrom },
+    fit: { plan: f.plan, addonUnits: f.addonUnits, roomBytes: f.roomBytes, amount: f.amount, keepsAll: f.keepsAll },
+    canChange: o.canChange, reason,
+  };
+}
+
+/**
+ * The `storageTold` block: the latest decrease the person confirmed. Absent or null is none; one that
+ * cannot be read is a drift, named, and reads as none, so a held drop stays held.
+ */
+function storageToldOf(raw: unknown): StorageTold | null | { bad: string } {
+  if (raw === undefined || raw === null) return null;
+  const t = obj(raw);
+  if (!t) return { bad: "storageTold" };
+  if (!isCount(t.planBytesLimit)) return { bad: "storageTold.planBytesLimit" };
+  if (typeof t.at !== "string" || !Number.isFinite(Date.parse(t.at))) return { bad: "storageTold.at" };
+  return { planBytesLimit: t.planBytesLimit, at: t.at };
+}
+
 /** The program's five spend verdicts. `fault` is never one of them — see {@link SpendOutcome}. */
 function spendOf(body: unknown): SpendOutcome | { bad: string } {
   const b = obj(body);
@@ -531,9 +595,9 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
   /** Every `/v1/access` dial that ended without a verdict, for {@link EntitlementsPort.accessFaults}. */
   let accessFaultCount = 0;
   /** One read of the program: the verdict it cached, or `null` for every fault (then held). */
-  const ask = async (accountId: string, flight: Flight): Promise<AccessVerdict | null> => {
+  const ask = async (accountId: string, flight: Flight, need?: StorageNeed): Promise<AccessVerdict | null> => {
     const at = clock();
-    const res = await post("/v1/access", { accountId }, flight);
+    const res = await post("/v1/access", need ? { accountId, storageNeed: need } : { accountId }, flight);
     // A 200 is the only answer. 400/401/503 are not verdicts about this account (the contract's
     // own status table), so they take the fault path without being reported as drift.
     if (res && res.status === 200) {
@@ -547,8 +611,16 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         const carry = read.ok ? trialStorageOf(obj(res.body)?.trialStorage) : null;
         if (carry !== null && "bad" in carry) named("/v1/access", res.status, carry.bad);
         const carried = carry !== null && !("bad" in carry);
+        const offer = read.ok ? storageOfferOf(obj(res.body)?.storageOffer) : null;
+        if (offer !== null && "bad" in offer) named("/v1/access", res.status, offer.bad);
+        const told = read.ok ? storageToldOf(obj(res.body)?.storageTold) : null;
+        if (told !== null && "bad" in told) named("/v1/access", res.status, told.bad);
         const verdict: AccessVerdict = read.ok
-          ? { ...read, ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}) }
+          ? {
+            ...read, ...(priced ? { prices: card } : {}), ...(carried ? { trialStorage: carry } : {}),
+            ...(offer !== null && !("bad" in offer) ? { storageOffer: offer } : {}),
+            ...(told !== null && !("bad" in told) ? { storageTold: told } : {}),
+          }
           : read;
         const reuseMs = verdict.ok ? ttlMs : Math.min(ttlMs, ACCESS_REFUSED_TTL_MS);
         // A call that began earlier and answered later never replaces a newer verdict.
@@ -593,6 +665,14 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     async access(accountId: string, opts?: AccessReadOpts): Promise<AccessVerdict> {
       const at = clock();
       const held = cache.get(accountId);
+      // A READ THAT ASKS FOR THE STORAGE OFFER is its own call: one shared with a read that did not
+      // ask would answer without the offer. Its answer is cached like any other; a fault answers as
+      // `fresh` does, the last verdict known, else allow.
+      if (opts?.storageNeed) {
+        const entry: Flight = { call: null as unknown as Promise<AccessVerdict | null>, startedAt: at, waited: true };
+        entry.call = ask(accountId, entry, opts.storageNeed);
+        return (await entry.call) ?? held?.verdict ?? UNMETERED_ACCESS;
+      }
       // ONLY AN ANSWER BEGUN SINCE `askedAfter`: a verdict or a call from before it says nothing
       // about what happened since, so neither is reused, and a fault falls to allow, not to it.
       if (opts?.askedAfter !== undefined) {
@@ -707,12 +787,17 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       return "settled";
     },
 
-    async manageLink(accountId: string, lang?: "de" | "en", hint?: PlanHint): Promise<{ url: string } | null> {
+    async manageLink(
+      accountId: string, lang?: "de" | "en", hint?: PlanHint,
+      change?: { elevated: true; storageNeed?: StorageNeed },
+    ): Promise<{ url: string } | null> {
       // Named only when the caller chose one: an older program reads `accountId` alone, and one that
       // predates the hint ignores `plan` and `interval` (the body is read field by field).
       const { plan, interval } = planHintOf(hint?.plan, hint?.interval);
       const res = await post("/v1/manage-link", {
         accountId, ...(lang ? { lang } : {}), ...(plan ? { plan } : {}), ...(interval ? { interval } : {}),
+        ...(change?.elevated === true ? { elevated: true } : {}),
+        ...(change?.elevated === true && change.storageNeed ? { storageNeed: change.storageNeed } : {}),
       });
       if (!res || res.status !== 200 || !res.bodyIsJson) return null;
       const b = obj(res.body);

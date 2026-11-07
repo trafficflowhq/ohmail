@@ -235,6 +235,18 @@ describe("what the page cannot speak for", () => {
     expect(s.waiting.map((w) => w.from.address)).toEqual(["a@example.test", "y@example.test"]);
     expect(s.waitingTotal).toBe(9);
   });
+
+  it("a listed sender whose letter has left the gate here is neither shown nor counted", async () => {
+    // The page was asked before a decision reached the store; c is one the mirror has no letter of.
+    const { engine, push } = rig(() => page(["a", "b", "c"]));
+    push(msg("a", { folder: "INBOX" }), msg("b", { folder: "ohmail/Screener" }));
+    await engine.start();
+    await engine.syncOnce();
+    await engine.refreshScreenerWaiting();
+    const s = screenerSegments(engine.read(), NOW);
+    expect(s.waiting.map((w) => w.from.address)).toEqual(["b@example.test", "c@example.test"]);
+    expect(s.waitingTotal, "the count named a sender the list leaves out").toBe(2);
+  });
 });
 
 describe("a decision on a sender only the store holds", () => {

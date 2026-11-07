@@ -75,6 +75,8 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
   it("a database where mail 0160 never ran (only the prebuild did) is short its trigger function", async () => {
     const healthy = found(await hosted(owned.db));
     const prebuiltOnly = await rolledBack(async (db) => {
+      // Mail 0181's folder trigger runs the same function, so it goes first; a trigger is no marker.
+      await db.execute(sql.raw(`drop trigger "folder_state_pending_account_tg" on "folder_state"`));
       await db.execute(sql.raw(`drop trigger "folder_state_outstanding_account_tg" on "folder_state"`));
       await db.execute(sql.raw(`drop function "folder_state_outstanding_account"()`));
       return hosted(db);
@@ -87,6 +89,26 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
       return hosted(db);
     });
     expect(found(noIndexes)).toBe(healthy - 2);
+  });
+
+  it("a database where mail 0181 never ran (only the prebuild did) is short its trigger function", async () => {
+    const healthy = found(await hosted(owned.db));
+    const prebuiltOnly = await rolledBack(async (db) => {
+      await db.execute(sql.raw(`drop trigger "flag_state_pending_account_tg" on "flag_state"`));
+      await db.execute(sql.raw(`drop function "flag_state_pending_account"()`));
+      return hosted(db);
+    });
+    expect(found(prebuiltOnly)).toBe(healthy - 1);
+    expect(prebuiltOnly.kind === "probed" && prebuiltOnly.schemaOk).toBe(false);
+    // Both queue indexes in their first, unkeyed shape: two short.
+    const unkeyed = await rolledBack(async (db) => {
+      for (const t of ["folder_state", "flag_state"]) {
+        await db.execute(sql.raw(`drop index "${t}_pending_queue_idx"`));
+        await db.execute(sql.raw(`create index "${t}_pending_queue_idx" on "${t}" ("updated_at", "message_id") where "reconcile_status" = 'pending'`));
+      }
+      return hosted(db);
+    });
+    expect(found(unkeyed)).toBe(healthy - 2);
   });
 
   it("a database without mail 0163's fresh-intent function is one short", async () => {

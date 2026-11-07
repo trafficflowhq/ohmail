@@ -1039,6 +1039,63 @@ export const accountStorageHolds = pgTable("account_storage_holds", {
   ckAbove: check("account_storage_holds_held_above_seen", sql`${t.heldBytes} is null or ${t.heldBytes} > ${t.seenBytes}`),
 }));
 
+/**
+ * THE STORAGE ESTIMATE'S SNAPSHOT (cloud 0057), one row per mailbox: what ohmail holds of it and the
+ * server's folder counts and first import as they stood. Counts and instants only; written whole per
+ * account by the worker (`storage-stats.ts`), read by the request and, granted, by the console.
+ */
+export const mailboxStorageStats = pgTable("mailbox_storage_stats", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  mailboxId: uuid("mailbox_id").notNull(),
+  letters: integer("letters").notNull(),
+  textLetters: integer("text_letters").notNull(),
+  emptied: integer("emptied").notNull(),
+  textBytes: bigint("text_bytes", { mode: "number" }).notNull(),
+  instances: integer("instances").notNull(),
+  serverLetters: integer("server_letters"),
+  counted: boolean("counted").notNull(),
+  imported: boolean("imported").notNull(),
+  at: timestamp("at", { withTimezone: true }).notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "mailbox_storage_stats_pk", columns: [t.accountId, t.mailboxId] }),
+  ckCounts: check("mailbox_storage_stats_counts", sql`${t.letters} >= 0 and ${t.textLetters} >= 0 and ${t.emptied} >= 0 and ${t.textBytes} >= 0 and ${t.instances} >= 0 and (${t.serverLetters} is null or ${t.serverLetters} >= 0)`),
+  ckWithin: check("mailbox_storage_stats_within", sql`${t.textLetters} + ${t.emptied} <= ${t.letters}`),
+}));
+
+/**
+ * THE PERSON'S STORAGE CHOICES (cloud 0057): the card they dismissed, with the cap, the emptied
+ * count and the drop's date it was dismissed at, and when they turned the storage mails off.
+ */
+export const accountStoragePrefs = pgTable("account_storage_prefs", {
+  accountId: uuid("account_id").primaryKey().references(() => accounts.id, { onDelete: "cascade" }),
+  cardDismissedLevel: text("card_dismissed_level"),
+  cardDismissedCap: bigint("card_dismissed_cap", { mode: "number" }),
+  cardDismissedEmptied: integer("card_dismissed_emptied"),
+  cardDismissedDropsAt: timestamp("card_dismissed_drops_at", { withTimezone: true }),
+  cardDismissedAt: timestamp("card_dismissed_at", { withTimezone: true }),
+  mailOffAt: timestamp("mail_off_at", { withTimezone: true }),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  ckLevel: check("account_storage_prefs_level_closed", sql`${t.cardDismissedLevel} is null or ${t.cardDismissedLevel} in ('near', 'full', 'drop')`),
+  ckWhole: check("account_storage_prefs_dismissal_whole", sql`(${t.cardDismissedLevel} is null) = (${t.cardDismissedAt} is null) and (${t.cardDismissedLevel} is null) = (${t.cardDismissedCap} is null) and (${t.cardDismissedLevel} is null) = (${t.cardDismissedEmptied} is null)`),
+}));
+
+/**
+ * ONE STORAGE MAIL PER (ACCOUNT, LEVEL, CAP) (cloud 0057): the pass claims the row before it sends,
+ * and `delivered_at` says the provider took it. The newest `sent_at` is the week between two mails.
+ */
+export const storageMailSent = pgTable("storage_mail_sent", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id, { onDelete: "cascade" }),
+  level: text("level").notNull(),
+  capBytes: bigint("cap_bytes", { mode: "number" }).notNull(),
+  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+}, (t) => ({
+  pk: primaryKey({ name: "storage_mail_sent_pk", columns: [t.accountId, t.level, t.capBytes] }),
+  ckLevel: check("storage_mail_sent_level_closed", sql`${t.level} in ('near', 'full')`),
+  ckCap: check("storage_mail_sent_cap_positive", sql`${t.capBytes} > 0`),
+}));
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
   oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
@@ -1047,5 +1104,5 @@ export const cloudSchema = {
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
   creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers, connectAttempts,
-  accountStorageHolds,
+  accountStorageHolds, mailboxStorageStats, accountStoragePrefs, storageMailSent,
 };

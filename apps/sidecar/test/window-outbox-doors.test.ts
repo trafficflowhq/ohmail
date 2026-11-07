@@ -8,6 +8,7 @@ import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organi
 import { createCloudSidecar, MIRROR_OWNER_FILE, type CloudSidecar } from "../src/cloud-engine.js";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { LEGACY_WINDOW_OUTBOX_FILE, WINDOW_OUTBOX_ROUTE } from "../src/window-outbox.js";
+import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
 
@@ -70,8 +71,23 @@ describe("the cloud engine serves the window's outbox while the account is out o
     return sidecar;
   }
 
+  /** An earlier session in reach of the account: its list put the mailbox the window is scoped to in the store. */
+  async function listedOnce(dataDir: string, address: string): Promise<void> {
+    const s = await createCloudSidecar({
+      dataDir, cloudUrl: "https://cloud.test", address,
+      tokens: { accessToken: "access-0", refreshToken: "refresh-0" }, keks: ring(), pollIntervalMs: 60_000,
+      fetchImpl: (async (input: string | URL | Request) => {
+        if (new URL(String(input instanceof Request ? input.url : input)).pathname !== "/mailboxes") throw new TypeError("fetch failed");
+        return new Response(JSON.stringify(mailboxList([hostedMailbox("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", address)])));
+      }) as unknown as typeof fetch,
+    });
+    await s.start().catch(() => undefined);
+    await s.stop();
+  }
+
   it("records a queued change, refuses one without the bearer, and the next launch reads it back", async () => {
     const d = await dir("ohmail-outbox-cloud-");
+    await listedOnce(d, "me@ohmail.test");
     const first = await boot(d);
     expect(first.servedMailboxId()).not.toBe("");
     expect(await roundTrip(first, first.servedMailboxId())).toEqual({ put: 204, foreign: 409, anon: 401 });
@@ -85,6 +101,7 @@ describe("the cloud engine serves the window's outbox while the account is out o
     const d = await dir("ohmail-outbox-cloud-legacy-");
     writeFileSync(join(d, MIRROR_OWNER_FILE), JSON.stringify({ address: "me@ohmail.test", base: "https://cloud.test" }));
     writeFileSync(join(d, LEGACY_WINDOW_OUTBOX_FILE), JSON.stringify({ v: 1, rows: [ROW] }));
+    await listedOnce(d, "other@ohmail.test");
     const other = await createCloudSidecar({
       dataDir: d, cloudUrl: "https://cloud.test", address: "other@ohmail.test",
       tokens: { accessToken: "access-2", refreshToken: "refresh-2" }, keks: ring(), fetchImpl: unreachable, pollIntervalMs: 60_000,
@@ -93,6 +110,7 @@ describe("the cloud engine serves the window's outbox while the account is out o
     expect(await readBack(other, other.servedMailboxId()), "another account read the change").toEqual({ status: 200, body: { rows: [], next: null } });
     expect(existsSync(join(d, LEGACY_WINDOW_OUTBOX_FILE)), "the ownerless file was left to be served").toBe(false);
     await other.stop();
+    await listedOnce(d, "me@ohmail.test");
     const mine = await boot(d);
     expect(await readBack(mine, mine.servedMailboxId())).toEqual({ status: 200, body: { rows: [ROW], next: null } });
   });

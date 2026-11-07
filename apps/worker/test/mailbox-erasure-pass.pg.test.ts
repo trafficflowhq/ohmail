@@ -10,7 +10,7 @@ import {
   PROFILE_FOUND_AUDIT_ACTION, accounts, accountStorage, auditLog, erasureRemaining, mailboxes, messageBodies, messages,
   reserveBodyBytes, stampMailboxErasure, storageUsageOf, type Tx,
 } from "@trafficflow/db";
-import { schema } from "@trafficflow/db/cloud";
+import { mailboxStorageStats, schema } from "@trafficflow/db/cloud";
 import type { Logger } from "@trafficflow/core/mail";
 import { MAILBOX_ERASURE_PASS_BUDGET_MS, mailboxErasurePass } from "../src/mailbox-erasure-pass.js";
 import { STORAGE_RECOUNT_EVERY_MS, storageEvictPass } from "../src/storage-evict.js";
@@ -87,6 +87,24 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
     expect(await done(kept)).toBe(false);
     const third = await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([x, y]) });
     expect(third, "a pass with nothing owed did work").toMatchObject({ steps: 0, finished: 0 });
+  });
+
+  it("a finished erasure takes the mailbox's storage snapshot with it, and leaves the others' (cloud 0057)", async () => {
+    const x = randomUUID();
+    await db.insert(accounts).values({ id: x, name: "erase-stats" });
+    const gone = await mailbox(x, "gone", 1);
+    const kept = await mailbox(x, "kept", 1);
+    for (const m of [gone, kept]) {
+      await db.insert(mailboxStorageStats).values({
+        accountId: x, mailboxId: m, letters: 1, textLetters: 1, emptied: 0, textBytes: 4, instances: 1,
+        serverLetters: 1, counted: true, imported: true, at: NOW,
+      });
+    }
+    await stamp(x, gone, NOW);
+    expect((await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([x]) })).finished).toBe(1);
+    const left = await db.select({ m: mailboxStorageStats.mailboxId }).from(mailboxStorageStats)
+      .where(eq(mailboxStorageStats.accountId, x));
+    expect(left.map((r) => r.m)).toEqual([kept]);
   });
 
   it("the wall-clock bound ends a pass between steps, and the next pass resumes from the stamp", async () => {

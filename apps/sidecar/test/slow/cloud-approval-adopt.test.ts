@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCloudSidecar, readMirrorOwner, type CloudSidecar } from "../../src/cloud-engine.js";
-import { approvalServer, FIXTURE_MESSAGE, type ApprovalServer } from "../../../desktop/test/fixtures/approval-server.js";
+import { approvalServer, FIXTURE_MAILBOX, FIXTURE_MESSAGE, type ApprovalServer } from "../../../desktop/test/fixtures/approval-server.js";
 import { freshDataDir } from "../_datadir.js";
 
 /**
@@ -99,10 +99,12 @@ describe("the pending door adopts its account at the first claim", () => {
     sidecars.splice(sidecars.indexOf(first), 1);
     const relaunched = await addressed(at, server, door.address);
     expect(relaunched.signedIn()).toBe(true);
-    expect(relaunched.world.mailboxId).not.toBe("");
+    // An empty store serves no mailbox until the account's list names it: a minted one is retired.
+    expect(relaunched.servedMailboxId()).toBe("");
     expect(await health(relaunched)).toMatchObject({ mode: "cloud", signedIn: true, identityPending: false });
     expect(readMirrorOwner(at.dataDir)).toBe(server.browser);
     await relaunched.start();
+    expect(relaunched.servedMailboxId()).toBe(FIXTURE_MAILBOX);
     const mail = await call(relaunched, `/messages/${FIXTURE_MESSAGE}`);
     const firstMailMs = Date.now() - confirmedAt;
     expect(mail.status, await mail.clone().text()).toBe(200);

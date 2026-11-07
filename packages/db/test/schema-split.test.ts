@@ -215,7 +215,8 @@ describe("the schema split matches the journal split", () => {
     // 31 → 32: `alert_drills` (cloud 0051) — alert drills and their acknowledgements, as above.
     // 32 → 33: `connect_attempts` (cloud 0054) — how connecting a mailbox ended, as above.
     // 33 → 34: `account_storage_holds` (cloud 0055) — a lower storage limit's hold, as above.
-    expect(declaredTables("schema-cloud.ts").size).toBe(34);
+    // 34 → 37: `mailbox_storage_stats`, `account_storage_prefs`, `storage_mail_sent` (cloud 0057), as above.
+    expect(declaredTables("schema-cloud.ts").size).toBe(37);
   });
 
   /**

@@ -61,17 +61,20 @@
         {
           "folder": "Archive",
           "hasSyncCursor": false,
-          "updatedAt": "2026-10-21T09:55:00.000Z"
+          "updatedAt": "2026-10-21T09:55:00.000Z",
+          "serverExists": null
         },
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": 120
         },
         {
           "folder": "Sent",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:58:00.000Z"
+          "updatedAt": "2026-10-21T09:58:00.000Z",
+          "serverExists": 30
         }
       ],
       "createdAt": "2026-10-18T10:00:00.000Z"
@@ -199,7 +202,8 @@
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:57:00.000Z"
+          "updatedAt": "2026-10-21T09:57:00.000Z",
+          "serverExists": 0
         }
       ],
       "createdAt": "2026-10-20T10:00:00.000Z"
@@ -445,17 +449,20 @@
         {
           "folder": "Archive",
           "hasSyncCursor": false,
-          "updatedAt": "2026-10-21T09:55:00.000Z"
+          "updatedAt": "2026-10-21T09:55:00.000Z",
+          "serverExists": null
         },
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": 120
         },
         {
           "folder": "Sent",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:58:00.000Z"
+          "updatedAt": "2026-10-21T09:58:00.000Z",
+          "serverExists": 30
         }
       ],
       "createdAt": "2026-10-18T10:00:00.000Z"
@@ -585,7 +592,8 @@
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:57:00.000Z"
+          "updatedAt": "2026-10-21T09:57:00.000Z",
+          "serverExists": 0
         }
       ],
       "createdAt": "2026-10-20T10:00:00.000Z"
@@ -833,12 +841,14 @@
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": 999
         },
         {
           "folder": "Zzz",
           "hasSyncCursor": false,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": null
         }
       ],
       "createdAt": "2026-10-20T10:00:00.000Z"
@@ -904,12 +914,14 @@
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": 999
         },
         {
           "folder": "Zzz",
           "hasSyncCursor": false,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": null
         }
       ],
       "createdAt": "2026-10-20T10:00:00.000Z"
@@ -975,12 +987,14 @@
         {
           "folder": "INBOX",
           "hasSyncCursor": true,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": 999
         },
         {
           "folder": "Zzz",
           "hasSyncCursor": false,
-          "updatedAt": "2026-10-21T09:59:00.000Z"
+          "updatedAt": "2026-10-21T09:59:00.000Z",
+          "serverExists": null
         }
       ],
       "createdAt": "2026-10-20T10:00:00.000Z"

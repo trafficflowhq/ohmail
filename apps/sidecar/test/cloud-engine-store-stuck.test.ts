@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { afterEach, describe, expect, it } from "vitest";
 import type { SyncChange, SyncResponse } from "@trafficflow/services/mail";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
+import { ensureLocalWorld } from "../src/identity.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 
@@ -112,6 +113,8 @@ describe("the window's mailbox list discloses a store that cannot keep up", () =
   it("a pull the store refuses outside the quarantine overlays every live row with the copy's own detail", { timeout: 30_000 }, async () => {
     const sidecar = await standUp(emptyPage(), "refused@ohmail.test");
     await sidecar.db.execute(sql.raw("ALTER TABLE mailboxes ADD CONSTRAINT refresh_probe CHECK (address <> 'refused@ohmail.test')"));
+    // The mailbox an earlier pull stored; this one's list cannot be stored beside it.
+    await ensureLocalWorld(sidecar.db, { address: "me@ohmail.test", now: new Date() });
     await sidecar.start();
     // The poll retries on its backoff (1 s, 2 s): the third refusal is the stuck copy.
     const end = Date.now() + 15_000;

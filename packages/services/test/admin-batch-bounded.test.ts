@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
-import { accounts, mailboxes, users } from "@trafficflow/db";
+import { accounts, accountStorage, mailboxes, users } from "@trafficflow/db";
+import { mailboxStorageStats } from "@trafficflow/db/cloud";
 import {
-  adminAccountDetail, adminAccounts, adminAccountsByIds, type AdminDb,
+  adminAccountDetail, adminAccounts, adminAccountsByIds, adminStorage, type AdminDb,
 } from "../src/admin-service.js";
 
 /**
@@ -108,5 +109,41 @@ describe("the batch by id and the account page are bounded by the ids asked", ()
     const db = await world();
     const { statements } = await recorded(db, () => adminAccounts(db as unknown as AdminDb, NOW, {}, { roles: ["owner"] }));
     expect(unbounded(statements, [A, B, C]).some((s) => /from "accounts"/.test(s))).toBe(true);
+  });
+});
+
+describe("the storage page reads the snapshot of its own page's accounts, once (cloud 0057)", () => {
+  const SNAPSHOT = /\bfrom "mailbox_storage_stats"/;
+  const MAIL_TABLES = /\b(messages|message_bodies|message_instances)\b/;
+
+  /** Three measured accounts, two mailboxes each, 10 letters a mailbox imported whole. */
+  async function measured(): Promise<Db> {
+    const db = await world();
+    await db.insert(accountStorage).values([A, B, C].map((accountId) => ({ accountId, bytes: 100 })));
+    await db.insert(mailboxStorageStats).values([A, B, C].flatMap((accountId, i) => [1, 2].map((n) => ({
+      accountId, mailboxId: `aaaaaaaa-0000-4000-8000-0000000000${i}${n}`, letters: 10, textLetters: 10, emptied: 0,
+      textBytes: 250_000, instances: 10, serverLetters: 10, counted: true, imported: true, at: NOW,
+    }))));
+    return db;
+  }
+
+  it("one statement over the snapshot per page, bound by the page's accounts, and none over the mail tables", async () => {
+    const db = await measured();
+    const first = await recorded(db, () => adminStorage(db as unknown as AdminDb, NOW, null, 2));
+    expect(first.value.rows.map((r) => [r.accountId, r.expectedLetters])).toEqual([[A, 20], [B, 20]]);
+    const reads = first.statements.filter((s) => SNAPSHOT.test(s.text));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.text).toMatch(/\bwhere\b/);
+    expect(JSON.stringify(reads[0]!.params)).toContain(A);
+    expect(JSON.stringify(reads[0]!.params)).toContain(B);
+    expect(JSON.stringify(reads[0]!.params)).not.toContain(C);
+    expect(first.statements.filter((s) => MAIL_TABLES.test(s.text))).toEqual([]);
+
+    const second = await recorded(db, () => adminStorage(db as unknown as AdminDb, NOW, first.value.nextCursor, 2));
+    expect(second.value.rows.map((r) => [r.accountId, r.expectedLetters])).toEqual([[C, 20]]);
+    const more = second.statements.filter((s) => SNAPSHOT.test(s.text));
+    expect(more).toHaveLength(1);
+    expect(JSON.stringify(more[0]!.params)).toContain(C);
+    expect(JSON.stringify(more[0]!.params)).not.toMatch(new RegExp(`${A}|${B}`));
   });
 });

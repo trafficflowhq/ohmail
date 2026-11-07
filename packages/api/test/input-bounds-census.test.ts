@@ -254,6 +254,9 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // The sign-in throttle's security notices, the same bucket: a scheduler's shared secret and no
   // body, query or path parameter. One run claims at most fifty owed rows (`drainSecurityNotices`).
   "GET /internal/security-notices/run",
+  // The storage mails (cloud 0057), the same bucket: a scheduler's shared secret and no body, query
+  // or path parameter. One run mails at most `STORAGE_MAILS_PER_RUN` accounts (`runStorageMailPass`).
+  "GET /internal/storage-mails/run",
   "GET /auth/session",
   "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/totp/enroll",
@@ -312,6 +315,8 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "GET /rules/:id",
   "GET /messages/:id",
   "GET /messages/:id/body",
+  // Load it now: nothing on the wire but the id; the places read and the size ceiling are the server's.
+  "GET /messages/:id/live-body",
   "POST /messages/:id/draft",
   "DELETE /messages/:id",
   /* mail 0099 — put a deleted message back where it was. `PATH_PARAMS_ONLY`, and by the same
@@ -841,6 +846,12 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
      otherwise dropped. The account is still the SESSION's: a manage link for an account the caller
      merely named would be a link to somebody else's payment details. */
   "POST /account/manage-link": { scalarsOnly: true },
+  /* The change door (cloud 0057): one field, `lang`, a member of its closed set or dropped; the account
+     is the SESSION's and the need it sends is read from the server's own rows. */
+  "POST /account/manage-link/change": { scalarsOnly: true },
+  /* The storage choices: exactly one of `dismiss` (a member of the three levels) or `mail` (a boolean),
+     refused 400 otherwise. */
+  "PATCH /account/storage": { scalarsOnly: true },
   /* One field, the session id the return address carried, refused 400 unless it is a token of at
      most this many letters, digits, `_` or `-`. The account is the SESSION's, as above. */
   "POST /account/checkout/confirm": { bounds: [RETURN_SESSION_ID_MAX_CHARS] },
@@ -1618,6 +1629,11 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   // route, uuid-checked and deduped; one id for the account page. Accounts, logins, mailboxes.
   "admin-service.ts :: [...ids]": { origin: { bounded: "the asked ids, cut at ADMIN_BATCH_MAX by the route and uuid-checked" }, count: 3 },
   "admin-service.ts :: unique": { origin: { bounded: "one admin page, bounded by ADMIN_MAX_PAGE_SIZE" }, count: 1 },
+  // The Expected figure's snapshot read (cloud 0057): one statement per storage page, or the account page's one id.
+  "admin-service.ts :: askedAccountIds": {
+    origin: { bounded: "the storage page's accounts, cut at ADMIN_STORAGE_MAX by its own LIMIT, or the account page's one uuid-checked id" },
+    count: 1,
+  },
   // `loadLedger`'s STATEMENT predicate (cloud 0028) — `reason IN (…)` over
   // `credit_ledger_events_idx`'s partial predicate exactly. A CONSTANT in the strongest sense
   // this census has: not a caller's list, not a page of ids, but a literal tuple the type system

@@ -1,6 +1,8 @@
 /**
  * WHAT THE ACCOUNT DOOR SAYS ABOUT THIS ACCOUNT — the two reads the wall and its strips need, and
- * the one press that mints the way back ({@link mintManageLink}).
+ * the one press that mints the way back ({@link mintManageLink}); and the storage doors: the
+ * person's storage choices ({@link setStorageChoice}) and an emptied letter's text for one view
+ * ({@link loadLiveBody}).
  * `GET /account/access` is the ONE fresh read: every other door keeps the 60 s cache, so a strip
  * that must see a reopening within seconds asks here, and it is on the refusal allow-list, so a
  * CLOSED account reaches it. `GET /account/export` is the settings document — rules, Screener
@@ -57,10 +59,106 @@ export interface StorageFacts {
   planLimitBytes: number | null;
   /** When the plan's limit applies again (ISO); `null` until a first payment dates it. */
   limitDropsAt: string | null;
+  /** Why the cap is what it is: the plan's own, the trial's room above it, or a lower limit held; null from an older server. */
+  limitReason: StorageLimitReason | null;
+  /** A mailbox is still on its first import. */
+  importing: boolean;
+  /**
+   * The card the server decided for the Ohbox, the person's dismissal applied; `undefined` from an
+   * older server, which decides none: the phone decides it then (`storageLevelOf`).
+   */
+  card: StorageCardLevel | null | undefined;
+  /** Storage mails are on; null from an older server. */
+  mail: boolean | null;
+  estimate: StorageEstimate | null;
+  /** Per mailbox, by id. */
+  mailboxes: StorageMailboxShare[];
+  /** The program's offer, narrowed to rooms and names: this phone reads no price. */
+  offer: StorageOfferFacts | null;
+}
+
+export type StorageCardLevel = "near" | "full" | "drop";
+export type StorageLimitReason = "plan" | "trial" | "held";
+export type StoragePlanName = "solo" | "plus" | "pro";
+
+export interface StorageEstimate {
+  expectedBytes: number;
+  expectedLetters: number;
+  storedLetters: number;
+  avgLetterBytes: number;
+  /** False while the folders still have no count: the estimate grows as they are opened. */
+  complete: boolean;
+}
+
+export interface StorageMailboxShare {
+  id: string;
+  usedBytes: number;
+  expectedBytes: number;
+  importing: boolean;
+}
+
+export interface StorageOfferFacts {
+  plans: { plan: StoragePlanName; roomBytes: number }[];
+  addon: { unitBytes: number; maxUnits: number } | null;
+  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number };
+  fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; keepsAll: boolean };
 }
 
 const count = (v: unknown): number | null =>
   (typeof v === "number" && Number.isFinite(v) && v >= 0 ? Math.floor(v) : null);
+
+const record = (v: unknown): Record<string, unknown> | null =>
+  (v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+
+const planName = (v: unknown): StoragePlanName | null => (v === "solo" || v === "plus" || v === "pro" ? v : null);
+
+function estimateOf(raw: unknown): StorageEstimate | null {
+  const r = record(raw);
+  if (r === null) return null;
+  const expectedBytes = count(r.expectedBytes);
+  const expectedLetters = count(r.expectedLetters);
+  const storedLetters = count(r.storedLetters);
+  const avgLetterBytes = count(r.avgLetterBytes);
+  if (expectedBytes === null || expectedLetters === null || storedLetters === null || avgLetterBytes === null) return null;
+  return { expectedBytes, expectedLetters, storedLetters, avgLetterBytes, complete: r.complete !== false };
+}
+
+function mailboxSharesOf(raw: unknown): StorageMailboxShare[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((m) => {
+    const r = record(m);
+    const usedBytes = count(r?.usedBytes);
+    const expectedBytes = count(r?.expectedBytes);
+    if (r === null || typeof r.id !== "string" || usedBytes === null || expectedBytes === null) return [];
+    return [{ id: r.id, usedBytes, expectedBytes, importing: r.importing === true }];
+  });
+}
+
+/** The offer's rooms and names, nothing else: an amount or a currency never enters this phone. */
+function offerOf(raw: unknown): StorageOfferFacts | null {
+  const r = record(raw);
+  if (r === null || r.canChange !== true) return null;
+  const plans = (Array.isArray(r.plans) ? r.plans : []).flatMap((p) => {
+    const plan = planName(record(p)?.plan);
+    const roomBytes = count(record(p)?.roomBytes);
+    return plan !== null && roomBytes !== null && roomBytes > 0 ? [{ plan, roomBytes }] : [];
+  });
+  const a = record(r.addon);
+  const unitBytes = count(a?.unitBytes);
+  const maxUnits = count(a?.maxUnits);
+  const c = record(r.current);
+  const f = record(r.fit);
+  const current = c && planName(c.plan) !== null && count(c.roomBytes) !== null
+    ? { plan: planName(c.plan)!, addonUnits: count(c.addonUnits) ?? 0, roomBytes: count(c.roomBytes)! } : null;
+  const fit = f && planName(f.plan) !== null && count(f.roomBytes) !== null
+    ? { plan: planName(f.plan)!, addonUnits: count(f.addonUnits) ?? 0, roomBytes: count(f.roomBytes)!, keepsAll: f.keepsAll === true }
+    : null;
+  if (plans.length === 0 || current === null || fit === null) return null;
+  return {
+    plans, current, fit,
+    addon: unitBytes !== null && unitBytes > 0 && maxUnits !== null && maxUnits > 0 ? { unitBytes, maxUnits } : null,
+  };
+}
 
 /** Narrow the block; an absent or malformed one is none, never "0 of 0". */
 export function storageOf(raw: unknown): StorageFacts | null {
@@ -85,6 +183,13 @@ export function storageOf(raw: unknown): StorageFacts | null {
     planLimitBytes,
     limitDropsAt: planLimitBytes !== null && typeof r.limitDropsAt === "string" && Number.isFinite(Date.parse(r.limitDropsAt))
       ? r.limitDropsAt : null,
+    limitReason: r.limitReason === "plan" || r.limitReason === "trial" || r.limitReason === "held" ? r.limitReason : null,
+    importing: r.importing === true,
+    card: r.card === undefined ? undefined : r.card === "near" || r.card === "full" || r.card === "drop" ? r.card : null,
+    mail: typeof r.mail === "boolean" ? r.mail : null,
+    estimate: estimateOf(r.estimate),
+    mailboxes: mailboxSharesOf(r.mailboxes),
+    offer: offerOf(r.offer),
   };
 }
 
@@ -191,6 +296,7 @@ export function forgetAccessFeed(profileId: string): void {
 export function resetAccessFeedForTests(): void {
   feeds.clear();
   heldCatchUps.clear();
+  putAwayThisRun.clear();
 }
 
 /**
@@ -272,6 +378,89 @@ export async function mintManageLink(
     if (res.status === 403 && body?.error?.code === "email_unverified") return { kind: "unverified" };
     const url = res.status === 200 ? body?.url : undefined;
     return typeof url === "string" && url.startsWith("https://") ? { kind: "url", url } : { kind: "failed" };
+  } catch {
+    return { kind: "failed" };
+  }
+}
+
+/** An older server keeps no dismissal: this run does, per pairing, level and cap. */
+const putAwayThisRun = new Set<string>();
+
+const putAwayKey = (profileId: string, level: StorageCardLevel, cap: string) => `${profileId}.${level}.${cap}`;
+
+/** The cap an older server's card is put away under: a new cap, plan limit or date brings it back. */
+export function storageCardCap(f: StorageFacts): string {
+  return `${f.limitBytes}.${f.planLimitBytes ?? ""}.${f.limitDropsAt ?? ""}`;
+}
+
+/** Did this run put an older server's card away at `level` under `cap`, for this pairing? */
+export function storagePutAwayOf(profileId: string): (level: StorageCardLevel, cap: string) => boolean {
+  return (level, cap) => putAwayThisRun.has(putAwayKey(profileId, level, cap));
+}
+
+/** A storage choice the server keeps per account (`PATCH /account/storage`): hide a card, or the storage mails on or off. */
+export type StorageChoice = { dismiss: StorageCardLevel } | { mail: boolean };
+
+/**
+ * Tell the server, then show its effect on this pairing's feed at once (the card gone, the switch
+ * moved) rather than after the next read. `false` is any failure: nothing is changed here.
+ */
+export async function setStorageChoice(session: ConnectedSession, choice: StorageChoice): Promise<boolean> {
+  if (session.standalone) return false;
+  const held = feeds.get(session.profile.id);
+  const facts = held?.answer.storage;
+  if ("dismiss" in choice && held !== undefined && facts !== undefined && facts.card === undefined) {
+    putAwayThisRun.add(putAwayKey(session.profile.id, choice.dismiss, storageCardCap(facts)));
+    feeds.set(session.profile.id, { ...held });
+    tellFeed();
+    return true;
+  }
+  try {
+    const res = await session.fetch(`${requestBase(session)}/account/storage`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(choice),
+    });
+    if (res.status !== 200) return false;
+  } catch {
+    return false;
+  }
+  const entry = feeds.get(session.profile.id);
+  const storage = entry?.answer.storage;
+  if (entry !== undefined && storage !== undefined) {
+    const next = "dismiss" in choice ? { ...storage, card: null } : { ...storage, mail: choice.mail };
+    feeds.set(session.profile.id, { ...entry, answer: { ...entry.answer, storage: next } });
+    tellFeed();
+  }
+  return true;
+}
+
+/** LOAD IT NOW's answer: the letter's text for this view, or why there is none. */
+export type LiveBodyAnswer =
+  | { kind: "text"; text: string }
+  /** 410: the mail server no longer holds it where ohmail last saw it. */
+  | { kind: "gone" }
+  /** 413: over the size the server loads. */
+  | { kind: "too_large" }
+  /** 429: the hour's loads are spent. */
+  | { kind: "busy" }
+  | { kind: "failed" };
+
+/**
+ * `GET /messages/:id/live-body` — the text of a letter emptied for space, read from the mail server
+ * for one view. The answer is handed back and kept nowhere: no store, no mirror, no cache.
+ */
+export async function loadLiveBody(session: ConnectedSession, messageId: string): Promise<LiveBodyAnswer> {
+  try {
+    const res = await session.fetch(
+      `${requestBase(session)}/messages/${encodeURIComponent(messageId)}/live-body`, { method: "GET" },
+    );
+    if (res.status === 410) return { kind: "gone" };
+    if (res.status === 413) return { kind: "too_large" };
+    if (res.status === 429) return { kind: "busy" };
+    if (res.status !== 200) return { kind: "failed" };
+    const body = (await res.json().catch(() => null)) as { text?: unknown } | null;
+    return typeof body?.text === "string" ? { kind: "text", text: body.text } : { kind: "failed" };
   } catch {
     return { kind: "failed" };
   }

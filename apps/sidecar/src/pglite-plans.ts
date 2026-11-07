@@ -24,13 +24,11 @@ export const PLAN_NAMES_MAX = 64;
 
 /**
  * Statements whose GENERIC plan loses an index their custom plan uses, read by EXPLAIN over synthetic
- * stores from a few thousand to seventy thousand messages: they stay unnamed and planned per execution. Both
- * run once a cycle or once a pass, so the planner's cost there is noise. Keyed by the text
+ * stores from a few thousand to seventy thousand messages: they stay unnamed and planned per execution. Each
+ * runs once a cycle or once a pass, so the planner's cost there is noise. Keyed by the text
  * with its whitespace folded to single spaces ({@link foldStatement}).
  */
 export const CUSTOM_PLAN_STATEMENTS: ReadonlySet<string> = new Set([
-  // The flag reconcile's due query: the generic plan loses the (mailbox, dedup) index (a small store).
-  `select "flag_state"."message_id", "flag_state"."desired_seen", "flag_state"."observed_seen", "flag_state"."last_set_by", "messages"."native_locator", "flag_state"."attempts" from "flag_state" inner join "messages" on "messages"."id" = "flag_state"."message_id" where ("messages"."mailbox_id" = $1 and "flag_state"."reconcile_status" = $2 and ("flag_state"."next_attempt_at" is null or "flag_state"."next_attempt_at" <= $3)) order by "flag_state"."updated_at" asc, "flag_state"."message_id" asc limit $4`,
   // A page of the seen-state walk of one mailbox: the generic plan loses the (id, account) index (a small
   // store, analysed). It carries the known-set's clause that leaves a collapsed letter's INBOX copy unknown,
   // with the mailbox's recorded Sent folder as one bound value.

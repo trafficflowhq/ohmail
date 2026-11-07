@@ -5,153 +5,168 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
-import { DesktopStorageNotice } from "../src/DesktopStorageNotice.js";
-import type { StorageFacts } from "../../webapp/app/shell/storage-state";
+import { storageFactsOf, type StorageFacts } from "../../webapp/app/shell/storage-state";
 
 /**
- * THE EMPTIED-TEXT NOTICE ON THE CLOUD DOOR: the words follow the current usage and the subscription.
- * When the current cap is not what emptied the text it says what happened then and that the text is coming
- * back, and offers nothing; a past-due or
- * grace subscription is offered no plan and no add-on; a build that may not link out offers neither.
- * The text comes back only for the mailboxes ohmail still reads, which the shell's mailbox facts say.
+ * THE STORAGE CARD AND SETTINGS → STORAGE ON THE CLOUD DOOR. The same card and pane as the browser,
+ * their writes over the bridge. A build that may not link out to billing (the Mac App Store) gets the
+ * numbers and the fitted plan named, and "Manage your plan at ohmail.app" as plain text: no amount,
+ * no purchase button and no link (App Review 3.1.3(f)). A plan change needs a second factor this
+ * window cannot assert, so Change plan and Add storage open Settings → Storage in the browser.
  */
-const LIVE = { id: "mb_1", status: "connected", hostedImportCompletedAt: "2026-10-01T00:00:00.000Z" };
-let mailboxFacts: Array<Record<string, unknown>> | null = [LIVE];
+const bridge = vi.hoisted(() => ({
+  calls: [] as Array<{ path: string; method: string; body: unknown }>,
+  answer: (_path: string, _method: string): Response => new Response("{}", { status: 200 }),
+  opened: [] as string[],
+}));
+vi.mock("../src/bridge-fetch.js", async () => {
+  const real = await vi.importActual<typeof import("../src/bridge-fetch.js")>("../src/bridge-fetch.js");
+  return {
+    ...real,
+    bridgeFetch: async (path: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? "GET";
+      bridge.calls.push({ path, method, body: init?.body ? JSON.parse(init.body) : null });
+      return bridge.answer(path, method);
+    },
+  };
+});
+vi.mock("../src/native.js", async () => {
+  const real = await vi.importActual<typeof import("../src/native.js")>("../src/native.js");
+  return { ...real, openWeb: vi.fn(async (place: string) => { bridge.opened.push(place); }) };
+});
 vi.mock("../../webapp/app/shell/MailStateProvider", async () => {
   const real = await vi.importActual<typeof import("../../webapp/app/shell/MailStateProvider")>(
     "../../webapp/app/shell/MailStateProvider",
   );
-  return { ...real, useMailboxFacts: () => mailboxFacts };
+  return { ...real, useMailboxFacts: () => [{ id: "mb_1", address: "sam@example.com", status: "connected" }] };
 });
+
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const act = (React as unknown as { act: (cb: () => void) => void }).act;
+const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 const h = React.createElement;
 
-const EMPTIED = {
-  usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
-  firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04" as string | null, withheldOnArrival: 0, upgrade: "plan" as const,
-  emptyingNow: true, planLimitBytes: null as number | null, limitDropsAt: null as string | null,
+const OFFER = {
+  currency: "usd", interval: "month",
+  plans: [
+    { plan: "solo", mailboxes: 2, roomBytes: 2_000_000_000, amount: 900 },
+    { plan: "plus", mailboxes: 5, roomBytes: 5_000_000_000, amount: 1500 },
+  ],
+  addon: { unitBytes: 10_000_000_000, amount: 1000, maxUnits: 10 },
+  current: { plan: "solo", addonUnits: 0, roomBytes: 2_000_000_000, roomFrom: "now" },
+  fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, amount: 2500, keepsAll: true },
+  canChange: true, reason: null,
 };
+const NEAR = storageFactsOf({
+  usedBytes: 3_200_000_000, limitBytes: 4_000_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null,
+  withheldOnArrival: 0, emptyingNow: false, planLimitBytes: 2_000_000_000, limitDropsAt: null,
+  limitReason: "trial", importing: true, card: "near", mail: true,
+  estimate: { expectedBytes: 12_500_000_000, expectedLetters: 500_000, storedLetters: 128_000, avgLetterBytes: 25_000,
+    avgMeasured: false, complete: true, at: null },
+  mailboxes: [{ id: "mb_1", usedBytes: 3_200_000_000, letters: 500_000, expectedLetters: 500_000, expectedBytes: 12_500_000_000, importing: true }],
+  offer: OFFER,
+})!;
+
 let host: HTMLDivElement;
 let root: Root;
+let rereads = 0;
 
 beforeEach(() => {
-  globalThis.localStorage.clear();
-  mailboxFacts = [LIVE];
+  bridge.calls = [];
+  bridge.opened = [];
+  bridge.answer = () => new Response("{}", { status: 200 });
+  rereads = 0;
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
 });
-afterEach(() => {
-  act(() => { root.unmount(); });
+afterEach(async () => {
+  await act(() => { root.unmount(); });
   host.remove();
 });
 
-function draw(facts: StorageFacts, lifecycleState: string, linksOut = true): string {
-  act(() => {
+async function draw(which: "card" | "pane", facts: StorageFacts, linksOut: boolean): Promise<void> {
+  const { DesktopStorageNotice } = await import("../src/DesktopStorageNotice.js");
+  const { DesktopStorage } = await import("../src/DesktopSubscription.js");
+  const props = { facts, linksOut, reread: () => { rereads += 1; } };
+  await act(() => {
     root.render(h(NextIntlClientProvider, {
-      locale: "en", messages: en, children: h(DesktopStorageNotice, { facts, lifecycleState, linksOut }),
+      locale: "en", messages: en, timeZone: "UTC",
+      children: h(which === "card" ? DesktopStorageNotice : DesktopStorage, props),
     }));
   });
-  return host.textContent ?? "";
 }
+const text = (): string => host.textContent ?? "";
+const buttons = (): string[] => [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
+const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 
-describe("the desktop's emptied-text notice", () => {
-  it("at the cap of an active plan: the cap, and the plan or the add-on", () => {
-    const said = draw(EMPTIED, "active");
-    expect(said).toContain("To stay within your plan's 2 GB, ohmail no longer stores the text of your 80,000 oldest letters.");
-    expect(said).toContain("Text is kept for letters from April 2019 on.");
-    expect(said).toContain("A bigger plan or the storage add-on keeps more text from now on.");
-    expect(said).toContain(
-      "With more room, ohmail fetches the text of emptied letters back from your mail server, newest first, for the mailboxes it still reads.");
-    expect(said).not.toContain("does not bring back");
+describe("the storage card on the Cloud door", () => {
+  it("draws the card with the fitted choice, its price and the change buttons", async () => {
+    await draw("card", NEAR, true);
+    expect(text()).toContain("Storage 80% full");
+    expect(text()).toContain("Plus + 10 GB keeps all of it, $25/month.");
+    expect(buttons()).toEqual(["Dismiss", "Add storage", "Change plan"]);
   });
 
-  it("with every mailbox removed the offer brings nothing back; while one is on its first import neither is said", () => {
-    const below = { ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false };
-    mailboxFacts = [{ ...LIVE, status: "disabled" }];
-    const gone = draw(EMPTIED, "active");
-    expect(gone).toContain("A bigger plan or the storage add-on keeps more text from now on. It does not bring back text that was already emptied.");
-    expect(gone).not.toMatch(/fetches|room again/);
-    expect(draw(below, "active")).not.toMatch(/fetches|room again|bring back/);
-    mailboxFacts = [LIVE, { ...LIVE, id: "mb_2", hostedImportCompletedAt: null }];
-    const waiting = draw(EMPTIED, "active");
-    expect(waiting).toContain("A bigger plan or the storage add-on keeps more text from now on.");
-    expect(waiting).not.toMatch(/fetches|room again|bring back/);
-    expect(draw(below, "active")).not.toMatch(/fetches|room again|bring back/);
+  it("the Mac App Store face: the numbers and the fitted plan named, no amount, no button but Dismiss, no link", async () => {
+    await draw("card", NEAR, false);
+    expect(text()).toContain("Storage 80% full");
+    expect(text()).toContain("3.2 GB of 4 GB");
+    expect(text()).toContain("Plus + 10 GB keeps all of it.");
+    expect(text()).toContain("Manage your plan at ohmail.app");
+    expect(text()).not.toMatch(/\$|€|£|\d+\/month/);
+    expect(buttons()).toEqual(["Dismiss"]);
+    expect(host.querySelectorAll("a")).toHaveLength(0);
   });
 
-  it("letters that arrived while the storage was full are counted apart from the oldest", () => {
-    const said = draw({ ...EMPTIED, withheldOnArrival: 5 }, "active");
-    expect(said).toContain("ohmail no longer stores the text of your 79,995 oldest letters.");
-    expect(said).toContain("Text is kept for letters from April 2019 on, apart from 5 letters that arrived while your storage was full.");
+  it("Dismiss writes the choice over the bridge and reads the account again", async () => {
+    await draw("card", NEAR, true);
+    await act(() => { host.querySelector<HTMLButtonElement>("[aria-label=Dismiss]")!.click(); });
+    await settle();
+    expect(bridge.calls).toEqual([{ path: "/account/storage", method: "PATCH", body: { dismiss: "near" } }]);
+    expect(rereads).toBe(1);
+    expect(host.querySelector("[data-storage-card]")).toBeNull();
   });
 
-  it("upgraded to 10 GB, 19% used: what happened then, that the text is coming back, no cap and no offer", () => {
-    const said = draw({ ...EMPTIED, limitBytes: 10_000_000_000, emptyingNow: false }, "active");
-    expect(said).toContain("To stay within your plan's storage at the time, ohmail stopped storing the text of your 80,000 oldest letters.");
-    expect(said).toContain("There is room again: for the mailboxes ohmail still reads, it fetches the text of emptied letters back");
-    expect(said).not.toContain("10 GB");
-    expect(said).not.toMatch(/bigger plan|add-on/);
+  it("Change plan and Add storage open Settings → Storage in the browser in one press, with no mint", async () => {
+    await draw("card", NEAR, true);
+    await act(() => { [...host.querySelectorAll("button")].find((b) => b.textContent === "Change plan")!.click(); });
+    await settle();
+    await act(() => { [...host.querySelectorAll("button")].find((b) => b.textContent === "Add storage")!.click(); });
+    await settle();
+    expect(bridge.opened).toEqual(["storage", "storage"]);
+    expect(bridge.calls).toEqual([]);
   });
 
-  it("past due or in grace, and a build that may not link out: no plan and no add-on", () => {
-    for (const state of ["past_due", "grace"]) expect(draw(EMPTIED, state), state).not.toMatch(/bigger plan|add-on/);
-    expect(draw(EMPTIED, "active", false)).not.toMatch(/bigger plan|add-on|Manage subscription/);
+  it("a browser that will not open says so, and the press can be tried again", async () => {
+    const { openWeb } = await import("../src/native.js");
+    vi.mocked(openWeb).mockImplementationOnce(async (place) => { bridge.opened.push(place); throw new Error("no browser"); });
+    await draw("pane", NEAR, true);
+    await act(() => { [...host.querySelectorAll("button")].find((b) => b.textContent === "Change plan")!.click(); });
+    await settle();
+    expect(host.querySelector("[role=alert]")?.textContent).toBe(en.settings.webNoBrowser);
+    await act(() => { [...host.querySelectorAll("button")].find((b) => b.textContent === "Change plan")!.click(); });
+    await settle();
+    expect(bridge.opened).toEqual(["storage", "storage"]);
+    expect(host.querySelector("[role=alert]")).toBeNull();
+  });
+});
+
+describe("Settings → Storage on the Cloud door", () => {
+  it("the pane's numbers on every build; the Mac App Store face has no amount, no change button and no link", async () => {
+    await draw("pane", NEAR, false);
+    expect(text()).toContain("used, your trial room of 4 GB");
+    expect(text()).toContain("Keeps all your mail");
+    expect(text()).toContain("Manage your plan at ohmail.app");
+    expect(text()).not.toMatch(/\$|€|£/);
+    expect(buttons().filter((b) => b === "Change plan" || b === "Add storage")).toEqual([]);
+    expect(host.querySelectorAll("a")).toHaveLength(0);
   });
 
-  it("near the cap: the same upgrade message; on the largest plan the add-on alone", () => {
-    const near = { ...EMPTIED, usedBytes: 1_820_000_000, emptiedForSpace: 0, keptFrom: null };
-    const said = draw(near, "active");
-    expect(said).toContain("Storage is nearly full.");
-    expect(said).toContain("A bigger plan or the storage add-on keeps more text from now on.");
-    const pro = draw({ ...near, limitBytes: 10_000_000_000, usedBytes: 9_500_000_000, upgrade: "addon" as const }, "active");
-    expect(pro).toContain("The storage add-on keeps more text from now on.");
-    expect(pro).not.toContain("bigger plan");
-  });
-
-  it("inside the trial's floor: when the plan's own limit applies, before anything is emptied", () => {
-    const said = draw({
-      ...EMPTIED, usedBytes: 3_500_000_000, limitBytes: 4_000_000_000, emptiedForSpace: 0, emptyingNow: false,
-      planLimitBytes: 2_000_000_000, limitDropsAt: "2026-11-08T12:00:00.000Z",
-    }, "active");
-    expect(said).toContain("Until November 8, 2026, ohmail keeps up to 4 GB of letter text. From then on your plan keeps 2 GB");
-    expect(said).toContain("A bigger plan or the storage add-on keeps more text from now on.");
-  });
-
-  it("a build that may not link out still says the storage is nearly full, with no purchase", () => {
-    const said = draw({ ...EMPTIED, usedBytes: 1_820_000_000, emptiedForSpace: 0 }, "active", false);
-    expect(said).toContain("Storage is nearly full.");
-    expect(said).not.toMatch(/bigger plan|add-on|Manage subscription/);
-  });
-
-  it("state A, far below the cap, no trim recorded: the plain count, no offer, no press", () => {
-    const said = draw({
-      ...EMPTIED, usedBytes: 1_000_000, limitBytes: 4_000_000_000, emptiedForSpace: 3, firstEmptiedAt: null, keptFrom: null,
-      emptyingNow: false,
-    } as StorageFacts, "active");
-    expect(said).toContain("The text of 3 letters is not stored here.");
-    expect(said).not.toMatch(/oldest|at the time|bigger plan|add-on|bring back|Manage subscription/);
-  });
-
-  it("state B, a trial near its plan's own limit, no trim recorded: the plain count, the offer, no restore line", () => {
-    const said = draw({
-      ...EMPTIED, usedBytes: 1_900_000_000, limitBytes: 4_000_000_000, emptiedForSpace: 75_000, firstEmptiedAt: null, keptFrom: null,
-      emptyingNow: false, planLimitBytes: 2_000_000_000, limitDropsAt: null,
-    } as StorageFacts, "trialing");
-    expect(said).toContain("The text of 75,000 letters is not stored here.");
-    expect(said).not.toMatch(/your 75,000 oldest|at the time|bring back/);
-    expect(said).toContain("A bigger plan keeps more text from now on.");
-    expect(said).toContain("Manage subscription");
-  });
-
-  it("put away under the earlier release, state A stays away", async () => {
-    const { localStorageDoor } = await import("../../webapp/app/shell/durable");
-    localStorageDoor("storage.notice").set("ohmail.storage.local.emptiedNotice", "1");
-    const said = draw({
-      ...EMPTIED, usedBytes: 1_000_000, limitBytes: 4_000_000_000, emptiedForSpace: 3, firstEmptiedAt: null, keptFrom: null,
-      emptyingNow: false,
-    } as StorageFacts, "active");
-    expect(said).toBe("");
+  it("the storage mails switch writes over the bridge", async () => {
+    await draw("pane", NEAR, true);
+    await act(() => { host.querySelector<HTMLButtonElement>("[role=switch]")!.click(); });
+    await settle();
+    expect(bridge.calls).toEqual([{ path: "/account/storage", method: "PATCH", body: { mail: false } }]);
+    expect(rereads).toBe(1);
   });
 });

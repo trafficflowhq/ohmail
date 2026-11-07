@@ -285,6 +285,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
      own "is this mailbox still here". A read of a table this projection does not join at all. */
   "mailboxStatusForWrite",
   "listPendingFolderStates", "listPendingFlagStates",
+  // A SQL fragment those two reads share; it runs no statement.
+  "pendingQueueMailbox",
   // the mail-0065 junk/delete wave's reads — special-folder discovery, the AI-authored
   // quarantine probe, and the junk-restore pass's candidate read (bodies joined to instances,
   // projecting nothing new). These landed UNCLASSIFIED and the guard suite was red in HEAD from

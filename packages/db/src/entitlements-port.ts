@@ -109,11 +109,62 @@ export interface TrialStorageCarry {
   until: string | null;
 }
 
+/**
+ * WHAT THE PERSON'S MAIL NEEDS, as the storage estimate reads it (`storage-estimate.ts`): sent on
+ * `/v1/access` only by the person-facing read and the storage mail pass, and on the manage-link mint
+ * of the change door, so the program can size its offer. An older program ignores it.
+ */
+export interface StorageNeed {
+  expectedBytes: number;
+  expectedLetters: number;
+  importing: boolean;
+}
+
+/** The plans the card names, a closed set (the hint's). */
+export type StoragePlanName = (typeof PLAN_HINT_PLANS)[number];
+
+/** One plan on the program's card: its mailboxes, its room and its price per interval. */
+export interface StorageOfferPlan {
+  plan: StoragePlanName;
+  mailboxes: number;
+  roomBytes: number;
+  /** In the currency's minor unit (cents), per `interval`. */
+  amount: number;
+}
+
+/**
+ * THE PROGRAM'S STORAGE OFFER (`storageOffer` on `/v1/access`, answered when the read carried a
+ * {@link StorageNeed}), narrowed field by field. Prices come only from the program: this tree states
+ * none. `current.roomFrom` is `first_payment` while add-on units wait for the first payment; `fit`
+ * is the cheapest plan plus storage units that keeps all the mail, else the largest with `keepsAll`
+ * false; `canChange` says whether the subscription page may change the plan now, and `reason` (one
+ * lower-case word) why not.
+ */
+export interface StorageOffer {
+  /** ISO 4217, lower case, as the program bills. */
+  currency: string;
+  interval: (typeof PLAN_HINT_INTERVALS)[number];
+  plans: StorageOfferPlan[];
+  /** The storage add-on: the room one unit adds, its price and how many one account may hold. */
+  addon: { unitBytes: number; amount: number; maxUnits: number } | null;
+  current: { plan: StoragePlanName; addonUnits: number; roomBytes: number; roomFrom: "now" | "first_payment" };
+  fit: { plan: StoragePlanName; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
+  canChange: boolean;
+  reason: string | null;
+}
+
+/** The latest decrease of the plan's own limit the person confirmed, inside its 14 days (`storageTold`). */
+export interface StorageTold {
+  planBytesLimit: number;
+  /** ISO instant of the confirmation. */
+  at: string;
+}
+
 /** May this account use the service, and within what limits. `prices` absent = unpriced. */
 export type AccessVerdict =
   | {
     ok: true; limits: AccessLimits; lifecycle?: AccessLifecycle; prices?: ActionPrices; trial?: AccessTrial;
-    trialStorage?: TrialStorageCarry;
+    trialStorage?: TrialStorageCarry; storageOffer?: StorageOffer; storageTold?: StorageTold;
   }
   | { ok: false; reason: AccessRefusal; manageUrl?: string; lifecycle?: AccessLifecycle; trial?: AccessTrial };
 
@@ -391,12 +442,13 @@ export type ReturnConfirmOutcome = "confirmed" | "pending" | "not_found" | "faul
  * a READ route's: an ALLOW held a little past its TTL answers at once and is re-read behind it,
  * and a held refusal is asked about again first. `askedAfter` (the client's clock) answers only
  * from a call begun at or after that instant — no older held verdict, no older call in flight, and
- * on a fault no older verdict either. One of the three, never two.
+ * on a fault no older verdict either. One of the three, never two. `storageNeed` asks the program
+ * for its storage offer: such a read is its own call, never shared with one that did not ask.
  */
 export type AccessReadOpts =
-  | { fresh?: boolean; staleAllow?: never; askedAfter?: never }
-  | { staleAllow: true; fresh?: never; askedAfter?: never }
-  | { askedAfter: number; fresh?: never; staleAllow?: never };
+  | { fresh?: boolean; storageNeed?: StorageNeed; staleAllow?: never; askedAfter?: never }
+  | { staleAllow: true; fresh?: never; askedAfter?: never; storageNeed?: never }
+  | { askedAfter: number; fresh?: never; staleAllow?: never; storageNeed?: never };
 
 /**
  * THE PROGRAM'S OWN FAILURES, as `POST /v1/ops` states them (wire contract v1, 2026-10-19): facts,
@@ -517,8 +569,13 @@ export interface EntitlementsPort {
    * Render the row, or the onboarding link, only when a URL comes back; never store one. `lang`
    * is the page's language; absent, the page picks its own. `hint` is the plan the person chose
    * on the site before signing up: it picks the page's preselected choice and nothing else.
+   * `change.elevated` asks for a page that may change the plan, which only the step-up door sends;
+   * `change.storageNeed` sizes that page's offer. An older program ignores both.
    */
-  manageLink(accountId: string, lang?: "de" | "en", hint?: PlanHint): Promise<{ url: string } | null>;
+  manageLink(
+    accountId: string, lang?: "de" | "en", hint?: PlanHint,
+    change?: { elevated: true; storageNeed?: StorageNeed },
+  ): Promise<{ url: string } | null>;
   /** The person is being erased: stop the money. Bounded and never throwing, because Article 17
    *  may not be withheld because a payment processor is unreachable. */
   releaseAccount(accountId: string): Promise<ReleaseOutcome>;

@@ -7,7 +7,8 @@ import type { makeTestDb } from "../src/testing.js";
  * MAIL 0160's COLUMN OVER EVERY WRITE SHAPE: `folder_state.outstanding_account_id` is the message's
  * account on every outstanding filing, whatever the writer. The cases run on the store the caller
  * hands in (PGlite and SQLite in `folder-state-outstanding-account.test.ts`, real Postgres in its
- * `.pg` twin); after each, no outstanding row carries another value.
+ * `.pg` twin); after each, no outstanding row carries another value. Since mail 0181 every other
+ * pending row carries it too (`reconcile-queue-account.test.ts`); a settled row still carries none.
  */
 
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
@@ -63,10 +64,11 @@ export async function runWriteShapes(db: Db, tag: string): Promise<number> {
   expect((await stamp(db, m2)).account).toBe(A);
   expect(await drift(db)).toBe(0);
 
-  // 3. An observation that makes a settled row outstanding.
+  // 3. An observation that makes a row outstanding. Its sides agree and it is pending (the status's
+  //    default), so since mail 0181 it carries the account already.
   const m3 = await msg();
   await db.insert(folderState).values({ messageId: m3, desiredFolder: "Archive", observedFolder: "Archive", lastSetBy: "us" });
-  expect((await stamp(db, m3)).account).toBe(null);
+  expect((await stamp(db, m3)).account).toBe(A);
   await db.update(folderState).set({ observedFolder: "INBOX" }).where(eq(folderState.messageId, m3));
   expect((await stamp(db, m3)).account).toBe(A);
   expect(await drift(db)).toBe(0);
@@ -95,15 +97,18 @@ export async function runWriteShapes(db: Db, tag: string): Promise<number> {
   expect((await stamp(db, m5)).account).toBe(A);
   expect(await drift(db)).toBe(0);
 
-  // 7. A batch insert across both accounts, outstanding and not.
-  const batch = [await msg(), await msg(B, MB), await msg(), await msg(B, MB)];
+  // 7. A batch insert across both accounts, outstanding and not: the two pending rows that are not
+  //    outstanding (sides agree, the user's own) carry their account since mail 0181; settled, none.
+  const batch = [await msg(), await msg(B, MB), await msg(), await msg(B, MB), await msg()];
   await db.insert(folderState).values(batch.map((m, i) => ({
     messageId: m, ...filed, ...(i === 2 ? { observedFolder: "ohmail/News" } : {}), ...(i === 3 ? { lastSetBy: "external" } : {}),
+    ...(i === 4 ? { observedFolder: "ohmail/News", reconcileStatus: "reconciled" } : {}),
   })));
   expect((await stamp(db, batch[0]!)).account).toBe(A);
   expect((await stamp(db, batch[1]!)).account).toBe(B);
-  expect((await stamp(db, batch[2]!)).account).toBe(null);
-  expect((await stamp(db, batch[3]!)).account).toBe(null);
+  expect((await stamp(db, batch[2]!)).account).toBe(A);
+  expect((await stamp(db, batch[3]!)).account).toBe(B);
+  expect((await stamp(db, batch[4]!)).account).toBe(null);
   expect(await drift(db)).toBe(0);
 
   const [o] = await db.select({ n: count() }).from(folderState).where(ourOutstandingFiling());

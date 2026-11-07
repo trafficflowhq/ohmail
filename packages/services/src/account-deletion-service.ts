@@ -66,6 +66,9 @@ import {
 import {
   accountLifecycleNotices,
   accountStorageHolds,
+  accountStoragePrefs,
+  mailboxStorageStats,
+  storageMailSent,
   attachmentStaging,
   authEvents,
   connectAttempts,
@@ -450,6 +453,11 @@ export async function deleteAccount(
     await drop("screener_suggest_owed", tx.delete(screenerSuggestOwed).where(eq(screenerSuggestOwed.accountId, accountId)));
     // A lower storage limit's hold (cloud 0055): limits and a date, keyed by the account, same reason.
     await drop("account_storage_holds", tx.delete(accountStorageHolds).where(eq(accountStorageHolds.accountId, accountId)));
+    // The storage estimate's snapshot, the card's dismissal and mail switch, and the storage mails
+    // sent (cloud 0057): counts, limits and instants, keyed by the account, the same reason.
+    await drop("mailbox_storage_stats", tx.delete(mailboxStorageStats).where(eq(mailboxStorageStats.accountId, accountId)));
+    await drop("account_storage_prefs", tx.delete(accountStoragePrefs).where(eq(accountStoragePrefs.accountId, accountId)));
+    await drop("storage_mail_sent", tx.delete(storageMailSent).where(eq(storageMailSent.accountId, accountId)));
     // The account's own preferences — the dormancy dial, the Ohbox posture, and
     // `seed_confirmed_at`, which is the CONSENT EVENT of onboarding — were deleted FIRST, at
     // the top of this transaction: consent to something is a record about a person and there
@@ -585,6 +593,8 @@ export async function deleteAccount(
         prefixes.push(`${THROTTLE_PREFIX.password}${hA}:%`, `${THROTTLE_PREFIX.knownClient}${hA}:%`);
       }
     }
+    // Load it now's admission names the account itself, by its keyed hash (`live-body-admit.ts`).
+    if (opts.throttleKeys) exact.push(`live-body:${opts.throttleKeys.client(accountId)}`);
     await drop("auth_throttle", tx.delete(authThrottle).where(or(
       ...(exact.length === 0 ? [] : [inArray(authThrottle.key, exact)]),
       ...prefixes.map((pattern) => like(authThrottle.key, pattern)),

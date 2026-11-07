@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+import { rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -11,6 +12,7 @@ import {
   type EngineMutation,
   type Folder,
   type MirrorStore,
+  type ScreenerWaitingWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
@@ -18,6 +20,9 @@ import { settleFirstPaint } from "./_first-paint.js";
 import { screenerIntentsKey, type ScreenerIntent } from "../app/shell/screener-intents";
 import { INTENT_ASK_MS } from "../app/shell/intent-windows";
 import { COMMIT_MS } from "../app/shell/screener-state";
+import { createCloudSidecar } from "../../sidecar/src/cloud-engine.js";
+import { freshDataDir } from "../../sidecar/test/_datadir.js";
+import { hostedMailbox, mailboxList } from "../../sidecar/test/fixtures/hosted-mailbox.js";
 
 /**
  * A SCREENER DECISION SURVIVES THE TAB THAT MADE IT — the kill test.
@@ -73,6 +78,8 @@ let sent: EngineMutation[] = [];
 let undoAction: (() => void) | null = null;
 /** Every sentence the hook raised, in order. */
 let said: string[] = [];
+/** `waitingCount` at every render — the badge as the rail draws it. */
+let counts: number[] = [];
 
 function msg(id: string, from: string, folder: Folder): EngineMessage {
   return {
@@ -101,8 +108,13 @@ async function seed(store: MirrorStore): Promise<void> {
   }]);
 }
 
-/** An engine over `store` whose every dispatched verb is recorded in `sent`. */
-function engineOver(store: MirrorStore): OhmailEngine {
+/**
+ * An engine over `store` whose every dispatched verb is recorded in `sent`. `door.queue` is the store's
+ * queue; `door.answered` holds each verb's answer, as a server door's round trip does.
+ */
+function engineOver(
+  store: MirrorStore, door: { queue?: () => Promise<ScreenerWaitingWire>; answered?: Promise<void> } = {},
+): OhmailEngine {
   return new OhmailEngine({
     store,
     now: () => NOW,
@@ -113,6 +125,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
       }),
       mutate: async (m) => {
         sent.push(m);
+        await door.answered;
         const changes: SyncChange[] = mutationEffects(store, m, {
           now: () => NOW, uuid: () => `id-${++seq}`,
         }).map((e) => ({
@@ -127,6 +140,7 @@ function engineOver(store: MirrorStore): OhmailEngine {
         text: "body", html: null, loadedRemoteContent: false,
         unsubscribe: "no_header", unsubscribeUrl: null,
       }),
+      ...(door.queue ? { screenerWaiting: door.queue } : {}),
     },
   });
 }
@@ -164,6 +178,7 @@ async function mountState(engine: OhmailEngine): Promise<{
         if (opts?.onAction) undoAction = opts.onAction;
       }) as never,
     ) as unknown as StateLike;
+    counts.push(latest.waitingCount);
     return null;
   }
 
@@ -219,6 +234,7 @@ beforeEach(() => {
   sent = [];
   undoAction = null;
   said = [];
+  counts = [];
   window.localStorage.clear();
 });
 
@@ -653,4 +669,126 @@ describe("a decided sender stays decided on screen", () => {
     expect(decides()).toHaveLength(1);
     expect(second.get().waiting).toHaveLength(0);
   });
+
+  it("the store's first answer, asked before the replay reached it, never counts the decided sender", async () => {
+    const store = await freshStore(true);
+    const first = await mountState(engineOver(store));
+    await act(async () => {
+      first.get().decide(first.get().waiting[0], "screened", { read: false, scope: "sender" });
+    });
+    await killTab();
+    counts = [];
+
+    // The relaunch asks the store at mount; every answer waits until this case lets it go.
+    const answers: Array<() => void> = [];
+    const listed: ScreenerWaitingWire = {
+      items: [{ messageId: HELD.id, address: HELD.from.address, name: null, receivedAt: HELD.date!,
+        subject: HELD.subject, snippet: HELD.snippet, mailboxId: "mb" }],
+      nextCursor: null, total: 1, inFlight: [],
+    };
+    let asks = 0;
+    let answer!: () => void;
+    const engine = engineOver(store, {
+      queue: () => {
+        const wire = asks++ === 0 ? listed : { ...listed, items: [], total: 0 };
+        return new Promise((r) => { answers.push(() => r(wire)); });
+      },
+      answered: new Promise((r) => { answer = r; }),
+    });
+    const second = await mountState(engine);
+    await second.bump();
+    await act(async () => { await Promise.resolve(); });
+    expect(decides(), "the replay was not sent before the answer").toHaveLength(1);
+
+    // The first answer lands after the decide, before the server's, and still lists the sender.
+    await act(async () => { answers.shift()!(); await vi.advanceTimersByTimeAsync(10); });
+    expect(engine.screenerWaitingSettled()).toBe(true);
+    await act(async () => { answer(); await vi.advanceTimersByTimeAsync(10); });
+    for (const r of answers.splice(0)) await act(async () => { r(); await vi.advanceTimersByTimeAsync(10); });
+    expect(Math.max(...counts), `a decided sender was counted at the start (${counts.join(",")})`).toBe(0);
+    expect(decides(), "the decision was sent more than once").toHaveLength(1);
+  });
+});
+
+/**
+ * THE FIRST SESSION AFTER A SIGN-IN ON A SERVER DOOR. The window journals under the mailbox the
+ * shell says is served (`setStorageOwner`), so the key is the real engine's answer in each session:
+ * a first session that served a minted id the relaunch never serves again read nothing back.
+ */
+describe("the first session after a sign-in on a server door", () => {
+  /* jsdom's `Blob` has no `arrayBuffer()`; the engine's store loads its extensions as a Blob. */
+  if (typeof (Blob.prototype as { arrayBuffer?: unknown }).arrayBuffer !== "function") {
+    (Blob.prototype as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer = function (this: Blob) {
+      return new Promise<ArrayBuffer>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result as ArrayBuffer);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsArrayBuffer(this);
+      });
+    };
+  }
+  const OPERATOR = "operator@ohmail.test";
+  const HOSTED = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+  const reply = (v: unknown): Response => new Response(JSON.stringify(v), { headers: { "content-type": "application/json" } });
+  const ownServer = (async (input: RequestInfo | URL): Promise<Response> => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/auth/login") return reply({ status: "twofa_required", loginToken: "lt" });
+    if (path === "/auth/2fa/totp/verify") return reply({ tokens: { accessToken: "a-1", refreshToken: "r-1" } });
+    if (path === "/auth/session") return reply({ user: { email: OPERATOR } });
+    if (path === "/mailboxes") return reply(mailboxList([hostedMailbox(HOSTED, "team@ohmail.test")]));
+    if (path === "/sync") return reply({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "c1", hasMore: false, serverTime: NOW.toISOString() });
+    return new Response("{}", { status: 404 });
+  }) as unknown as typeof fetch;
+
+  /** One launch of the real engine, read as the shell reads it: `ready`'s id, an empty one filled once. */
+  async function launch(dataDir: string): Promise<string> {
+    let served: string | null = null;
+    const s = await createCloudSidecar({
+      dataDir, cloudUrl: "https://own.test", address: OPERATOR, keks: { 1: Buffer.alloc(32, 9) },
+      fetchImpl: ownServer, pollIntervalMs: 3_600_000,
+      onServedMailbox: async (id) => { if (served === "") served = id; },
+    });
+    served = s.servedMailboxId();
+    try {
+      if (!s.signedIn()) {
+        await s.handle(new Request("http://sidecar/cloud/signin", {
+          method: "POST", headers: { authorization: `Bearer ${s.sessionToken}` },
+          body: JSON.stringify({ email: OPERATOR, password: "pw", totp: "123456" }),
+        }));
+      }
+      await s.start();
+    } finally {
+      await s.stop();
+    }
+    return served;
+  }
+
+  it("a decision pressed just before the quit is sent once at the relaunch", async () => {
+    vi.useRealTimers();
+    const dataDir = await freshDataDir("ohmail-first-session-journal-");
+    const { setStorageOwner } = await import("../app/shell/storage-owner.js");
+    try {
+      const owners = [await launch(dataDir), await launch(dataDir)];
+      expect(owners[0], "the first session served no mailbox").not.toBe("");
+      vi.useFakeTimers();
+      vi.setSystemTime(NOW);
+      const store = await freshStore(true);
+      setStorageOwner(owners[0]!);
+      const first = await mountState(engineOver(store));
+      await act(async () => {
+        first.get().decide(first.get().waiting[0], "screened", { read: false, scope: "sender" });
+      });
+      await killTab();
+
+      setStorageOwner(owners[1]!);
+      const second = await mountState(engineOver(store));
+      await second.bump();
+      await act(async () => { await Promise.resolve(); });
+      expect(decides(), "the decision of the first session was lost at the relaunch").toHaveLength(1);
+      expect(second.get().waiting).toHaveLength(0);
+    } finally {
+      setStorageOwner(null);
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

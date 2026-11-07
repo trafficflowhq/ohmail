@@ -571,6 +571,8 @@ export interface MailboxFolderSummary {
   /** highestmodseq present ⇒ the folder has been scanned at least once. */
   hasSyncCursor: boolean;
   updatedAt: ISODateTime;
+  /** The letters the server stated the folder holds when it was last opened; null before that. */
+  serverExists?: number | null;
 }
 
 /**

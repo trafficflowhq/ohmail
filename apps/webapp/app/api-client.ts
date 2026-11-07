@@ -3412,6 +3412,23 @@ export const account = {
       throw err;
     }
   },
+  /**
+   * `POST /account/manage-link/change` — the subscription page that may change the plan and the
+   * storage add-on. Step-up gated: a 403 `step_up_required` is the caller's to answer with the
+   * factor and ask once more. `null` only for a 404 (no such page here), as `manageLink`.
+   */
+  manageLinkChange: async (opts?: { lang?: "de" | "en" }): Promise<{ url: string } | null> => {
+    try {
+      const body = opts?.lang === "de" || opts?.lang === "en" ? { lang: opts.lang } : {};
+      return await api<{ url: string }>("/account/manage-link/change", { method: "POST", body });
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) return null;
+      throw err;
+    }
+  },
+  /** `PATCH /account/storage` — put a storage card away, or turn the storage mails off or on. */
+  storage: (body: { dismiss: "near" | "full" | "drop" } | { mail: boolean }) =>
+    api<unknown>("/account/storage", { method: "PATCH", body }),
 };
 
 /**

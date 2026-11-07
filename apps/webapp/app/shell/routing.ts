@@ -77,7 +77,7 @@ export type TriagePileId = (typeof TRIAGE_PILES)[number];
  * view's per-surface clamp; this list is only "what may a URL say".
  */
 export const PANE_IDS = [
-  "general", "notifications", "mailboxes", "screener", "ai", "away", "billing", "invites", "tags",
+  "general", "notifications", "mailboxes", "screener", "ai", "away", "billing", "storage", "invites", "tags",
   "rules", "folders", "signatures", "about", "help", "security", "account", "desktop", "devices",
 ] as const;
 export type PaneId = (typeof PANE_IDS)[number];

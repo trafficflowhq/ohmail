@@ -392,10 +392,49 @@ export const MAILBOXES_ACCOUNT_PREBUILD_SPEC: ConcurrentIndexSpec = {
   ddl: sql`create index concurrently if not exists "mailboxes_account_idx" on public.mailboxes using btree ("account_id","id")`,
 };
 
+/**
+ * Mail 0181's reconcile queues: each poll's pending rows by the message's account, then in the poll's
+ * own order, `(updated_at, message_id)`, so a poll reads its own account's queue, never another
+ * account's, and a queue with nothing due reads nothing. The account is the column a trigger keeps
+ * on every pending row: here mail 0160's, whose prelude this spec repeats. Neither table has a
+ * mailbox column; the poll joins `messages` for that.
+ */
+export const FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "folder_state_pending_queue_idx",
+  table: "folder_state",
+  prelude: [FOLDER_STATE_OUTSTANDING_COLUMN_DDL],
+  ddl: sql`create index concurrently if not exists "folder_state_pending_queue_idx" on public.folder_state using btree ("outstanding_account_id","updated_at","message_id") where "reconcile_status" = 'pending'`,
+};
+
+/**
+ * Mail 0181's read-state queue column, added only where it is missing: on a database that has it the
+ * block reads the catalog and takes no table lock. The journal carries the same block, so after the
+ * prebuild it does nothing.
+ */
+export const FLAG_STATE_PENDING_ACCOUNT_COLUMN_DDL = sql`DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                  WHERE table_schema = 'public' AND table_name = 'flag_state' AND column_name = 'pending_account_id') THEN
+    ALTER TABLE "flag_state" ADD COLUMN IF NOT EXISTS "pending_account_id" uuid;
+  END IF;
+END $$`;
+
+/**
+ * Mail 0181's `\Seen` queue: the folder queue's twin on `flag_state`, by `pending_account_id`. The
+ * column is the prelude's; the index holds its rows under no account until the journal's trigger and
+ * backfill fill it, and nothing reads it before.
+ */
+export const FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "flag_state_pending_queue_idx",
+  table: "flag_state",
+  prelude: [FLAG_STATE_PENDING_ACCOUNT_COLUMN_DDL],
+  ddl: sql`create index concurrently if not exists "flag_state_pending_queue_idx" on public.flag_state using btree ("pending_account_id","updated_at","message_id") where "reconcile_status" = 'pending'`,
+};
+
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
   WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_0139_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
   RECIPIENT_KEYS_PREBUILD_SPEC,
   SENDER_DATE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
+  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

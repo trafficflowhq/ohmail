@@ -50,6 +50,8 @@ describe.skipIf(!PG_UP)("mail 0160 and 0161's prebuild on a database at 0159", (
     try {
       // Rewound to 0159: trigger, function, indexes, column and the two bookkeeping rows gone; one
       // outstanding filing written at 0159.
+      // Mail 0181's trigger runs 0160's function, so it goes first; the rerun migrator restores it.
+      await db.execute(sql`drop trigger if exists folder_state_pending_account_tg on folder_state`);
       await db.execute(sql`drop trigger if exists folder_state_outstanding_account_tg on folder_state`);
       await db.execute(sql`drop function if exists folder_state_outstanding_account()`);
       await db.execute(sql`drop index if exists public.folder_state_outstanding_idx`);

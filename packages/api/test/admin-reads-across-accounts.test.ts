@@ -1,10 +1,13 @@
 import { describe, it, expect } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, accountStorage, mailboxes, sessions, users } from "@trafficflow/db";
-import { alertState, connectAttempts, staffAuditEvents, staffRoleGrants, staffSessions, staffUsers } from "@trafficflow/db/cloud";
+import {
+  alertState, connectAttempts, mailboxStorageStats, staffAuditEvents, staffRoleGrants, staffSessions, staffUsers,
+} from "@trafficflow/db/cloud";
 import type { ApiDeps } from "@trafficflow/api";
 import type {
-  AlertResolvedPage, ConnectAttemptsPage, EngagementSnapshot, FunnelSnapshot, StaffFeedPage, StaffList, StoragePage,
+  AccountDetailV2, AlertResolvedPage, ConnectAttemptsPage, EngagementSnapshot, FunnelSnapshot, StaffFeedPage, StaffList,
+  StoragePage,
 } from "@trafficflow/services";
 import { MAIL_POLICY_ROW_KIND } from "../../db/src/alert-mail-policy.js";
 import { STAFF_SESSION_HEADER } from "../src/routes/admin.js";
@@ -179,6 +182,48 @@ describe("GET /admin/storage — stored bytes per measured account, keyset by id
     expect(second).toMatchObject({ totalBytes: 600, measuredAccounts: 3, nextCursor: null });
     const junk = await read<StoragePage>(w.deps, w.token, "/admin/storage?cursor=not-an-id");
     expect(junk.rows.map((r) => r.accountId)).toEqual([A, B, C]);
+  });
+
+  it("carries each account's Expected figure from the worker's snapshot, the account page's own; none before one (cloud 0057)", async () => {
+    const w = await world();
+    const snap = (accountId: string, mailboxId: string, s: {
+      letters: number; textBytes: number; instances: number; serverLetters: number; counted: boolean; imported: boolean;
+    }) => ({ accountId, mailboxId, textLetters: s.letters, emptied: 0, at: ago(HOUR), ...s });
+    await w.deps.db.insert(mailboxStorageStats).values([
+      // A: one mailbox on its first import with a folder not yet counted, one imported whole whose
+      // letters sit in two folders each.
+      snap(A, "aaaaaaaa-0000-4000-8000-000000000001", {
+        letters: 2_000, textBytes: 50_000_000, instances: 2_000, serverLetters: 500_000, counted: false, imported: false,
+      }),
+      snap(A, "aaaaaaaa-0000-4000-8000-000000000002", {
+        letters: 1_000, textBytes: 10_000_000, instances: 2_000, serverLetters: 2_000, counted: true, imported: true,
+      }),
+      snap(C, "cccccccc-0000-4000-8000-000000000001", {
+        letters: 76_000, textBytes: 1_900_000_000, instances: 76_000, serverLetters: 76_000, counted: true, imported: true,
+      }),
+    ]);
+    const unchecked = { emptiedForSpace: 0, lastEmptiedAt: null, checkedAt: null, drift: null };
+    const page = await read<StoragePage>(w.deps, w.token, "/admin/storage");
+    expect(page.rows).toEqual([
+      // 500,000 letters on the importing mailbox's server and the 1,000 held whole, at the account's
+      // own 20,000 bytes a letter (60 MB of text over 3,000 letters).
+      {
+        accountId: A, bytes: 100, updatedAt: ago(HOUR).toISOString(), ...unchecked,
+        expectedBytes: 10_020_000_000, expectedLetters: 501_000, complete: false, importing: true,
+      },
+      // No snapshot yet: no figure, never a zero.
+      { accountId: B, bytes: 200, updatedAt: ago(2 * HOUR).toISOString(), ...unchecked },
+      {
+        accountId: C, bytes: 300, updatedAt: ago(3 * HOUR).toISOString(), ...unchecked,
+        expectedBytes: 1_900_000_000, expectedLetters: 76_000, complete: true, importing: false,
+      },
+    ]);
+    // The Customers board says what each account page says.
+    for (const r of page.rows) {
+      const s = (await read<AccountDetailV2>(w.deps, w.token, `/admin/accounts/${r.accountId}`)).storage!;
+      expect([s.expectedBytes, s.expectedLetters, s.complete, s.importing], r.accountId)
+        .toEqual([r.expectedBytes, r.expectedLetters, r.complete, r.importing]);
+    }
   });
 });
 

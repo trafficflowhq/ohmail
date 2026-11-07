@@ -249,6 +249,12 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
   "public.credit_refund_obligations": ["account_id", "owed_at", "settled_at", "tries", "last_fault"],
   // How connecting a mailbox ended (cloud 0054): closed words and an instant, read-only. Never `id`.
   "public.connect_attempts": ["account_id", "at", "door", "preset", "outcome", "reason", "transport"],
+  // The storage estimate's snapshot (cloud 0057): counts, two booleans and an instant per mailbox,
+  // the console's Expected figure. Usage data, never content; read-only.
+  "public.mailbox_storage_stats": [
+    "account_id", "mailbox_id", "letters", "text_letters", "emptied", "text_bytes", "instances",
+    "server_letters", "counted", "imported", "at",
+  ],
   "public.staff_audit_events": [
     "id", "at", "request_id", "staff_user_id", "staff_session_id", "actor_label", "roles",
     "action", "target_account_id", "target_user_id", "target_mailbox_id", "outcome",

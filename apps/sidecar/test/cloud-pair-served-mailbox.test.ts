@@ -31,15 +31,19 @@ afterEach(async () => {
 const json = (v: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json", ...headers } });
 
-/** The other computer: the redeem, its mailbox list (two rows, the older one first by creation), a quiet feed. */
-function pairingHost(boxes: "two" | "none" = "two"): typeof fetch {
+/** The other computer: the redeem, a password sign-in as `who`, its mailbox list (two rows, the older one first by creation), a quiet feed. */
+function pairingHost(boxes: "two" | "none" | "down" = "two", who = ""): typeof fetch {
   return (async (input: RequestInfo | URL): Promise<Response> => {
     const url = new URL(String(input));
+    if (url.pathname === "/auth/login") return json({ status: "twofa_required", loginToken: "lt" });
+    if (url.pathname === "/auth/2fa/totp/verify") return json({ tokens: { accessToken: "access-1", refreshToken: "refresh-1" } });
+    if (url.pathname === "/auth/session") return json({ user: { email: who } });
     if (url.pathname === "/pair/redeem") {
       return json({ grant: "device-pair", tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }, 200,
         { "x-ohmail-account": ACCOUNT });
     }
     if (url.pathname === "/mailboxes") {
+      if (boxes === "down") return json({ error: { code: "service_unavailable" } }, 503);
       return json(mailboxList(boxes === "none" ? [] : [
         hostedMailbox(NEWER, "second@ohmail.test", { createdAt: "2026-01-02T00:00:00.000Z" }),
         hostedMailbox(OLDER, "first@ohmail.test", { createdAt: "2026-01-01T00:00:00.000Z" }),
@@ -54,13 +58,13 @@ function pairingHost(boxes: "two" | "none" = "two"): typeof fetch {
 
 const keks = { 1: Buffer.alloc(32, 9) };
 
-async function boot(dataDir: string, told: string[], over: { boxes?: "two" | "none"; waitMs?: number; address?: string; events?: string[] } = {}): Promise<CloudSidecar> {
+async function boot(dataDir: string, told: string[], over: { boxes?: "two" | "none" | "down"; waitMs?: number; address?: string; events?: string[] } = {}): Promise<CloudSidecar> {
   const s = await createCloudSidecar({
     dataDir,
     cloudUrl: "https://desk.test",
     address: over.address ?? null,
     keks,
-    fetchImpl: pairingHost(over.boxes),
+    fetchImpl: pairingHost(over.boxes, over.address),
     pollIntervalMs: 3_600_000,
     ...(over.waitMs !== undefined ? { pairServedWaitMs: over.waitMs } : {}),
     onServedMailbox: async (id) => { told.push(`named ${id}`); },
@@ -75,6 +79,13 @@ const pair = (s: CloudSidecar): Promise<Response> =>
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${s.sessionToken}` },
     body: JSON.stringify({ token: "tok-abc" }),
+  }));
+
+const signIn = (s: CloudSidecar, email: string): Promise<Response> =>
+  s.handle(new Request("http://sidecar/cloud/signin", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${s.sessionToken}` },
+    body: JSON.stringify({ email, password: "pw", totp: "123456" }),
   }));
 
 describe("the mailbox a paired launch serves", () => {
@@ -111,16 +122,73 @@ describe("the mailbox a paired launch serves", () => {
     expect(told, "a launch whose ready named its mailbox named another").toEqual([]);
   });
 
-  it("a launch whose ready named its mailbox is never told another", async () => {
-    const dir = await freshDataDir("ohmail-pair-served-addressed-");
+  /* A server door's window keys its Screener journal by this id, so a first session that served
+     another id than the relaunch lost a decision pressed just before the quit. */
+  it.each([
+    ["an address that is one of the account's mailboxes", "second@ohmail.test", NEWER],
+    ["an address that is none of them (an operator login)", "operator@ohmail.test", OLDER],
+  ])("a sign-in on a fresh install serves what every relaunch serves: %s", async (_name, address, expected) => {
+    const dir = await freshDataDir("ohmail-signin-served-");
     dirs.push(dir);
     const told: string[] = [];
-    const s = await boot(dir, told, { address: "first@ohmail.test" });
-    const seeded = s.servedMailboxId();
-    expect(seeded).not.toBe("");
+    const first = await boot(dir, told, { address });
+    expect(first.servedMailboxId(), "a launch named a mailbox before the account's list").toBe("");
+    const res = await signIn(first, address);
+    told.push("answered");
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect((await res.json()).mailboxId).toBe(expected);
+    expect(told).toEqual([`named ${expected}`, "answered"]);
+    await first.start();
+    expect(first.servedMailboxId()).toBe(expected);
+    await first.stop();
+    sidecars.splice(sidecars.indexOf(first), 1);
+
+    for (let i = 0; i < 2; i++) {
+      const events: string[] = [];
+      const again: string[] = [];
+      const s = await boot(dir, again, { address, events });
+      expect(s.signedIn(), "the relaunch did not resume from the seal").toBe(true);
+      expect(s.servedMailboxId()).toBe(expected);
+      await s.start();
+      expect(again, "a launch whose ready named its mailbox was told another").toEqual([]);
+      expect(events, "a relaunch minted a mailbox the refresh then retired").not.toContain("cloud_mailboxes_refreshed");
+      await s.stop();
+      sidecars.splice(sidecars.indexOf(s), 1);
+    }
+  });
+
+  it("a paired door with an address names its row from the list too", async () => {
+    const dir = await freshDataDir("ohmail-pair-served-operator-");
+    dirs.push(dir);
+    const told: string[] = [];
+    const s = await boot(dir, told, { address: "operator@ohmail.test" });
     expect((await pair(s)).status).toBe(200);
-    expect(told).toEqual([]);
-    expect(s.servedMailboxId()).toBe(seeded);
+    expect(told).toEqual([`named ${OLDER}`]);
+    expect(s.servedMailboxId()).toBe(OLDER);
+  });
+
+  it("an account whose list names no mailbox mints one for an address door, once the list has said so", async () => {
+    const dir = await freshDataDir("ohmail-signin-served-none-");
+    dirs.push(dir);
+    const told: string[] = [];
+    const s = await boot(dir, told, { address: "operator@ohmail.test", boxes: "none" });
+    expect(s.servedMailboxId()).toBe("");
+    const res = await signIn(s, "operator@ohmail.test");
+    expect(res.status, await res.clone().text()).toBe(200);
+    const named = (await res.json()).mailboxId as string;
+    expect(named).not.toBe("");
+    expect(told).toEqual([`named ${named}`]);
+  });
+
+  it("a sign-in whose first pull failed answers then, not at the bound", async () => {
+    const dir = await freshDataDir("ohmail-signin-served-down-");
+    dirs.push(dir);
+    const s = await boot(dir, [], { address: "operator@ohmail.test", boxes: "down", waitMs: 120_000 });
+    const asked = Date.now();
+    const res = await signIn(s, "operator@ohmail.test");
+    expect(res.status, await res.clone().text()).toBe(200);
+    expect((await res.json()).mailboxId).toBe("");
+    expect(Date.now() - asked, "the answer waited out the bound for a list that had failed").toBeLessThan(60_000);
   });
 
   it("a list with no mailbox leaves it unnamed, and the answer still goes at the bound", async () => {
