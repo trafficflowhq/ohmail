@@ -208,7 +208,7 @@ describe("mail_send with sendAt and files — where the door keeps them (mail 01
   ];
 
   it("schedules over POST /drafts/:id/schedule-with-files with the files, and the store keeps them", async () => {
-    const w = await world({ local: true, scheduleFilesCheck: true });
+    const w = await world({ local: true, scheduleFilesCheck: true, scheduleFiles: true });
     const res = await w.engine.mutate({ ...COMPOSE(w.mailboxId), attachments: FILES });
     expect(res.status).toBe("confirmed");
     const [row] = await w.db.select().from(drafts);
@@ -222,8 +222,19 @@ describe("mail_send with sendAt and files — where the door keeps them (mail 01
     expect(scheduledSendsList(w.engine.read())[0]).toMatchObject({ id: row!.id, sendFiles: 2 });
   });
 
-  it("a door without the route (Cloud) answers 404: refused by name, nothing scheduled, nothing sent", async () => {
-    const w = await world({ scheduleFilesCheck: true });
+  it("an older server that keeps no files is refused by name before anything is written (mail 0180)", async () => {
+    // It mounts the route and keeps the bytes unsealed: a door that did not announce is never posted them.
+    const w = await world({ scheduleFilesCheck: true, scheduleFiles: false });
+    const res = await w.engine.mutate({ ...COMPOSE(w.mailboxId), attachments: FILES });
+    expect(res.status).toBe("rolled_back");
+    expect(res.error).toMatchObject({ code: "schedule_files_unsupported", retryable: false });
+    expect(w.calls).toEqual(["GET /hello"]);
+    expect(await w.db.select().from(drafts)).toHaveLength(0);
+    expect(w.spy.delivered).toHaveLength(0);
+  });
+
+  it("a door that says it keeps them but has no route answers 404: refused by name, nothing scheduled, nothing sent", async () => {
+    const w = await world({ scheduleFilesCheck: true, scheduleFiles: true });
     const res = await w.engine.mutate({ ...COMPOSE(w.mailboxId), attachments: FILES });
     expect(res.status).toBe("rolled_back");
     expect(res.error).toMatchObject({ code: "schedule_files_unsupported", retryable: false });
@@ -233,14 +244,19 @@ describe("mail_send with sendAt and files — where the door keeps them (mail 01
     expect(w.calls.some((c) => c.endsWith("/send"))).toBe(false);
   });
 
-  it("/hello says which door keeps files: the desktop engine yes, Cloud no; with the check off nothing is asked", async () => {
+  it("/hello says which door keeps files, and how far ahead; with the check off nothing is asked", async () => {
     const local = await world({ local: true, scheduleFilesCheck: true, scheduleFiles: true });
-    const cloud = await world({ scheduleFilesCheck: true, scheduleFiles: false });
+    const older = await world({ scheduleFilesCheck: true, scheduleFiles: false });
     const off = await world({ local: true, scheduleFiles: true });
-    expect(await local.engine.scheduleFilesAnnounced()).toBe(true);
-    expect(await cloud.engine.scheduleFilesAnnounced()).toBe(false);
+    expect(await local.engine.scheduleFilesAnnounced()).toEqual({ kept: true, days: null });
+    expect(await older.engine.scheduleFilesAnnounced()).toEqual({ kept: false, days: null });
     expect(await off.engine.scheduleFilesAnnounced()).toBe(null);
     expect(off.calls).toEqual([]);
+    // A server that keeps them names its days, with `scheduleFiles` still false for older clients.
+    older.setIntercept((url) => new URL(url).pathname === "/hello"
+      ? Promise.resolve(new Response(JSON.stringify({ product: "ohmail", features: { scheduleFiles: false, scheduleFilesDays: 7 } })))
+      : null);
+    expect(await older.engine.scheduleFilesAnnounced()).toEqual({ kept: true, days: 7 });
   });
 });
 

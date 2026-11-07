@@ -23,7 +23,6 @@ import { useBottomChromeSlot } from "./bottom-chrome";
 import { destLabel, DESTINATIONS, domainOf, type Destination, type Scope } from "../state/model";
 import {
   calendarDayLabel,
-  DAY_OFFSETS,
   dayAt,
   dayAtHour,
   dayNine,
@@ -46,7 +45,10 @@ import {
   scheduleLabel,
   SEND_LATER_MIN_LEAD_MS,
   SIG_FOLLOWING,
-  usableHours,
+  horizonDays,
+  horizonHours,
+  inSendLaterHorizon,
+  sendLaterHorizon,
   todayEvening,
   sendLaterMornings,
   SMALL_HOURS_END,
@@ -1470,7 +1472,12 @@ export function ComposeSheet({
   /* WHETHER THE AFFORDANCE IS THERE AT ALL — one predicate, two reasons (`sendLaterOffered`): a
      forward cannot wear an appointment, and the standalone door keeps none. Withheld rather than
      refused after the pick, and the sentence below says which it is. */
-  const laterOffered = sendLaterOffered({ standalone: w.standalone, forward, hasAttachments: attachments.length > 0 });
+  const filesKept = w.actions.scheduleFilesKept();
+  const laterOffered = sendLaterOffered({
+    standalone: w.standalone, forward, hasAttachments: attachments.length > 0, filesKept: filesKept?.kept === true,
+  });
+  /* A picker open when a file arrives that this door cannot keep closes: its times would go without it. */
+  useEffect(() => { if (!laterOffered) setLater(null); }, [laterOffered]);
   /* SEND + DONE's own offer — the engine's rule about the SOURCE, asked through the world layer
      so the paired door and the standalone door get the same answer from the same reader. */
   /* A parent-less mail has no source to finish, and `m` is null in that mode — the offer asks
@@ -1669,8 +1676,12 @@ export function ComposeSheet({
    * while it is meaningfully ahead — past ~17:57 "this evening at 18:00" is a promise measured
    * in seconds, and the honest menu simply omits it (the webapp's `eveningUsable`).
    */
+  /* WITH FILES, a server keeps them only so far ahead (`scheduleFilesDays`): no later day or hour is offered. */
+  const laterDays = attachments.length > 0 && filesKept?.kept === true ? filesKept.days : null;
+  const laterEnd = sendLaterHorizon(openedAt, laterDays);
+  const withinLater = (at: Date): boolean => inSendLaterHorizon(at, laterEnd);
   const eveningAt = todayEvening(openedAt).instant;
-  const eveningUsable = eveningAt.getTime() - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS;
+  const eveningUsable = eveningAt.getTime() - openedAt.getTime() > SEND_LATER_MIN_LEAD_MS && withinLater(eveningAt);
   const mornings = sendLaterMornings(openedAt, zone);
   const openLater = () => {
     // The keyboard would cover the picker it is being asked to read.
@@ -2430,13 +2441,15 @@ export function ComposeSheet({
                       onPress={() => pickLater(eveningAt)}
                     />
                   ) : null}
-                  <SheetRow
-                    label={Copy.sendLaterTomorrow(
-                      scheduleLabel(mornings.tomorrow.toISOString(), openedAt, zone),
-                    )}
-                    onPress={() => pickLater(mornings.tomorrow)}
-                  />
-                  {mornings.monday ? (
+                  {withinLater(mornings.tomorrow) ? (
+                    <SheetRow
+                      label={Copy.sendLaterTomorrow(
+                        scheduleLabel(mornings.tomorrow.toISOString(), openedAt, zone),
+                      )}
+                      onPress={() => pickLater(mornings.tomorrow)}
+                    />
+                  ) : null}
+                  {mornings.monday && withinLater(mornings.monday) ? (
                     <SheetRow
                       label={Copy.sendLaterMonday(
                         scheduleLabel(mornings.monday.toISOString(), openedAt, zone),
@@ -2456,9 +2469,7 @@ export function ComposeSheet({
                    offered only while some hour on it is still far enough ahead to be worth
                    naming, which is the same lead rule the evening preset lives under. */
                 <ScrollView style={{ maxHeight: 208 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                  {DAY_OFFSETS.filter(
-                    (offset) => offset > 0 || usableHours(openedAt, 0).length > 0,
-                  ).map((offset) => (
+                  {horizonDays(openedAt, laterEnd).map((offset) => (
                     <SheetRow
                       key={offset}
                       icon="chev"
@@ -2473,7 +2484,7 @@ export function ComposeSheet({
                    widened for sending: the 09:00 the horizons fix, the 18:00 the evening
                    preset fixes, and the four ordinary hours between and around them. */
                 <ScrollView style={{ maxHeight: 208 }} nestedScrollEnabled keyboardShouldPersistTaps="handled">
-                  {usableHours(openedAt, later.offset).map((hour) => {
+                  {horizonHours(openedAt, later.offset, laterEnd).map((hour) => {
                     const at = dayAtHour(openedAt, later.offset, hour).instant;
                     return (
                       <SheetRow
@@ -2500,6 +2511,11 @@ export function ComposeSheet({
               <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingTop: 6, paddingBottom: 2 }}>
                 {Copy.sendLaterZone(zone)}
               </Txt>
+              {laterDays !== null ? (
+                <Txt variant="caption" tone="ink3" style={{ paddingHorizontal: 14, paddingBottom: 2 }}>
+                  {Copy.sendLaterFilesDays(laterDays)}
+                </Txt>
+              ) : null}
               {/* BACK unwinds ONE step — the escape cascade's rule (close the innermost thing
                   that is open), which on the last step closes the picker itself. */}
               <SheetRow
@@ -2523,9 +2539,9 @@ export function ComposeSheet({
               {scheduledNotHereSentence(w.mailboxes.organizer)}
             </Txt>
           ) : null}
-          {!w.standalone && !forward && attachments.length > 0 ? (
+          {!w.standalone && !forward && attachments.length > 0 && filesKept?.kept !== true ? (
             <Txt variant="hint" tone="ink3" style={{ paddingBottom: 2 }}>
-              {Copy.sendLaterUnavailable}
+              {filesKept === null ? Copy.sendLaterUnavailable : Copy.sendLaterFilesNotHere}
             </Txt>
           ) : null}
           {pinNotes ? null : notesBlock}

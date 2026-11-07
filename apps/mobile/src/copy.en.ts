@@ -2440,6 +2440,9 @@ const TABLE = {
   sendLaterPast: "That time has passed. Pick a future time.",
   sendLaterZone: (zone: string) => `Times are in your time zone (${zone}).`,
   sendLaterUnavailable: "Send later isn't available for messages with attachments or forwards yet.",
+  /** A server that keeps no files for a later send (an older one), and how far ahead one that does keeps them. */
+  sendLaterFilesNotHere: "This server can't keep files for a later send, so this message can't be scheduled with them. Send it now, or remove the files to schedule it.",
+  sendLaterFilesDays: (days: number) => `A message with files can be scheduled up to ${days} ${days === 1 ? "day" : "days"} ahead.`,
   scheduledFor: (when: string) => `Scheduled for ${when}.`,
   /** The Scheduled surface — the More tab's row, its screen, and the one verb on a row. */
   scheduled: "Scheduled",
@@ -2633,6 +2636,10 @@ const TABLE = {
   draftsDiscardWhat: "This deletes the only copy.",
   /** PHONE-ONLY: a send on this phone's queue, listed in Drafts until it goes. */
   draftsWaiting: "Waiting to send",
+  /** A draft whose schedule ended unsent: its files were not kept (mail 0179). */
+  draftsFilesNotKept: (n: number) => (n === 1
+    ? "Its file was not kept. Attach it again before you send."
+    : `Its ${n} files were not kept. Attach them again before you send.`),
   draftsDiscardWaitingWhat: "This cancels the send and deletes the only copy.",
   draftsDiscardedNotSent: "Discarded. Nothing was sent.",
   draftsDiscardConfirm: "Discard",

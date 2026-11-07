@@ -5,6 +5,9 @@ import {
   HttpAdapter, MutationRejectedError, SEND_INLINE_MAX_TOTAL_BYTES,
   type ComposeAttachment, type EngineMutation, type FetchLike,
 } from "../src/index.js";
+import { sendFingerprint } from "../src/send-fingerprint.js";
+
+type MailSend = Extract<EngineMutation, { kind: "mail_send" }>;
 
 /**
  * ═══ WHICH TRANSPORT A SEND'S ATTACHMENT BYTES TAKE, DECIDED HERE ══════════════════════════
@@ -54,6 +57,10 @@ function harness(over: {
   mintStatus?: number; uploadStatus?: number;
   /** What `GET /drafts/:id/send-attempt` answers: a reservation, none, or a server without it. */
   attempt?: "found" | "none" | "no-route";
+  /** `GET /hello`'s features; absent, the request fails as an unreachable door does. */
+  hello?: Record<string, unknown>;
+  /** What `GET /drafts/:id` answers, for a replay's read before it stages again. */
+  row?: Record<string, unknown>;
 } = {}) {
   const calls: Call[] = [];
   let minted = 0;
@@ -66,6 +73,28 @@ function harness(over: {
     else if (init?.body) body = `<${(init.body as Uint8Array).byteLength ?? 0} bytes>`;
     calls.push({ method: init?.method ?? "GET", url, body, headers });
 
+    if (path === "/hello") {
+      if (!over.hello) throw new TypeError("fetch failed");
+      return new Response(JSON.stringify({ product: "ohmail", features: over.hello }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (path === "/drafts/draft-1" && (init?.method ?? "GET") === "GET") {
+      return new Response(JSON.stringify(over.row ?? { id: "draft-1", status: "draft" }), {
+        status: 200, headers: { "content-type": "application/json" },
+      });
+    }
+    if (path === "/drafts/draft-1" && init?.method === "PUT" && over.row?.status === "scheduled") {
+      // The server's answer to an edit of a scheduled row (drafts-service).
+      return new Response(JSON.stringify({ error: { code: "conflict", message: "this message is scheduled to send; cancel the schedule to edit it" } }), {
+        status: 409, headers: { "content-type": "application/json" },
+      });
+    }
+    if (path.endsWith("/schedule-with-files")) {
+      return new Response(JSON.stringify({ id: "draft-1", status: "scheduled", updatedAt: "2026-11-07T10:00:00.000Z" }), {
+        status: 200, headers: { "content-type": "application/json", "x-sync-seq": "7" },
+      });
+    }
     if (path.endsWith("/send-attempt")) {
       // A server that predates the route answers the router's 404 — the default here, because it
       // is what every caller of this harness that says nothing is entitled to assume.
@@ -503,5 +532,99 @@ describe("THE DESKTOP STAGES ON ITS HOSTED DOOR ONLY — from source", () => {
       new URL("../../../apps/webapp/app/shell/engine-config.ts", import.meta.url), "utf8",
     );
     expect(src).toContain("stageAttachments: true");
+  });
+});
+
+/**
+ * SEND LATER WITH FILES (mail 0180): the door is asked on every attempt, only a door that keeps the
+ * files is sent them, inside the horizon it names, and they take exactly the transport the send would.
+ */
+describe("Send later with files — asked of the door, carried as the send carries them", () => {
+  const AT = (days: number) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
+  const later = (attachments: ComposeAttachment[], days = 1): EngineMutation =>
+    ({ ...(send(attachments) as object), sendAt: AT(days) }) as EngineMutation;
+  const paths = (calls: Call[]) => calls.map((c) => `${c.method} ${new URL(c.url, "http://localhost").pathname}`);
+  const scheduleBody = (calls: Call[]) => calls.find((c) => c.url.endsWith("/schedule-with-files"))?.body as Record<string, unknown>;
+  const SERVER = { scheduleFiles: false, scheduleFilesDays: 7 };
+
+  it("a server naming its horizon takes small files inline, as the send would, after one /hello", async () => {
+    const { calls, fetchImpl } = harness({ hello: SERVER });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, stageAttachments: true, scheduleFilesCheck: true });
+    const m = later([file(1024, "note.txt")]);
+    await a.mutate(m, { idempotencyKey: "later-1" });
+    expect(paths(calls)).toEqual(["GET /hello", "POST /drafts", "POST /drafts/draft-1/schedule-with-files"]);
+    expect(scheduleBody(calls)).toEqual({ sendAt: (m as { sendAt: string }).sendAt, attachments: [file(1024, "note.txt")] });
+  });
+
+  it("and stages files over the inline ceiling, sending only the references", async () => {
+    const { calls, fetchImpl } = harness({ hello: SERVER });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, stageAttachments: true, scheduleFilesCheck: true });
+    await a.mutate(later([file(3 * MIB, "one.bin"), file(3 * MIB, "two.bin")]), { idempotencyKey: "later-2" });
+    expect(calls.filter((c) => c.url.startsWith("https://storage.example/"))).toHaveLength(2);
+    expect(scheduleBody(calls)).toMatchObject({ stagedAttachmentIds: ["ticket-1", "ticket-2"] });
+    expect(scheduleBody(calls).attachments).toBeUndefined();
+  });
+
+  it("a door that announced nothing is never sent the files: refused before anything is written", async () => {
+    // An older server mounts the route and keeps the bytes unsealed, so its `false` is final.
+    const { calls, fetchImpl } = harness({ hello: { scheduleFiles: false } });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, scheduleFilesCheck: true });
+    await expect(a.mutate(later([file(1024)]), { idempotencyKey: "later-3" }))
+      .rejects.toMatchObject({ code: "schedule_files_unsupported", retryable: false });
+    expect(paths(calls)).toEqual(["GET /hello"]);
+  });
+
+  it("past the horizon is refused before the wire; the desktop's own engine names none", async () => {
+    const far = harness({ hello: SERVER });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: far.fetchImpl, scheduleFilesCheck: true });
+    await expect(a.mutate(later([file(1024)], 8), { idempotencyKey: "later-4" }))
+      .rejects.toMatchObject({ code: "schedule_files_too_far", retryable: false, details: { days: 7 } });
+    expect(paths(far.calls)).toEqual(["GET /hello"]);
+    const desktop = harness({ hello: { scheduleFiles: true } });
+    const d = new HttpAdapter({ baseUrl: "http://localhost", fetch: desktop.fetchImpl, scheduleFilesCheck: true });
+    await d.mutate(later([file(1024)], 30), { idempotencyKey: "later-5" });
+    expect(paths(desktop.calls)).toContain("POST /drafts/draft-1/schedule-with-files");
+  });
+
+  it("no answer is a retryable refusal with no request beyond the question", async () => {
+    const { calls, fetchImpl } = harness();
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, scheduleFilesCheck: true });
+    await expect(a.mutate(later([file(1024)]), { idempotencyKey: "later-6" }))
+      .rejects.toMatchObject({ code: "network", retryable: true });
+    expect(paths(calls)).toEqual(["GET /hello"]);
+  });
+
+  it("a replay finds the letter scheduled as pressed and puts no upload again", async () => {
+    const m = later([file(4 * MIB, "big.bin")]);
+    const { calls, fetchImpl } = harness({
+      hello: SERVER, row: { id: "draft-1", status: "scheduled", sendAt: (m as { sendAt: string }).sendAt, sendFiles: 1 },
+    });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, stageAttachments: true, scheduleFilesCheck: true });
+    const res = await a.mutate(m, { idempotencyKey: "later-7", createdRow: { id: "draft-1", revision: null, fingerprint: sendFingerprint(m as MailSend) } });
+    expect(res).toMatchObject({ entityId: "draft-1" });
+    expect(calls.filter((c) => c.url.startsWith("https://storage.example/")), "a replay uploaded again").toHaveLength(0);
+    expect(paths(calls)).not.toContain("POST /drafts/draft-1/schedule-with-files");
+  });
+
+  it("a press with other words or files, or none recorded, under the same key is not confirmed by that letter", async () => {
+    const first = later([file(1024, "wrong-contract.pdf")]);
+    const sendAt = (first as { sendAt: string }).sendAt;
+    const m = { ...(first as object), body: "corrected words", attachments: [file(2048, "right-contract.pdf")] } as EngineMutation;
+    for (const fingerprint of [sendFingerprint(first as MailSend), null]) {
+      const { calls, fetchImpl } = harness({ hello: SERVER, row: { id: "draft-1", status: "scheduled", sendAt, sendFiles: 1 } });
+      const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, scheduleFilesCheck: true });
+      await expect(a.mutate(m, { idempotencyKey: "later-9", createdRow: { id: "draft-1", revision: null, fingerprint } }))
+        .rejects.toMatchObject({ code: "conflict" });
+      expect(paths(calls)).not.toContain("POST /drafts/draft-1/schedule-with-files");
+    }
+  });
+
+  it("a forward is never an appointment, and says so for a forward", async () => {
+    const { fetchImpl } = harness({ hello: SERVER });
+    const a = new HttpAdapter({ baseUrl: "http://localhost", fetch: fetchImpl, scheduleFilesCheck: true });
+    const m = { ...(later([]) as object), forwardOf: "m-1", attachments: undefined } as EngineMutation;
+    await expect(a.mutate(m, { idempotencyKey: "later-8" })).rejects.toMatchObject({
+      code: "schedule_unsupported_content", message: "Send later isn't available for forwarded messages. Send it now.",
+    });
   });
 });

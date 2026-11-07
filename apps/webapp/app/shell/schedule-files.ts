@@ -1,16 +1,17 @@
 import { useEffect, useState } from "react";
-import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
+import type { EngineDraft, OhmailEngine, ScheduleFilesAnswer } from "@ohmail/client-engine";
 
 /** One answer per engine, once one came: a door does not change what it keeps while it runs. */
-const said = new WeakMap<OhmailEngine, boolean>();
+const said = new WeakMap<OhmailEngine, ScheduleFilesAnswer>();
 
 /**
- * DOES THIS DOOR KEEP A LETTER'S FILES FOR SEND LATER (`/hello` `features.scheduleFiles`, mail 0179)?
+ * DOES THIS DOOR KEEP A LETTER'S FILES FOR SEND LATER, AND HOW FAR AHEAD (`/hello`, mail 0179, 0180)?
  * Asked only while `asking` (files are attached, or the picker is open); `null` until an answer
- * comes, and on a door that cannot say. `true` is the desktop's own engine; Cloud says `false`.
+ * comes, and on a door that cannot say. The desktop's own engine keeps them with no horizon of its
+ * own; a server that keeps them names its days; an older server keeps none.
  */
-export function useScheduleFiles(engine: OhmailEngine, asking: boolean): boolean | null {
-  const [answer, setAnswer] = useState<boolean | null>(() => said.get(engine) ?? null);
+export function useScheduleFiles(engine: OhmailEngine, asking: boolean): ScheduleFilesAnswer | null {
+  const [answer, setAnswer] = useState<ScheduleFilesAnswer | null>(() => said.get(engine) ?? null);
   useEffect(() => {
     if (!asking || answer !== null || typeof engine.scheduleFilesAnnounced !== "function") return undefined;
     let live = true;

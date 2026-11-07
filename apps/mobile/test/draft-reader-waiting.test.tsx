@@ -64,7 +64,7 @@ const { default: DraftsScreen } = await import("../app/drafts/index");
 const waitingRow = (rowless = false): WorldDraft => ({
   id: rowless ? "q-1" : "d-1", subject: "Offline", to: "Bo", preview: "Written on a train.", when: "09:00",
   state: "waiting", heldSays: null, bodyKnown: true, body: "Written on a train.", repliesHere: false,
-  inReplyToMessageId: null, failure: null, edit: null, waiting: { key: "k-1", wire: false, rowless },
+  inReplyToMessageId: null, failure: null, filesNotKept: null, edit: null, waiting: { key: "k-1", wire: false, rowless },
 });
 
 const settle = async () => { for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); }); };
@@ -222,6 +222,15 @@ describe("Drafts on a phone that is its own mailbox's only app", () => {
     const { el, unmount } = mount(createElement(DraftReader, { id: "d-1" }));
     expect(texts(el)).toContain(Copy.draftsEditNote);
     unmount();
+  });
+
+  it("a draft whose schedule ended unsent says its files were not kept, in the list (the web's note)", () => {
+    world.standalone = false;
+    world.drafts = [{ ...held(), state: "open", heldSays: null, filesNotKept: 2 }, { ...held(), id: "d-2", state: "open", heldSays: null }];
+    const list = mount(createElement(DraftsScreen));
+    expect(texts(list.el).filter((t) => t === Copy.draftsFilesNotKept(2)), "one row, one note").toHaveLength(1);
+    expect(Copy.draftsFilesNotKept(1)).toBe("Its file was not kept. Attach it again before you send.");
+    list.unmount();
   });
 
   it("an empty Drafts says where a standalone phone keeps them, and the account sentence only where there is one", () => {

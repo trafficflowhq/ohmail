@@ -241,10 +241,14 @@ export const IDENTITY_PROBE_DEADLINE_MS = 8000;
 /** How long a forward that names its parts waits for `GET /hello`: the engine puts no limit on a send. */
 export const FORWARD_PARTS_HELLO_MS = 8000;
 
-/** What this phone reads off `GET /hello`'s `features`: named forward parts, and armed staging. */
+/** What this phone reads off `GET /hello`'s `features`: named forward parts, armed staging, and kept files. */
 export interface HelloFeatures {
   forwardParts: boolean;
   staging: boolean;
+  /** Send later keeps a letter's files: the desktop's engine (`scheduleFiles`), or a server naming its days. */
+  scheduleFiles: boolean;
+  /** How many days ahead a server keeps them (`scheduleFilesDays`); `null` where none is named. */
+  scheduleFilesDays: number | null;
 }
 
 /**
@@ -268,10 +272,17 @@ export async function helloFeatures(
     }
     if (!res.ok) return null;
     try {
-      const body = (await res.json()) as { product?: unknown; features?: { forwardParts?: unknown; staging?: unknown } } | null;
-      return body?.product === "ohmail"
-        ? { forwardParts: body.features?.forwardParts === true, staging: body.features?.staging === true }
-        : null;
+      const body = (await res.json()) as {
+        product?: unknown;
+        features?: { forwardParts?: unknown; staging?: unknown; scheduleFiles?: unknown; scheduleFilesDays?: unknown };
+      } | null;
+      if (body?.product !== "ohmail") return null;
+      const days = body.features?.scheduleFilesDays;
+      const horizon = typeof days === "number" && Number.isInteger(days) && days > 0 ? days : null;
+      return {
+        forwardParts: body.features?.forwardParts === true, staging: body.features?.staging === true,
+        scheduleFiles: body.features?.scheduleFiles === true || horizon !== null, scheduleFilesDays: horizon,
+      };
     } catch {
       return null;
     }
@@ -539,6 +550,11 @@ function accountGuarded(
     // Cancel asks the server, on `mutate`'s rule. Left out of this literal, every phone Cancel would
     // be answered by the disk alone — the type makes the omission a compile error.
     withdrawSend: (key, draftId) => adapter.withdrawSend(key, draftId),
+    /* Whether Send later may carry files, from the adapter's own `/hello` (`scheduleFilesCheck`): left
+       out of this literal, the engine reads "this door keeps none" on the live path only. */
+    ...(adapter.scheduleFilesAnnounced
+      ? { scheduleFilesAnnounced: () => adapter.scheduleFilesAnnounced!() }
+      : {}),
     fetchBody: (id) => adapter.fetchBody(id),
     fetchBodies: (ids: string[]) => adapter.fetchBodies(ids),
     searchServer: (query, opts) => adapter.searchServer(query, opts),
@@ -734,6 +750,9 @@ export async function bootEngine(deps: MobileEngineDeps, config: ConnectConfig):
             uploadAdmits: phoneUploadAdmits,
           }
           : {}),
+        /* SEND LATER WITH FILES, on a paired door only: it goes where `/hello` says the files are kept,
+           inside the horizon a server names, asked on every attempt. The phone's own engine keeps none. */
+        ...(local === undefined ? { scheduleFilesCheck: true } : {}),
       }),
       accountId,
       () => identityCleared,

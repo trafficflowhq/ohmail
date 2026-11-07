@@ -47,24 +47,28 @@ describe("send later, where an appointment can be kept and where it cannot", () 
   it("THE PREDICATE — a paired reply is offered the appointment, a standalone reply is not", () => {
     // The positive control FIRST: a rule that refused everything would satisfy every other case
     // in this file.
-    expect(sendLaterOffered({ standalone: false, forward: false, hasAttachments: false })).toBe(true);
-    expect(sendLaterOffered({ standalone: true, forward: false, hasAttachments: false })).toBe(false);
+    expect(sendLaterOffered({ standalone: false, forward: false, hasAttachments: false, filesKept: false })).toBe(true);
+    expect(sendLaterOffered({ standalone: true, forward: false, hasAttachments: false, filesKept: false })).toBe(false);
   });
 
-  it("THE ATTACHMENTS ARM — a draft row stores no files, so an attached reply loses the appointment", () => {
-    // The webapp's own withheld affordance (`sendLaterUnavailable`); drop `!o.hasAttachments`
-    // from the predicate and this row reddens while the two above stay green.
-    expect(sendLaterOffered({ standalone: false, forward: false, hasAttachments: true })).toBe(false);
+  it("THE ATTACHMENTS ARM — an attached reply keeps the appointment only where the door keeps its files", () => {
+    // A door that keeps no files (an older server, or no answer yet): the webapp's own withheld
+    // affordance; drop the attachments term from the predicate and this row reddens.
+    expect(sendLaterOffered({ standalone: false, forward: false, hasAttachments: true, filesKept: false })).toBe(false);
+    // A server that names its horizon, or the desktop host, keeps them (mail 0180): offered.
+    expect(sendLaterOffered({ standalone: false, forward: false, hasAttachments: true, filesKept: true })).toBe(true);
+    // Never on the standalone phone, whatever its answer says.
+    expect(sendLaterOffered({ standalone: true, forward: false, hasAttachments: true, filesKept: true })).toBe(false);
     // …and the composer says WHY, only where attachments are the reason (each absence its own note).
-    expect(COMPOSER).toContain("{!w.standalone && !forward && attachments.length > 0 ? (");
-    expect(COMPOSER).toContain("{Copy.sendLaterUnavailable}");
+    expect(COMPOSER).toContain("{!w.standalone && !forward && attachments.length > 0 && filesKept?.kept !== true ? (");
+    expect(COMPOSER).toContain("{filesKept === null ? Copy.sendLaterUnavailable : Copy.sendLaterFilesNotHere}");
   });
 
   it("THE PRE-EXISTING REASON is untouched — a forward wears no appointment on either door", () => {
     // A draft row stores no forward reference (§14). This was the only reason before and it is
     // still a reason, so the widening cannot have replaced it.
-    expect(sendLaterOffered({ standalone: false, forward: true, hasAttachments: false })).toBe(false);
-    expect(sendLaterOffered({ standalone: true, forward: true, hasAttachments: false })).toBe(false);
+    expect(sendLaterOffered({ standalone: false, forward: true, hasAttachments: false, filesKept: true })).toBe(false);
+    expect(sendLaterOffered({ standalone: true, forward: true, hasAttachments: false, filesKept: true })).toBe(false);
   });
 
   it("THE DOOR IS DERIVED FROM THE SESSION'S ORIGIN, in the layer that composes the session", () => {
@@ -85,7 +89,7 @@ describe("send later, where an appointment can be kept and where it cannot", () 
 
   it("THE COMPOSER withholds the button through that predicate, not through a bare forward check", () => {
     expect(COMPOSER, "the composer decides for itself instead of asking the predicate")
-      .toContain("sendLaterOffered({ standalone: w.standalone, forward, hasAttachments: attachments.length > 0 })");
+      .toContain("standalone: w.standalone, forward, hasAttachments: attachments.length > 0, filesKept: filesKept?.kept === true,");
     expect(COMPOSER, "the Send later button is not gated on the predicate")
       .toMatch(/\{laterOffered \?\s*\(\s*<Button\s+label=\{Copy\.sendLater\}/);
     /* THE OLD FORM IS GONE. A button left on `!forward` would be green on every case above and
