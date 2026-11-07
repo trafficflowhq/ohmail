@@ -14,7 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome,
+  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -11476,8 +11476,8 @@ export class OhmailEngine {
     }
   }
 
-  /** Does the scheduling server keep a letter's files for a later send? `null`: no answer, or an adapter that cannot ask. */
-  async scheduleFilesAnnounced(): Promise<boolean | null> {
+  /** Does the scheduling server keep a letter's files for a later send, and how far ahead? `null`: no answer, or an adapter that cannot ask. */
+  async scheduleFilesAnnounced(): Promise<ScheduleFilesAnswer | null> {
     const ask = this.adapter.scheduleFilesAnnounced;
     if (typeof ask !== "function") return null;
     try {

@@ -252,7 +252,7 @@ export function DraftsView({
                       </span>
                       <span className="draft-line">
                         <span className="draft-to">{to || t("noRecipient")}</span>
-                        {/* The files waiting with it on this computer (mail 0179). */}
+                        {/* The files waiting with it, on this computer or on the server (mail 0179, 0180). */}
                         {d.sendFiles ? <span className="draft-badge">{t("scheduledFiles", { count: d.sendFiles })}</span> : null}
                       </span>
                       <span className="draft-preview">{preview(d.body ?? "")}</span>

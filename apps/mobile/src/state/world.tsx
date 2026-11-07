@@ -675,6 +675,8 @@ const NO_ACTIONS: WorldActions = {
   keptReply: () => ({ kind: "none" as const }),
   forwardFiles: () => ({ state: "failed" as const, parts: [] }),
   forwardPartsSupported: () => false,
+  // Nothing connected keeps no files for a later send.
+  scheduleFilesKept: () => null,
   sendSurface: () => undefined,
   draftSent: () => false,
   draftLeft: () => null,
@@ -1501,6 +1503,8 @@ export function WorldProvider({ children }: { children: ReactNode }) {
         engine, toast: showToast, painted: gate.painted, uuid: () => Crypto.randomUUID(), zone,
         ...(letters ? { letters } : {}),
         forwardParts: () => forwardPartsNow.current?.said() ?? null,
+        /* Whether Send later keeps a letter's files on this door, read off the same `/hello`. */
+        scheduleFiles: () => forwardPartsNow.current?.scheduleFiles() ?? null,
         /* What this session's send carries: the door, and on Cloud whether its `/hello` armed staging. */
         sendSurface: () => sessionSendSurface(session, forwardPartsNow.current),
         // The register, not the hook's value: this facade is built once per session, and a
@@ -1723,6 +1727,7 @@ export function WorldProvider({ children }: { children: ReactNode }) {
           forwardFetch: (id) => acts.forwardFetch(id),
           forwardFiles: (id) => acts.forwardFiles(id),
           forwardPartsSupported: () => acts.forwardPartsSupported(),
+          scheduleFilesKept: () => acts.scheduleFilesKept(),
           sendSurface: () => acts.sendSurface(),
           retryAbandoned: (id) => acts.retryAbandoned(id),
           discardAbandoned: (id) => acts.discardAbandoned(id),
