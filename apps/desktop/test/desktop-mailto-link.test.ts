@@ -323,6 +323,29 @@ describe("the desktop window, armed, with a compose sink", () => {
     expect(composed, "an http address opened a compose form").toEqual([]);
   });
 
+  it("a link in the letter being written is not followed, whatever its scheme; a read-only one still is", async () => {
+    const mod = await armed();
+    install(mod, document, true);
+    const body = document.createElement("div");
+    body.className = "ProseMirror";
+    body.setAttribute("contenteditable", "true");
+    body.innerHTML =
+      '<p>write to <a href="mailto:someone@example.test">someone</a> or <a href="https://example.test/x"><strong>see</strong></a></p>' +
+      '<p contenteditable="false"><a href="mailto:sig@example.test">signature</a></p>';
+    document.body.appendChild(body);
+    const click = (el: Element): boolean =>
+      el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+
+    expect(click(body.querySelector('a[href^="mailto:someone"]')!), "the webview followed the mailto").toBe(false);
+    expect(click(body.querySelector("strong")!), "the webview followed the web link").toBe(false);
+    expect(composed, "a click in the editor opened a new message").toEqual([]);
+    expect(opened, "a click in the editor opened the browser").toEqual([]);
+    expect(invoked).toEqual([]);
+
+    click(body.querySelector('a[href^="mailto:sig"]')!);
+    expect(composed).toEqual(["mailto:sig@example.test"]);
+  });
+
   it("with no sink registered the click is still stopped, and nothing throws", async () => {
     const mod = await freshModule();
     mod.enableExternalLinks();

@@ -10,7 +10,7 @@ import { MessageBody, sanitizeMailHtml } from "../../webapp/app/components/Messa
 import {
   flushRenderedLinks, reportRenderedLinks, setRenderedLinksBatchSink, setRenderedLinksSink,
 } from "../../webapp/app/shell/rendered-links";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "../../webapp/app/shell/open-external";
 import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
 import type { RichValue } from "../../webapp/app/shell/rich-text";
@@ -359,7 +359,7 @@ describe("the editor's links — a signature's, a draft's — are on the list wh
     expect(reports().at(-1), "the unmount left the signature's link on the list").toEqual({ surface: report!.surface, urls: [] });
   });
 
-  it("a draft's links follow its document, and a click opens the bytes its editor reported", async () => {
+  it("a draft's links follow its document, and a click on one while writing opens nothing", async () => {
     let replace: ((next: RichValue) => void) | null = null;
     function Draft(): React.ReactElement {
       const [value, setValue] = React.useState<RichValue>({
@@ -394,9 +394,18 @@ describe("the editor's links — a signature's, a draft's — are on the list wh
     await turns();
     expect(reports().length, "a change that kept the links reported them again").toBe(before);
 
-    const [a] = await drawn(el, ".rte a[href]");
-    await press(a!);
-    expect(opens()).toEqual(last.urls);
+    const composed: string[] = [];
+    setMailtoSink((raw) => composed.push(raw));
+    await act(async () => {
+      replace!({ text: "new", html: '<p><a href="HTTPS://Bücher.example/ü?x=1#f">new</a> <a href="mailto:anna@example.test">anna@example.test</a></p>' });
+    });
+    await turns();
+    const anchors = await drawn(el, ".rte a[href]");
+    expect(anchors.map((x) => x.getAttribute("href"))).toEqual(["HTTPS://Bücher.example/ü?x=1#f", "mailto:anna@example.test"]);
+    for (const a of anchors) await press(a);
+    setMailtoSink(null);
+    expect(opens(), "a click in the letter being written opened the browser").toEqual([]);
+    expect(composed, "a click in the letter being written opened a new message").toEqual([]);
     await unmount();
     expect(reports().at(-1)).toEqual({ surface: last.surface, urls: [] });
   });
