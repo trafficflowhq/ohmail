@@ -678,5 +678,19 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"drafts\" ADD COLUMN \"send_files\" integer NOT NULL DEFAULT 0;",
       "CREATE TABLE IF NOT EXISTS \"scheduled_send_files\" (\n  \"account_id\" text NOT NULL,\n  \"mailbox_id\" text NOT NULL,\n  \"draft_id\" text NOT NULL,\n  \"send_key\" text NOT NULL,\n  \"file_no\" integer NOT NULL,\n  \"seq\" integer NOT NULL DEFAULT 0,\n  \"filename\" text NOT NULL,\n  \"content_type\" text NOT NULL,\n  \"size_bytes\" integer NOT NULL,\n  \"content_sha256\" text NOT NULL,\n  \"raw_b64\" text NOT NULL,\n  \"created_at\" integer NOT NULL DEFAULT (CAST(unixepoch('subsec') * 1000 AS INTEGER)),\n  CONSTRAINT \"scheduled_send_files_account_id_draft_id_file_no_seq_pk\" PRIMARY KEY (\"account_id\", \"draft_id\", \"file_no\", \"seq\"),\n  CONSTRAINT \"scheduled_send_files_sha256_hex\" CHECK (length(\"content_sha256\") = 64 AND \"content_sha256\" NOT GLOB '*[^0-9a-f]*')\n);"
     ]
+  },
+  {
+    "name": "0180_scheduled_send_files_sealed.sql",
+    "statements": [
+      "ALTER TABLE \"scheduled_send_files\" ADD COLUMN \"dek_enc\" text;",
+      "ALTER TABLE \"scheduled_send_files\" ADD COLUMN \"dek_key_version\" integer;"
+    ]
+  },
+  {
+    "name": "0181_reconcile_pending_queue.sql",
+    "statements": [
+      "CREATE INDEX IF NOT EXISTS \"folder_state_pending_queue_idx\" ON \"folder_state\" (\"updated_at\", \"message_id\") WHERE \"reconcile_status\" = 'pending';",
+      "CREATE INDEX IF NOT EXISTS \"flag_state_pending_queue_idx\" ON \"flag_state\" (\"updated_at\", \"message_id\") WHERE \"reconcile_status\" = 'pending';"
+    ]
   }
 ] as const;

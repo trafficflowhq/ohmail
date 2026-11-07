@@ -259,10 +259,29 @@ export const MAILBOXES_ACCOUNT_PREBUILD_SPEC: ConcurrentIndexSpec = {
   ddl: sql`create index concurrently if not exists "mailboxes_account_idx" on public.mailboxes using btree ("account_id","id")`,
 };
 
+/**
+ * Mail 0181's reconcile queues: each poll's pending rows in its own order, `(updated_at,
+ * message_id)`, so a queue with nothing due reads an empty index instead of the whole table.
+ * `folder_state` has no mailbox column to lead with; the poll joins `messages` for that.
+ */
+export const FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "folder_state_pending_queue_idx",
+  table: "folder_state",
+  ddl: sql`create index concurrently if not exists "folder_state_pending_queue_idx" on public.folder_state using btree ("updated_at","message_id") where "reconcile_status" = 'pending'`,
+};
+
+/** Mail 0181's `\Seen` queue: the folder queue's twin on `flag_state`. */
+export const FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC: ConcurrentIndexSpec = {
+  name: "flag_state_pending_queue_idx",
+  table: "flag_state",
+  ddl: sql`create index concurrently if not exists "flag_state_pending_queue_idx" on public.flag_state using btree ("updated_at","message_id") where "reconcile_status" = 'pending'`,
+};
+
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
   WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_0139_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
   RECIPIENT_KEYS_PREBUILD_SPEC,
   SENDER_DATE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
+  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

@@ -38,6 +38,8 @@ import { tagsRoutes } from "./tags.js";
  * `folderOps` service, and its settings surface withholds the pane (§17). */
 import { foldersRoutes } from "./folders.js";
 import { draftsRoutes } from "./drafts.js";
+// Send later with files, kept sealed by this host until the letter goes (mail 0180).
+import { scheduleFilesRoutes } from "./schedule-files.js";
 import { workflowsRoutes } from "./workflows.js";
 import { proposalsRoutes } from "./proposals.js";
 import { waitlistRoutes } from "./waitlist.js";
@@ -245,6 +247,7 @@ export const apiRoutes: Route[] = [
   ...tagsRoutes,
   ...foldersRoutes,
   ...draftsRoutes,
+  ...scheduleFilesRoutes,
   ...workflowsRoutes,
   ...proposalsRoutes,
   ...accountRoutes,
