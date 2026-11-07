@@ -32,6 +32,7 @@ import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
 import { MessageActions } from "./MessageActions";
+import { EmptiedLetter } from "./EmptiedLetter";
 import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
 import { usePosture } from "./posture";
 import { readerVerbMode } from "./reader-verbs";
@@ -91,6 +92,8 @@ export function MessageReader({
   const bare = inPane || railBack;
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
   const [textFor, setTextFor] = useState<string | null>(null);
+  /** An emptied letter's text, loaded from the mail server for this view only (`EmptiedLetter`). */
+  const [liveText, setLiveText] = useState<{ id: string; text: string } | null>(null);
   const toast = useWorldToast();
 
   // The open: mark read (watched — the engine owns the overlay and the rollback),
@@ -499,12 +502,16 @@ export function MessageReader({
   }
 
   // `withheld` is checked BEFORE the failure arm and never folded into it: the storage cap is an
-  // answer the server gave, so "reopen to try again" would be false. See `Copy.liveBodyWithheld`.
+  // answer the server gave, so "reopen to try again" would be false. See `Copy.storageEmptied`.
   // Per MARKER, and a verdict's husk outside the spam pile is text on its way — `withheldNote`.
+  // Emptied for space: its own block, with Load it now (`EmptiedLetter`), in place of the note.
+  const emptied = !m.protected && m.bodyState === "withheld" && !junkLeaving(m)
+    && (m.bodyWithheld ?? "storage_cap") === "storage_cap";
+  const loaded = emptied && liveText !== null && liveText.id === m.id ? liveText.text : null;
   const bodyNote =
     !m.protected && (m.bodyState === "snippet" || m.bodyState === "loading")
       ? Copy.liveBodyLoading
-      : !m.protected && m.bodyState === "withheld"
+      : !m.protected && m.bodyState === "withheld" && !emptied
         ? withheldNote(m, refillExpired, mailboxStatusOf(w.mailboxes.all, m.mailboxId))
         : !m.protected && m.bodyState === "failed"
           ? Copy.liveBodyFailed
@@ -747,6 +754,15 @@ export function MessageReader({
 
           {!m.protected ? (
             <>
+              {emptied ? (
+                <EmptiedLetter
+                  key={m.id}
+                  messageId={m.id}
+                  removed={mailboxStatusOf(w.mailboxes.all, m.mailboxId) === "disabled"}
+                  onLoaded={(text) => setLiveText({ id: m.id, text })}
+                  onSettings={() => router.push("/storage")}
+                />
+              ) : null}
               {bodyNote ? (
                 <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
                   {bodyNote}
@@ -803,7 +819,7 @@ export function MessageReader({
                       sheet at 16.5/1.78 (`reader.css:16`). This screen is that reader, so it reads
                       at `readerBody`. `msgBody` is the desktop pane's role and stays with it. */}
                   <HistoryFold foldKey={m.id} html={m.html} subject={m.subject} end={<View style={{ height: 0 }} onLayout={(e) => seen.openedEnd(e.nativeEvent.layout.y)} />}>
-                    <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
+                    <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={loaded ?? m.body} />
                   </HistoryFold>
                 </>
               )}

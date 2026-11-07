@@ -7,7 +7,7 @@
  * (welcome, servers, scan, connect) stay ungated on purpose: they are where the verdicts route
  * to — including the wall's way off itself.
  */
-import { Redirect } from "expo-router";
+import { Redirect, usePathname } from "expo-router";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { ActivityIndicator, View } from "react-native";
 import { useConnection } from "../net/connection";
@@ -15,7 +15,6 @@ import { accessLock, onAccessLock } from "../net/access-lock";
 import { readAccess } from "../net/account";
 import type { ConnectedSession } from "../net/pairing";
 import "../state/access-verdict-native";
-import "../state/storage-notice-native";
 import { recordVerdict, storedVerdict, verdictsReady, verdictsSettled } from "../state/access-verdict";
 import { gateFor } from "../state/gate";
 import { useTheme } from "../theme";
@@ -85,6 +84,9 @@ export function Gated({ children }: { children: ReactNode }) {
   const verdict = gateFor(conn.state, conn.profiles.length, lock);
   const session = conn.state.k === "live" ? conn.state.session : null;
   const painted = useFirstPaint(session);
+  /* The storage card stands atop the Ohbox alone, the tabs' first route. */
+  const path = usePathname();
+  const ohbox = path === "/" || path === "/index";
 
   /* A wall the sink raised is this pairing's verdict for the next launch's first paint too. */
   useEffect(() => {
@@ -114,7 +116,7 @@ export function Gated({ children }: { children: ReactNode }) {
   return (
     <>
       <LifecycleStrip session={session} />
-      <StorageNotice session={session} />
+      <StorageNotice session={session} ohbox={ohbox} />
       {children}
     </>
   );

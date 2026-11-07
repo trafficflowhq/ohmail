@@ -52,7 +52,7 @@ const { listNavClearance, scaffoldPlan } = await import("../src/ui/scaffold/plan
 
 const EMPTIED = {
   usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 3,
-  firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: null, withheldOnArrival: 0, emptyingNow: true,
+  firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: null, withheldOnArrival: 0, emptyingNow: true, card: "full",
 };
 const trialEnds = new Date(Date.now() + 24 * 3600_000).toISOString();
 const session = { standalone: false, profile: { id: "p-1" }, ownerKey: "o-1" } as never;

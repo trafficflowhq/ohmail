@@ -1280,10 +1280,6 @@ export const DE: Deck = {
   livePileFailed: (title: string) => `${title} — ließ sich nicht speichern. Versuch es nochmal.`,
   liveBodyLoading: "Die ganze Nachricht wird geladen…",
   liveBodyFailed: "Nur die Vorschau ließ sich laden. Öffne sie erneut, um es nochmal zu versuchen.",
-  liveBodyWithheld:
-    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. Sobald wieder Platz frei ist, holt ohmail diesen Text von deinem Mailserver zurück.",
-  liveBodyWithheldRemoved:
-    "Der Text ist hier nicht gespeichert — damit der Speicherplatz deines Tarifs reicht, speichert ohmail den Text älterer Nachrichten nicht mehr, auch den dieser (oder der Speicher war beim Eintreffen voll). Das hier ist die Vorschau; die Nachricht selbst liegt vollständig in deinem Postfach auf deinem Mailserver. ohmail liest dieses Postfach nicht mehr, darum kommt dieser Text hier nicht zurück.",
   liveBodyWithheldJunk:
     "Hier nicht gespeichert — dein Spam-Urteil hat diese Nachricht in den Spam-Ordner deines eigenen Mailservers einsortiert. Dort lebt sie weiter; das hier ist die Vorschau.",
   liveBodyWithheldExpunged:
@@ -2230,39 +2226,80 @@ export const DE: Deck = {
   stripLater: "Später",
   stripCaughtUp: (date: string) => `ohmail holt die Nachrichten nach, die seit dem ${date} angekommen sind.`,
   stripDismiss: "Verstanden",
-  storageNoticeEmptied: (cap: string, count: number) =>
-    `Damit die ${cap} GB deines Tarifs reichen, speichert ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr.`,
-  storageNoticeEmptiedBefore: (count: number) =>
-    `Damit der Speicher deines Tarifs damals reichte, hat ohmail den Text ${count === 1 ? "deiner ältesten Nachricht" : `deiner ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} ältesten Nachrichten`} nicht mehr gespeichert.`,
-  storageNoticeNotStored: (count: number) =>
-    `Der Text ${count === 1 ? "einer Nachricht" : `von ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten`} ist hier nicht gespeichert.`,
-  storageNoticeKeptFrom: (month: string) => `Für Nachrichten ab ${month} bleibt der Text gespeichert.`,
-  storageNoticeKeptFromExcept: (month: string, count: number) =>
-    `Für Nachrichten ab ${month} bleibt der Text gespeichert, außer bei ${count === 1 ? "einer Nachricht, die ankam" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen`}, als dein Speicher voll war.`,
-  storageNoticeOnArrival: (count: number) =>
-    count === 1
-      ? "Eine Nachricht, die ankam, als dein Speicher voll war, ist ohne ihren Text gespeichert."
-      : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} Nachrichten, die ankamen, als dein Speicher voll war, sind ohne ihren Text gespeichert.`,
-  storageNoticeSafe: "Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver und bleiben hier gelistet und auffindbar.",
-  storageNoticeNear:
-    "Der Speicher ist fast voll. Ist er voll, speichert ohmail den Text deiner ältesten Nachrichten nicht mehr, um Platz für neue Mails zu machen. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.",
-  storageNoticeFull:
-    "Der Speicher ist voll. ohmail speichert den Text deiner ältesten Nachrichten nicht mehr, um Platz für neue Mails zu machen. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.",
-  storageNoticeCarry: (date: string, limit: string, cap: string) =>
-    `Bis zum ${date} speichert ohmail bis zu ${limit} GB Nachrichtentext. Danach umfasst dein Tarif ${cap} GB, und ohmail speichert den Text deiner ältesten Nachrichten darüber hinaus nicht mehr. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.`,
-  storageNoticeCarryUnpaid: (limit: string, cap: string) =>
-    `Bis 14 Tage nach deiner ersten Zahlung speichert ohmail bis zu ${limit} GB Nachrichtentext. Danach umfasst dein Tarif ${cap} GB, und ohmail speichert den Text deiner ältesten Nachrichten darüber hinaus nicht mehr. Diese Nachrichten bleiben vollständig in deinem Postfach auf deinem Mailserver.`,
-  storageOfferTrial: "Ein größerer Tarif speichert ab jetzt mehr Text.",
-  storageOfferTrialTop: "Sobald dein Abo bezahlt ist, speichert das Speicher-Add-on ab jetzt mehr Text.",
-  storageOfferActive: "Ein größerer Tarif oder das Speicher-Add-on speichert ab jetzt mehr Text.",
-  storageOfferActiveTop: "Das Speicher-Add-on speichert ab jetzt mehr Text.",
-  storageNoticeNoRestore: "Bereits entfernten Text bringt das nicht zurück.",
-  storageNoticeRefill:
-    "Mit mehr Platz holt ohmail den Text entfernter Nachrichten von deinem Mailserver zurück, die neuesten zuerst, für die Postfächer, die es noch liest.",
-  storageNoticeRefilling:
-    "Es ist wieder Platz frei: Für die Postfächer, die ohmail noch liest, holt es den Text entfernter Nachrichten von deinem Mailserver zurück, die neuesten zuerst, soweit der Platz reicht.",
-  storageNoticeManage: "Abo verwalten",
-  storageNoticeDismiss: "Schließen",
+  storageCardNear: (pct: string) => `Der Speicher ist zu ${pct} voll`,
+  storageCardFull: "Der Speicher ist voll",
+  storageCardDrop: (gb: string) => `Dein Speicher sinkt auf ${gb} GB`,
+  storageOf: (used: string, limit: string) => `${used} von ${limit} GB`,
+  storagePercent: (n: number) => `${n} %`,
+  storageUsedTrial: (used: string, limit: string) => `${used} GB von ${limit} GB Platz deiner Testphase belegt.`,
+  storageUsedPlan: (used: string, limit: string) => `${used} GB von ${limit} GB deines Tarifs belegt.`,
+  storageUsedHeld: (used: string, limit: string, date: string) =>
+    `${used} GB von den ${limit} GB belegt, die du bis zum ${date} behältst.`,
+  storageExpectedImporting: (gb: string) => `Erwartet etwa ${gb} GB, wenn der Import fertig ist.`,
+  storageExpectedNeeds: (gb: string) => `Deine Mails brauchen etwa ${gb} GB.`,
+  storageKeptFrom: (month: string) => `Text gespeichert für Nachrichten ab ${month}; ältere bleiben auf deinem Mailserver.`,
+  storageKeptOldest: "Der Text deiner ältesten Nachrichten bleibt auf deinem Mailserver.",
+  storageDropDated: (date: string, plan: string) =>
+    `Ab dem ${date} umfasst dein Tarif ${plan} GB, und ohmail behält darin den Text deiner neuesten Nachrichten.`,
+  storageDropUnpaid: (plan: string) =>
+    `Ab 14 Tagen nach deiner ersten Zahlung umfasst dein Tarif ${plan} GB, und ohmail behält darin den Text deiner neuesten Nachrichten.`,
+  storageFitAll: (name: string, gb: string) => `${name} behält alle deine Mails: ${gb} GB.`,
+  storageFitMost: (name: string, gb: string) => `${name} behält am meisten: ${gb} GB.`,
+  storageWithAddon: (plan: string, gb: string) => `${plan} + ${gb} GB Speicher`,
+  storageManageAt: "Deinen Tarif verwaltest du auf ohmail.app",
+  storageManage: "Abo verwalten",
+  storageDismiss: "Ausblenden",
+  storageDismissFailed: "Das ließ sich gerade nicht ausblenden. Versuch es gleich nochmal.",
+  storageTitle: "Speicher",
+  storageStateFull: "Voll",
+  storageUsedSubTrial: "belegt, Platz deiner Testphase",
+  storageUsedSubPlan: "belegt, dein Tarif",
+  storageUsedSubHeld: (date: string) => `belegt, bis zum ${date}`,
+  storageExpectedImport: (gb: string, letters: string) =>
+    `Erwartet, wenn der Import fertig ist: etwa ${gb} GB, ${letters} Nachrichten.`,
+  storageExpectedAll: (gb: string, letters: string) => `Alle deine Mails: etwa ${gb} GB, ${letters} Nachrichten.`,
+  storageImportRunning: (stored: string, expected: string) => `Erster Import läuft: ${stored} von ${expected} Nachrichten.`,
+  storageEstimateGrows: "Die Zahl wächst, während ohmail weitere deiner Ordner öffnet.",
+  storageAverage: (kb: string) => `Deine Nachrichten haben im Schnitt etwa ${kb} KB Text.`,
+  storageKeptFromLong: (month: string) =>
+    `Text gespeichert für Nachrichten ab ${month}. Ältere Nachrichten liegen vollständig auf deinem Mailserver und bleiben hier gelistet und auffindbar.`,
+  storageWhatCounts: "Was zählt",
+  storageWhatCountsText:
+    "Nur der Text deiner Nachrichten zählt. Anhänge nie: Sie bleiben auf deinem Mailserver und öffnen sich von dort.",
+  storageWhyLimited: "Warum er begrenzt ist",
+  storageWhyLimitedText:
+    "Wir halten den Text deiner Nachrichten in unserer Datenbank, damit Lesen und Finden auf jedem Gerät sofort gehen. Diese Datenbank ist der teure Teil von ohmail Cloud, darum enthält jeder Tarif eine feste Menge.",
+  storageYourPlan: "Dein Tarif",
+  storagePlanTrial: (limit: string, plan: string, planGb: string) =>
+    `Deine Testphase speichert bis zu ${limit} GB. Mit ${plan} sind es ab 14 Tagen nach deiner ersten Zahlung ${planGb} GB.`,
+  storagePlanUntil: (limit: string, date: string, plan: string, planGb: string) =>
+    `Bis zum ${date} behältst du bis zu ${limit} GB. Danach umfasst ${plan} ${planGb} GB.`,
+  storagePlanKeeps: (plan: string, gb: string) => `${plan} umfasst ${gb} GB.`,
+  storagePlans: "Tarife",
+  storagePlanYours: (plan: string) => `${plan} · dein Tarif`,
+  storagePlanRoom: (gb: string, letters: string) => `${gb} GB · etwa ${letters} Nachrichten`,
+  storageAddon: "Speicher-Add-on",
+  storageAddonRoom: (gb: string, letters: string) => `+${gb} GB · je etwa ${letters} Nachrichten`,
+  storageFitted: "Behält alle deine Mails",
+  storageFittedMost: "Behält am meisten",
+  storageMails: "Speicher-Mails",
+  storageMailsOn: "ohmail schreibt dir einmal bei 90 % und einmal, wenn der Speicher voll ist.",
+  storageMailsOff: "ohmail schickt dir keine Speicher-Mails.",
+  storageMailsFailed: "Das ließ sich gerade nicht speichern. Versuch es gleich nochmal.",
+  storageNone: "Dieser Server hat keine Speichergrenze.",
+  storageEmptied:
+    "Der Text dieser Nachricht ist nicht in der Cloud gespeichert, weil dein Speicher voll ist. Auf deinem Mailserver ist sie vollständig.",
+  storageEmptiedRemoved:
+    "Der Text dieser Nachricht ist nicht in der Cloud gespeichert, weil dein Speicher voll war, und ohmail liest dieses Postfach nicht mehr, darum kommt er hier nicht zurück. Auf deinem Mailserver ist sie vollständig.",
+  storageLoadNow: "Jetzt laden",
+  storageLoading: "Wird von deinem Mailserver geladen…",
+  storageLoadNote: "Jetzt laden holt sie für diese Ansicht von deinem Mailserver. Sie wird nicht gespeichert.",
+  storageLoaded: "Für diese Ansicht von deinem Mailserver geladen. Nicht in der Cloud gespeichert.",
+  storageSettings: "Speicher-Einstellungen",
+  storageLoadGone: "Dein Mailserver hat diese Nachricht nicht mehr dort, wo ohmail sie zuletzt gesehen hat.",
+  storageLoadTooLarge: "Diese Nachricht ist zu groß, um sie hier zu laden. Auf deinem Mailserver ist sie vollständig.",
+  storageLoadBusy: "In dieser Stunde wurden viele Nachrichten geladen. Versuch es später nochmal.",
+  storageLoadFailed: "Die Nachricht ließ sich gerade nicht laden. Versuch es gleich nochmal.",
 
   renderErrorTitle: "Auf diesem Bildschirm ist etwas schiefgegangen.",
   renderErrorWhere: (surface: string) => `${surface} konnte nicht gezeichnet werden.`,

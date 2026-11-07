@@ -28,7 +28,7 @@ import { NO_TOASTS, afterDismiss, nextToast, paintGate, type ToastSlots } from "
 import { useLocale } from "../i18n/LocaleProvider";
 import { activeLocale } from "../i18n/locale";
 import { useConnection } from "../net/connection";
-import { helloReader } from "../net/pairing";
+import { helloReader, type ConnectedSession } from "../net/pairing";
 import {
   readFoldersEnabled,
   writeAutoAct,
@@ -851,6 +851,12 @@ export function useBodies(): (id: string) => ReturnType<typeof liveBody> {
   // `stamp` is the dependency: the function reads the engine, and a body landing must re-read it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useCallback((id: string) => (engine ? liveBody(engine, id) : null), [engine, stamp]);
+}
+
+/** The live session, or null: for a surface that asks its server itself (an emptied letter's Load it now). */
+export function useLiveSession(): ConnectedSession | null {
+  const conn = useConnection();
+  return conn.state.k === "live" ? conn.state.session : null;
 }
 
 /** One message's body for a surface that draws it — see {@link useBodyStamp}. */
