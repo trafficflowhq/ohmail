@@ -44,6 +44,14 @@ describe("the local store's body vector (mail 0140)", () => {
     expect([Number(t!.n), c!.g]).toEqual([1, ""]);
   });
 
+  it("keeps the bounded vector and its index: only a server's setup retires them, a paired desktop searches by them", async () => {
+    const [r] = await rows<{ f: string; ix: boolean }>(sql`select p.proname as f,
+        to_regclass('public.message_bodies_body_tsv_idx') is not null as ix
+      from pg_trigger t join pg_proc p on p.oid = t.tgfoid
+      where t.tgname = 'message_bodies_body_tsv_tg' and t.tgrelid = 'message_bodies'::regclass`);
+    expect([r!.f, r!.ix]).toEqual(["message_bodies_body_tsv_bounded", true]);
+  });
+
   it("stores a 2 MiB body of distinct words whole and finds it by its first part", async () => {
     const accountId = randomUUID();
     await opened.db.insert(accounts).values({ id: accountId, name: "vector" });
