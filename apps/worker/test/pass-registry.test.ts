@@ -116,6 +116,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "sensitive-backfill.ts::sensitiveBackfillPass",
   "storage-evict.ts::storageEvictPass",
   "storage-refill.ts::storageRefillPass",
+  "storage-stats.ts::storageStatsPass",
   "sync-kick.ts::syncKickPass",
   "thread-backfill.ts::runThreadBackfill",
   "thread-join-heal.ts::threadJoinHealPass",

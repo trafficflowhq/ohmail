@@ -11,7 +11,7 @@ import type { Tx } from "@trafficflow/db";
 import {
   runAwayResponderPass,
   reapStaleWebSessions,
-  runAccountLifecyclePass, eraseOneDueAccount, throttleKeysFor,
+  runAccountLifecyclePass, eraseOneDueAccount, throttleKeysFor, runStorageMailPass,
   runScheduledSendPass, runSendReconcilePass, runOwedSentCopyPass, SEND_RECONCILE_NET_TIMEOUTS,
   startDrainBudget,
   TransientDialRefusal, type AdminDb,
@@ -157,6 +157,12 @@ const ACCOUNT_LIFECYCLE_ERASE_PATH = "/internal/account-lifecycle/erase";
  * timing oracle. Exported for the route's own test; the worker's `api-cron.ts` pokes the same path.
  */
 export const SECURITY_NOTICES_CRON_PATH = "/internal/security-notices/run";
+
+/**
+ * The storage mails' clock (cloud 0057): at 90% and when full, sent here on the API host, which holds
+ * the transactional mail. HOURLY; the worker's `api-cron.ts` pokes the same path.
+ */
+export const STORAGE_MAILS_CRON_PATH = "/internal/storage-mails/run";
 
 /**
  * `makeSendAdapter` under the per-mailbox admission counter — the reconciling pass's dial:
@@ -1235,6 +1241,48 @@ export const internalRoutes: Route[] = [
       } catch (err) {
         log.error("security_notices_failed", { err });
         return json(503, { error: { code: "security_notices_failed" } });
+      }
+    },
+  },
+  {
+    /**
+     * `GET /internal/storage-mails/run` — the storage mails (`runStorageMailPass`): one at 90% and one
+     * when full, once per account, level and cap, a week apart, none while turned off, and only where
+     * the program offers a change the person can take. The reaper's shape: GET, either secret, 404
+     * unarmed; unmetered hosts answer 200 `{skipped}`. Overlapping pokes are safe: each mail is claimed
+     * under the account's advisory lock before its send.
+     */
+    method: "GET",
+    pattern: STORAGE_MAILS_CRON_PATH,
+    relay: false,  /* the hosted service's shared-secret intake */
+    cost: "unauthenticated",
+    options: { public: true, anonymous: true, raw: true },
+    handler: async (req, deps) => {
+      const log = (deps.logger ?? silentLogger).child({ route: STORAGE_MAILS_CRON_PATH });
+      const cfg = deps.alerts;
+      if (!cfg || cfg.secret.trim().length === 0) return json(404, { error: { code: "not_found" } });
+      const cron = cfg.cronSecret?.trim();
+      const authorized = presentsSecret(req, cfg.secret)
+        || (cron !== undefined && cron.length > 0 && presentsSecret(req, cron));
+      if (!authorized) {
+        log.warn("storage_mails_unauthorized", {});
+        return json(401, { error: { code: "unauthorized" } });
+      }
+      const port = entitlementsPort(deps);
+      if (!port) return json(200, { skipped: "unmetered" });
+      try {
+        const result = await runStorageMailPass(deps.db, {
+          port, mail: deps.services?.customerMail ?? null, log, now: deps.now,
+        });
+        if (result.sent.near + result.sent.full + result.faults > 0) {
+          log.info("storage_mails_pass", {
+            sent: result.sent.near + result.sent.full, due: result.due, faults: result.faults, capped: result.capped,
+          });
+        }
+        return json(200, { now: deps.now().toISOString(), ...result });
+      } catch (err) {
+        log.error("storage_mails_failed", { err });
+        return json(503, { error: { code: "storage_mails_failed" } });
       }
     },
   },

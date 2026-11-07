@@ -587,6 +587,36 @@ export class MailService {
       }));
   }
 
+  /**
+   * A storage mail (cloud 0057), at 90% or when storage is full. The DEDUP is the caller's
+   * (`storage_mail_sent`'s key on account, level and cap, and a week between two); the key here is the
+   * backstop for a re-driven send, on the same fact. The button is the app's own Settings › Storage
+   * door, which asks for sign-in: no token rides the mail. `transactional`: the recipient is the
+   * account's own user, read from `users`.
+   */
+  async sendStorageNotice(
+    ctx: MailContext,
+    input: {
+      to: string; locale: MailLocale; level: "near" | "full"; usedBytes: number; capBytes: number;
+      limitReason: "plan" | "trial" | "held"; limitDropsAt: string | null; expectedBytes: number; importing: boolean;
+      keptFrom: string | null;
+      fit: { plan: "solo" | "plus" | "pro"; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
+      /** The storage the fitted choice adds on top of its plan's own room. */
+      addonBytes: number;
+      currency: string; interval: "month" | "year";
+    },
+  ): Promise<MailSendResult> {
+    const { to: _to, level, ...facts } = input;
+    return this.guarded(ctx, input.to, "transactional", (to) =>
+      this.deps.mailer.send(to, level === "full" ? "storage_full" : "storage_near", {
+        ...facts,
+        settingsUrl: `${trimSlash(this.cfg.appUrl)}/#/settings/storage`,
+        supportEmail: this.cfg.supportEmail,
+      }, {
+        idempotencyKey: `storage:${hashToken(`${to}|${level}|${String(input.capBytes)}`)}`,
+      }));
+  }
+
   async sendAccountExists(ctx: MailContext, input: { to: string; locale?: MailLocale }): Promise<MailSendResult> {
     const locale = mailLocaleOf(input.locale);
     return this.guarded(ctx, input.to, "unsolicited", (to) =>

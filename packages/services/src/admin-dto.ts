@@ -648,6 +648,14 @@ export interface StorageRow {
   checkedAt: string | null;
   /** The counter minus the real bytes at that check; null before the first. */
   drift: number | null;
+  /**
+   * The account page's Expected figure (cloud 0057), from the worker's snapshot alone: see
+   * {@link AccountStorageFacts}. Absent before the account's first snapshot. Counts only.
+   */
+  expectedBytes?: number;
+  expectedLetters?: number;
+  complete?: boolean;
+  importing?: boolean;
 }
 
 /**
@@ -666,6 +674,15 @@ export interface AccountStorageFacts {
   lastEmptiedAt: string | null;
   keptFrom: string | null;
   withheldOnArrival: number;
+  /**
+   * The storage estimate (cloud 0057), from the worker's snapshot alone: what the mailboxes need once
+   * every letter is in, `complete` false while a folder of a mailbox still importing had no count.
+   * Absent before the first snapshot. Counts only.
+   */
+  expectedBytes?: number;
+  expectedLetters?: number;
+  complete?: boolean;
+  importing?: boolean;
 }
 
 /** `GET /admin/storage?cursor=&limit=` — keyset by account id; the two totals cover every row. */
