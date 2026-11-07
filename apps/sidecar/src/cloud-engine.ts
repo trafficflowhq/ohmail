@@ -160,12 +160,12 @@ export interface CloudSidecarConfig {
   /** Told once when the mirror's store ends under it — the local engine's `SidecarConfig.onStoreFatal`. */
   onStoreFatal?: (fatal: Error) => void;
   /**
-   * Told the mailbox this launch serves when `ready` could not name one (a paired install, whose
-   * world has no row until the first mailbox list lands) — `main.ts` writes it as a `mailbox`
-   * frame. Awaited before any answer that depends on it goes out.
+   * Told the mailbox this launch serves when `ready` could not name one (a paired install, or a
+   * store with no mailbox yet: the world has no row until the first mailbox list lands) —
+   * `main.ts` writes it as a `mailbox` frame. Awaited before any answer that depends on it goes out.
    */
   onServedMailbox?: (mailboxId: string) => Promise<void>;
-  /** The pairing's wait for that name — {@link PAIR_SERVED_WAIT_MS}; a test shortens it. */
+  /** A sign-in's or pairing's wait for that name — {@link PAIR_SERVED_WAIT_MS}; a test shortens it. */
   pairServedWaitMs?: number;
 }
 
@@ -860,15 +860,16 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
       address: config.address,
       ...(config.displayName ? { displayName: config.displayName } : {}),
       now: now(),
+      door: "cloud",
     });
     const session = await mintLaunchBearer(db, world, now(), log);
     // One phase, both identity writes — see the same two lines in `engine.ts`.
     const worldMs = Date.now() - tWorld;
 
-    /* THE MAILBOX THIS LAUNCH SERVES. A paired install has no address, so its world names no row
-       and `ready` says "" — the window then waits for ever on a mailbox the mirror already holds.
+    /* THE MAILBOX THIS LAUNCH SERVES. A paired install, or a store holding no mailbox yet, names no
+       row, and `ready` says "" — the window then waits for ever on a mailbox the mirror already holds.
        Named ONCE, when a mailbox list first gives this world a row, by the rule a relaunch applies
-       (`ensureLocalWorld` again), and told to the shell before the pairing's answer goes out. */
+       (`ensureLocalWorld` again), and told to the shell before a sign-in's or pairing's answer goes out. */
     let served = world.mailboxId;
     /* The window's outbox, scoped to the mailbox this launch serves. Built after
        `enforceMirrorOwner`, so it never reads a file that check discarded; the launch bearer is
@@ -891,6 +892,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           address: config.address,
           ...(config.displayName ? { displayName: config.displayName } : {}),
           now: now(),
+          door: "cloud",
+          listed: true,
         });
         if (again.mailboxId === "" || served !== "") return;
         served = again.mailboxId;
@@ -1892,8 +1895,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
         log?.("cloud_signed_in", { mailboxId: served });
         // NOT AWAITED, and for the reason the launch path does not await it either: a first pull of
         // a real account takes a while, and a sign-in that appears to hang for it looks broken. The
-        // mirror reports its own progress through `/health.online` and the next `/sync`.
-        void live.mirror.start().catch((err: unknown) => {
+        // mirror reports its own progress through `/health.online` and the next `/sync`. Its first
+        // mailbox list is awaited below, bounded, as on a pairing: it names the served mailbox.
+        const firstPull = live.mirror.start().catch((err: unknown) => {
           const fk = integrityLogFields(err);
           log?.("cloud_pull_failed", {
             err,
@@ -1902,6 +1906,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             reason: "the first pull after signing in did not complete; the mirror retries with backoff",
           });
         });
+        // A first pull that ended without naming one will not name one before the bound.
+        await Promise.race([servedWithin(config.pairServedWaitMs ?? PAIR_SERVED_WAIT_MS), firstPull]);
         return json({ status: "signed_in", mailboxId: served, address: config.address });
       }
 

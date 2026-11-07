@@ -7,6 +7,7 @@ import { FIRST_PAINT_VERDICT_MS, readStoredVerdict } from "../../webapp/app/shel
  * last word for this mailbox was `open` paints at once; any other asks the account's own read
  * first, bounded, and paints anyway past the bound (the bridge's 402 notice stays armed). `key` is
  * the storage owner the bridge stores the verdict under, or `null` where no hosted account is.
+ * Before the engine has named a mailbox, {@link useDesktopUnnamedWall} asks instead.
  */
 
 /** A refused answer's facts, the fields the 402 carries. */
@@ -46,4 +47,45 @@ export function useDesktopFirstPaint(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `onRefused` is a state setter
   }, [key, known]);
   return known || opened === key ? "open" : "asking";
+}
+
+/** How often the window asks the account again while its engine has named no mailbox. */
+export const UNNAMED_ACCESS_MS = 10_000;
+
+/** The engine's answer to a relayed request while its mirror cannot reach the server. */
+const OFFLINE_CODE = "offline_read_only";
+
+/**
+ * THE WALL BEFORE A MAILBOX IS NAMED. A Cloud door's engine names its mailbox from the account's
+ * list, and a refused account's list is a 402: no mailbox is shown, so neither the first paint nor
+ * a relayed 402 can raise the lock. While `asking` (an account door signed in, no mailbox shown, no
+ * lock up) the account's own read is asked at once and every {@link UNNAMED_ACCESS_MS}; a refused
+ * answer is the lock's facts. `"unreachable"` while the engine answers it offline: its pulls have
+ * not reached the server, which the boot line then says instead of "Opening your mailbox…".
+ */
+export function useDesktopUnnamedWall(
+  asking: boolean,
+  onRefused: (facts: AccessRefusedFacts) => void,
+): "asking" | "unreachable" {
+  const [unreachable, setUnreachable] = useState(false);
+  useEffect(() => {
+    setUnreachable(false);
+    if (!asking) return;
+    let live = true;
+    const ask = async (): Promise<void> => {
+      try {
+        const res = await bridgeFetch(ACCOUNT_ACCESS_PATH);
+        const body = (await res.json().catch(() => null)) as { error?: { code?: unknown } } | null;
+        if (!live) return;
+        setUnreachable(res.status === 503 && body?.error?.code === OFFLINE_CODE);
+        const facts = res.ok ? refusedFactsOfAnswer(body) : null;
+        if (facts !== null) onRefused(facts);
+      } catch { /* the engine did not answer: asked again on the clock */ }
+    };
+    void ask();
+    const clock = setInterval(() => void ask(), UNNAMED_ACCESS_MS);
+    return () => { live = false; clearInterval(clock); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `onRefused` is a state setter
+  }, [asking]);
+  return asking && unreachable ? "unreachable" : "asking";
 }

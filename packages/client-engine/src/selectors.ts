@@ -1766,24 +1766,30 @@ function storeRow(
  * THE STORE'S SENDERS, IN THE STORE'S ORDER — a join, never a union. A sender whose held mail the
  * mirror presents gets the mirror's row; one whose named message the mirror holds elsewhere is
  * one the mirror has seen decided since the page was read, and is left out; the rest are minted.
+ * `leftTheGate` counts the senders left out because their named letter is no longer at the gate here.
  */
 function joinStore(
   reader: EntityReader, senders: readonly ScreenerWaitingSenderDTO[],
   derived: ReadonlyMap<string, ScreenerSenderDTO>, own: ReadonlySet<string>,
   now: Date, locale: string, zone: string,
-): ScreenerSenderDTO[] {
+): { rows: ScreenerSenderDTO[]; leftTheGate: number } {
   const advice = newestAdviceBySender(reader);
   const out: ScreenerSenderDTO[] = [];
+  let leftTheGate = 0;
   for (const s of senders) {
     const key = senderKey(s.address);
     if (own.has(key)) continue;
     const dto = derived.get(key);
     // The store's word on what a screen-out of this sender files (`checked.claimsOnly`); the mirror has none.
     if (dto) { out.push(s.claimsOnly && dto.checked?.reason === "impersonation" ? { ...dto, checked: { ...dto.checked, claimsOnly: true } } : dto); continue; }
-    if (reader.get<EngineMessage>("message", s.messageId) !== undefined) continue;
+    const m = reader.get<EngineMessage>("message", s.messageId);
+    if (m !== undefined) {
+      if ((m.physicalFolder ?? m.folder) !== FOLDER_OF_VIEW.screener) leftTheGate += 1;
+      continue;
+    }
     out.push(storeRow(s, now, locale, zone, suggestionAi(advice.get(key))));
   }
-  return out;
+  return { rows: out, leftTheGate };
 }
 
 /**
@@ -1825,7 +1831,7 @@ export function screenerRowsOfStore(
 ): ScreenerSenderDTO[] {
   const segments = screenerSegments(reader, now, locale, zone, ownAddresses);
   const own = ownAddressKeys(reader, ownAddresses === undefined ? {} : { ownAddresses });
-  return joinStore(reader, senders, derivedWaitingOf.get(segments) ?? new Map(), own, now, locale, zone);
+  return joinStore(reader, senders, derivedWaitingOf.get(segments) ?? new Map(), own, now, locale, zone).rows;
 }
 
 function heldReleaseClaim(reader: EntityReader): (key: string) => boolean {
@@ -2049,20 +2055,19 @@ export function screenerSegments(
 
   // THE STORE'S QUEUE, when it has answered: the waiting set and its count are the store's.
   const store = screenerWaitingOf(reader);
-  const waiting = store === null
+  const joined = store === null ? null : joinStore(reader, store.senders, out.waiting, own, now, locale, zone);
+  const waiting = store === null || joined === null
     ? [...out.waiting.values()]
-    : [
-      ...joinStore(reader, store.senders, out.waiting, own, now, locale, zone),
-      ...pastThePage(reader, store, out.waiting),
-    ];
+    : [...joined.rows, ...pastThePage(reader, store, out.waiting)];
   const segments: ScreenerSegments = {
     waiting,
     screenedOut: [...out.screened_out.values()],
     spam: [...out.spam.values()],
     source: store === null ? "mirror" : "store",
-    // A row a decision's overlay hides is a sender no longer waiting, before the next answer.
-    waitingTotal: store === null ? waiting.length
-      : Math.max(0, store.page.total - Math.max(0, store.page.rows - store.senders.length)),
+    // A row a decision's overlay hides is a sender no longer waiting, before the next answer;
+    // so is a listed sender whose letter has left the gate here.
+    waitingTotal: store === null || joined === null ? waiting.length
+      : Math.max(0, store.page.total - Math.max(0, store.page.rows - store.senders.length) - joined.leftTheGate),
     waitingCursor: store === null ? null : store.page.nextCursor,
     failedAtGate: [],
   };

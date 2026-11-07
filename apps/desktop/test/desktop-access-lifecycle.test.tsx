@@ -308,12 +308,14 @@ describe("the window's lift and first paint", () => {
   const OPEN = { metered: true, access: "open", canAddMailbox: true, mailboxes: 5, aiEnabled: true };
   const REFUSED = { metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false };
   let accessBody: unknown = REFUSED;
+  let accessStatus = 200;
   let accessReads = 0;
   const settle = async (): Promise<void> => {
     for (let i = 0; i < 12; i += 1) await act(async () => { await Promise.resolve(); });
   };
   beforeEach(() => {
     accessBody = REFUSED;
+    accessStatus = 200;
     accessReads = 0;
     localStorage.clear();
     sessionStorage.clear();
@@ -330,7 +332,7 @@ describe("the window's lift and first paint", () => {
       transformCallback: () => 1,
       invoke: async (command: string, payload?: { url?: string }) => {
         if (command !== "engine_request") return null;
-        if (payload?.url === "/account/access") { accessReads += 1; return encode(200, JSON.stringify(accessBody)); }
+        if (payload?.url === "/account/access") { accessReads += 1; return encode(accessStatus, JSON.stringify(accessBody)); }
         return encode(200, "{}");
       },
     };
@@ -401,6 +403,44 @@ describe("the window's lift and first paint", () => {
     seen.length = 0;
     await act(async () => { root.render(h(Probe, { k: null })); });
     expect(seen[0]).toBe("open");
+  });
+
+  it("before a mailbox is named the account is asked at once and on the clock: refused is the lock's facts, offline is unreachable", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const { useDesktopUnnamedWall, UNNAMED_ACCESS_MS } = await import("../src/desktop-first-paint.js");
+    const seen: string[] = [];
+    const refused: unknown[] = [];
+    function Probe({ asking }: { asking: boolean }): React.ReactElement {
+      seen.push(useDesktopUnnamedWall(asking, (f) => { refused.push(f); }));
+      return h("i", null, "x");
+    }
+    const tick = async (): Promise<void> => { await act(async () => { vi.advanceTimersByTime(UNNAMED_ACCESS_MS); }); await settle(); };
+    // A mailbox is shown, or no account door: nothing is asked.
+    await act(async () => { root.render(h(Probe, { asking: false })); });
+    await tick();
+    expect(accessReads).toBe(0);
+    // Open: asked at once, nothing raised.
+    accessBody = OPEN;
+    await act(async () => { root.render(h(Probe, { asking: true })); });
+    await settle();
+    expect([accessReads, refused]).toEqual([1, []]);
+    // The engine answers offline: its server is not answering.
+    accessStatus = 503;
+    accessBody = { error: { code: "offline_read_only", message: "offline" } };
+    await tick();
+    expect(seen[seen.length - 1]).toBe("unreachable");
+    // Refused on the clock: the lock's facts, and no longer unreachable.
+    accessStatus = 200;
+    accessBody = REFUSED;
+    await tick();
+    expect(accessReads).toBe(3);
+    expect(refused).toMatchObject([{ reason: "payment_required" }]);
+    expect(seen[seen.length - 1]).toBe("asking");
+    // A mailbox named, or the lock up: the clock stops.
+    await act(async () => { root.render(h(Probe, { asking: false })); });
+    await tick();
+    await tick();
+    expect(accessReads).toBe(3);
   });
 });
 

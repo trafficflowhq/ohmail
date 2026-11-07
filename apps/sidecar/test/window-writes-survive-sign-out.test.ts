@@ -86,6 +86,8 @@ async function launch(dataDir: string, s: Server, who: { address: string; base: 
     tokens: { accessToken: `access-${launches}`, refreshToken: `refresh-${launches}` },
   });
   sidecars.push(sidecar);
+  // The window mounts once the account's list has named the mailbox it is scoped to.
+  await sidecar.start();
   /** Every request the window sends its engine, by method and path. */
   const asked: string[] = [];
   const bridge = async (path: string, init?: unknown): Promise<Response> => {
@@ -316,7 +318,7 @@ describe("a kept write is its own account's, on its own server", () => {
 
     clock.ms += 10 * MIN;
     const a2 = await launch(dataDir, s, { address: A, base: BASE1 });
-    expect(a2.sidecar.servedMailboxId(), "control: the mailbox id is minted anew").not.toBe(firstScope);
+    expect(a2.sidecar.servedMailboxId(), "A's mailbox is the account's own, served again after the switch").toBe(firstScope);
     const w2 = windowOver(a2.bridge, a2.sidecar.servedMailboxId(), clock);
     await w2.start();
     expect(await until(10_000, () => s.writes.length === 2)).toBe(true);

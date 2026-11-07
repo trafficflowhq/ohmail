@@ -144,6 +144,8 @@ async function launch(dataDir: string, s: Server, tokens: { accessToken: string;
     pollIntervalMs: 3_600_000, keks: { 1: Buffer.alloc(32, 7) }, tokens,
   });
   sidecars.push(sidecar);
+  // The window mounts once the account's list has named the mailbox it is scoped to.
+  await sidecar.start();
   const bridge = async (path: string, init?: unknown): Promise<Response> => {
     const i = (init ?? {}) as RequestInit;
     const headers = new Headers(i.headers);
@@ -284,7 +286,6 @@ describe("a send waits for the account, never for this computer's copy", () => {
     const s: Server = { create: "ok", send: "ok", refresh: "minted", creates: [], sends: [], seq: 1_000, syncMs: 0, t: {}, marked: [],
       ...(row ? { row: null } : {}) };
     const a = await launch(dataDir, s, { accessToken: "held-access", refreshToken: "held-refresh" });
-    await a.sidecar.start();
     const clock = { ms: Date.now() };
     const w = windowOver(a.bridge, a.sidecar.servedMailboxId(), clock, true);
     await w.start();
