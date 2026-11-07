@@ -3992,9 +3992,10 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
     // property that rule was standing in for is not "no query", it is "no query anything outside
     // this file could have shaped". So the ban stays, with the admitted values named per key: a new
     // entry that invents a query still fails here, and so does an existing one that grows a parameter.
-    const ALLOWED_QUERIES: [(&str, &str); 3] = [
+    const ALLOWED_QUERIES: [(&str, &str); 4] = [
         ("mailboxes", "settings=mailboxes"),
         ("devices", "settings=devices"),
+        ("storage", "settings=storage"),
         ("setup", "next=join"),
     ];
     for (key, url) in LINKS {
@@ -4011,6 +4012,8 @@ fn the_browser_can_only_be_sent_where_this_table_says() {
             );
         }
     }
+    // Change plan and Add storage need a factor this window cannot assert: Settings → Storage itself.
+    assert_eq!(link_for("storage"), Some("https://ohmail.app/mailbox?settings=storage#/settings"));
     assert_eq!(link_for("https://elsewhere.test"), None);
     assert_eq!(link_for(""), None);
     assert_eq!(link_for("Account"), None);

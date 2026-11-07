@@ -1309,7 +1309,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
     expect(notes, "every sibling at the cap must carry the note").toHaveLength(2);
     for (const n of notes) {
-      expect(n.textContent).toContain("stopped storing the text of older letters");
+      expect(n.textContent).toContain("isn't kept on Cloud because your storage is full");
       expect(n.textContent).not.toContain("Loading the full message");
       expect(n.textContent).not.toContain("Couldn't load the full message");
     }
@@ -1337,7 +1337,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     expect(notes).toHaveLength(2);
     for (const n of notes) {
       expect(n.textContent).toContain("your spam verdict filed this message to the Junk folder");
-      expect(n.textContent).not.toContain("stopped storing the text of older letters");
+      expect(n.textContent).not.toContain("isn't kept on Cloud");
     }
   });
 
@@ -1385,7 +1385,7 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
       expect(n.textContent).toContain("every copy of this message is gone");
       // The storage sentence's reassurance is FALSE here — that is why the marker exists.
       expect(n.textContent).not.toContain("safe in your mailbox");
-      expect(n.textContent).not.toContain("stopped storing the text of older letters");
+      expect(n.textContent).not.toContain("isn't kept on Cloud");
     }
   });
 
@@ -1401,12 +1401,12 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     for (const n of notes) {
       expect(n.textContent).toContain(`larger than ${MAX_RAW_MESSAGE_BYTES / (1024 * 1024)} MB`);
       expect(n.textContent).toContain("Open it in your mail provider");
-      expect(n.textContent).not.toContain("stopped storing the text of older letters");
+      expect(n.textContent).not.toContain("isn't kept on Cloud");
     }
     expect([...host!.querySelectorAll("button")].find((x) => x.textContent?.includes("Retry"))).toBeUndefined();
   });
 
-  it("the storage-cap marker keeps the storage sentence, and says the text comes back once there is room", async () => {
+  it("the storage-cap marker keeps the storage sentence: not kept on Cloud, complete on the mail server", async () => {
     bodyState = "withheld";
     bodyWithheld = "storage_cap";
     conversation = [A, B, C];
@@ -1414,8 +1414,8 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
     expect(notes).toHaveLength(2);
     for (const n of notes) {
-      expect(n.textContent).toContain("stopped storing the text of older letters");
-      expect(n.textContent).toContain("When there is room again, ohmail fetches this text back from your mail server.");
+      expect(n.textContent).toContain("isn't kept on Cloud because your storage is full");
+      expect(n.textContent).toContain("It's complete on your mail server.");
     }
   });
 
@@ -1429,10 +1429,9 @@ describe("a conversation's siblings are loaded on open and rendered like mail", 
     const notes = [...host!.querySelectorAll(".conv .pm .hm-state")];
     expect(notes).toHaveLength(2);
     for (const n of notes) {
-      expect(n.textContent).toContain("stopped storing the text of older letters");
-      expect(n.textContent).toContain("ohmail no longer reads this mailbox, so this text does not come back here.");
+      expect(n.textContent).toContain("isn't kept on Cloud because your storage was full");
+      expect(n.textContent).toContain("ohmail no longer reads this mailbox, so it does not come back here.");
     }
-    expect(text()).not.toContain("room again");
   });
 
   it("a LIVE sensitive sibling renders its body like any other sibling", async () => {

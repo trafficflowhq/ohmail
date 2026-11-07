@@ -146,14 +146,14 @@ async function settle(turns = 40): Promise<void> {
 const SETTINGS = messages.settings as unknown as Record<string, string>;
 
 /** Mount the real gate at `#/settings` over `status`, with the window's link interceptor armed. */
-async function open(status: EngineStatus): Promise<void> {
+async function open(status: EngineStatus, hash = "#/settings"): Promise<void> {
   fakeShell(status);
   /* The two calls `main.tsx` makes, and the reason this file can assert the EXIT: the address
      never navigates this window — one capture-phase listener on the document hands it to the
      platform's opener. Disposed in `afterEach`, so a case that does not arm it sees nothing. */
   enableExternalLinks();
   disposeInterceptor = interceptLinkClicks(document, { trustSameOrigin: true });
-  window.location.hash = "#/settings";
+  window.location.hash = hash;
   mountPoint = document.createElement("div");
   document.body.appendChild(mountPoint);
   root = createRoot(mountPoint);
@@ -416,10 +416,10 @@ describe("the offer after a failed read", () => {
   });
 });
 
-describe("the emptied-text notice on the Cloud door", () => {
-  const EMPTIED = {
-    usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
-    firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", emptyingNow: true,
+describe("the storage card on the Cloud door", () => {
+  const FULL = {
+    usedBytes: 2_000_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
+    firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", emptyingNow: true, card: "full",
   };
   const withStorage = (storage: unknown, state = "trialing"): { status: number; body: string } => ({
     status: 200,
@@ -428,27 +428,25 @@ describe("the emptied-text notice on the Cloud door", () => {
       lifecycle: { state, closedReason: null }, storage,
     }),
   });
-  const notice = (): HTMLElement | null => mountPoint!.querySelector("[data-storage-notice]");
+  const card = (): HTMLElement | null => mountPoint!.querySelector("[data-storage-card]");
 
-  it("the same access read draws it, with the plan sentence and a way to the Subscription pane", async () => {
-    globalThis.localStorage.clear();
-    access = withStorage(EMPTIED);
-    await open(CLOUD_SERVING);
-    expect(notice()?.textContent).toContain("no longer stores the text of your 80,000 oldest letters");
-    expect(notice()?.textContent).toContain("A bigger plan keeps more text from now on.");
-    expect(notice()?.querySelector("a")?.getAttribute("href")).toBe("#/settings/billing");
-    // The first paint's read and the offer's, as on any first launch: the notice asks nothing of its own.
+  it("the same access read draws it atop the Ohbox, with a way to Settings → Storage", async () => {
+    access = withStorage(FULL);
+    await open(CLOUD_SERVING, "#/ohbox");
+    expect(card()?.textContent).toContain("Storage full");
+    expect(card()?.textContent).toContain("Text kept for letters from April 2019 on; older ones stay on your mail server.");
+    expect(card()?.querySelector("a")?.getAttribute("href")).toBe("#/settings/storage");
+    // The first paint's read and the offer's, as on any first launch: the card asks nothing of its own.
     expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH)).toHaveLength(2);
   });
 
   it("the cap is crossed while the window is open: a return after the quiet floor draws it", async () => {
-    globalThis.localStorage.clear();
     localStorage.setItem("ohmail.access.mbx-1", "open");
-    access = withStorage({ ...EMPTIED, usedBytes: 1_700_000_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null });
-    await open(CLOUD_SERVING);
-    expect(notice()).toBeNull();
+    access = withStorage({ ...FULL, usedBytes: 1_000_000_000, emptiedForSpace: 0, card: null });
+    await open(CLOUD_SERVING, "#/ohbox");
+    expect(card()).toBeNull();
     const before = enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length;
-    access = withStorage(EMPTIED, "active");
+    access = withStorage(FULL, "active");
     const start = Date.now();
     const backAt = async (ms: number): Promise<void> => {
       vi.spyOn(Date, "now").mockReturnValue(start + ms);
@@ -459,32 +457,31 @@ describe("the emptied-text notice on the Cloud door", () => {
     expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length - before, "a return inside the floor asked").toBe(0);
     await backAt(16 * 60_000);
     expect(enginePaths.filter((p) => p === ACCOUNT_ACCESS_PATH).length - before).toBe(1);
-    expect(notice()?.textContent).toContain("no longer stores the text of your 80,000 oldest letters");
+    expect(card()?.textContent).toContain("Storage full");
     globalThis.localStorage.clear();
   });
 
-  it("put away, it stays away on the next launch", async () => {
-    globalThis.localStorage.clear();
-    access = withStorage(EMPTIED, "active");
-    await open(CLOUD_SERVING);
-    await press(byText("button", "Dismiss")!);
-    expect(notice()).toBeNull();
+  it("Dismiss is written to the account, which answers no card on the next launch", async () => {
+    access = withStorage(FULL, "active");
+    await open(CLOUD_SERVING, "#/ohbox");
+    access = withStorage({ ...FULL, card: null }, "active");
+    await press(mountPoint!.querySelector<HTMLElement>("[data-storage-card] [aria-label=Dismiss]")!);
+    expect(card()).toBeNull();
+    expect(enginePaths).toContain("/account/storage");
     await act(async () => { root!.unmount(); });
     mountPoint!.remove();
-    await open(CLOUD_SERVING);
-    expect(notice()).toBeNull();
-    globalThis.localStorage.clear();
+    await open(CLOUD_SERVING, "#/ohbox");
+    expect(card()).toBeNull();
   });
 
-  it("a standalone install and an answer below ninety percent with nothing emptied draw nothing", async () => {
-    globalThis.localStorage.clear();
-    access = withStorage(EMPTIED);
-    await open(LOCAL_SERVING);
-    expect(notice()).toBeNull();
+  it("a standalone install, and an answer that names no card, draw nothing", async () => {
+    access = withStorage(FULL);
+    await open(LOCAL_SERVING, "#/ohbox");
+    expect(card()).toBeNull();
     await act(async () => { root!.unmount(); });
     mountPoint!.remove();
-    access = withStorage({ ...EMPTIED, usedBytes: 1_700_000_000, emptiedForSpace: 0 });
-    await open(CLOUD_SERVING);
-    expect(notice()).toBeNull();
+    access = withStorage({ ...FULL, card: null });
+    await open(CLOUD_SERVING, "#/ohbox");
+    expect(card()).toBeNull();
   });
 });

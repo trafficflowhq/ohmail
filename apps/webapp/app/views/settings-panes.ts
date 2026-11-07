@@ -19,6 +19,8 @@ export interface WiredPanes {
   desktop: string | null;
   devices: boolean;
   billing: boolean;
+  /** Settings → Storage: where a cap meters the stored letter text. */
+  storage: boolean;
   invites: boolean;
   security: boolean;
   account: boolean;
@@ -52,6 +54,7 @@ export function settingsPanes(w: WiredPanes, t: (key: string) => string): Array<
     ...(w.desktop !== null ? [["desktop", w.desktop] as [PaneId, string]] : []),
     ...(w.devices ? [["devices", t("devices")] as [PaneId, string]] : []),
     ...(w.billing ? [["billing", t("billing")] as [PaneId, string]] : []),
+    ...(w.storage ? [["storage", t("storage")] as [PaneId, string]] : []),
     ...(w.invites ? [["invites", t("invites")] as [PaneId, string]] : []),
     ...(w.security ? [["security", t("security")] as [PaneId, string]] : []),
     ...(w.account ? [["account", t("account")] as [PaneId, string]] : []),

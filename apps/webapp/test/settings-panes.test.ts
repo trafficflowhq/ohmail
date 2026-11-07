@@ -14,13 +14,13 @@ const t = (key: string): string => `L:${key}`;
 
 const ALL: WiredPanes = {
   mailboxes: true, screener: true, ai: true, away: true, rules: true, folders: true,
-  signatures: true, desktop: "This computer", devices: true, billing: true, invites: true,
+  signatures: true, desktop: "This computer", devices: true, billing: true, storage: true, invites: true,
   security: true, account: true, about: true, help: true,
 };
 
 const NONE: WiredPanes = {
   mailboxes: false, screener: false, ai: false, away: false, rules: false, folders: false,
-  signatures: false, desktop: null, devices: false, billing: false, invites: false,
+  signatures: false, desktop: null, devices: false, billing: false, storage: false, invites: false,
   security: false, account: false, about: false, help: false,
 };
 
@@ -34,7 +34,7 @@ describe("the settings tab list", () => {
   it("keeps the nav's reading order — client basics, mail plumbing, account administration, facts", () => {
     expect(settingsPanes(ALL, t).map(([id]) => id)).toEqual([
       "general", "notifications", "mailboxes", "screener", "ai", "away", "rules", "tags",
-      "folders", "signatures", "desktop", "devices", "billing", "invites", "security",
+      "folders", "signatures", "desktop", "devices", "billing", "storage", "invites", "security",
       "account", "about", "help",
     ]);
   });

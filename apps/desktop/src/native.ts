@@ -102,6 +102,9 @@ export const WEB_PLACES = [
   // gated, and a desktop session is stamped with a factor exactly once, when its code was claimed.
   // A form here would collect a password and be refused, so the window offers the way out instead.
   "devices",
+  // `storage` is Settings → Storage: Change plan and Add storage mint their page only after a
+  // recent second factor, which this window cannot assert, so the press opens the pane there.
+  "storage",
   // `link-desktop` is the odd one and worth naming: every other place here administers an
   // account this app is already serving, and this one is opened BEFORE there is a session — it
   // is the browser half of signing in, where the page mints a one-use code the person retypes

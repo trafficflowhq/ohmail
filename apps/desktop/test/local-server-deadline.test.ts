@@ -241,6 +241,7 @@ const reaches = (r: Route, c: Call): boolean => c.method === r.method && c.path 
 const UNRESOLVED: Readonly<Record<string, string>> = {
   "cloud-suggest.ts ask": "the Cloud suggest door's helper: its two callers name the Screener page and the suggest buy, neither a probe",
   "main.tsx post": "the network-return relay's poster: it posts the one retry path (`network-return.ts`), which re-dials and probes nothing",
+  "DesktopGate.tsx liveBodyBridge": "Load it now's bridge door: liveBodyVia hands it GET /messages/:id/live-body alone, a hosted read that probes no /local route",
 };
 
 /** Probes the engine builds outside a `/local/*` route handler — none a bridge call can reach. */
