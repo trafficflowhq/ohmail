@@ -99,8 +99,11 @@ function routeClassOf(method: string, pathname: string): string {
   return key === null ? "other" : key.slice(key.indexOf(" ") + 1);
 }
 
-/** A send carries its attachments inline on a self-hosted door (32 MiB), so its upload gets a staged file's bound. */
-const SEND_PATH = /^\/drafts\/[^/]+\/send$/;
+/**
+ * A send, and Send later with files, carry the attachments inline on a self-hosted door (32 MiB),
+ * so their upload gets a staged file's bound.
+ */
+const SEND_PATH = /^\/drafts\/[^/]+\/(?:send|schedule-with-files)$/;
 
 /** An abort at `ms`, on the process's own timers; `clear` once the forward settles. */
 function writeDeadline(ms: number): { signal: AbortSignal; clear: () => void } {

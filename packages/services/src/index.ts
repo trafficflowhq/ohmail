@@ -284,12 +284,18 @@ export {
 } from "./schedule-service.js";
 export {
   runScheduledSendPass, SCHEDULED_SEND_BATCH, SCHEDULED_SEND_EXPIRY_MS, SCHEDULED_SEND_SCAN_FACTOR,
+  SCHEDULED_SEND_EXPIRED_SENTENCE, SCHEDULED_FILES_OVERDUE_MS, SCHEDULED_FILES_MAX_AGE_MS,
   type ScheduledSendPassDeps, type ScheduledSendPassResult,
 } from "./schedule-send-pass.js";
 export {
-  readScheduledFiles, scheduledFilesMeta, sweepScheduledSendFiles, scheduledFileRows,
-  SCHEDULED_FILE_PIECE_CHARS, SCHEDULED_FILES_UNREADABLE, type ScheduledFile, type ScheduledFileMeta,
+  readScheduledFiles, scheduledFilesMeta, sweepScheduledSendFiles, sweepAgedScheduledFiles, scheduledFileRows, sealedFileRows,
+  SCHEDULED_FILE_PIECE_CHARS, SEALED_FILE_PIECE_BYTES, SCHEDULED_FILES_UNREADABLE, SCHEDULED_FILES_UNREADABLE_KEPT,
+  SCHEDULED_FILES_PLAIN, SCHEDULE_FILES_MAX_AHEAD_MS, SCHEDULED_FILES_QUOTA, SCHEDULED_FILES_QUOTA_LOCK_CLASS,
+  type ScheduledFile, type ScheduledFileMeta, type ScheduledFilesKeeping, type ScheduledFileSealer,
+  type SealedPiece, type PiecePlace,
 } from "./scheduled-send-files.js";
+// The server's seal on those files (mail 0180): on this barrel only, never on the mail leaf an engine bundles.
+export { scheduledFileSealer, keepScheduledFilesSealed } from "./scheduled-files-seal.js";
 export {
   runSendReconcilePass, SEND_RECONCILE_BATCH, SEND_RECONCILE_CALL_CEILING_MS,
   SEND_RECONCILE_CLOSE_CEILING_MS, SEND_RECONCILE_NET_TIMEOUTS,

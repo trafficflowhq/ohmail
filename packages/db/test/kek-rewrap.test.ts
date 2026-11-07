@@ -3,8 +3,10 @@ import { randomUUID } from "node:crypto";
 import { eq, getTableName, is } from "drizzle-orm";
 import { PgTable, PgColumn, getTableConfig } from "drizzle-orm/pg-core";
 import { makeTestDb } from "../src/testing.js";
-import { schema } from "../src/schema.js";
-import { accounts, users, mailboxes, mailboxCredentials } from "../src/schema-mail.js";
+// Every table either schema module exports, not only the ones the drizzle client is handed: a sealed
+// column on a table outside that list (mail 0180's pieces) must still be found.
+import * as schema from "../src/schema.js";
+import { accounts, users, mailboxes, mailboxCredentials, scheduledSendFiles } from "../src/schema-mail.js";
 import {
   totpSecrets, staffUsers, mailboxOauthCeremonies,
   mailboxOauthDeviceCeremonies, oauthProviderConfig,
@@ -94,6 +96,8 @@ async function seedAllSites(version: number): Promise<Record<string, string>> {
     "mailbox_oauth_ceremonies.code_verifier_enc": `verifier-${randomUUID()}`,
     "mailbox_oauth_device_ceremonies.device_code_enc": `device-code-${randomUUID()}`,
     "oauth_provider_config.client_secret_enc": `client-secret-${randomUUID()}`,
+    // Mail 0180: a server's scheduled-letter piece, whose envelope is the piece's own key.
+    "scheduled_send_files.dek_enc": `piece-key-${randomUUID()}`,
   };
   await db.insert(mailboxCredentials).values({
     mailboxId, transport: "imap",
@@ -132,6 +136,11 @@ async function seedAllSites(version: number): Promise<Record<string, string>> {
     clientSecretEnc: sealedAt(version, secrets["oauth_provider_config.client_secret_enc"]),
     clientSecretKeyVersion: version,
   });
+  await db.insert(scheduledSendFiles).values({
+    accountId, mailboxId, draftId: randomUUID(), sendKey: randomUUID(), fileNo: 0, seq: 0,
+    filename: "a.pdf", contentType: "application/pdf", sizeBytes: 3, contentSha256: "ab".repeat(32), rawB64: "c2Vh",
+    dekEnc: sealedAt(version, secrets["scheduled_send_files.dek_enc"]), dekKeyVersion: version,
+  });
   return secrets;
 }
 
@@ -143,6 +152,7 @@ async function readAll(): Promise<Record<string, { ct: string | null; kv: number
   const [o] = await db.select().from(mailboxOauthCeremonies);
   const [d] = await db.select().from(mailboxOauthDeviceCeremonies);
   const [p] = await db.select().from(oauthProviderConfig);
+  const [f] = await db.select().from(scheduledSendFiles);
   return {
     "mailbox_credentials.secret_enc": { ct: c?.secretEnc ?? null, kv: c?.keyVersion ?? null },
     "totp_secrets.secret_enc": { ct: t?.secretEnc ?? null, kv: t?.keyVersion ?? null },
@@ -160,6 +170,7 @@ async function readAll(): Promise<Record<string, { ct: string | null; kv: number
     "oauth_provider_config.client_secret_enc": {
       ct: p?.clientSecretEnc ?? null, kv: p?.clientSecretKeyVersion ?? null,
     },
+    "scheduled_send_files.dek_enc": { ct: f?.dekEnc ?? null, kv: f?.dekKeyVersion ?? null },
   };
 }
 
@@ -247,10 +258,11 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
     await seedAllSites(1);
     const census = await kekRewrapCensus(db as unknown as Tx, 2);
     // EIGHT since cloud 0046: `staff_users` and `totp_secrets` each carry two sealed sites, the
-    // live pair and the pending one an enrolment or a replacement in progress holds.
-    expect(census.outstanding).toBe(8);
+    // live pair and the pending one an enrolment or a replacement in progress holds. NINE with mail
+    // 0180's scheduled-letter pieces.
+    expect(census.outstanding).toBe(9);
     for (const s of census.sites) expect(s.outstanding, s.site).toBe(1);
-    expect(formatCensus(census).at(-1)).toContain("8 row(s) still below V" + "2");
+    expect(formatCensus(census).at(-1)).toContain("9 row(s) still below V" + "2");
   });
 
   /**
@@ -286,6 +298,13 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
     await expect(db.insert(oauthProviderConfig).values({
       provider: "microsoft", clientSecretEnc: sealedAt(1, "orphan"), clientSecretKeyVersion: null,
     })).rejects.toThrow(/oauth_provider_config_secret_sealed_together/);
+
+    // Mail 0180's pair, held the same way.
+    await expect(db.insert(scheduledSendFiles).values({
+      accountId, mailboxId, draftId: randomUUID(), sendKey: randomUUID(), fileNo: 0, seq: 0,
+      filename: "a.pdf", contentType: "application/pdf", sizeBytes: 3, contentSha256: "ab".repeat(32), rawB64: "c2Vh",
+      dekEnc: sealedAt(1, "orphan"), dekKeyVersion: null,
+    })).rejects.toThrow(/scheduled_send_files_dek_sealed_together/);
 
     // Cloud 0046 seals a TRIO: a start time without its secret would be a replacement that is
     // fresh for ever, and a secret without its version cannot be opened.
@@ -332,12 +351,12 @@ describe("CRYPTO-4 — the census answers 'does anything still reference V<n>'",
 });
 
 describe("CRYPTO-4 — the pass moves every site onto the current version", () => {
-  it("re-wraps all eight sites, preserving every plaintext exactly", async () => {
+  it("re-wraps all nine sites, preserving every plaintext exactly", async () => {
     const secrets = await seedAllSites(1);
     const kp = fakeProvider(2);
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: true });
 
-    expect(r.rewrapped).toBe(8);
+    expect(r.rewrapped).toBe(9);
     expect(r.failed).toBe(0);
     expect(r.raced).toBe(0);
     expect(r.truncated).toBe(false);
@@ -356,10 +375,10 @@ describe("CRYPTO-4 — the pass moves every site onto the current version", () =
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: false });
 
     expect(r.rewrapped).toBe(0);
-    expect(r.census.outstanding).toBe(8);
+    expect(r.census.outstanding).toBe(9);
     expect(kp.encrypts).toBe(0);                       // not one envelope was even built
     expect(await readAll()).toEqual(before);
-    expect(Object.keys(secrets)).toHaveLength(8);
+    expect(Object.keys(secrets)).toHaveLength(9);
   });
 
   /**
@@ -411,7 +430,7 @@ describe("CRYPTO-4 — the pass moves every site onto the current version", () =
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true, batchLimit: 1,
     });
     expect(r.truncated).toBe(true);
-    expect(r.rewrapped).toBe(8);                       // one per site, the ninth deferred
+    expect(r.rewrapped).toBe(9);                       // one per site, the tenth deferred
 
     const second = await runKekRewrap({
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true, batchLimit: 1,
@@ -441,7 +460,7 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: true });
 
     expect(r.rewrapped).toBe(0);
-    expect(r.failed).toBe(8);
+    expect(r.failed).toBe(9);
     expect(await readAll()).toEqual(before);
     for (const f of r.failures) {
       expect(f.reason, f.site).toBe("no_kek_for_version");
@@ -478,7 +497,7 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
     const r = await runKekRewrap({ db: db as unknown as Tx, keyProvider: kp, apply: true });
 
     expect(r.rewrapped).toBe(0);
-    expect(r.failed).toBe(8);
+    expect(r.failed).toBe(9);
     for (const f of r.failures) expect(f.reason, f.site).toBe("roundtrip_mismatch");
     expect(await readAll()).toEqual(before);
   });
@@ -492,7 +511,7 @@ describe("CRYPTO-4 — fail closed: a value that will not decrypt is REPORTED, n
       db: db as unknown as Tx, keyProvider: fakeProvider(2), apply: true,
     });
     expect(r.failed).toBe(1);
-    expect(r.rewrapped).toBe(8);
+    expect(r.rewrapped).toBe(9);
     const census = await kekRewrapCensus(db as unknown as Tx, 2);
     expect(census.outstanding).toBe(1);               // the corrupt row, and only it
   });
@@ -519,7 +538,7 @@ describe("CRYPTO-4 — nothing this pass emits can carry key material", () => {
       expect(emitted, `${site} plaintext`).not.toContain(plaintext);
       expect(emitted, `${site} stored ciphertext`).not.toContain(before[site]!.ct);
     }
-    expect(events).toHaveLength(8);
+    expect(events).toHaveLength(9);
   });
 
   /**
@@ -635,7 +654,7 @@ describe("retiring a version — what stored rows still name, asked at boot", ()
     expect(said).toContain(`${KEY_RING_RETIRED}=1`);
     expect(said).toContain(`put ${keyRingVar(1)} back`);
     expect(said).toContain(`unset ${KEY_RING_RETIRED}`);
-    expect(said).not.toMatch(/\b8\b/);
+    expect(said).not.toMatch(/\b9\b/);
     // Versions 1 and 2 retired, a row on version 2 alone: version 2 comes back, version 1 stays retired.
     const deeper = retiredVersionInUseFault({ retiredThrough: 2, total: 1, versions: [2], sites: [] });
     expect(deeper).toContain(`put ${keyRingVar(2)} back`);
@@ -680,7 +699,7 @@ describe("retiring a version — the step the re-wrap prints last", () => {
     const census = await kekRewrapCensus(db as unknown as Tx, 2);
     const text = formatRetireStep({ census, retiredThrough: 0, failed: 0 }).join("\n");
     expect(text).toContain("Do NOT remove any KEK version yet");
-    expect(text).toContain(`8 row(s) remain below ${v(2)}`);
+    expect(text).toContain(`9 row(s) remain below ${v(2)}`);
     expect(text).not.toContain(KEY_RING_RETIRED);
   });
 

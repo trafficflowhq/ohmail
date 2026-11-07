@@ -203,7 +203,11 @@ const CLASSIFIED: Record<string, { how: "paired" | "paired-by-caller" | "no-new-
     { how: "no-new-pin", why: "a delete takes a pin away" },
   "packages/services/src/schedule-send-pass.ts  (module).closeAppointment":
     { how: "no-new-pin", why: "an appointment's status; the reply target is not written" },
+  "packages/services/src/schedule-send-pass.ts  (module).tidyKeptFiles":
+    { how: "no-new-pin", why: "closes an overdue appointment; the reply target is not written" },
   "packages/services/src/schedule-service.ts  ScheduleService.schedule":
+    { how: "no-new-pin", why: "an appointment's status; the reply target is not written" },
+  "packages/services/src/schedule-service.ts  ScheduleService.scheduleSealed":
     { how: "no-new-pin", why: "an appointment's status; the reply target is not written" },
   "packages/services/src/schedule-service.ts  ScheduleService.cancel":
     { how: "no-new-pin", why: "an appointment's status; the reply target is not written" },

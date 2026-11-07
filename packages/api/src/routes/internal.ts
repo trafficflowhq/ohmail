@@ -924,9 +924,12 @@ export const internalRoutes: Route[] = [
       }
       try {
         const eligible = accountEligibleFrom(deps);
+        const kept = deps.services?.scheduledFiles;
         const result = await runScheduledSendPass(deps.db, {
           openSendAdapter: deps.services?.sendAdapter
             ?? ((mailboxId: string) => makeSendAdapter(deps, mailboxId)),
+          // This host's sealed files (mail 0180): opened for the send, tidied before the claim.
+          ...(kept?.atRest === "sealed" ? { files: { open: kept.sealer.open.bind(kept.sealer), tidy: true } } : {}),
           ...(deps.services?.storageCapOf ? { resolveStorageCap: deps.services.storageCapOf } : {}),
           // The wall's gate (mail 0124): a parked account's rows stay `scheduled`, dialled the
           // cycle after the account reads open — see `accountEligibleFrom` for why the network
