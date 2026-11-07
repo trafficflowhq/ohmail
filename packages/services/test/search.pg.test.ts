@@ -4,12 +4,13 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
-import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
+import { accountSettings, mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureWordIndex } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureWordIndex, retireBodyVector } from "@trafficflow/db/admin";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { SearchFilters, ServiceContext } from "@trafficflow/services";
-import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, throwawayDb } from "@trafficflow/db/testing";
 
 /**
  * Phase 2c-1 golden-relevance — the search tests PGlite cannot host (pg_trgm lives
@@ -614,4 +615,79 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
     expect(got.slice(0, want.length)).toEqual(want);
     expect(cursor === undefined).toBe(want.length === all.length);
   }, 300_000);
+});
+
+/**
+ * THE SERVER'S BODY-VECTOR RETIREMENT CHANGES NO ANSWER (`retireBodyVector`): every query shape
+ * answers the same letters before the step, after it while an account still reads the old vector
+ * (the index kept), and after the index is dropped. On a database of its own: the step re-points
+ * the trigger other files' seeding relies on.
+ */
+describe("search answers the same before and after the old body vector is retired (real Postgres)", () => {
+  const box = throwawayDb("trafficflow_search_body_vector");
+  const bc = postgres(box.url, { max: 3, onnotice: () => {} });
+  const bdb = brandDialect(drizzle(bc, { schema }), "pg");
+  const stepClient = postgres(box.url, { max: 1, onnotice: () => {} });
+  const BUILT = randomUUID();   // every letter has its document and the account its marker
+  const OWED = randomUUID();    // letters from before the documents: search reads the old vector
+  const bctx = (accountId: string): ServiceContext => ({ db: bdb, accountId, userId: null, now: () => NOW, requestId: "search-body-vector" });
+  const LETTERS = [
+    { subject: "Harbour notes", body: "The lighthouse keeper wrote about the storm." },
+    { subject: "Visit", body: "We walked to the lighthouse at dawn, calm sea." },
+    { subject: "Insurance from myAXA", body: "Your keeper policy renews in June." },
+    { subject: "Weekend", body: "Lighthouses along the coast, a keeper's cottage." },
+    { subject: "Lunch", body: "Nothing about the coast here." },
+  ];
+  const SHAPES = ["lighthouse", "lighthouse keeper", "lighth", '"lighthouse keeper"', "lighthouse -storm", "axa", "lighthuose"];
+
+  beforeAll(async () => {
+    await box.createFromTemplate();
+    await ensureSearchExtensions(bdb, { concurrently: false });
+    await ensureWordIndex(bdb, { concurrently: false });
+    for (const accountId of [BUILT, OWED]) {
+      const [mb] = await bdb.insert(mailboxes).values({ accountId, provider: "imap", address: `${accountId.slice(0, 8)}@vector.example` }).returning();
+      for (const [i, l] of LETTERS.entries()) {
+        const [m] = await bdb.insert(messages).values({
+          accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `vector:${randomUUID()}`, subject: l.subject,
+          fromAddress: `writer${i}@vector.example`, date: new Date(TODAY.getTime() - i * 3_600_000), unread: false,
+          hasAttachments: false, nativeLocator: { folder: "INBOX", ref: `1:${i}` },
+        }).returning();
+        await bdb.insert(messageBodies).values({ messageId: m!.id, text: l.body });
+        await bdb.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+        if (accountId === BUILT) {
+          await upsertMessageSearch(bdb as never, m!.id, {
+            accountId, subject: l.subject, from: { name: null, address: `writer${i}@vector.example` }, to: [], cc: [],
+            attachmentNames: [], bodyText: l.body, source: "text",
+          });
+        }
+      }
+    }
+    await bdb.insert(accountSettings).values({ accountId: BUILT, searchIndexBuiltAt: NOW });
+  }, MIGRATED_DB_SETUP_BUDGET_MS);
+  afterAll(async () => {
+    await Promise.all([bc.end({ timeout: 5 }), stepClient.end({ timeout: 5 })]);
+    await box.drop();
+  }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
+
+  const answers = async (accountId: string): Promise<Record<string, string[]>> => {
+    const out: Record<string, string[]> = {};
+    for (const q of SHAPES) out[q] = (await svc.search(bctx(accountId), { q, parts: "page" })).items.map((m) => m.id);
+    return out;
+  };
+
+  it("every shape, on a built account and on an owed one, while the index is kept and once it is dropped", async () => {
+    const before = { built: await answers(BUILT), owed: await answers(OWED) };
+    for (const who of ["built", "owed"] as const) {
+      expect(before[who].lighthouse!.length, `${who}: the body word is found`).toBe(3);
+      expect(before[who].axa, `${who}: the substring`).toHaveLength(1);
+    }
+    const stepDb = brandDialect(drizzle(stepClient), "pg");
+    expect(await retireBodyVector(stepDb, { concurrently: false })).toEqual({ trigger: "cleared", gin: "kept", owedAccounts: 1 });
+    expect({ built: await answers(BUILT), owed: await answers(OWED) }).toEqual(before);
+
+    // The owed account's mail leaves: nothing reads the old vector, and the index goes.
+    await bc`update messages set deleted_at = now() where account_id = ${OWED}`;
+    expect(await retireBodyVector(stepDb, { concurrently: false })).toEqual({ trigger: "cleared", gin: "dropped", owedAccounts: 0 });
+    expect(await answers(BUILT)).toEqual(before.built);
+  }, 120_000);
 });

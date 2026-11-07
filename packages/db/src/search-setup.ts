@@ -3,6 +3,10 @@ import {
   ensureConcurrentIndexes, type ConcurrentIndexSpec, type SqlExecutor,
 } from "./concurrent-index.js";
 import { pgDialect } from "./dialect/pg.js";
+import { MIGRATION_LOCK_KEY, MIGRATION_LOCK_TIMEOUT_MS } from "./migration-lock.js";
+
+const rowsOf = <T,>(r: unknown): T[] =>
+  Array.isArray(r) ? (r as T[]) : ((r as { rows?: T[] }).rows ?? []);
 
 /**
  * Search EXTENSION setup, kept deliberately OUT of the shared migrator. `makeTestDb()` replays
@@ -107,6 +111,135 @@ export async function ensureWordIndex(
     ...(opts.log ? { log: opts.log } : {}),
     ...(opts.concurrently === false ? { concurrently: false } : {}),
   });
+}
+
+/**
+ * THE OLD BODY VECTOR, RETIRED ON A SERVER. Not a journal entry: the journal is also the desktop's
+ * schema, and a desktop paired to a server builds no search documents and still searches by
+ * `body_tsv`. 0140's trigger keeps its name, timing and column and runs a function that stores no
+ * vector, so a new letter costs no `to_tsvector` and no index entry, and an old row's vector is
+ * cleared once its text changes (a gone letter keeps no words). The GIN goes once no account still
+ * reads the pre-0125 columns: one with living mail and no built search index.
+ */
+export const BODY_VECTOR_CLEARED_FUNCTION_DDL = sql`create or replace function public.message_bodies_body_tsv_cleared() returns trigger language plpgsql as $$ begin new.body_tsv := null; return new; end; $$`;
+
+/** SHARE ROW EXCLUSIVE on `message_bodies` (measured): reads go on, a body write waits for it. */
+export const BODY_VECTOR_TRIGGER_DDL = sql`create or replace trigger message_bodies_body_tsv_tg before insert or update of "text" on public.message_bodies for each row execute function public.message_bodies_body_tsv_cleared()`;
+
+export const BODY_VECTOR_INDEX = "message_bodies_body_tsv_idx";
+const BOUNDED_FN = "message_bodies_body_tsv_bounded";
+const CLEARED_FN = "message_bodies_body_tsv_cleared";
+
+/** The trigger could not be re-pointed within its bounded waits; nothing was changed. */
+export class BodyVectorLockTimeout extends Error {
+  override name = "BodyVectorLockTimeout";
+}
+
+export interface BodyVectorRetirement {
+  /** What the trigger runs after the step; `other` is a function this step does not know, left alone. */
+  trigger: "cleared" | "bounded" | "absent" | "other";
+  gin: "dropped" | "kept" | "absent";
+  /** Accounts with living mail and no built search index: their search still reads the old vector. */
+  owedAccounts: number;
+}
+
+type BodyVectorState = { runs: string | null; valid: boolean | null; owed: number };
+
+async function bodyVectorState(db: SqlExecutor): Promise<BodyVectorState> {
+  const [r] = rowsOf<{ runs: string | null; valid: boolean | null; owed: number }>(await db.execute(sql`
+    select (select p.proname::text from pg_trigger t join pg_proc p on p.oid = t.tgfoid
+             where t.tgrelid = to_regclass('public.message_bodies') and t.tgname = 'message_bodies_body_tsv_tg') as runs,
+           (select i.indisvalid from pg_index i where i.indexrelid = to_regclass(${`public.${BODY_VECTOR_INDEX}`})) as valid,
+           (select count(*)::int from (select distinct mb.account_id from public.mailboxes mb) a
+             where exists (select 1 from public.messages m where m.account_id = a.account_id and m.deleted_at is null)
+               and not exists (select 1 from public.account_settings st
+                                where st.account_id = a.account_id and st.search_index_built_at is not null)) as owed`));
+  return { runs: r?.runs ?? null, valid: r?.valid ?? null, owed: Number(r?.owed ?? 0) };
+}
+
+const triggerVerdict = (s: BodyVectorState): BodyVectorRetirement["trigger"] =>
+  s.runs === null ? "absent" : s.runs === BOUNDED_FN ? "bounded" : s.runs === CLEARED_FN ? "cleared" : "other";
+/** An invalid leftover serves no read, so it goes whatever is owed. */
+const ginGoes = (s: BodyVectorState): boolean => s.valid === false || (s.valid === true && s.owed === 0);
+
+function sqlStateOf(err: unknown): unknown {
+  let e: unknown = err;
+  for (let depth = 0; depth < 5 && e !== null && typeof e === "object"; depth++) {
+    const code = (e as { code?: unknown }).code;
+    if (code !== undefined) return code;
+    e = (e as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+/**
+ * Re-points the trigger and drops the GIN where the state above owes it; a run with nothing owed
+ * reads the catalog and takes no lock. `concurrently: false` as {@link ensureSearchExtensions}.
+ */
+export async function retireBodyVector(
+  db: SqlExecutor,
+  opts: { log?: (msg: string) => void; concurrently?: boolean; lockTimeoutMs?: number; attempts?: number; pauseMs?: number } = {},
+): Promise<BodyVectorRetirement> {
+  const { log, concurrently = true, lockTimeoutMs = 2_000, attempts = 20, pauseMs = 500 } = opts;
+  if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs <= 0) throw new Error("lockTimeoutMs must be a positive integer");
+  const first = await bodyVectorState(db);
+  const kept = (s: BodyVectorState): BodyVectorRetirement["gin"] => {
+    if (s.valid === null) return "absent";
+    log?.(`${BODY_VECTOR_INDEX}: kept, ${s.owed} account(s) still search by the old body vector`);
+    return "kept";
+  };
+  if (first.runs !== BOUNDED_FN && !ginGoes(first)) {
+    return { trigger: triggerVerdict(first), gin: kept(first), owedAccounts: first.owed };
+  }
+
+  const [prev] = rowsOf<{ v: string }>(await db.execute(sql`select current_setting('lock_timeout') as v`));
+  const restore = sql`select set_config('lock_timeout', ${prev?.v ?? "0"}, false)`;
+  const key = MIGRATION_LOCK_KEY as unknown as number;
+  await db.execute(sql.raw(`set lock_timeout = ${MIGRATION_LOCK_TIMEOUT_MS}`));
+  try {
+    await db.execute(sql`select pg_advisory_lock(${key})`);
+  } catch (err) {
+    await db.execute(restore);
+    throw new Error(`could not take the migration advisory lock within ${MIGRATION_LOCK_TIMEOUT_MS}ms to retire the body vector — re-run; this step is idempotent. Cause: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  try {
+    await db.execute(restore);
+    const s = await bodyVectorState(db);
+    if (s.runs === BOUNDED_FN) {
+      await db.execute(BODY_VECTOR_CLEARED_FUNCTION_DDL);
+      let done = false;
+      for (let attempt = 1; !done; attempt++) {
+        try {
+          await db.execute(sql.raw(`set lock_timeout = ${lockTimeoutMs}`));
+          await db.execute(BODY_VECTOR_TRIGGER_DDL);
+          done = true;
+        } catch (err) {
+          if (sqlStateOf(err) !== "55P03") throw err;
+          if (attempt >= attempts) {
+            throw new BodyVectorLockTimeout(
+              `message_bodies_body_tsv_tg not re-pointed: ${attempts} waits of ${lockTimeoutMs}ms on message_bodies' writers each ran out. Nothing changed; re-run the setup.`,
+            );
+          }
+          log?.(`message_bodies_body_tsv_tg: message_bodies busy (attempt ${attempt} of ${attempts}), retrying`);
+          await new Promise((r) => setTimeout(r, pauseMs));
+        } finally {
+          await db.execute(restore);
+        }
+      }
+      log?.("message_bodies_body_tsv_tg: re-pointed, a new body stores no vector");
+    }
+    let gin: BodyVectorRetirement["gin"];
+    if (ginGoes(s)) {
+      log?.(`${BODY_VECTOR_INDEX}: ${s.valid === false ? "an INVALID leftover" : "no account searches by it"} — dropping${concurrently ? " concurrently" : ""}`);
+      await db.execute(sql.raw(`drop index ${concurrently ? "concurrently " : ""}if exists public."${BODY_VECTOR_INDEX}"`));
+      gin = "dropped";
+    } else {
+      gin = kept(s);
+    }
+    return { trigger: triggerVerdict(await bodyVectorState(db)), gin, owedAccounts: s.owed };
+  } finally {
+    await db.execute(sql`select pg_advisory_unlock(${key})`);
+  }
 }
 
 /**
