@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql, type AnyColumn, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accountSettings, accounts, folderState, messages, routingDecisions,
+  accountSettings, accounts, folderState, messageInstances, messages, routingDecisions,
   applyScreenerDecision, rerouteAdvisedLetter, rerouteUnconfirmedHeld, unconfirmedSql, recordChanges, fencedAccountWrite,
   AccountErasedError, OrganizedElsewhereError, MailboxErasedError, MailboxNotFoundError,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type ScreenerActRefusal,
@@ -40,6 +40,14 @@ export const SCREENER_ACT_DENY_BAR = 0.9;
 
 /** Senders one account may be filed for in one cycle — the reconciler's per-cycle move budget. */
 export const SCREENER_ACT_SENDERS_PER_CYCLE = 50;
+
+/**
+ * A COPY ON RECORD: the server held this letter at the last read. The reaper tombstones a letter
+ * left without one only after a read saw it go, or hourly, so every letter this pass reads to act
+ * on asks it here.
+ */
+const copyOnRecord = (id: SQL | AnyColumn): SQL =>
+  sql`exists (select 1 from ${messageInstances} cr where cr.message_id = ${id})`;
 
 export interface ScreenerAutoActDeps {
   /** Scope to ONE account — the caller loops its served accounts. */
@@ -546,6 +554,7 @@ async function checkUncheckedHeld(db: Tx, accountId: string, senders: readonly s
         eq(messages.accountId, accountId),
         eq(folderState.desiredFolder, SCREENER_FOLDER),
         isNull(messages.deletedAt),
+        copyOnRecord(messages.id),
         isNull(messages.senderCheck),
         inArray(sql`lower(${messages.fromAddress})`, [...senders]),
       ))
@@ -580,6 +589,7 @@ async function advisedLettersFileable(
       inArray(messages.id, letters.map((l) => l.id)),
       eq(folderState.desiredFolder, SCREENER_FOLDER),
       isNull(messages.deletedAt),
+      copyOnRecord(messages.id),
       isNull(folderState.autoFilingUndoneAt),
       or(...bags),
     ));
@@ -690,6 +700,9 @@ async function selectWaitingSenders(
   }).from(reps)
     .where(and(
       eq(reps.rank, 1),
+      // The row on screen has a copy on record: outside the window, so a sender whose newest
+      // letter's copy is gone waits for the reaper, as the suggest pass does.
+      copyOnRecord(sql`${sql.identifier("reps")}.${sql.identifier(messages.id.name)}`),
       // No held letter of the sender, with `identityHeld`'s reach, that an automatic path may not read.
       sql`not exists (
         select 1 from ${messages}

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, sourceFor, type RefundObligationPort, type Tx,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, sourceFor, type RefundObligationPort, type Tx,
 } from "@trafficflow/db";
 import {
   makeEntitlementsClient, pendingRefundObligations, refundObligationsOn, type EntitlementsFetch,
@@ -82,11 +82,15 @@ async function heldWorld(): Promise<{ db: Tx; accountId: string }> {
   const [m] = await db.insert(messages).values({
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `settle:${randomUUID()}`,
     subject: "hello", fromAddress: "a@example.test", snippet: "a first message",
-    date: at, createdAt: at, nativeLocator: { folder: SCREENER, ref: `1:${randomUUID()}` },
+    date: at, createdAt: at, nativeLocator: { folder: SCREENER, ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
     messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  // Its copy in the Screener, as the ingest records one.
+  await db.insert(messageInstances).values({
+    accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: 1, isPrimary: true,
   });
   return { db, accountId };
 }

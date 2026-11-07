@@ -7,7 +7,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, changeLog, folderState, mailboxes, messages, routingDecisions, rules,
+  accountSettings, accounts, changeLog, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
@@ -66,6 +66,13 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
     await sql?.end({ timeout: 5 });
   });
 
+  /** The letter's copy in the Screener, as the ingest records one: what the act reads as held. */
+  async function copyOnRecord(w: { accountId: string; mailboxId: string }, messageId: string, uid: number): Promise<void> {
+    await db.insert(messageInstances).values({
+      accountId: w.accountId, mailboxId: w.mailboxId, messageId, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
+    });
+  }
+
   /** One account, one mailbox, `n` held senders each with a confident Spam verdict; the no-AI switch on unless said. */
   async function seed(n: number, opts: { suggest?: boolean; noAiSwitch?: boolean } = {}): Promise<{
     accountId: string; mailboxId: string; ids: string[]; senders: string[];
@@ -96,6 +103,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
+      await copyOnRecord({ accountId, mailboxId: mb!.id }, m!.id, 200 + i);
       if (opts.suggest !== false) {
         await db.insert(routingDecisions).values({
           accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
@@ -333,6 +341,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
+    await copyOnRecord(w, m!.id, 900);
     await db.insert(routingDecisions).values({
       accountId: w.accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
       destination: "INBOX", confidence: 0.95, rationale: "", spam: false, status: SCREENER_SUGGESTION_STATUS,
@@ -364,6 +373,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
       messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
+    await copyOnRecord(w, m!.id, ref);
     return m!.id;
   }
 
@@ -383,6 +393,7 @@ describe.skipIf(!AVAILABLE)("screener auto-act — the act and the press write o
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
+      await copyOnRecord(w, m!.id, ref);
       return m!.id;
     };
     const genuine = await letter(910, "pass", new Date("2020-01-01T00:00:00Z"));

@@ -40,7 +40,7 @@ import {
   completeFiling, junkAuditCode, physicalDestination, specialFoldersOf,
   SPAM_PILE, TOMBSTONE_MAX_PER_CYCLE, type SpecialFolderMap,
 } from "./junk-filing.js";
-import { junkRestorePass } from "./junk-restore.js";
+import { junkRestorePass, oweJunkWalk } from "./junk-restore.js";
 import { junkGonePass } from "./junk-gone.js";
 import { forgetTrashProof, trashGonePass, TRASH_GONE_PAGE } from "./trash-gone.js";
 import { storageRefillPass } from "./storage-refill.js";
@@ -510,7 +510,8 @@ export async function buildCursor(
     };
   }
   // A derivation is remembered only when it was built from a READ — a pass that reused the last
-  // one has nothing new to say, and rewriting it would stamp old arrays with a new generation.
+  // one has nothing new to say, and rewriting it would stamp old arrays with a new generation. A
+  // read the memo did not keep is not remembered either (`rememberFolders`).
   if (readOwed) memo?.rememberFolders(fresh, rowEpochs, epochs);
   /**
    * WHERE THE LAST PASS'S BUDGET RAN OUT (mail 0115) — read out of the rows this function already
@@ -1681,15 +1682,22 @@ async function syncCycleWithin(
   // clients tombstone on. A cross-batch external move is tombstoned here and RESURRECTED by the adopt
   // path (`clearDeletedOnAdopt` + the move change) — the client contract's "a LATER create resurrects"
   // end to end. Junk-parked rows are excluded in the query; optional-guarded so every fake repo works.
-  const reapOwed = batch.unchanged !== true || reaperDrained.get(adapter) !== true;
-  // SKIPPED on a pass the adapter proved `unchanged` when this connection's last reap took less
-  // than its limit: only a removed instance makes a victim, and an empty batch removes none.
+  // Only a removed instance makes a victim, and its candidate read is the whole mailbox: it runs on
+  // a new connection, after a reap that took its limit, when this batch removed an instance, when a
+  // write that may remove one went through the memo's repo since the last reap, and hourly. Without
+  // a memo to count those writes, any batch the adapter did not prove `unchanged` reaps.
+  const mark = reaperMarks.get(adapter);
+  const removals = deps.knownSet?.removals;
+  const reapOwed = mark === undefined || !mark.drained
+    || batch.deletes.length > 0 || proved.size > 0
+    || (removals === undefined ? batch.unchanged !== true : removals !== mark.removals)
+    || Date.now() - mark.at >= REAP_BELT_MS;
   if (typeof repo.tombstoneInstanceless === "function" && reapOwed) {
     const reaped = await fencedLiveGroup(deps, (r) =>
       typeof r.tombstoneInstanceless === "function"
         ? r.tombstoneInstanceless(accountId, mailboxId, TOMBSTONE_MAX_PER_CYCLE)
         : Promise.resolve(0));
-    reaperDrained.set(adapter, reaped < TOMBSTONE_MAX_PER_CYCLE);
+    reaperMarks.set(adapter, { drained: reaped < TOMBSTONE_MAX_PER_CYCLE, at: Date.now(), removals });
     if (reaped > 0) {
       log?.info("sync_tombstoned_expunged", {
         mailboxId, accountId, reaped,
@@ -1905,7 +1913,7 @@ async function syncCycleWithin(
     for (const folder of goneFolders) {
       const outcome = await fencedLiveGroup(deps, (r) =>
         typeof r.retireGoneFolder === "function" ? r.retireGoneFolder(accountId, mailboxId, folder) : Promise.resolve(null));
-      if (outcome === "retired") reaperDrained.set(adapter, false);
+      if (outcome === "retired") oweReap(adapter);
       // `repair_owed`: the organizer's repair logs its own progress, and a reader's row waits quietly.
       if (outcome === null || outcome === "absent" || outcome === "repair_owed") continue;
       log?.info("sync_folder_retired", {
@@ -2132,8 +2140,16 @@ async function syncCycleWithin(
  */
 const ownMailReleaseDone = new Set<string>();
 
-/** Adapter → its last reap took less than its limit. Per connection, so a new one reaps first. */
-const reaperDrained = new WeakMap<object, boolean>();
+/** Adapter → its last reap: under its limit, when, and the memo's removal count then. Per
+    connection, so a new one reaps first. */
+const reaperMarks = new WeakMap<object, { drained: boolean; at: number; removals: number | undefined }>();
+/** The reaper's belt: a removal no cue reported (another process's, say) waits at most this long. */
+export const REAP_BELT_MS = 60 * 60 * 1000;
+/** A reap is owed on this connection's next pass. */
+function oweReap(adapter: object): void {
+  const mark = reaperMarks.get(adapter);
+  if (mark !== undefined) mark.drained = false;
+}
 
 /**
  * `PlanDeps.ownAddresses` for one page — read once, and only when the page holds mail the gate
@@ -2687,7 +2703,7 @@ async function repairStatus(
   if (held === "unanswered" || again?.k === "unanswered") return false;
   if (held !== "missing" || again === undefined || again.k === "absent") {
     await settle();
-    if (held === "missing") reaperDrained.set(deps.adapter, false);
+    if (held === "missing") oweReap(deps.adapter);
     return false;
   }
   if (again.k === "found") {
@@ -2728,6 +2744,7 @@ async function refillLeftJunk(
       write: (fn) => fencedLiveGroup(deps, fn),
     });
   } catch (err) {
+    oweJunkWalk(mailboxId);
     rethrowRefusal(err);
     log?.warn("junk_refill_at_move_failed", {
       mailboxId, accountId, err,

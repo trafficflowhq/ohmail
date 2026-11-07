@@ -14,7 +14,7 @@
 import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCalendarMime } from "@trafficflow/core/ics";
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
-  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome,
+  StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -4239,8 +4239,13 @@ export class OhmailEngine {
           await this.adoptOrphanedOutbox();
           // The wipe took the held-release answer too; the settle's bell asks for it again.
           this.heldRelease.owed = true;
-          // …and the queue's page, for the same reason.
+          // …and the queue's page: withheld until the store speaks again, asked now rather than at the
+          // rebuild's settle, or each rebuilt page of gate mail would count as the queue (6, 7, 8).
           this.screenerWait.dirty = true;
+          if (this.screenerWait.armed) {
+            this.screenerWait.settled = false;
+            this.reaskScreenerWaiting();
+          }
           // The instant index is an index of the mail that just went. A build walking the old
           // rows would install it over the new mirror and hand back hits that open nothing.
           this.invalidateSearchIndex();
@@ -11502,8 +11507,8 @@ export class OhmailEngine {
     }
   }
 
-  /** Does the scheduling server keep a letter's files for a later send? `null`: no answer, or an adapter that cannot ask. */
-  async scheduleFilesAnnounced(): Promise<boolean | null> {
+  /** Does the scheduling server keep a letter's files for a later send, and how far ahead? `null`: no answer, or an adapter that cannot ask. */
+  async scheduleFilesAnnounced(): Promise<ScheduleFilesAnswer | null> {
     const ask = this.adapter.scheduleFilesAnnounced;
     if (typeof ask !== "function") return null;
     try {

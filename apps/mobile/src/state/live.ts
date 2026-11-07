@@ -11,6 +11,7 @@
 import { firstContactTime, isSharedProviderDomain, owaInvitationStub, type OwaInvitationStub } from "@ohmail/client-engine";
 import { authScreens, failedAtGateOf, type FailedAtGateDTO } from "@ohmail/client-engine";
 import { lastCheckedAt, type CheckedRow, type FiledPile, type FiledSince } from "@ohmail/client-engine";
+import type { ScheduleFilesAnswer } from "@ohmail/client-engine";
 import type { UnscreenedPileWire } from "@ohmail/client-engine";
 import { calendarEventsOf, withoutCalendarBodies, type DistinctCalendarEvent } from "@ohmail/client-engine";
 import { DRAFT_BODY_MAX_BYTES, SENT_FORWARD_MAX_PARTS, draftOverCeiling } from "@ohmail/client-engine";
@@ -1281,6 +1282,8 @@ export interface WorldDraft {
    * verbatim, `WorldScheduled.failure`'s treatment and for its reason.
    */
   failure: string | null;
+  /** How many files a schedule that ended unsent did not keep (mail 0179); `null` for every other row. */
+  filesNotKept: number | null;
   /** What the phone's composer opens this draft with ({@link draftEditOf}); `null` where it cannot. */
   edit: WorldDraftEdit | null;
   /**
@@ -1417,6 +1420,7 @@ export function liveDrafts(reader: EntityReader, v: WorldView, waiting: readonly
       repliesHere,
       inReplyToMessageId: repliesHere ? parent : null,
       failure: null,
+      filesNotKept: null,
       edit: null,
       waiting: { key: w.key, wire: w.wire, rowless: w.draftId === null },
     };
@@ -1451,6 +1455,7 @@ export function liveDrafts(reader: EntityReader, v: WorldView, waiting: readonly
       repliesHere,
       inReplyToMessageId: repliesHere ? parent : null,
       failure: d.sendError ?? null,
+      filesNotKept: d.status === "draft" && d.sendFiles ? d.sendFiles : null,
       edit: draftEditOf(d),
       waiting: null,
     };
@@ -3580,6 +3585,8 @@ export interface LiveDeps {
   letters?: LetterDoor;
   /** The session's server sends only the forwarded parts a send names; `null` is not known yet. A getter. */
   forwardParts?: () => boolean | null;
+  /** Whether the session's door keeps a letter's files for Send later, and how far ahead; `null` is not known yet. A getter. */
+  scheduleFiles?: () => ScheduleFilesAnswer | null;
   /** The session's send surface (`compose/attach.ts#phoneSendSurface`). A getter. */
   sendSurface?: () => number | undefined;
   /**
@@ -3712,6 +3719,8 @@ export interface LiveWorldActions {
   forwardFiles(messageId: string): ForwardFilesRead;
   /** The server sends only the parts a forward names; `null` until it answers, `false` once it said it cannot. */
   forwardPartsSupported(): boolean | null;
+  /** Whether Send later keeps a letter's files on this door, and how many days ahead; `null` until it answers. */
+  scheduleFilesKept(): ScheduleFilesAnswer | null;
   /** What this session's send carries at most (`compose/attach.ts#phoneSendSurface`); absent is the strict bound. */
   sendSurface(): number | undefined;
   /**
@@ -4314,6 +4323,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
   /** Does the server send only the parts a forward names (`GET /hello` `features.forwardParts`)? */
   let forwardPartsRefused = false;
   const forwardPartsSupported = (): boolean | null => (forwardPartsRefused || deps.forwardParts === undefined ? false : deps.forwardParts());
+  const scheduleFilesKept = (): ScheduleFilesAnswer | null => deps.scheduleFiles?.() ?? null;
   const sendSurface = (): number | undefined => deps.sendSurface?.();
 
   /*
@@ -6683,7 +6693,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     retryQueued: (id) => engine.retryQueued(id),
     discardQueued: (key) => engine.withdrawQueued(key),
     releaseConfirmed,
-    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, sendSurface, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
+    openMessage, leaveMessage, hydrateMessage, forwardFetch, forwardFiles, forwardPartsSupported, scheduleFilesKept, sendSurface, hydrateHeld, holdFiles, releaseFiles, loadInlineImages,
     watchLists, openAttachmentBytes,
     releaseAttachments,
     sweepFeed, leaveFeed, decide, reachOf, unsubClaimOf, screeningUnsubClaim, release, setPile,
@@ -6724,6 +6734,8 @@ export interface WorldActions {
   forwardFiles(messageId: string): ForwardFilesRead;
   /** See {@link LiveWorldActions.forwardPartsSupported}. */
   forwardPartsSupported(): boolean | null;
+  /** See {@link LiveWorldActions.scheduleFilesKept}. */
+  scheduleFilesKept(): ScheduleFilesAnswer | null;
   /** See {@link LiveWorldActions.sendSurface}. */
   sendSurface(): number | undefined;
   /**
@@ -6895,6 +6907,7 @@ export function stableActions(current: () => WorldActions): WorldActions {
     forwardFetch: (id) => current().forwardFetch(id),
     forwardFiles: (id) => current().forwardFiles(id),
     forwardPartsSupported: () => current().forwardPartsSupported(),
+    scheduleFilesKept: () => current().scheduleFilesKept(),
     sendSurface: () => current().sendSurface(),
     retryAbandoned: (id) => current().retryAbandoned(id),
     discardAbandoned: (id) => current().discardAbandoned(id),
@@ -7178,6 +7191,32 @@ export function usableHours(from: Date, offset: number, zone: string = readerZon
     (hour) =>
       dayAtHour(from, offset, hour, zone).instant.getTime() - from.getTime() >= SEND_LATER_MIN_LEAD_MS,
   );
+}
+
+/**
+ * THE LATEST A LETTER WITH FILES MAY GO, from the picker's frozen "now": a server keeps its files only
+ * so far ahead (`scheduleFilesDays`, mail 0180). `null` is no horizon. The presets, days and hours
+ * below stop at it, so no row names a time that server refuses.
+ */
+export function sendLaterHorizon(from: Date, days: number | null): number | null {
+  return days === null ? null : from.getTime() + days * 24 * 60 * 60 * 1000;
+}
+
+/** Is this instant inside the horizon ({@link sendLaterHorizon})? */
+export function inSendLaterHorizon(at: Date, horizon: number | null): boolean {
+  return horizon === null || at.getTime() <= horizon;
+}
+
+/** The hours worth offering on that day ({@link usableHours}), none past the horizon. */
+export function horizonHours(from: Date, offset: number, horizon: number | null, zone: string = readerZone()): number[] {
+  return usableHours(from, offset, zone).filter((hour) => inSendLaterHorizon(dayAtHour(from, offset, hour, zone).instant, horizon));
+}
+
+/** The days the picker offers: today while it has an hour left, and no day without an hour inside the horizon. */
+export function horizonDays(from: Date, horizon: number | null, zone: string = readerZone()): number[] {
+  if (horizon === null) return DAY_OFFSETS.filter((offset) => offset > 0 || usableHours(from, 0, zone).length > 0);
+  const last = Math.ceil((horizon - from.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  return DAY_OFFSETS.filter((offset) => offset <= last && horizonHours(from, offset, horizon, zone).length > 0);
 }
 
 /**

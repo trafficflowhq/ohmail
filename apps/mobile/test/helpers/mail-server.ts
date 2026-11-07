@@ -818,6 +818,24 @@ export function mailServer() {
        * ({@link claimScheduled}), which is the one outcome the phone's cancel must not
        * mistake for a cancellation.
        */
+      /* SEND LATER WITH FILES (mail 0179, 0180): the appointment and its files, kept by the server. */
+      const draftScheduleFiles = url.pathname.match(/^\/drafts\/([^/]+)\/schedule-with-files$/);
+      if (method === "POST" && draftScheduleFiles) {
+        const id = decodeURIComponent(draftScheduleFiles[1]!);
+        const row = drafts.get(id);
+        if (!row) { json(404, { error: { code: "not_found", message: "no such draft" } }); return; }
+        const parsed = JSON.parse(body) as { sendAt?: string; attachments?: unknown[]; stagedAttachmentIds?: unknown[] };
+        const count = (parsed.attachments?.length ?? 0) + (parsed.stagedAttachmentIds?.length ?? 0);
+        if (!parsed.sendAt || Date.parse(parsed.sendAt) <= Date.now() || count === 0) {
+          json(400, { error: { code: "validation_failed", message: "a future sendAt and files are required" } });
+          return;
+        }
+        seq += 1;
+        const next = { ...row, status: "scheduled", sendAt: parsed.sendAt, sendFiles: count, updatedAt: new Date().toISOString() };
+        drafts.set(id, next);
+        json(200, next, seq);
+        return;
+      }
       const draftSchedule = url.pathname.match(/^\/drafts\/([^/]+)\/schedule$/);
       if (draftSchedule) {
         const id = decodeURIComponent(draftSchedule[1]!);

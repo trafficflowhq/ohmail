@@ -2449,6 +2449,9 @@ export const scheduledSendFiles = sqliteTable("scheduled_send_files", {
   contentSha256: text("content_sha256").notNull(),
   rawB64: text("raw_b64").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // Mail 0180: a server's sealed piece; NULL on a device.
+  dekEnc: text("dek_enc"),
+  dekKeyVersion: integer("dek_key_version"),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.draftId, t.fileNo, t.seq] }) }));
 
 /**

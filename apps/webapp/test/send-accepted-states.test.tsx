@@ -183,14 +183,18 @@ describe("the button's word and its state attribute come from one derivation", (
 });
 
 /**
- * SEND LATER WITH FILES (mail 0179) — the composer offers the times only where the door keeps the
- * files (`/hello` `scheduleFiles`, the desktop's own engine). Elsewhere the panel says why in
- * visible words, in place of the times, before any pick.
+ * SEND LATER WITH FILES (mail 0179, 0180) — the composer offers the times only where the door keeps
+ * the files (`/hello`: the desktop's own engine, or a server naming its horizon), and on a server only
+ * inside that horizon. Elsewhere the panel says why in visible words, in place of the times, before any pick.
  */
 describe("Send later on a letter with files says what it can do before the pick", () => {
   const FILE = { filename: "photo.png", contentType: "image/png", contentBase64: "aGk=" };
 
-  async function compose(o: { kept: boolean | null; files: boolean; onSendLater?: (iso: string) => void; filesNotKept?: number }): Promise<{
+  const DESKTOP = { kept: true, days: null };
+  async function compose(o: {
+    kept: { kept: boolean; days: number | null } | null; files: boolean; onSendLater?: (iso: string) => void;
+    filesNotKept?: number; forwardOf?: string;
+  }): Promise<{
     setFiles: (files: boolean) => Promise<void>;
   }> {
     const { ComposeView } = await import("../app/views/ComposeView.js");
@@ -209,7 +213,10 @@ describe("Send later on a letter with files says what it can do before the pick"
     document.body.appendChild(host);
     root = createRoot(host);
     const draw = async (files: boolean): Promise<void> => {
-      const fields = { ...EMPTY_COMPOSE, to: "ada@fake.test", subject: "later", body: "words", attachments: files ? [FILE] : [] };
+      const fields = {
+        ...EMPTY_COMPOSE, to: "ada@fake.test", subject: "later", body: "words", attachments: files ? [FILE] : [],
+        ...(o.forwardOf ? { forwardOf: o.forwardOf } : {}),
+      };
       await act(async () => {
         root!.render(
           <NextIntlClientProvider locale="en" messages={en as never} timeZone="UTC">
@@ -235,7 +242,7 @@ describe("Send later on a letter with files says what it can do before the pick"
 
   it("where the door keeps files, a pick schedules the letter with them", async () => {
     const picked: string[] = [];
-    await compose({ kept: true, files: true, onSendLater: (iso) => picked.push(iso) });
+    await compose({ kept: DESKTOP, files: true, onSendLater: (iso) => picked.push(iso) });
     expect(toggle().disabled).toBe(false);
     await act(async () => { toggle().click(); });
     const tomorrow = [...host!.querySelectorAll<HTMLButtonElement>(".send-later .gate-actions button")]
@@ -246,13 +253,13 @@ describe("Send later on a letter with files says what it can do before the pick"
     expect(picked).toHaveLength(1);
   });
 
-  for (const kept of [false, null] as const) {
-    it(`where the door ${kept === false ? "says it keeps none" : "cannot say"}, the panel says so in words and offers no time`, async () => {
+  for (const kept of [{ kept: false, days: null }, null] as const) {
+    it(`where the door ${kept !== null ? "says it keeps none" : "cannot say"}, the panel says so in words and offers no time`, async () => {
       const picked: string[] = [];
       await compose({ kept, files: true, onSendLater: (iso) => picked.push(iso) });
       expect(toggle().disabled, "the reason must be reachable, not hidden in a title").toBe(false);
       await act(async () => { toggle().click(); });
-      expect(panelText()).toContain(kept === false ? en.compose.sendLaterFilesNotHere : en.compose.sendLaterUnavailable);
+      expect(panelText()).toContain(kept !== null ? en.compose.sendLaterFilesNotHere : en.compose.sendLaterUnavailable);
       expect(presets()).toEqual([en.compose.sendLaterClose]);
       expect(host!.querySelector("#compose-send-at")).toBeNull();
       expect(picked).toEqual([]);
@@ -260,7 +267,7 @@ describe("Send later on a letter with files says what it can do before the pick"
   }
 
   it("a file attached while the panel is open swaps the times for the sentence", async () => {
-    const view = await compose({ kept: false, files: false });
+    const view = await compose({ kept: { kept: false, days: null }, files: false });
     await act(async () => { toggle().click(); });
     expect(presets().some((p) => p.startsWith("Tomorrow"))).toBe(true);
     await view.setFiles(true);
@@ -276,7 +283,7 @@ describe("Send later on a letter with files says what it can do before the pick"
     const { ToastHost } = await import("@ohmail/ui");
     const { KeymapProvider } = await import("../app/shell/keymap.js");
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
-    const adapter = Object.assign(new FixturesAdapter(), { scheduleFilesAnnounced: async () => true });
+    const adapter = Object.assign(new FixturesAdapter(), { scheduleFilesAnnounced: async () => ({ kept: true, days: null }) });
     const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore() });
     const from = { mailboxId: "mb-1", address: "me@fake.test", choices: [], substituted: false, substitutedFrom: null, maxMessageBytes: null, domainMatched: false };
     const picks: string[][] = [];
@@ -335,10 +342,57 @@ describe("Send later on a letter with files says what it can do before the pick"
   });
 
   it("a row whose schedule ended unsent says its files were not kept, until they are attached again", async () => {
-    const view = await compose({ kept: true, files: false, filesNotKept: 2 });
+    const view = await compose({ kept: DESKTOP, files: false, filesNotKept: 2 });
     const said = "This message was scheduled with 2 files that were not kept. Attach them again before you send.";
     expect(host!.textContent).toContain(said);
     await view.setFiles(true);
     expect(host!.textContent).not.toContain(said);
+  });
+
+  describe("on a server that keeps files only so far ahead", () => {
+    // A Wednesday morning: tomorrow 09:00 is under a day away and Monday 09:00 about five.
+    beforeEach(() => { vi.useFakeTimers({ now: new Date("2026-11-04T10:00:00.000Z"), toFake: ["Date"] }); });
+    afterEach(() => { vi.useRealTimers(); });
+    const field = (): HTMLInputElement => host!.querySelector<HTMLInputElement>("#compose-send-at")!;
+
+    it("offers no time past the horizon, caps the field there, and says how far", async () => {
+      await compose({ kept: { kept: true, days: 1 }, files: true });
+      await act(async () => { toggle().click(); });
+      expect(presets().some((p) => p.startsWith("Tomorrow"))).toBe(true);
+      expect(presets().some((p) => p.startsWith("Monday")), "a preset past the horizon was offered").toBe(false);
+      expect(Date.parse(field().max)).toBeLessThanOrEqual(Date.parse("2026-11-05T10:00:00.000Z"));
+      expect(panelText()).toContain("A message with files can be scheduled up to 1 day ahead.");
+      expect(panelText()).not.toContain(en.compose.sendLaterThisComputer);
+    });
+
+    it("a time typed past it is refused in words before the pick", async () => {
+      const picked: string[] = [];
+      await compose({ kept: { kept: true, days: 1 }, files: true, onSendLater: (iso) => picked.push(iso) });
+      await act(async () => { toggle().click(); });
+      await act(async () => {
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        set.call(field(), "2026-11-07T12:00");
+        field().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      expect(panelText()).toContain("A message with files can be scheduled at most 1 day ahead. Pick a closer time.");
+      const confirm = [...host!.querySelectorAll<HTMLButtonElement>(".send-later-custom button")].find((b) => b.textContent?.startsWith(en.compose.sendLaterConfirm));
+      expect(confirm?.disabled).toBe(true);
+      expect(picked).toEqual([]);
+    });
+
+    it("a file attached with the panel open takes the times past the horizon away", async () => {
+      const view = await compose({ kept: { kept: true, days: 1 }, files: false });
+      await act(async () => { toggle().click(); });
+      expect(presets().some((p) => p.startsWith("Monday")), "a letter without files has no horizon").toBe(true);
+      await view.setFiles(true);
+      expect(presets().some((p) => p.startsWith("Monday"))).toBe(false);
+      expect(panelText()).toContain("up to 1 day ahead");
+    });
+  });
+
+  it("a forward is never scheduled, and its own sentence says so", async () => {
+    await compose({ kept: DESKTOP, files: false, forwardOf: "m-1" });
+    expect(toggle().disabled).toBe(true);
+    expect(toggle().title).toBe(en.compose.sendLaterNoForwards);
   });
 });

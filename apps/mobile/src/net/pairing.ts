@@ -8,7 +8,7 @@
  * measured before the burn ({@link resolveApiBase}, `net/server-base.ts`);
  * {@link resolveAccountId} takes the server's word — a door naming no account is refused.
  */
-import { isSessionRefusal, originNeedsPin, type OhmailEngine, type SqlMirrorStore } from "@ohmail/client-engine";
+import { isSessionRefusal, originNeedsPin, type OhmailEngine, type ScheduleFilesAnswer, type SqlMirrorStore } from "@ohmail/client-engine";
 import {
   FORWARD_PARTS_HELLO_MS,
   bootEngine,
@@ -89,7 +89,7 @@ export function unreachableSaid(detail: RefusalArg): Refusal | null {
  */
 export async function helloAnnounced(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): Promise<HelloFeatures | null> {
   return session.standalone
-    ? { forwardParts: true, staging: false }
+    ? { forwardParts: true, staging: false, scheduleFiles: false, scheduleFilesDays: null }
     : helloFeatures(session.fetch, normalizeOrigin(session.profile.origin), FORWARD_PARTS_HELLO_MS);
 }
 
@@ -104,6 +104,8 @@ export async function forwardPartsAnnounced(session: Pick<ConnectedSession, "sta
  */
 export function helloReader(session: Pick<ConnectedSession, "standalone" | "fetch" | "profile">): {
   said: () => boolean | null; staging: () => boolean | null; settled: () => Promise<void>;
+  /** Whether Send later keeps a letter's files here, and how many days ahead; `null` until answered. */
+  scheduleFiles: () => ScheduleFilesAnswer | null;
 } {
   let said: HelloFeatures | null = null;
   let asking: Promise<void> | null = null;
@@ -119,6 +121,10 @@ export function helloReader(session: Pick<ConnectedSession, "standalone" | "fetc
     said: () => now()?.forwardParts ?? null,
     staging: () => now()?.staging ?? null,
     settled: () => asking ?? Promise.resolve(),
+    scheduleFiles: () => {
+      const h = now();
+      return h === null ? null : { kept: h.scheduleFiles, days: h.scheduleFilesDays };
+    },
   };
 }
 

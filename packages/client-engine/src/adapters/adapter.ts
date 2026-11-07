@@ -114,6 +114,16 @@ export interface MutationOutcome {
 export type WithdrawSendOutcome =
   | "withdrawn" | "already_sent" | "unverified" | "in_flight" | "failed" | "unsupported" | "unreachable";
 
+/**
+ * WHAT A DOOR SAYS ABOUT KEEPING A LETTER'S FILES FOR SEND LATER (`GET /hello`, mail 0179, 0180).
+ * `kept`: it keeps them — the desktop's own engine (`scheduleFiles`), or a server that names a
+ * horizon (`scheduleFilesDays`). `days`: that horizon, or `null` where none is named.
+ */
+export interface ScheduleFilesAnswer {
+  kept: boolean;
+  days: number | null;
+}
+
 export interface WithdrawSendAnswer {
   outcome: WithdrawSendOutcome;
   /** The send this key already holds, on `already_sent`/`unverified` — shape-checked by the adapter. */
@@ -411,11 +421,11 @@ export interface EngineAdapter {
   forwardPartsAnnounced?(): Promise<boolean | null>;
 
   /**
-   * DOES THE SERVER THIS ADAPTER SCHEDULES WITH KEEP A LETTER'S FILES FOR A LATER SEND (`GET /hello`
-   * `features.scheduleFiles`, mail 0179)? `null` is no answer. Optional: without it, a letter with
+   * DOES THE SERVER THIS ADAPTER SCHEDULES WITH KEEP A LETTER'S FILES FOR A LATER SEND, AND HOW FAR
+   * AHEAD ({@link ScheduleFilesAnswer})? `null` is no answer. Optional: without it, a letter with
    * files is never offered Send later.
    */
-  scheduleFilesAnnounced?(): Promise<boolean | null>;
+  scheduleFilesAnnounced?(): Promise<ScheduleFilesAnswer | null>;
 
   /**
    * `GET /drafts/:id` — THE DRAFT'S TEXT, when the mirror row arrived without it.

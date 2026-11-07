@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, eq, is, isNotNull, isNull, lt, lte, sql, Column, type SQL } from "drizzle-orm";
 import { type PgColumn, type PgTable } from "drizzle-orm/pg-core";
 import type { Tx, LedgerTx } from "./change-log.js";
-import { mailboxCredentials } from "./schema-mail.js";
+import { mailboxCredentials, scheduledSendFiles } from "./schema-mail.js";
 import {
   totpSecrets, staffUsers, mailboxOauthCeremonies, mailboxOauthDeviceCeremonies, oauthProviderConfig,
 } from "./schema-cloud.js";
@@ -138,6 +138,16 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
     table: oauthProviderConfig,
     ciphertext: "clientSecretEnc", keyVersion: "clientSecretKeyVersion",
     key: ["provider"], keyIsSecret: false,
+  },
+  {
+    // A scheduled letter's sealed piece (mail 0180): the envelope is the piece's own data key, so a
+    // re-wrap moves that key and never touches the file bytes. Held at most about eight days, and
+    // here for the PKCE row's reason: a retirement must see every key that still opens something.
+    // A desktop's plain rows carry a NULL pair and are outside every query below.
+    site: "scheduled_send_files.dek_enc",
+    table: scheduledSendFiles,
+    ciphertext: "dekEnc", keyVersion: "dekKeyVersion",
+    key: ["accountId", "draftId", "fileNo", "seq"], keyIsSecret: false,
   },
 ];
 

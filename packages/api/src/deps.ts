@@ -12,7 +12,7 @@ import type {
   UnsubscribeService,
   ContactsService, SnippetsService, NotifyRulesService, AwayResponderService,
   AttachmentsService, KbService, TagsService, FolderOpsService, DraftsService, DraftingService, SendService,
-  ScheduleService,
+  ScheduleService, ScheduledFilesKeeping,
   WorkflowsService, ProfileImportService, HostResolver, SendDeps,
 } from "@trafficflow/services/mail";
 /* `OAuthTokenProvider` from the MAIL entry, never the root barrel: this file is compiled by every
@@ -251,6 +251,13 @@ export interface ApiServices {
   // OPTIONAL like `folderOps` and for the same shape of reason: a host wired before this
   // service existed answers 500 `schedule service not configured` rather than crashing at boot.
   schedules?: ScheduleService;
+  /**
+   * HOW THIS HOST KEEPS A SCHEDULED LETTER'S FILES (mail 0179, 0180), read by the files route, the
+   * scheduled pass and `/hello`: `plain` on the desktop's own engine, `sealed` on Cloud and self-host
+   * (`keepScheduledFilesSealed` over the host's key ring). ABSENT, the files route answers 404 and
+   * nothing is kept: a composition that never said where files go keeps none.
+   */
+  scheduledFiles?: ScheduledFilesKeeping;
   // AI draft-from-history. `drafting` assembles the sensitivity-safe context + stores
   // the draft; `drafter` is the INJECTED DraftPort (a mock in tests, a model-backed
   // adapter in a deployment that has one). A model needs an API key, which is
@@ -723,9 +730,9 @@ export interface HelloConfig {
     remoteImages: boolean;
     /**
      * Send later keeps a letter's files here until it goes (`POST /drafts/:id/schedule-with-files`,
-     * mail 0179): true only where that route is mounted and this host runs the scheduled pass that
-     * reads them back — the desktop's own engine. A server keeps no files at rest, so it says false
-     * and the composer says so before the person picks a time.
+     * mail 0179) with no horizon of its own: true on the desktop's own engine alone. A server says
+     * false here, so a client that predates its horizon keeps refusing, and announces the horizon
+     * as `features.scheduleFilesDays` instead, which `/hello` derives from `ApiServices.scheduledFiles`.
      */
     scheduleFiles: boolean;
   };

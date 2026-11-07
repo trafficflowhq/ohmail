@@ -238,6 +238,9 @@ describe("the bridge", () => {
     };
     expect(await settle("/drafts/d-1/send", "POST", 90_000), "cut while still uploading").toBe("still pending");
     expect(await settle("/drafts/d-1/send", "POST", STAGED_UPLOAD_DEADLINE_MS)).toBe("BridgeDeadlineError");
+    // Send later carries the same files the same way.
+    expect(await settle("/drafts/d-1/schedule-with-files", "POST", 90_000)).toBe("still pending");
+    expect(await settle("/drafts/d-1/schedule-with-files", "POST", STAGED_UPLOAD_DEADLINE_MS)).toBe("BridgeDeadlineError");
     // Control: the draft's other writes keep the minute.
     for (const [method, path] of [["POST", "/drafts"], ["PATCH", "/drafts/d-1"]]) {
       expect(await settle(path, method, BRIDGE_DEADLINE_MS), `${method} ${path}`).toBe("BridgeDeadlineError");

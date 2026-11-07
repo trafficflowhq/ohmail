@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, routingDecisions, rules,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, routingDecisions, rules,
   SCREENER_SUGGESTION_PROVENANCE, SCREENER_SUGGESTION_STATUS, type Tx,
 } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
@@ -44,15 +44,21 @@ describe.skipIf(!AVAILABLE)("the auto-act pass on real Postgres: a store that ra
     }).returning();
     await db.insert(accountSettings).values({ accountId, screenerAutoApplyAt: null, screeningScope: "all_time" });
     // Confirmed by the provider (`pass`): a deny on any other letter writes no rule to fault.
+    let uid = 0;
     const held = async (from: string): Promise<string> => {
+      uid++;
       const [m] = await db.insert(messages).values({
         accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `actpg:${randomUUID()}`,
         subject: "hello there", fromAddress: from, authVerdict: "pass",
-        nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+        nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
       }).returning();
       await db.insert(folderState).values({
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      // Its copy in the Screener, as the ingest records one.
+      await db.insert(messageInstances).values({
+        accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
       });
       await db.insert(routingDecisions).values({
         accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE,
