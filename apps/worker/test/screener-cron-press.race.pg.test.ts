@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import {
-  accounts, accountSettings, mailboxes, messages, folderState, routingDecisions,
+  accounts, accountSettings, mailboxes, messageInstances, messages, folderState, routingDecisions,
   SCREENER_SUGGESTION_PROVENANCE, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
@@ -91,11 +91,15 @@ async function seed(sender: string): Promise<string> {
     // Both halves of the pass's sensitivity exclusion must read "not flagged", or the cron has
     // no candidate and this test would race one writer against nothing.
     noAi: false,
-    nativeLocator: { folder: "ohmail/Screener", ref: `1:${Math.floor(Math.random() * 1e6)}` },
+    nativeLocator: { folder: "ohmail/Screener", ref: "1:1" },
   }).returning();
   await dbCron.insert(folderState).values({
     messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  // Its copy in the Screener, as the ingest records one: the pass reads only letters with a copy on record.
+  await dbCron.insert(messageInstances).values({
+    accountId, mailboxId: mb!.id, messageId: m!.id, folder: "ohmail/Screener", uidvalidity: 1n, uid: 1, isPrimary: true,
   });
   return accountId;
 }
@@ -134,6 +138,9 @@ describe("SEC3-MONEY-1 — the auto-suggest cron and a Suggest press racing one 
       }),
       press.suggest(ctx, { senders: [sender] }),
     ]);
+
+    // THE PREMISE: the cron found the sender too, or the press raced nothing and the rest is vacuous.
+    expect(cron.examined, "the cron had no candidate, so the press raced nothing").toBe(1);
 
     // ── THE INVARIANT ─────────────────────────────────────────────────────────────────────
     expect(calls.n, "cron and press each bought their own model call for one credit").toBe(1);

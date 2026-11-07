@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, screenerAttemptKey,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, screenerAttemptKey,
   type RefundObligation, type RefundObligationPort, type Tx,
 } from "@trafficflow/db";
 import { makeHaikuClassifier, type AnthropicLike, type ClassifierInput, type ClassifierPort } from "@trafficflow/core";
@@ -52,15 +52,22 @@ function provider(model: ClassifierPort): ClassifierPort & { down: boolean } {
   return p;
 }
 
+let nextUid = 1;
+
 async function heldSender(db: Tx, accountId: string, mailboxId: string, from: string): Promise<string> {
+  const uid = nextUid++;
   const [m] = await db.insert(messages).values({
     accountId, mailboxId, bodyHash: "h", dedupKey: `scope:${randomUUID()}`,
     subject: `hello from ${from}`, fromAddress: from, snippet: "a first message",
-    date: ARRIVED, createdAt: ARRIVED, nativeLocator: { folder: SCREENER, ref: `1:${randomUUID()}` },
+    date: ARRIVED, createdAt: ARRIVED, nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
   }).returning();
   await db.insert(folderState).values({
     messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  // Its copy in the Screener, as the ingest records one.
+  await db.insert(messageInstances).values({
+    accountId, mailboxId, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
   });
   return m!.id;
 }

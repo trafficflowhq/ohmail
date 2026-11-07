@@ -98,11 +98,16 @@ export function defineCorrespondentSuite(
      * confirmed by the provider (`pass`), as a Gmail-held mailbox's would be.
      */
     async function held(w: World, from: string, inReplyTo?: string): Promise<string> {
+      const at = uid++;
       const [m] = await db.insert(messages).values({
         accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: `held:${randomUUID()}`,
         subject: "Re: the north elevation", fromAddress: from, date: WROTE, authVerdict: "pass",
-        nativeLocator: { folder: SCREENER, ref: `9:${uid++}` },
+        nativeLocator: { folder: SCREENER, ref: `9:${at}` },
       }).returning();
+      await db.insert(messageInstances).values({
+        accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: SCREENER,
+        uidvalidity: 9n, uid: at, isPrimary: true,
+      });
       await db.insert(folderState).values({
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false,

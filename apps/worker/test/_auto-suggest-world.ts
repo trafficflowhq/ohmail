@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, screenerAttemptKey,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, screenerAttemptKey,
   type RefundObligation, type RefundObligationPort, type Tx,
 } from "@trafficflow/db";
 import { createLogger, makeHaikuClassifier, type AnthropicLike, type ClassifierPort } from "@trafficflow/core";
@@ -29,17 +29,24 @@ export async function world(): Promise<World> {
   return { db, accountId, mailboxId: mb!.id };
 }
 
+let nextUid = 1;
+
 /** One held first-contact sender, `nth` seconds into the day, so the pass meets them in order. */
 export async function held(w: World, from: string, nth: number): Promise<string> {
   const at = new Date(ARRIVED.getTime() + nth * 1000);
+  const uid = nextUid++;
   const [m] = await w.db.insert(messages).values({
     accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: `door:${randomUUID()}`,
     subject: `hello from ${from}`, fromAddress: from, snippet: "a first message",
-    date: at, createdAt: at, nativeLocator: { folder: SCREENER, ref: `1:${randomUUID()}` },
+    date: at, createdAt: at, nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
   }).returning();
   await w.db.insert(folderState).values({
     messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+  });
+  // Its copy in the Screener, as the ingest records one.
+  await w.db.insert(messageInstances).values({
+    accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
   });
   return m!.id;
 }

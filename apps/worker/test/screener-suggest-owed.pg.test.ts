@@ -7,7 +7,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable, journalDrift } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, folderState, mailboxes, messages, type Tx,
+  accountSettings, accounts, folderState, mailboxes, messageInstances, messages, type Tx,
 } from "@trafficflow/db";
 import {
   schema, screenerSuggestOwed,
@@ -191,16 +191,22 @@ describe.skipIf(!AVAILABLE)("SCR-SUGGEST-OWED — the mark, its reader, and the 
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `owed-b-${randomUUID().slice(0, 8)}@x.test`,
     }).returning();
+    let uid = 0;
     const seed = async (at: Date): Promise<void> => {
+      uid++;
       const [m] = await db.insert(messages).values({
         accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `owed:${randomUUID()}`,
         subject: "hello again", fromAddress: "repeat@first-contact.test",
         snippet: "s", date: new Date("2026-07-01T00:00:00Z"), createdAt: at,
-        nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
+        nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
       }).returning();
       await db.insert(folderState).values({
         messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      // Its copy in the Screener, as the ingest records one.
+      await db.insert(messageInstances).values({
+        accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid, isPrimary: true,
       });
     };
 

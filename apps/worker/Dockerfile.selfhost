@@ -75,16 +75,6 @@ RUN test -f build/host-worker/bin/ohmail-worker.mjs \
 # ── Runtime ──────────────────────────────────────────────────────────────────────────────
 FROM base AS runtime
 ENV NODE_ENV=production
-# A JS heap ceiling below the container cap means the engine aborts with a heap trace on
-# stderr instead of the kernel SIGKILLing the process — a SIGKILL is unloggable, and in one
-# early outage that is why the whole deployment log read "Starting Container" and nothing
-# else.
-#
-# BE HONEST ABOUT WHAT THIS DOES NOT DO: RFC822 bodies are Buffers, which live in the
-# engine's EXTERNAL memory, not the JS heap — this flag does not bound them. The actual
-# memory bound is the per-cycle batch budget in `packages/core/src/adapters/imap-types.ts`.
-# This is a visibility aid and headroom, only.
-ENV NODE_OPTIONS="--max-old-space-size=512"
 # glibc gives a thread that first allocates under contention its own 64 MB arena and returns
 # those bytes only from the top of one, so a burst leaves them resident for the life of the
 # process — measured on the desktop engine as one +92.9 MB step in rss with the JS heap FALLING
@@ -93,7 +83,21 @@ ENV NODE_OPTIONS="--max-old-space-size=512"
 # than a WASM one and their own throughput under it is owed.
 ENV MALLOC_ARENA_MAX=2
 COPY --from=build --chown=node:node /app/build/host-worker /app
+# THE JS HEAP CEILING IS SIZED AT START, not written here: Cloud and self-host run this one image
+# on boxes of every size. `entrypoint.sh` gives the process half the memory its container may use
+# (the cgroup limit, else MemTotal), kept between 512 and 2048 MiB, unless NODE_OPTIONS or the
+# command already names a heap flag, and says in one log line what it chose. A ceiling below the
+# container cap means the engine aborts with a heap trace on stderr instead of the kernel
+# SIGKILLing the process — a SIGKILL is unloggable, and in one early outage that is why the whole
+# deployment log read "Starting Container" and nothing else.
+#
+# BE HONEST ABOUT WHAT THIS DOES NOT DO: RFC822 bodies are Buffers, which live in the
+# engine's EXTERNAL memory, not the JS heap — the ceiling does not bound them. The actual
+# memory bound is the per-cycle batch budget in `packages/core/src/adapters/imap-types.ts`.
+# The ceiling is a visibility aid and the known-set memo's room (a quarter of it), only.
+COPY apps/worker/entrypoint.sh /app/bin/entrypoint.sh
 USER node
 # The health server binds PORT (defaulting to 8080), which the compose healthcheck polls.
 EXPOSE 8080
+ENTRYPOINT ["/bin/sh", "/app/bin/entrypoint.sh"]
 CMD ["node", "/app/bin/ohmail-worker.mjs"]
