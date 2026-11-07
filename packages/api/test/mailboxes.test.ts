@@ -32,6 +32,11 @@ describe("mailboxes (read + resync)", () => {
     expect(inbox.hasSyncCursor).toBe(true);
     const feed = mb.folders.find((f: { folder: string }) => f.folder === "ohmail/News");
     expect(feed.hasSyncCursor).toBe(false);
+    // Each folder's own count as the server stated it, null before a cycle opened it.
+    expect([inbox.serverExists, feed.serverExists]).toEqual([null, null]);
+    await db.update(mailboxFolders).set({ serverExists: 3_412 }).where(eq(mailboxFolders.folder, "INBOX"));
+    const again = (await (await H(req("GET", "/mailboxes", { bearer: s.token }), deps)).json()).items[0];
+    expect(again.folders.find((f: { folder: string }) => f.folder === "INBOX").serverExists).toBe(3_412);
   });
 
   it("GET /mailboxes/:id returns the DTO; a cross-account id → 404", async () => {

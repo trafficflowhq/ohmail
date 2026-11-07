@@ -21,7 +21,9 @@ import {
   accountLifecycleNotices,
   connectAttempts,
   creditRefundObligations,
+  mailboxStorageStats,
   staffAuditEvents,
+  storageEstimateOf,
   STAFF_ROLES,
   type ContentBlind,
   type EvaluateOptions,
@@ -707,6 +709,23 @@ export async function adminAccountDetail(
       withheldOnArrival: accountStorage.withheldOnArrival,
     })
     .from(accountStorage).where(eq(accountStorage.accountId, id)).limit(1);
+  // The storage estimate from the worker's snapshot alone (cloud 0057): counts the role is granted.
+  const snapshot = await db
+    .select({
+      mailboxId: mailboxStorageStats.mailboxId, letters: mailboxStorageStats.letters,
+      textLetters: mailboxStorageStats.textLetters, textBytes: mailboxStorageStats.textBytes,
+      instances: mailboxStorageStats.instances, serverLetters: mailboxStorageStats.serverLetters,
+      counted: mailboxStorageStats.counted, imported: mailboxStorageStats.imported,
+    })
+    .from(mailboxStorageStats).where(eq(mailboxStorageStats.accountId, id));
+  const estimate = snapshot.length === 0 ? null : storageEstimateOf(snapshot.map((s) => ({
+    id: s.mailboxId, serverLetters: s.serverLetters === null ? null : int(s.serverLetters),
+    counted: s.counted, imported: s.imported,
+    stats: {
+      letters: int(s.letters), textLetters: int(s.textLetters), textBytes: int(s.textBytes), instances: int(s.instances),
+      imported: s.imported,
+    },
+  })));
   const deviceRows = await db
     .select({ id: devices.id, kind: devices.kind, createdAt: devices.createdAt, lastSyncedAt: devices.lastSyncedAt })
     .from(devices).where(eq(devices.accountId, id)).orderBy(desc(devices.createdAt)).limit(ADMIN_LIST_LIMIT);
@@ -762,6 +781,10 @@ export async function adminAccountDetail(
       // The column holds the month's first day; the page names the month.
       keptFrom: storageRow.keptFrom === null ? null : storageRow.keptFrom.slice(0, 7),
       withheldOnArrival: int(storageRow.withheldOnArrival),
+      ...(estimate !== null ? {
+        expectedBytes: estimate.expectedBytes, expectedLetters: estimate.expectedLetters,
+        complete: estimate.complete, importing: snapshot.some((s) => !s.imported),
+      } : {}),
     } : null,
     devices: deviceRows.map((d) => ({
       id: d.id, kind: deviceKindWord(d.kind), pairedAt: asDate(d.createdAt).toISOString(), lastSyncedAt: iso(d.lastSyncedAt),

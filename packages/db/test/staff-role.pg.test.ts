@@ -759,6 +759,46 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
     expect(row).toEqual({ cols: [...STAFF_SELECT_GRANTS["public.connect_attempts"]!].sort(), writes: false });
   });
 
+  it("serves the account page's Expected figure as the blind role, and refuses every write (cloud 0057)", async () => {
+    const mailboxId = "00000000-0000-4000-8000-000000000057";
+    await ownerClient.unsafe(`insert into account_storage (account_id, bytes) values ('${seeded.accountId}', 2048)
+      on conflict (account_id) do nothing`);
+    await ownerClient.unsafe(`insert into mailbox_storage_stats (account_id, mailbox_id, letters, text_letters, emptied,
+      text_bytes, instances, server_letters, counted, imported, at)
+      values ('${seeded.accountId}', '${mailboxId}', 2000, 2000, 0, 50000000, 2000, 10000, true, false, now())`);
+    const detail = await adminAccountDetail(staff, new Date(), seeded.accountId, { roles: ["owner"] });
+    // 10,000 letters on the server at the account's own 25,000 bytes a letter.
+    expect(detail?.storage).toMatchObject({ expectedLetters: 10_000, expectedBytes: 250_000_000, complete: true, importing: true });
+    for (const statement of [
+      `insert into mailbox_storage_stats (account_id, mailbox_id, letters, text_letters, emptied, text_bytes, instances, counted, imported, at)
+        values ('${seeded.accountId}', '${mailboxId.replace(/7$/, "8")}', 1, 1, 0, 1, 1, true, true, now())`,
+      "update mailbox_storage_stats set letters = 0",
+      "delete from mailbox_storage_stats",
+    ]) {
+      expect(await staffClient.unsafe(statement).then(() => null, (e: unknown) => sqlstateOf(e)), statement).toBe(DENIED_SQLSTATE);
+    }
+    await ownerClient.unsafe("delete from mailbox_storage_stats");
+  });
+
+  it("cloud 0057's own grant, run alone, is the allow-list's columns and no write", async () => {
+    const [, grant] = readFileSync(join(CLOUD_DIR, "0057_storage_estimate_and_mails.sql"), "utf8").split("--> statement-breakpoint");
+    await ownerClient.unsafe(`revoke all on public.mailbox_storage_stats from ${STAFF_ROLE}`);
+    await ownerClient.unsafe(grant!);
+    const [row] = await ownerClient.unsafe<Array<{ cols: string[]; writes: boolean }>>(`
+      select array(select column_name::text from information_schema.columns
+                    where table_schema = 'public' and table_name = 'mailbox_storage_stats'
+                      and has_column_privilege('${STAFF_ROLE}', 'public.mailbox_storage_stats', column_name, 'SELECT')
+                    order by 1) as cols,
+             has_any_column_privilege('${STAFF_ROLE}', 'public.mailbox_storage_stats', 'INSERT, UPDATE')
+               or has_table_privilege('${STAFF_ROLE}', 'public.mailbox_storage_stats', 'DELETE, TRUNCATE') as writes`);
+    expect(row).toEqual({ cols: [...STAFF_SELECT_GRANTS["public.mailbox_storage_stats"]!].sort(), writes: false });
+    // The two other tables of 0057 are not the console's: nothing of them is granted.
+    const [other] = await ownerClient.unsafe<Array<{ any: boolean }>>(`
+      select has_any_column_privilege('${STAFF_ROLE}', 'public.account_storage_prefs', 'SELECT')
+          or has_any_column_privilege('${STAFF_ROLE}', 'public.storage_mail_sent', 'SELECT') as any`);
+    expect(other).toEqual({ any: false });
+  });
+
   /* ══ 3. The census — equality, so a grant nobody asserted still fails ════════════════ */
 
   it("the SELECT-able set EQUALS the allowlist, column for column", async () => {

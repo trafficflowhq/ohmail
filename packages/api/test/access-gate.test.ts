@@ -5,8 +5,11 @@ import {
 } from "@trafficflow/api";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { UNMETERED, accountStorage, mailboxes, messages, type AccessVerdict, type EntitlementsPort } from "@trafficflow/db";
-import { accountLifecycleNotices } from "@trafficflow/db/cloud";
+import {
+  UNMETERED, accountStorage, mailboxFolders, mailboxes, messages,
+  type AccessReadOpts, type AccessVerdict, type EntitlementsPort,
+} from "@trafficflow/db";
+import { accountLifecycleNotices, accountStoragePrefs, mailboxStorageStats } from "@trafficflow/db/cloud";
 import {
   spendOf, entitlementsPort as entitlementsPortOf,
 } from "../src/routes/shared.js";
@@ -17,6 +20,25 @@ import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
+
+interface Doors { query: (...a: unknown[]) => Promise<unknown>; exec: (...a: unknown[]) => Promise<unknown> }
+type Client = Doors & { transaction: (cb: (tx: Doors) => Promise<unknown>) => Promise<unknown> };
+/** Every statement text the PGlite client runs from here on, a transaction's included. */
+function recordStatements(db: unknown): string[] {
+  const client = (db as { $client: Client }).$client;
+  const seen: string[] = [];
+  const instrument = <T extends Doors>(t: T): T => {
+    for (const door of ["query", "exec"] as const) {
+      const inner = t[door].bind(t);
+      t[door] = (...a: unknown[]) => { if (typeof a[0] === "string") seen.push(a[0]); return inner(...(a as [])); };
+    }
+    return t;
+  };
+  instrument(client);
+  const innerTx = client.transaction.bind(client);
+  client.transaction = (cb) => innerTx((tx) => cb(instrument(tx)));
+  return seen;
+}
 
 /**
  * THE ACCESS GATE, DRIVEN THROUGH THE ROUTE TABLE.
@@ -44,6 +66,11 @@ function stubPort(over: Partial<EntitlementsPort> & { access?: EntitlementsPort[
 
 const refusing = (reason: "payment_required" | "suspended", manageUrl?: string): EntitlementsPort =>
   stubPort({ access: async () => ({ ok: false, reason, ...(manageUrl ? { manageUrl } : {}) }) });
+
+/** The estimate of an account with no mailbox: nothing expected, measured on the default. */
+const NO_MAILBOX_ESTIMATE = {
+  expectedBytes: 0, expectedLetters: 0, storedLetters: 0, avgLetterBytes: 25_000, avgMeasured: false, complete: true, at: null,
+};
 
 /** The bag with an entitlements composition of the test's choosing. */
 async function depsWith(entitlementsPort: unknown) {
@@ -170,6 +197,8 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
       usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 80_000,
       firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: "2019-04", withheldOnArrival: 12, upgrade: "plan",
       emptyingNow: true,
+      limitReason: "plan", importing: false, card: "full", mail: true,
+      estimate: NO_MAILBOX_ESTIMATE, mailboxes: [],
     });
   });
 
@@ -264,6 +293,7 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
     expect(body.storage).toEqual({
       usedBytes: 0, limitBytes: 5_000, emptiedForSpace: 0, firstEmptiedAt: null, keptFrom: null, withheldOnArrival: 0,
       upgrade: "plan", emptyingNow: false,
+      limitReason: "plan", importing: false, card: null, mail: true, estimate: NO_MAILBOX_ESTIMATE, mailboxes: [],
     });
   });
 
@@ -281,6 +311,22 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
       const body = await res.json();
       expect(Object.keys(body)).not.toContain("storage");
     }
+  });
+
+  it("says why the cap is what it is: the plan's own limit, the trial's room, a lower limit held", async () => {
+    const reason = async (verdicts: AccessVerdict[]): Promise<unknown> => {
+      let i = 0;
+      const { db, deps } = await depsWith(stubPort({ access: async () => verdicts[Math.min(i++, verdicts.length - 1)]! }));
+      const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+      let body: { storage?: { limitReason?: unknown } } = {};
+      for (let n = 0; n < verdicts.length; n++) body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+      return body.storage?.limitReason;
+    };
+    const capped = (storageBytes: number, extra: Partial<Extract<AccessVerdict, { ok: true }>> = {}): AccessVerdict =>
+      ({ ok: true, limits: { mailboxes: 2, storageBytes, canAddMailbox: true, aiEnabled: true }, ...extra });
+    expect(await reason([capped(2_000_000_000)])).toBe("plan");
+    expect(await reason([capped(4_000_000_000, { trialStorage: { planBytesLimit: 2_000_000_000, until: null } })])).toBe("trial");
+    expect(await reason([capped(10_000_000_000), capped(2_000_000_000)])).toBe("held");
   });
 
   it("a REFUSAL is never reported as unmetered — the arm the middleware hides", async () => {
@@ -405,6 +451,175 @@ describe("GET /account/access answers limits, and never mistakes a refusal for f
  * dial. PGlite here for the route's shape; the transaction on real Postgres is
  * `account-reopen.pg.test.ts`.
  */
+/**
+ * THE STORAGE BLOCK'S ESTIMATE, CARD AND OFFER (cloud 0057): the folder counts and the worker's snapshot
+ * read cheaply, the need carried on the one read of the program, its offer passed through, and the
+ * person's dismissal and mail switch kept on the server.
+ */
+describe("GET /account/access tells what the mail needs and what the plan keeps", () => {
+  const GB = 1_000_000_000;
+  const NEED_OFFER = {
+    currency: "usd", interval: "month" as const,
+    plans: [{ plan: "plus" as const, mailboxes: 5, roomBytes: 5 * GB, amount: 1_500 }],
+    addon: { unitBytes: 10 * GB, amount: 1_000, maxUnits: 10 },
+    current: { plan: "solo" as const, addonUnits: 0, roomBytes: 4 * GB, roomFrom: "now" as const },
+    fit: { plan: "plus" as const, addonUnits: 1, roomBytes: 15 * GB, amount: 2_500, keepsAll: true },
+    canChange: true, reason: null,
+  };
+  const trial = (offer?: typeof NEED_OFFER): AccessVerdict => ({
+    ok: true, limits: { mailboxes: 2, storageBytes: 4 * GB, canAddMailbox: true, aiEnabled: true },
+    trialStorage: { planBytesLimit: 2 * GB, until: null },
+    ...(offer ? { storageOffer: offer } : {}),
+  });
+
+  /** One mailbox: its folder counts, and the worker's snapshot of it when given. */
+  async function mailboxOf(
+    db: Awaited<ReturnType<typeof makeDeps>>["db"], accountId: string,
+    o: { folders: Array<[string, number | null]>; stats?: { letters: number; textLetters: number; textBytes: number; instances: number } },
+  ): Promise<string> {
+    const id = randomUUID();
+    await db.insert(mailboxes).values({ id, accountId, provider: "imap", address: `mb-${id.slice(0, 8)}@example.com` });
+    for (const [folder, n] of o.folders) await db.insert(mailboxFolders).values({ mailboxId: id, folder, serverExists: n });
+    if (o.stats) {
+      await db.insert(mailboxStorageStats).values({
+        accountId, mailboxId: id, ...o.stats, emptied: 0, serverLetters: null, counted: true, imported: false, at: FIXED_NOW,
+      });
+    }
+    return id;
+  }
+
+  it("the estimate and each mailbox's figures; the need rides the read to the program and its offer comes back", async () => {
+    let asked: AccessReadOpts | undefined;
+    const { db, deps } = await depsWith(stubPort({ access: async (_a, o) => { asked = o; return trial(NEED_OFFER); } }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    await db.insert(accountStorage).values({ accountId: s.accountId, bytes: 3.2 * GB });
+    // 400,000 and 100,000 letters on the server; 128,000 held so far, at 25 KB of text each.
+    const a = await mailboxOf(db, s.accountId, {
+      folders: [["INBOX", 3_412], ["Archive", 386_940], ["Sent", 9_648]],
+      stats: { letters: 100_000, textLetters: 100_000, textBytes: 2.6 * GB, instances: 100_000 },
+    });
+    const b = await mailboxOf(db, s.accountId, {
+      folders: [["INBOX", 100_000]], stats: { letters: 28_000, textLetters: 28_000, textBytes: 0.6 * GB, instances: 28_000 },
+    });
+    const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+    expect(asked).toEqual({ fresh: true, storageNeed: { expectedBytes: 12.5 * GB, expectedLetters: 500_000, importing: true } });
+    expect(body.storage).toMatchObject({
+      usedBytes: 3.2 * GB, limitBytes: 4 * GB, planLimitBytes: 2 * GB, limitDropsAt: null,
+      limitReason: "trial", importing: true, card: "drop", mail: true,
+      estimate: {
+        expectedBytes: 12.5 * GB, expectedLetters: 500_000, storedLetters: 128_000, avgLetterBytes: 25_000,
+        avgMeasured: true, complete: true, at: FIXED_NOW.toISOString(),
+      },
+      offer: NEED_OFFER,
+    });
+    const byId = <T extends { id: string }>(m: T[]): T[] => [...m].sort((x, y) => x.id.localeCompare(y.id));
+    expect(byId(body.storage.mailboxes)).toEqual(byId([
+      { id: a, usedBytes: 2.6 * GB, letters: 100_000, expectedLetters: 400_000, expectedBytes: 10 * GB, importing: true },
+      { id: b, usedBytes: 0.6 * GB, letters: 28_000, expectedLetters: 100_000, expectedBytes: 2.5 * GB, importing: true },
+    ]));
+    // A folder no cycle has counted yet: the estimate says it is not complete.
+    await db.insert(mailboxFolders).values({ mailboxId: a, folder: "Projects", serverExists: null });
+    const later = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
+    expect(later.storage.estimate.complete).toBe(false);
+  });
+
+  it("counts nothing in the mail tables: no statement of the read names messages, their bodies or their places", async () => {
+    const { db, deps } = await depsWith(stubPort({ access: async () => trial(NEED_OFFER) }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    await db.insert(accountStorage).values({ accountId: s.accountId, bytes: 3.2 * GB });
+    await mailboxOf(db, s.accountId, {
+      folders: [["INBOX", 10]], stats: { letters: 10, textLetters: 10, textBytes: 1_000, instances: 10 },
+    });
+    const seen = recordStatements(db);
+    const res = await H(req("GET", "/account/access", { bearer: s.token }), deps);
+    expect((await res.json()).storage.estimate.expectedLetters).toBe(10);
+    expect(seen.length, "the request ran statements this recorder saw").toBeGreaterThan(3);
+    expect(seen.filter((q) => /\b(messages|message_bodies|message_instances)\b/.test(q))).toEqual([]);
+  });
+
+  it("PATCH /account/storage {dismiss}: the card stays away at the facts it was dismissed at", async () => {
+    let cap = 4 * GB;
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({ ok: true, limits: { mailboxes: 2, storageBytes: cap, canAddMailbox: true, aiEnabled: true } }),
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    await db.insert(accountStorage).values({ accountId: s.accountId, bytes: 3.3 * GB });
+    const card = async () => (await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json()).storage.card;
+    expect(await card()).toBe("near");
+    const res = await H(req("PATCH", "/account/storage", { bearer: s.token, body: JSON.stringify({ dismiss: "near" }) }), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ dismissed: "near" });
+    expect(await card()).toBeNull();
+    // A new cap brings it back.
+    cap = 4_100_000_000;
+    expect(await card()).toBe("near");
+    const [row] = await db.select().from(accountStoragePrefs).where(eq(accountStoragePrefs.accountId, s.accountId));
+    expect(row).toMatchObject({ cardDismissedLevel: "near", cardDismissedCap: 4 * GB, cardDismissedEmptied: 0 });
+  });
+
+  it("PATCH /account/storage {mail}: off and on again, and the block says so", async () => {
+    const { db, deps } = await depsWith(stubPort({
+      access: async () => ({ ok: true, limits: { mailboxes: 2, storageBytes: 4 * GB, canAddMailbox: true, aiEnabled: true } }),
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const mail = async () => (await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json()).storage.mail;
+    const patch = (body: unknown) => H(req("PATCH", "/account/storage", { bearer: s.token, body: JSON.stringify(body) }), deps);
+    expect((await patch({ mail: false })).status).toBe(200);
+    expect(await mail()).toBe(false);
+    expect((await patch({ mail: true })).status).toBe(200);
+    expect(await mail()).toBe(true);
+    // One of the two, each of its own type, and nothing else.
+    for (const bad of [{}, { mail: "off" }, { dismiss: "soon" }, { dismiss: "near", mail: false }, ["near"], null]) {
+      const r = await patch(bad);
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+    }
+  });
+
+  it("PATCH /account/storage on a host with no program is 404, and writes nothing", async () => {
+    const { db, deps } = await depsWith(undefined);
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("PATCH", "/account/storage", { bearer: s.token, body: JSON.stringify({ mail: false }) }), deps);
+    expect(res.status).toBe(404);
+    expect(await db.select().from(accountStoragePrefs)).toEqual([]);
+  });
+});
+
+describe("POST /account/manage-link/change — the page that may change the plan", () => {
+  it("needs a recent second factor: without one 403 step_up_required, and the program is never asked", async () => {
+    const mints: unknown[] = [];
+    const { db, deps } = await depsWith(stubPort({
+      manageLink: async (...a) => { mints.push(a); return { url: "https://manage.example/manage?token=x" }; },
+    }));
+    const stale = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: new Date(FIXED_NOW.getTime() - 60 * 60 * 1000) });
+    const refused = await H(req("POST", "/account/manage-link/change", { bearer: stale.token, body: "{}" }), deps);
+    expect(refused.status).toBe(403);
+    expect((await refused.json()).error.code).toBe("step_up_required");
+    expect(mints).toEqual([]);
+  });
+
+  it("with one, asks for an elevated page with the mail's need, for the session's account", async () => {
+    const mints: unknown[][] = [];
+    const { db, deps } = await depsWith(stubPort({
+      manageLink: async (...a) => { mints.push(a); return { url: "https://manage.example/manage?token=x" }; },
+    }));
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const res = await H(req("POST", "/account/manage-link/change", {
+      bearer: s.token, body: JSON.stringify({ lang: "de", accountId: randomUUID() }),
+    }), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ url: "https://manage.example/manage?token=x" });
+    expect(mints).toEqual([[s.accountId, "de", undefined, {
+      elevated: true, storageNeed: { expectedBytes: 0, expectedLetters: 0, importing: false },
+    }]]);
+  });
+
+  it("404 on a host with no program", async () => {
+    const { db, deps } = await depsWith(undefined);
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    expect((await H(req("POST", "/account/manage-link/change", { bearer: s.token, body: "{}" }), deps)).status).toBe(404);
+  });
+});
+
 describe("GET /account/access reopens what the wall closed", () => {
   const openLifecycle = {
     state: "active" as const, closedReason: null, trialEndsAt: null, graceUntil: null,

@@ -21,6 +21,8 @@ export const TAIL_SECTION_PLAN = [
   { name: "inbound_quiet", passes: ["inbound_quiet"] },
   { name: "away_reply_flag_redeliver", passes: ["away_reply_flag_redeliver"] },
   { name: "storage_evict", passes: ["storage_evict"] },
+  // After the trim: a snapshot taken then counts what the trim left.
+  { name: "storage_stats", passes: ["storage_stats"] },
   { name: "screener_correspondent_retro", passes: ["screener_correspondent_retro"] },
   { name: "screener_auto_suggest", passes: ["screener_auto_suggest"] },
   { name: "screener_auto_act", passes: ["screener_auto_act"] },

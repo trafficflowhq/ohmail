@@ -15,7 +15,7 @@ export interface ApiCronTarget {
   /** Closed name, stable across renames of the path — the key an operator greps for. */
   target: "sessions_reap" | "smtp_size" | "scheduled_send"
     | "send_reconcile" | "away_responder" | "unsubscribe_drain"
-    | "account_lifecycle" | "security_notices" | "sent_copies";
+    | "account_lifecycle" | "security_notices" | "sent_copies" | "storage_mails";
   /** The API route, poked as `GET {baseUrl}{route}` with the bearer secret. */
   route: string;
   /** The cadence. Jitter (up to {@link jitterMs}) is ADDED per wait, never subtracted. */
@@ -216,6 +216,18 @@ export const API_CRON_TARGETS: readonly ApiCronTarget[] = [
     jitterMs: 30 * 1000,
     // How many owed copies are still recorded: a pass falling behind shows on the health row.
     readsRemaining: true,
+  },
+  {
+    // THE STORAGE MAILS (cloud 0057): at 90% and when full, on the API host, which holds the
+    // transactional mail. HOURLY: storage fills over days, and the pass's own key and week keep a
+    // missed or doubled poke from a second mail.
+    target: "storage_mails",
+    route: "/internal/storage-mails/run",
+    everyMs: 60 * 60 * 1000,
+    // Its own stagger, distinct from every sibling's.
+    firstDelayMs: 13 * 60 * 1000,
+    // The route stops itself at 45 s, under the platform's 60 s.
+    timeoutMs: 60 * 1000,
   },
 ];
 

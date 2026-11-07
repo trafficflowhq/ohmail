@@ -1,9 +1,10 @@
 import {
-  type AttachmentAdapter, type AttachmentSink, type DownloadAllInput, type OpenAdapter,
+  liveBody, type AttachmentAdapter, type AttachmentSink, type DownloadAllInput, type OpenAdapter,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
 import { jsonResponse } from "../responses.js";
 import { makeOpenAdapter } from "../attachments-adapter.js";
+import { liveBodyReader } from "../live-body-door.js";
 import { mailServerRefusal } from "../mail-server-refusal.js";
 import { withErrorEnvelope, type Middleware } from "../middleware.js";
 import type { Route } from "../router.js";
@@ -95,6 +96,30 @@ function contentDisposition(filename: string | null): string {
 }
 
 export const attachmentRoutes: Route[] = [
+  {
+    /**
+     * LOAD IT NOW — a letter whose text was emptied for space, read from the person's own mail
+     * server for this view and kept nowhere (`live-body.ts`). The attachment fetch's on-demand class:
+     * `connection`, the byte routes' envelope, and never cached. An unmetered host empties nothing
+     * for space, so it answers 409 to every id it knows.
+     */
+    method: "GET",
+    pattern: "/messages/:id/live-body",
+    relay: true,
+    cost: "connection",
+    options: { raw: true, middleware: BYTE_ROUTE_MIDDLEWARE },
+    handler: async (req, deps, params) => {
+      try {
+        const body = await liveBody(serviceContext(deps, req), params.id!, {
+          ...(deps.services?.liveBodyAdmit ? { admit: deps.services.liveBodyAdmit } : {}),
+          read: liveBodyReader(deps),
+        });
+        return jsonResponse(body, { headers: { "Cache-Control": "no-store" } });
+      } catch (err) {
+        throw mailServerRefusal(err) ?? err;
+      }
+    },
+  },
   {
     method: "GET",
     pattern: "/messages/:id/attachments",

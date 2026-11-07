@@ -91,6 +91,42 @@ describe("a lower storage limit waits before it empties letters", () => {
       .toEqual({ capBytes: 4 * GB, planBytes: 2 * GB, dropsAt: null });
   });
 
+  it("a decrease the person confirmed opens no hold: the lower limit applies at once", async () => {
+    const db = await makeTestDb();
+    const id = await account(db);
+    await read(db, id, v(15 * GB), START);
+    const told = { planBytesLimit: 5 * GB, at: at(1).toISOString() };
+    expect(await read(db, id, { ...v(5 * GB), storageTold: told } as AccessVerdict, at(1)))
+      .toEqual({ capBytes: 5 * GB, planBytes: null, dropsAt: null });
+    expect(await rowOf(db, id)).toMatchObject({ seenBytes: 5 * GB, heldBytes: null, heldUntil: null });
+  });
+
+  it("…and only that far: a further drop below the confirmed limit holds the confirmed one", async () => {
+    const db = await makeTestDb();
+    const id = await account(db);
+    await read(db, id, v(15 * GB), START);
+    const told = { planBytesLimit: 5 * GB, at: at(1).toISOString() };
+    const got = await read(db, id, { ...v(2 * GB), storageTold: told } as AccessVerdict, at(1));
+    expect(got).toMatchObject({ capBytes: 5 * GB, planBytes: 2 * GB });
+  });
+
+  it("a confirmation older than the limit last seen, or past its 14 days, opens the hold as before", async () => {
+    const db = await makeTestDb();
+    // Confirmed down to 5 GB on day 1 and seen; back up to 15 GB on day 2; down to 5 GB again on day 3, unconfirmed.
+    const id = await account(db);
+    await read(db, id, v(15 * GB), START);
+    const told = { planBytesLimit: 5 * GB, at: at(1).toISOString() };
+    await read(db, id, { ...v(5 * GB), storageTold: told } as AccessVerdict, at(1));
+    await read(db, id, { ...v(15 * GB), storageTold: told } as AccessVerdict, at(2));
+    expect(await read(db, id, { ...v(5 * GB), storageTold: told } as AccessVerdict, at(3)))
+      .toMatchObject({ capBytes: 15 * GB, planBytes: 5 * GB });
+    // A confirmation first read 15 days after it was made covers nothing.
+    const late = await account(db);
+    await read(db, late, v(15 * GB), START);
+    expect(await read(db, late, { ...v(5 * GB), storageTold: told } as AccessVerdict, at(16)))
+      .toMatchObject({ capBytes: 15 * GB, planBytes: 5 * GB });
+  });
+
   it("no limit, a zero limit and a refusal are applied as before and touch no database", async () => {
     const untouchable = new Proxy({}, { get: () => { throw new Error("the database was touched"); } }) as Tx;
     expect(await heldStorageLimitOf(untouchable, randomUUID(), v(null), START)).toBeNull();

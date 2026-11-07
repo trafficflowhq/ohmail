@@ -110,7 +110,10 @@ describe("the projection the sidecar reads matches the table", () => {
     // 190 -> 191 with `POST /auth/reuse-sweeps/ack`: the account's own notice, put away on the server
     // that listed it, like `GET /auth/session` beside it.
     // 191 -> 192 with `POST /auth/step-up/recovery-code`, relayed like `POST /auth/step-up/totp`.
-    expect(RELAY_ALLOWLIST.length).toBe(192);
+    // 192 -> 195 with the storage program: Load it now, read from the server that empties letters for
+    // space; the storage choices, kept where `GET /account/access` is read; and the change door,
+    // relayed like the manage link beside it.
+    expect(RELAY_ALLOWLIST.length).toBe(195);
   });
 
   it("every pattern in the projection is a real route", () => {

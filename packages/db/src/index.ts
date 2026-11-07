@@ -505,6 +505,7 @@ export {
   type AccessLifecycle, type AccessLifecycleState, type AccessClosedReason, type AccessTrial,
   PLAN_HINT_PLANS, PLAN_HINT_INTERVALS, planHintOf, type PlanHint,
   LARGEST_PLAN_STORAGE_BYTES, storageUpgradeOf, type StorageUpgrade, type TrialStorageCarry,
+  type StorageNeed, type StorageOffer, type StorageOfferPlan, type StoragePlanName, type StorageTold,
   type SpendOutcome, type SpendAction, type SpendRelease, type ReleaseOutcome,
   type ReleaseReceipt, type UsageReceipt, type RefundObligation, type RefundObligationPort,
   type RefundObligationReason, type ReturnConfirmOutcome,

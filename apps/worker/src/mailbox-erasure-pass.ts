@@ -1,5 +1,6 @@
-import { and, asc, isNotNull, isNull, type SQL } from "drizzle-orm";
+import { and, asc, eq, isNotNull, isNull, type SQL } from "drizzle-orm";
 import { clearErasedSettingsHashes, clearErasedSignatures, eraseOwedMailbox, mailboxes, type Tx } from "@trafficflow/db";
+import { mailboxStorageStats } from "@trafficflow/db/cloud";
 import { dialect } from "@trafficflow/db/dialect";
 
 /**
@@ -61,7 +62,13 @@ export async function mailboxErasurePass(
     if (run.steps > 0) out.mailboxes += 1;
     out.steps += run.steps;
     out.messagesErased += run.messagesErased;
-    if (run.done) out.finished += 1;
+    if (run.done) {
+      out.finished += 1;
+      // The storage estimate's snapshot of it goes with it (cloud 0057); a crash before this line
+      // leaves a row the next snapshot of the account deletes, and no reader joins an erased mailbox.
+      await db.delete(mailboxStorageStats)
+        .where(and(eq(mailboxStorageStats.accountId, r.accountId), eq(mailboxStorageStats.mailboxId, r.id)));
+    }
   }
   return out;
 }

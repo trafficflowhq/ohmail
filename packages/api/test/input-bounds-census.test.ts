@@ -254,6 +254,9 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   // The sign-in throttle's security notices, the same bucket: a scheduler's shared secret and no
   // body, query or path parameter. One run claims at most fifty owed rows (`drainSecurityNotices`).
   "GET /internal/security-notices/run",
+  // The storage mails (cloud 0057), the same bucket: a scheduler's shared secret and no body, query
+  // or path parameter. One run mails at most `STORAGE_MAILS_PER_RUN` accounts (`runStorageMailPass`).
+  "GET /internal/storage-mails/run",
   "GET /auth/session",
   "POST /auth/2fa/webauthn/register/options",
   "POST /auth/2fa/totp/enroll",
@@ -312,6 +315,8 @@ const PATH_PARAMS_ONLY: ReadonlyArray<string> = [
   "GET /rules/:id",
   "GET /messages/:id",
   "GET /messages/:id/body",
+  // Load it now: nothing on the wire but the id; the places read and the size ceiling are the server's.
+  "GET /messages/:id/live-body",
   "POST /messages/:id/draft",
   "DELETE /messages/:id",
   /* mail 0099 — put a deleted message back where it was. `PATH_PARAMS_ONLY`, and by the same
@@ -835,6 +840,12 @@ const CENSUS: Readonly<Record<string, Disposition>> = {
      otherwise dropped. The account is still the SESSION's: a manage link for an account the caller
      merely named would be a link to somebody else's payment details. */
   "POST /account/manage-link": { scalarsOnly: true },
+  /* The change door (cloud 0057): one field, `lang`, a member of its closed set or dropped; the account
+     is the SESSION's and the need it sends is read from the server's own rows. */
+  "POST /account/manage-link/change": { scalarsOnly: true },
+  /* The storage choices: exactly one of `dismiss` (a member of the three levels) or `mail` (a boolean),
+     refused 400 otherwise. */
+  "PATCH /account/storage": { scalarsOnly: true },
   /* One field, the session id the return address carried, refused 400 unless it is a token of at
      most this many letters, digits, `_` or `-`. The account is the SESSION's, as above. */
   "POST /account/checkout/confirm": { bounds: [RETURN_SESSION_ID_MAX_CHARS] },

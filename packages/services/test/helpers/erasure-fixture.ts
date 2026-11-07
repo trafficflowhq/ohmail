@@ -96,6 +96,9 @@ import {
   connectAttempts,
   screenerSuggestOwed,
   accountStorageHolds,
+  accountStoragePrefs,
+  mailboxStorageStats,
+  storageMailSent,
   totpSecrets,
   waitlist,
   webauthnChallenges,
@@ -522,6 +525,17 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   await db.insert(connectAttempts).values({
     accountId, at: NOW, door: "connect", preset: "gmail", outcome: "refused", reason: "auth", transport: "imap",
   });
+  // The storage estimate's snapshot, the card's dismissal and mail switch, a storage mail sent
+  // (cloud 0057), each keyed by the account.
+  await db.insert(mailboxStorageStats).values({
+    accountId, mailboxId, letters: 10, textLetters: 9, emptied: 1, textBytes: 2_048, instances: 10,
+    serverLetters: 12, counted: true, imported: false, at: NOW,
+  });
+  await db.insert(accountStoragePrefs).values({
+    accountId, cardDismissedLevel: "near", cardDismissedCap: 2_000_000_000, cardDismissedEmptied: 0,
+    cardDismissedAt: NOW, mailOffAt: NOW,
+  });
+  await db.insert(storageMailSent).values({ accountId, level: "near", capBytes: 2_000_000_000, sentAt: NOW, deliveredAt: NOW });
 
   // THE OTHER ELEVEN: each of these had a deleter and no seed, so both sweeps counted
   // 0 -> 0 over them — a wrong predicate in any of those deletes was invisible. One row each;
