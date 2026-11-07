@@ -21,6 +21,45 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.47] — 2026-11-07
+
+### The Cloud worker reads far less from the database while a large mailbox is being imported
+
+While a large mailbox is being imported, the Cloud worker no longer re-reads the whole mailbox on every
+pass to look for letters removed from the server: it looks after a removal, on a new connection and at
+least once an hour. The check that gives a letter moved out of Junk in another mail app its text back now
+runs every 15 minutes instead of on every pass; moving a letter out of Junk in ohmail still restores it at
+once. The worker's in-memory list of known letters is now sized from the memory the worker actually has, and a
+mailbox too large for that list no longer stops importing new letters.
+The organizer image now sets its memory ceiling at start to half the memory its container may use, between
+512 MB and 2 GB, where it was always 512 MB; a `--max-old-space-size` you set in its `NODE_OPTIONS` still wins.
+Automatic suggestions and filing in the Screener only consider letters the mail server still holds.
+This applies to Cloud and to your own server.
+
+### Cloud stores less per letter
+
+Cloud no longer keeps an old copy of each letter's words that search stopped using, so large mailboxes take less space and import with less disk work. A server you run yourself does the same once every account's search index is built.
+
+### The Screener's waiting count no longer jumps while the app reloads your mail
+
+When ohmail had to reload its copy of your mail from the start, which the desktop app sometimes does when it
+opens, the Ohbox's Screener strip and the sidebar's Screener count could show a different number for a moment
+("6 waiting", then 7, then 8) before they went back to the right one. They now wait until ohmail has checked
+again who is really waiting.
+
+### Send later now works with attachments on Cloud and on your own server
+
+A message with attachments can now be scheduled with Send later on ohmail Cloud and on a server you run
+yourself: in the web app, in the desktop app connected to either, and on a paired phone (Android and
+iOS). The server keeps the files until the message goes, encrypted, and deletes them the moment it is
+sent, cancelled or closed. A message with files can be scheduled up to seven days ahead; the picker
+offers no later time and says so. On the desktop app's own engine nothing changes: the files wait on
+your computer.
+
+A server that has not been updated yet still keeps no files for a later send, and Send later says so in
+the panel before you pick a time, as before. A forwarded message still can't be scheduled, and the
+panel now says that in its own words.
+
 ## [0.30.46] — 2026-11-07
 
 ### Clicking a link while writing a letter no longer opens it
@@ -17088,7 +17127,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.46...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.47...HEAD
+[0.30.47]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.47
 [0.30.46]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.46
 [0.30.45]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.45
 [0.30.44]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.44

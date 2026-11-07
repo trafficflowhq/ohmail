@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.47" date="2026-11-07">
+      <description>
+        <ul>
+          <li>The Cloud worker reads far less from the database while a large mailbox is being imported</li>
+          <li>Cloud stores less per letter</li>
+          <li>The Screener's waiting count no longer jumps while the app reloads your mail</li>
+          <li>Send later now works with attachments on Cloud and on your own server</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.46" date="2026-11-07">
       <description>
         <ul>
@@ -110,13 +120,6 @@
           <li>A reply draft you deleted stays deleted</li>
           <li>A worker with half its platform credential pages instead of going quietly dark</li>
           <li>A Screener decision no longer fails while ohmail is filing your mail</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.42" date="2026-11-06">
-      <description>
-        <ul>
-          <li>New mail keeps arriving within seconds while a large mailbox is being added</li>
         </ul>
       </description>
     </release>
