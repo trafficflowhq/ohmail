@@ -27,15 +27,13 @@ const twin = readFileSync(at("README.ohmarchy.md"), "utf8");
 const named = (md: string): string[] =>
   [...md.matchAll(/(?:src|srcset|href)="(docs\/assets\/readme\/[^"]+)"/g)].map((m) => m[1]!);
 
-/** README.ohmarchy.md back into README.md: the switch, the twin link, the tile paths. */
+/** README.ohmarchy.md back into README.md: the switch's lit half, the twin link, the tile paths. */
 function toPaper(md: string): string {
   return md
-    .replace('<a href="README.md"><picture>', '<a href="README.ohmarchy.md"><picture>')
-    .replace('srcset="docs/assets/readme/toggle-ohmarchy-dark.svg"', 'srcset="docs/assets/readme/toggle-paper-dark.svg"')
-    .replace(
-      'src="docs/assets/readme/toggle-ohmarchy-light.svg" alt="paper / ohmarchy face switch — ohmarchy is active; opens this README in the paper face"',
-      'src="docs/assets/readme/toggle-paper-light.svg" alt="paper / ohmarchy face switch — paper is active; opens this README in the ohmarchy face"',
-    )
+    .replace(/toggle-paper-off-(light|dark)\.svg/g, "toggle-paper-on-$1.svg")
+    .replace(/toggle-ohmarchy-on-(light|dark)\.svg/g, "toggle-ohmarchy-off-$1.svg")
+    .replace('alt="paper: open this README in the paper face"', 'alt="paper, the face shown"')
+    .replace('alt="ohmarchy, the face shown"', 'alt="ohmarchy: open this README in the ohmarchy face"')
     .replace("[twin in the other face](README.md)", "[twin in the other face](README.ohmarchy.md)")
     .replace(/(docs\/assets\/readme\/)ohmarchy-([a-z0-9-]+\.(?:gif|webp))/g, "$1$2");
 }
@@ -93,6 +91,43 @@ describe("the README's two faces", () => {
     expect(css).not.toMatch(/#e7f1ff/i);
     expect(phone).not.toMatch(/#e7f1ff/i);
   });
+});
+
+describe("the face switch", () => {
+  // GitHub has no image maps, so each half is its own link and picture, and the two must touch.
+  const block = (md: string): string => /<sub>Choose a face<\/sub><br\/>\s*([\s\S]*?)\s*<\/p>/.exec(md)?.[1] ?? "";
+  const halves = (md: string) =>
+    [...block(md).matchAll(/<a\s+href="([^"]+)">([\s\S]*?)<\/a>/g)].map((m) => {
+      const light = /<img [^>]*src="(docs\/assets\/readme\/toggle-([a-z]+)-(on|off)-light\.svg)"[^>]*width="(\d+)" height="40"/.exec(m[2]!);
+      const dark = /srcset="docs\/assets\/readme\/(toggle-[a-z]+-(?:on|off))-dark\.svg"/.exec(m[2]!)?.[1];
+      return { href: m[1], face: light?.[2], state: light?.[3], dark, width: Number(light?.[4]), file: light?.[1] ?? "" };
+    });
+  const svgBox = (rel: string, theme: "light" | "dark") => {
+    const svg = readFileSync(at(rel.replace("-light.svg", `-${theme}.svg`)), "utf8");
+    const box = /viewBox="(\d+) 0 (\d+) 40" width="(\d+)" height="40"/.exec(svg);
+    return { x: Number(box?.[1]), w: Number(box?.[2]), width: Number(box?.[3]) };
+  };
+
+  for (const [page, md, shown] of [["README.md", paper, "paper"], ["README.ohmarchy.md", twin, "ohmarchy"]] as const) {
+    it(`${page}: paper opens README.md, ohmarchy opens README.ohmarchy.md, the shown face is the lit half`, () => {
+      const [left, right, ...rest] = halves(md);
+      expect(rest).toEqual([]);
+      const lit = (face: string) => (face === shown ? "on" : "off");
+      expect(left).toMatchObject({ href: "README.md", face: "paper", state: lit("paper"), dark: `toggle-paper-${lit("paper")}` });
+      expect(right).toMatchObject({ href: "README.ohmarchy.md", face: "ohmarchy", state: lit("ohmarchy"), dark: `toggle-ohmarchy-${lit("ohmarchy")}` });
+    });
+
+    it(`${page}: the halves touch — no text between or inside the links, and their pictures tile the 178 px switch`, () => {
+      expect(block(md).replace(/<[^>]*>/g, "")).toBe("");
+      const [left, right] = halves(md);
+      for (const theme of ["light", "dark"] as const) {
+        const [l, r] = [svgBox(left!.file, theme), svgBox(right!.file, theme)];
+        expect([l.x, l.w, l.width], `${left!.file} ${theme}`).toEqual([0, left!.width, left!.width]);
+        expect([r.x, r.w, r.width], `${right!.file} ${theme}`).toEqual([l.w, right!.width, right!.width]);
+        expect(l.w + r.w).toBe(178);
+      }
+    });
+  }
 });
 
 describe("what ohmail.app links to and quotes from the README", () => {

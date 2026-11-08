@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 77 40" width="77" height="40" role="img" aria-label="paper: open this README in the paper face">
+  <title>paper: open this README in the paper face</title>
+  <path d="M77 5 L20 5 A15 15 0 0 0 20 35 L77 35 Z" fill="#fbfaf9"/>
+  <path d="M76.5 5.5 L20 5.5 A14.5 14.5 0 0 0 20 34.5 L76.5 34.5 Z" fill="none" stroke="rgba(54,44,36,0.16)" stroke-width="1"/>
+  <text x="43" y="24.5" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif" font-size="13" font-weight="600" fill="#534b45">paper</text>
+</svg>
