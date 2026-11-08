@@ -496,10 +496,10 @@ describe("GET /account/access tells what the mail needs and what the plan keeps"
     // 400,000 and 100,000 letters on the server; 128,000 held so far, at 25 KB of text each.
     const a = await mailboxOf(db, s.accountId, {
       folders: [["INBOX", 3_412], ["Archive", 386_940], ["Sent", 9_648]],
-      stats: { letters: 100_000, textLetters: 100_000, textBytes: 2.6 * GB, instances: 100_000 },
+      stats: { letters: 100_000, textLetters: 100_000, textBytes: 2.5 * GB, instances: 100_000 },
     });
     const b = await mailboxOf(db, s.accountId, {
-      folders: [["INBOX", 100_000]], stats: { letters: 28_000, textLetters: 28_000, textBytes: 0.6 * GB, instances: 28_000 },
+      folders: [["INBOX", 100_000]], stats: { letters: 28_000, textLetters: 28_000, textBytes: 0.7 * GB, instances: 28_000 },
     });
     const body = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
     expect(asked).toEqual({ fresh: true, storageNeed: { expectedBytes: 12.5 * GB, expectedLetters: 500_000, importing: true } });
@@ -514,8 +514,8 @@ describe("GET /account/access tells what the mail needs and what the plan keeps"
     });
     const byId = <T extends { id: string }>(m: T[]): T[] => [...m].sort((x, y) => x.id.localeCompare(y.id));
     expect(byId(body.storage.mailboxes)).toEqual(byId([
-      { id: a, usedBytes: 2.6 * GB, letters: 100_000, expectedLetters: 400_000, expectedBytes: 10 * GB, importing: true },
-      { id: b, usedBytes: 0.6 * GB, letters: 28_000, expectedLetters: 100_000, expectedBytes: 2.5 * GB, importing: true },
+      { id: a, usedBytes: 2.5 * GB, letters: 100_000, expectedLetters: 400_000, expectedBytes: 10 * GB, importing: true },
+      { id: b, usedBytes: 0.7 * GB, letters: 28_000, expectedLetters: 100_000, expectedBytes: 2.5 * GB, importing: true },
     ]));
     // A folder no cycle has counted yet: the estimate says it is not complete.
     await db.insert(mailboxFolders).values({ mailboxId: a, folder: "Projects", serverExists: null });

@@ -341,6 +341,8 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // stale-epoch arm's read of one message's instances. `repairLegacyNews` is DELIBERATELY ABSENT:
   // it forgets instance rows and flips the primary, which is what this projection remembers.
   "clearServerMissing", "instanceAtEpoch", "hasLegacyNewsRows",
+  // mail 0182: a mailboxes column, not projected.
+  "isLegacyNewsClean", "markLegacyNewsClean",
   // the junk-restore rewrite: message_bodies + messages.snippet/updated_at + one change_log row —
   // never a locator, never an instance, so it cannot move the projection. It runs on every cycle
   // that finds a candidate, which is exactly why it must be named here: unclassified it would

@@ -1,5 +1,5 @@
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
   accounts, auditLog, changeLog, folderState, mailboxFolders, mailboxes, messageBodies, messageInstances, messages, type Tx,
@@ -203,11 +203,21 @@ describe("the repair's three shapes, content-matched", () => {
 });
 
 describe("the pass around the repair", () => {
-  it("runs while the gate is open, stops once the store is clean, and an attach re-arms it", async () => {
+  /** The mailbox's recorded clean mark (mail 0182). */
+  const cleanAt = async (s: Awaited<ReturnType<typeof store>>, mailboxId: string) =>
+    (await s.db.select({ at: mailboxes.legacyNewsCleanAt }).from(mailboxes).where(eq(mailboxes.id, mailboxId)))[0]!.at;
+  const gateAt = (attach: number) => ({ legacyNewsRepairGate: () => ({ attach }) }) as unknown as MailboxAdapter;
+  const passOf = (s: Awaited<ReturnType<typeof store>>, a: { accountId: string; mailboxId: string }) =>
+    (adapter: MailboxAdapter) => legacyNewsRepairPass({
+      repo: s.repo, adapter, accountId: a.accountId, mailboxId: a.mailboxId, write: (fn) => s.repo.transaction(fn),
+    });
+
+  it("runs while the gate is open, stops once the store is clean, and records it once", async () => {
     const s = await store();
     const a = await s.account("gate");
     await a.letter("g", `${READS}#1:3`, [[READS, 1, 3, true], [NEWS, 4, 30, false]]);
-    // Each chunk is one fenced group: counting the groups counts the repairs that ran.
+    const walks = vi.spyOn(s.repo, "hasLegacyNewsRows");
+    // Each chunk and each mark is one fenced group: counting the groups counts the writes.
     let calls = 0;
     let gate: { attach: number } | null = null;
     const adapter = { legacyNewsRepairGate: () => gate } as unknown as MailboxAdapter;
@@ -216,14 +226,69 @@ describe("the pass around the repair", () => {
       write: (fn) => { calls++; return s.repo.transaction(fn); },
     });
     expect((await visit()).repair, "a closed gate (Reads still beside News) repairs nothing").toBeNull();
+    expect(walks).not.toHaveBeenCalled();
     gate = { attach: 1 };
     expect((await visit()).repair?.repointed).toBe(1);
-    expect((await visit()).repair, "a clean store is found by a read, and nothing is written").toBeNull();
-    await a.letter("h", `${READS}#1:4`, [[READS, 1, 4, true], [NEWS, 4, 40, false]]);
+    expect(await cleanAt(s, a.mailboxId), "a dirty mailbox is never marked").toBeNull();
+    expect((await visit()).repair, "a clean store is found by a read, and recorded once").toBeNull();
+    expect(await cleanAt(s, a.mailboxId)).not.toBeNull();
     expect((await visit()).repair, "clean under this attach: not asked again").toBeNull();
     gate = { attach: 2 };
-    expect((await visit()).repair?.repointed, "the next attach re-arms it").toBe(1);
+    // The attach re-arm is retired: a mailbox recorded clean is not walked on the next attach.
+    expect((await visit()).repair, "recorded clean: the next attach walks nothing").toBeNull();
+    expect(walks).toHaveBeenCalledTimes(2);
     expect(calls).toBe(2);
+  });
+
+  it("a clean mailbox is walked once, on its first connection, and never on a later one", async () => {
+    const s = await store();
+    const a = await s.account("clean");
+    await a.letter("n", `${NEWS}#4:30`, [[NEWS, 4, 30, true]], { desired: NEWS, observed: NEWS });
+    const walks = vi.spyOn(s.repo, "hasLegacyNewsRows");
+    const pass = passOf(s, a);
+    const first = gateAt(1);
+    expect((await pass(first)).repair).toBeNull();
+    expect(walks).toHaveBeenCalledTimes(1);
+    expect(await cleanAt(s, a.mailboxId)).not.toBeNull();
+    // A worker restart or a re-attach after a dropped connection: a new adapter, and the same one at its next attach.
+    expect((await pass(gateAt(1))).repair).toBeNull();
+    expect((await pass(gateAt(2))).repair).toBeNull();
+    expect(walks).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["(a) a legacy instance beside a News primary", `${NEWS}#4:30`, [[READS, 1, 3, false], [NEWS, 4, 30, true]], undefined],
+    ["(b) a locator spelled the old way, with a News instance", `${READS}#1:3`, [[NEWS, 4, 30, true]], undefined],
+    ["(c1) a folder_state desired spelled the old way", `${NEWS}#4:30`, [[NEWS, 4, 30, true]], { desired: READS, observed: NEWS }],
+    ["(c2) a folder_state observed spelled the old way", `${NEWS}#4:30`, [[NEWS, 4, 30, true]], { desired: NEWS, observed: READS }],
+  ] as const)("%s is still found and repaired, and marked only after", async (_name, loc, inst, fs) => {
+    const s = await store();
+    const a = await s.account("shape");
+    const id = await a.letter("s", loc, inst.map((i) => [...i] as [string, number, number, boolean]), fs);
+    const pass = passOf(s, a);
+    const first = await pass(gateAt(1));
+    expect(first.repair?.examined).toBe(1);
+    const r = await s.row(id);
+    expect(r.loc.folder).toBe(NEWS);
+    expect(r.inst).toEqual([`${NEWS}#4:30*`]);
+    if (fs) expect([r.fs?.d, r.fs?.o]).toEqual([NEWS, NEWS]);
+    expect(await cleanAt(s, a.mailboxId), "a mailbox the walk found dirty is not marked").toBeNull();
+    expect((await pass(gateAt(1))).repair).toBeNull();
+    expect(await cleanAt(s, a.mailboxId)).not.toBeNull();
+    const walks = vi.spyOn(s.repo, "hasLegacyNewsRows");
+    expect((await pass(gateAt(1))).repair).toBeNull();
+    expect(walks).not.toHaveBeenCalled();
+  });
+
+  it("the mark is read and written inside its own account", async () => {
+    const s = await store();
+    const a = await s.account("mine");
+    const b = await s.account("theirs");
+    await s.repo.markLegacyNewsClean!(a.accountId, b.mailboxId);
+    expect(await cleanAt(s, b.mailboxId)).toBeNull();
+    await s.repo.markLegacyNewsClean!(b.accountId, b.mailboxId);
+    expect(await s.repo.isLegacyNewsClean!(b.accountId, b.mailboxId)).toBe(true);
+    expect(await s.repo.isLegacyNewsClean!(a.accountId, b.mailboxId)).toBe(false);
   });
 });
 

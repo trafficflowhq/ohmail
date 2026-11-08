@@ -446,6 +446,8 @@ export const mailboxes = sqliteTable("mailboxes", {
   organizedThrough: integer("organized_through", { mode: "timestamp_ms" }),
   /** Mail 0169 — the last instant this row said another install held it; see the pg twin. LAST for 0111's reason. */
   heldElsewhereUntil: integer("held_elsewhere_until", { mode: "timestamp_ms" }),
+  /** Mail 0182 — when a full read found no pre-0.22 News spelling; see the pg twin. LAST for 0111's reason. */
+  legacyNewsCleanAt: integer("legacy_news_clean_at", { mode: "timestamp_ms" }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.
