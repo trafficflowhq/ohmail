@@ -699,5 +699,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "UPDATE flag_state SET pending_account_id = (SELECT account_id FROM messages WHERE id = flag_state.message_id)\n WHERE \"reconcile_status\" = 'pending' AND pending_account_id IS NOT (SELECT account_id FROM messages WHERE id = flag_state.message_id);",
       "CREATE INDEX IF NOT EXISTS \"flag_state_pending_queue_idx\" ON \"flag_state\" (\"pending_account_id\", \"updated_at\", \"message_id\") WHERE \"reconcile_status\" = 'pending';"
     ]
+  },
+  {
+    "name": "0182_mailboxes_legacy_news_clean.sql",
+    "statements": [
+      "ALTER TABLE \"mailboxes\" ADD COLUMN \"legacy_news_clean_at\" integer;"
+    ]
   }
 ] as const;
