@@ -21,6 +21,53 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.48] — 2026-11-08
+
+### Checking for moves and read marks to send to the mail server costs almost nothing
+
+Each sync asks whether any move or read mark is still waiting to reach your mail server. The answer
+is almost always no, but finding that out read every move and read mark ever stored, many times a
+minute. The check now reads only what is still waiting, on ohmail Cloud, your own server, the desktop
+app and the phone.
+
+### Cloud storage says what your mailboxes need
+
+Cloud now tells you how much space your mailboxes need and what your plan keeps. It mails you once when your
+storage reaches 90% and once when it is full, and you can turn these mails off.
+
+### Settings → Storage shows what your mail needs, and a letter emptied for space opens on request
+
+On ohmail Cloud, web and desktop: a short card at the top of the Ohbox when your storage is 80% full, when it
+is full, or when your plan's room is about to shrink, with the figures, what your mail is expected to need and
+the plan that keeps all of it. Settings → Storage shows the numbers per mailbox, what counts (only the text of
+your letters, never attachments), why it is limited, the plans, and a switch for the storage mails. Change plan
+and Add storage open your subscription page after a second factor; on the desktop they open Settings → Storage
+in your browser, where that factor is asked. A letter whose text was emptied for space
+now has Load it now, which reads it from your mail server for that view and stores nothing. The Mac App Store
+build shows the same numbers and plans without prices or purchase buttons.
+
+### Screener decisions made just before quitting are no longer lost
+
+Screener decisions made just before quitting are no longer lost, and the Screener count no longer flashes them
+at the next start. On a desktop app signed in to your own server or to ohmail Cloud, a decision pressed in the
+seconds before you quit could be dropped, and the sender waited again after the next start: always in the first
+session after signing in on a new install or after switching account or server, and in every session when the
+sign-in address is not one of the account's mailboxes. It is now carried out when the app opens again, and so is a
+delete or a move pressed in that moment. At that start the sidebar's Screener count could also show those senders
+for a moment before the decision reached the server.
+
+After signing in on a new install, the desktop app now opens your account's own mailbox once the account names
+it. If ohmail Cloud or your server cannot be reached at that moment, the app says so while it keeps trying, rather
+than opening an empty mailbox.
+
+### The phone shows your Cloud storage and loads an emptied letter
+
+On Android and iOS, a card at the top of the Ohbox says when your Cloud storage is nearly full, full, or about to
+shrink when your trial room ends: how much is used, what your mail needs, and which plan keeps all of it. Settings
+has a new Storage page with the same numbers per mailbox, the plans with their room in GB and letters, and the
+switch for storage mails. A letter whose text was not kept for lack of space has Load it now, which reads it from
+your mail server for that view without storing it.
+
 ## [0.30.47] — 2026-11-07
 
 ### The Cloud worker reads far less from the database while a large mailbox is being imported
@@ -17127,7 +17174,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.47...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.48...HEAD
+[0.30.48]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.48
 [0.30.47]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.47
 [0.30.46]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.46
 [0.30.45]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.45
