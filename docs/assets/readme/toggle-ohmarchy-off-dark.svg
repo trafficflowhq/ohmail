@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="77 0 101 40" width="101" height="40" role="img" aria-label="ohmarchy: open this README in the ohmarchy face">
+  <title>ohmarchy: open this README in the ohmarchy face</title>
+  <defs>
+  <filter id="lift" x="-40%" y="-60%" width="180%" height="260%">
+    <feDropShadow in="SourceGraphic" dx="0" dy="1" stdDeviation="1" flood-color="#000000" flood-opacity="0.32" result="s1"/>
+    <feDropShadow in="SourceGraphic" dx="0" dy="2.5" stdDeviation="3" flood-color="#000000" flood-opacity="0.3" result="s2"/>
+    <feMerge><feMergeNode in="s2"/><feMergeNode in="s1"/><feMergeNode in="SourceGraphic"/></feMerge>
+  </filter></defs>
+  <!-- the paper pill sits left of this half; only its shadow, which crosses the seam, shows here -->
+  <g filter="url(#lift)"><path d="M77 5 L20 5 A15 15 0 0 0 20 35 L77 35 Z" fill="#1c1714"/></g>
+  <rect x="77" y="5" width="96" height="30" fill="#13141c"/>
+  <rect x="77.5" y="5.5" width="95" height="29" fill="none" stroke="rgba(169,177,214,0.25)" stroke-width="1"/>
+  <text x="125" y="24.3" text-anchor="middle" font-family="'JetBrainsMono Nerd Font', 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace" font-size="12" font-weight="600" fill="#7a82ab">ohmarchy</text>
+</svg>

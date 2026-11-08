@@ -29,10 +29,8 @@
 
 <p align="center">
   <sub>Choose a face</sub><br/>
-  <a href="README.ohmarchy.md"><picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/toggle-paper-dark.svg">
-    <img src="docs/assets/readme/toggle-paper-light.svg" alt="paper / ohmarchy face switch — paper is active; opens this README in the ohmarchy face" width="178" height="40" />
-  </picture></a>
+  <a href="README.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/toggle-paper-on-dark.svg"><img src="docs/assets/readme/toggle-paper-on-light.svg" alt="paper, the face shown" width="77" height="40" /></picture></a><a
+    href="README.ohmarchy.md"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/toggle-ohmarchy-off-dark.svg"><img src="docs/assets/readme/toggle-ohmarchy-off-light.svg" alt="ohmarchy: open this README in the ohmarchy face" width="101" height="40" /></picture></a>
 </p>
 
 <p align="center">
