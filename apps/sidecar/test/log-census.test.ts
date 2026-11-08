@@ -1333,6 +1333,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      the launch dialled nothing at all. `info` on `mailbox_open_refused`'s rule: the refusal itself
      is already filed, and this records the consequence. `reason` only — no host and no mailbox. */
   mailbox_open_seal_discarded: "info",
+  /* AND THE MAILBOX THAT LAUNCH ADDED COULD NOT BE REMOVED: it stays signed out beside the next
+     press's one. `error` by its name; `err` + `reason`. */
+  mailbox_open_undo_failed: "error",
   /* THE STORE ANSWERED WITH A CREDENTIAL THIS LAUNCH COULD NOT DIAL, on a start that supplied a
      password of its own (`mobile.ts`). Named `login` and not after the row itself, which the
      name rule below refuses for its own reason. `info` by its name and by its meaning: nothing failed at a

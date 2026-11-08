@@ -91,6 +91,12 @@ function lastSyncIn(file: string): unknown[] {
   } finally { raw.close(); }
 }
 
+/** How many mailbox rows the store holds, on a fresh handle. */
+function mailboxRowsIn(file: string): number {
+  const raw = new sqlite.DatabaseSync(file);
+  try { return (raw.prepare("select id from mailboxes").all() as unknown[]).length; } finally { raw.close(); }
+}
+
 /** The store as a first sync that never finished leaves it: nothing to paint at a relaunch. */
 function neverSynced(file: string): void {
   const raw = new sqlite.DatabaseSync(file);
@@ -216,6 +222,8 @@ describe.runIf(ON_DEVICE_STORE)("the phone's Connect dials the outgoing server",
     expect(dialled, "the outgoing server was asked at Connect").toEqual([{ host: "smtp.invalid", port: 587 }]);
     expect((err as { submissionRefused?: unknown } | null)?.submissionRefused).toBe("auth");
     expect(transportsIn(file), "nothing sealed is left to win over the next press").toEqual([]);
+    /* The incoming server signed in, so the mailbox it made stays. */
+    expect(mailboxRowsIn(file)).toBe(1);
   }, 30_000);
 
   it("REFUSES an outgoing server whose certificate was refused, and says it was the certificate", async () => {
@@ -246,6 +254,7 @@ describe.runIf(ON_DEVICE_STORE)("the phone's Connect dials the outgoing server",
     expect((err as { submissionRefused?: unknown }).submissionRefused, "worded about the outgoing server").toBeUndefined();
     expect(dialled, "the outgoing server was asked after the incoming one could not be reached").toEqual([]);
     expect(transportsIn(file), "nothing sealed is left to win over the next press").toEqual([]);
+    expect(mailboxRowsIn(file), "the mailbox it added was left behind").toBe(0);
   }, 30_000);
 
   it("CONTROL — a relaunch still opens over an outage, on a store holding mail and on one that never synced", async () => {
