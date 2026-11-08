@@ -3182,28 +3182,28 @@ const TABLE = {
   stripCaughtUp: (date: string) => `ohmail is catching up on mail that arrived since ${date}.`,
   stripDismiss: "Got it",
   /**
-   * STORAGE (`ui/StorageNotice.tsx`, `app/storage.tsx`, the emptied letter): numbers first, in GB and
-   * in letters. The store face names plans and rooms, never an amount, a purchase or a link.
+   * STORAGE (`ui/StorageNotice.tsx`, `app/storage.tsx`, the emptied letter): numbers first, each size
+   * with its unit as the web says it. The store face names plans and rooms, never an amount, a purchase or a link.
    */
   storageCardNear: (pct: string) => `Storage is ${pct} full`,
   storageCardFull: "Storage is full",
-  storageCardDrop: (gb: string) => `Your storage drops to ${gb} GB`,
-  storageOf: (used: string, limit: string) => `${used} of ${limit} GB`,
+  storageCardDrop: (size: string) => `Your storage drops to ${size}`,
+  storageOf: (used: string, limit: string) => `${used} of ${limit}`,
   storagePercent: (n: number) => `${n}%`,
-  storageUsedTrial: (used: string, limit: string) => `${used} GB of your trial room of ${limit} GB used.`,
-  storageUsedPlan: (used: string, limit: string) => `${used} GB of your plan's ${limit} GB used.`,
-  storageUsedHeld: (used: string, limit: string, date: string) => `${used} GB used of the ${limit} GB you keep until ${date}.`,
-  storageExpectedImporting: (gb: string) => `Expected about ${gb} GB when the import finishes.`,
-  storageExpectedNeeds: (gb: string) => `Your mail needs about ${gb} GB.`,
+  storageUsedTrial: (used: string, limit: string) => `${used} of your trial room of ${limit} used.`,
+  storageUsedPlan: (used: string, limit: string) => `${used} of your plan's ${limit} used.`,
+  storageUsedHeld: (used: string, limit: string, date: string) => `${used} used of the ${limit} you keep until ${date}.`,
+  storageExpectedImporting: (size: string) => `Expected about ${size} when the import finishes.`,
+  storageExpectedNeeds: (size: string) => `Your mail needs about ${size}.`,
   storageKeptFrom: (month: string) => `Text kept for letters from ${month} on; older ones stay on your mail server.`,
   storageKeptOldest: "The text of your oldest letters stays on your mail server.",
   storageDropDated: (date: string, plan: string) =>
-    `From ${date} your plan keeps ${plan} GB, and ohmail keeps the text of your newest letters within it.`,
+    `From ${date} your plan keeps ${plan}, and ohmail keeps the text of your newest letters within it.`,
   storageDropUnpaid: (plan: string) =>
-    `From 14 days after your first payment your plan keeps ${plan} GB, and ohmail keeps the text of your newest letters within it.`,
-  storageFitAll: (name: string, gb: string) => `${name} keeps all your mail: ${gb} GB.`,
-  storageFitMost: (name: string, gb: string) => `${name} keeps the most: ${gb} GB.`,
-  storageWithAddon: (plan: string, gb: string) => `${plan} + ${gb} GB storage`,
+    `From 14 days after your first payment your plan keeps ${plan}, and ohmail keeps the text of your newest letters within it.`,
+  storageFitAll: (name: string, size: string) => `${name} keeps all your mail: ${size}.`,
+  storageFitMost: (name: string, size: string) => `${name} keeps the most: ${size}.`,
+  storageWithAddon: (plan: string, size: string) => `${plan} + ${size} storage`,
   /** The store face's line in place of any button: plain text, no link. */
   storageManageAt: "Manage your plan at ohmail.app",
   storageManage: "Manage subscription",
@@ -3214,12 +3214,13 @@ const TABLE = {
   storageUsedSubTrial: "used, your trial room",
   storageUsedSubPlan: "used, your plan",
   storageUsedSubHeld: (date: string) => `used, kept until ${date}`,
-  storageExpectedImport: (gb: string, letters: string) =>
-    `Expected when the import finishes: about ${gb} GB, ${letters} letters.`,
-  storageExpectedAll: (gb: string, letters: string) => `All your mail: about ${gb} GB, ${letters} letters.`,
+  storageExpectedImport: (size: string, letters: string) =>
+    `Expected when the import finishes: about ${size}, ${letters} letters.`,
+  storageExpectedAll: (size: string, letters: string) => `All your mail: about ${size}, ${letters} letters.`,
   storageImportRunning: (stored: string, expected: string) => `First import running: ${stored} of ${expected} letters.`,
+  storageMailbox: (kept: string, expected: string) => `${kept} kept · ${expected} expected`,
   storageEstimateGrows: "The figure grows as ohmail opens more of your folders.",
-  storageAverage: (kb: string) => `Your letters average about ${kb} KB of text.`,
+  storageAverage: (size: string) => `Your letters average about ${size} of text.`,
   storageKeptFromLong: (month: string) =>
     `Text kept for letters from ${month} on. Older letters are complete on your mail server, and still listed and findable here.`,
   storageWhatCounts: "What counts",
@@ -3230,15 +3231,15 @@ const TABLE = {
     "We keep your letters' text in our database so reading and finding mail are instant on every device. That database is the costly part of ohmail Cloud, so each plan includes a set amount.",
   storageYourPlan: "Your plan",
   storagePlanTrial: (limit: string, plan: string, planGb: string) =>
-    `Your trial keeps up to ${limit} GB. On ${plan}, ${planGb} GB from 14 days after your first payment.`,
+    `Your trial keeps up to ${limit}. On ${plan}, ${planGb} from 14 days after your first payment.`,
   storagePlanUntil: (limit: string, date: string, plan: string, planGb: string) =>
-    `You keep up to ${limit} GB until ${date}. Then ${plan} keeps ${planGb} GB.`,
-  storagePlanKeeps: (plan: string, gb: string) => `${plan} keeps ${gb} GB.`,
+    `You keep up to ${limit} until ${date}. Then ${plan} keeps ${planGb}.`,
+  storagePlanKeeps: (plan: string, size: string) => `${plan} keeps ${size}.`,
   storagePlans: "Plans",
   storagePlanYours: (plan: string) => `${plan} · your plan`,
-  storagePlanRoom: (gb: string, letters: string) => `${gb} GB · about ${letters} letters`,
+  storagePlanRoom: (size: string, letters: string) => `${size} · about ${letters} letters`,
   storageAddon: "Storage add-on",
-  storageAddonRoom: (gb: string, letters: string) => `+${gb} GB · about ${letters} letters each`,
+  storageAddonRoom: (size: string, letters: string) => `+${size} · about ${letters} letters each`,
   storageFitted: "Keeps all your mail",
   storageFittedMost: "Keeps the most",
   storageMails: "Storage mails",

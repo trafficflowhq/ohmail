@@ -6,10 +6,11 @@ import {
 import { resetAccessLockForTests } from "../src/net/access-lock";
 import type { ConnectedSession } from "../src/net/pairing";
 import {
-  aboutLetters, gigabytes, storageCardOf, storagePaneOf, storageRowValue,
+  grouped, storageCardOf, storagePaneOf, storageRowValue, storageSize,
 } from "../src/ui/storage-notice";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
+import { formatStorageBytes } from "../../webapp/app/shell/storage-state";
 
 /**
  * STORAGE ON THE PHONE: the access answer's storage block as the phone narrows it, the card the
@@ -45,6 +46,18 @@ const NEAR = {
     { id: "mb-2", usedBytes: 0.6 * GB, letters: 24_000, expectedLetters: 100_000, expectedBytes: 2.5 * GB, importing: true },
   ],
   offer: OFFER,
+};
+/** A small trial account as the wire carried it: 1.2 MB of 4 GB, 4,080 letters averaging 223 B. */
+const SMALL = {
+  ...NEAR, usedBytes: 1_208_935, importing: false, card: null,
+  estimate: {
+    expectedBytes: 909_840, expectedLetters: 4_080, storedLetters: 4_080, avgLetterBytes: 223,
+    avgMeasured: true, complete: true, at: "2026-11-08T02:00:00.000Z",
+  },
+  mailboxes: [
+    { id: "mb-1", usedBytes: 1_064_422, letters: 3_182, expectedLetters: 3_182, expectedBytes: 709_586, importing: false },
+    { id: "mb-2", usedBytes: 144_513, letters: 898, expectedLetters: 898, expectedBytes: 200_254, importing: false },
+  ],
 };
 const FULL = { ...NEAR, usedBytes: 4 * GB, card: "full", emptyingNow: true, emptiedForSpace: 286_000, keptFrom: "2019-03" };
 const open = (storage: unknown, state = "trialing") => ({
@@ -178,8 +191,8 @@ describe("the Storage screen", () => {
   it("draws the numbers: used of the cap, per mailbox, expected in GB and letters, the plans with their rooms", () => {
     const pane = storagePaneOf(accessOf(open(NEAR))!.storage!, EN, "en", "store");
     expect(pane).toMatchObject({
-      figure: "3.2 of 4 GB", tag: "80%", sub: "used, your trial room",
-      mailboxes: [{ id: "mb-1", said: "2.6 of 10 GB" }, { id: "mb-2", said: "0.6 of 2.5 GB" }],
+      figure: "3.2 GB of 4 GB", tag: "80%", sub: "used, your trial room",
+      mailboxes: [{ id: "mb-1", said: "2.6 GB kept · 10 GB expected" }, { id: "mb-2", said: "600 MB kept · 2.5 GB expected" }],
       estimate: [
         "Expected when the import finishes: about 12.5 GB, 500,000 letters.",
         "First import running: 128,000 of 500,000 letters.",
@@ -201,7 +214,7 @@ describe("the Storage screen", () => {
       scaleBytes: 12.5 * GB, parts: [{ id: "mb-1", bytes: 2.6 * GB }, { id: "mb-2", bytes: 0.6 * GB }],
       limitBytes: 4 * GB, expectedBytes: 12.5 * GB,
     });
-    expect(storageRowValue(accessOf(open(NEAR))!.storage!, EN, "en")).toBe("3.2 of 4 GB");
+    expect(storageRowValue(accessOf(open(NEAR))!.storage!, EN, "en")).toBe("3.2 GB of 4 GB");
   });
 
   it("full: the kept month; an estimate still growing says so; no offer, no plans", () => {
@@ -212,13 +225,45 @@ describe("the Storage screen", () => {
     expect(pane.plans).toEqual([]);
     expect(pane.plan).toBeNull();
     const de = storagePaneOf(accessOf(open(NEAR))!.storage!, DE, "de", "store");
-    expect(de.figure).toBe("3,2 von 4 GB");
+    expect(de.figure).toBe("3,2 GB von 4 GB");
     expect(de.plans[0]).toEqual({ name: "Solo · dein Tarif", room: "2 GB · etwa 80.000 Nachrichten", fitted: null });
   });
 
-  it("numbers read as estimates read", () => {
-    expect([gigabytes(3.2 * GB, "en"), gigabytes(12.5 * GB, "de"), gigabytes(110 * GB, "en")]).toEqual(["3.2", "12,5", "110"]);
-    expect([aboutLetters(445_123, "en"), aboutLetters(1_234, "de"), aboutLetters(42, "en")]).toEqual(["445,000", "1.200", "42"]);
+  it("a small account reads the web's figures: MB, KB and B, letters counted exactly, the average in bytes", () => {
+    const facts = accessOf(open(SMALL))!.storage!;
+    expect(storagePaneOf(facts, EN, "en", "store")).toMatchObject({
+      figure: "1 MB of 4 GB",
+      mailboxes: [{ id: "mb-1", said: "1 MB kept · 710 KB expected" }, { id: "mb-2", said: "145 KB kept · 200 KB expected" }],
+      estimate: ["All your mail: about 910 KB, 4,080 letters.", "Your letters average about 223 B of text."],
+    });
+    expect(storageRowValue(facts, EN, "en")).toBe("1 MB of 4 GB");
+    expect(storageCardOf(feed({ ...SMALL, card: "near" }), EN, "en", "store")!.lines[0]).toBe("1 MB of your trial room of 4 GB used.");
+    expect(storagePaneOf(facts, DE, "de", "store")).toMatchObject({
+      figure: "1 MB von 4 GB",
+      mailboxes: [{ id: "mb-1", said: "1 MB gespeichert · 710 KB erwartet" }, { id: "mb-2", said: "145 KB gespeichert · 200 KB erwartet" }],
+      estimate: ["Alle deine Mails: etwa 910 KB, 4.080 Nachrichten.", "Deine Nachrichten haben im Schnitt etwa 223 B Text."],
+    });
+    expect(storageRowValue(facts, DE, "de")).toBe("1 MB von 4 GB");
+  });
+
+  it("a plan's room in letters is the web's count, whatever this account's average", () => {
+    expect(storagePaneOf(accessOf(open({ ...SMALL, offer: OFFER }))!.storage!, EN, "en", "store").plans[0])
+      .toEqual({ name: "Solo · your plan", room: "2 GB · about 80,000 letters", fitted: null });
+  });
+
+  it("prints every size and count as the web does, in both languages", () => {
+    const sizes = [0, 1, 223, 999, 1_000, 144_513, 909_840, 999_499, 999_500, 1_208_935, 999_999_999, GB, 3.2 * GB,
+      9.94 * GB, 9.96 * GB, 12.5 * GB, 99.94 * GB, 99.96 * GB, 110 * GB, 1_234 * GB, 12_345_678 * GB];
+    for (const locale of ["en", "de"]) {
+      for (const bytes of sizes) {
+        for (const fine of [true, false]) {
+          expect(storageSize(bytes, locale, fine), `${bytes} ${locale} ${fine}`).toBe(formatStorageBytes(bytes, locale, fine));
+        }
+      }
+      for (const n of [0, 42, 898, 4_080, 500_000, 1_234_567]) {
+        expect(grouped(n, locale), `${n} ${locale}`).toBe(new Intl.NumberFormat(locale).format(n));
+      }
+    }
   });
 });
 
