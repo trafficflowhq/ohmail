@@ -157,7 +157,7 @@ describe("the Storage screen's body, store face", () => {
     }));
     const text = open.el.textContent ?? "";
     for (const said of [
-      "3.2 of 4 GB", "80%", "used, your trial room", "sam@example.com", "3.2 of 12.5 GB",
+      "3.2 GB of 4 GB", "80%", "used, your trial room", "sam@example.com", "3.2 GB kept · 12.5 GB expected",
       "Expected when the import finishes: about 12.5 GB, 500,000 letters.",
       "Solo · your plan", "2 GB · about 80,000 letters", "Plus + 10 GB storage", "Keeps all your mail",
       "Manage your plan at ohmail.app", "Only the text of your letters counts.",
