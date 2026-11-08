@@ -4,7 +4,7 @@ import {
   alertDriverGaps, alertPassRuns, alertState, authEvents,
   devices, mailboxes, outboundSends, platformSignals, sessions, workerHeartbeats,
 } from "./schema.js";
-import { imapRefusalsInWindow } from "./imap-admission.js";
+import { imapRefusalsInWindow, imapRefusalsReadable } from "./imap-admission.js";
 import {
   apiFaultWindow, poolerRefusalsInWindow, ENTITLEMENTS_FAULT_GRAIN, ENTITLEMENTS_FAULT_ROUTE_PREFIX,
   type ApiFaultArm, type ApiFaultRouteCount,
@@ -562,8 +562,8 @@ export const SCOPED_ALERT_KINDS: ReadonlySet<string> = new Set<AlertKind>([
   // `imap_admission_refused` is scoped by ROLE rather than by shard or driver name, and it is
   // the one that had to be measured rather than reasoned about: the counter lives in
   // `auth_throttle`, which `ohmail_admin` deliberately does NOT hold — that table is on the
-  // blind role's excluded list on purpose. So the API arm's read raises 42501, the rule swallows
-  // it and emits no key, and before this entry the API pass then DELETED the worker's row on
+  // blind role's excluded list on purpose. So the API arm's privilege probe says no, the rule marks
+  // it refused and emits no key, and before this entry the API pass then DELETED the worker's row on
   // every pass. Same flap as the four above, arriving through a grant rather than a signature.
   "imap_admission_refused",
   // Keyed by the OTHER driver, by this driver's own arm, and read from the worker's schedule.
@@ -605,7 +605,7 @@ export interface EvaluationScope {
 }
 
 /**
- * `no_reader`: the host stated no input for the rule. `refused`: the read was refused (42501, or
+ * `no_reader`: the host stated no input for the rule. `refused`: the read was refused or ungranted (42501, or
  * the database is older than this bundle). `partial`: the rule read less than its population.
  */
 export type UnreadReason = "no_reader" | "refused" | "partial";
@@ -1874,8 +1874,10 @@ export async function evaluateAlertsWithScope(
   // `imapRefusalsInWindow` reads one indexed row and treats an already-rolled window as 0, so a
   // burst that ended an hour ago does not keep the incident standing.
   try {
-    const refusals = await imapRefusalsInWindow(db, now, t.imapRefusalWindowMs);
-    if (refusals >= t.imapRefusalThreshold) {
+    // Asked first, so a role without the grant (the API arm's) sends no read Postgres logs as refused.
+    const refusals = await imapRefusalsReadable(db) ? await imapRefusalsInWindow(db, now, t.imapRefusalWindowMs) : null;
+    if (refusals === null) markUnread("imap_admission_refused", "refused");
+    else if (refusals >= t.imapRefusalThreshold) {
       alerts.push({
         key: "imap_admission_refused",
         kind: "imap_admission_refused",

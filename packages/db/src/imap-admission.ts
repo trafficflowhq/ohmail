@@ -197,6 +197,19 @@ export async function imapRefusalsInWindow(
   return Number(row?.n ?? 0);
 }
 
+/**
+ * May this connection run {@link imapRefusalsInWindow}? Per column, since every staff grant is
+ * column-scoped (a table-level ask ignores those); the staff role holds none here by design.
+ */
+export async function imapRefusalsReadable(db: Tx): Promise<boolean> {
+  const col = (name: string): SQL =>
+    sql`has_column_privilege('public.auth_throttle'::text, ${name}::text, 'SELECT'::text)`;
+  const raw = await db.execute(sql`select ${col(authThrottle.key.name)} and ${col(authThrottle.failures.name)}
+    and ${col(authThrottle.windowStartedAt.name)} as ok`) as unknown;
+  const rows = (Array.isArray(raw) ? raw : (raw as { rows?: unknown })?.rows ?? []) as Array<{ ok: unknown }>;
+  return rows[0]?.ok === true;
+}
+
 export interface ImapSlotInput {
   mailboxId: string;
   /** How many connections this deployment may hold open for the mailbox at once. */
