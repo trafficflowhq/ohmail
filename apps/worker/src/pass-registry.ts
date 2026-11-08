@@ -376,11 +376,14 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "storage_stats",
     module: `${W}/storage-stats.ts`, entry: "storageStatsPass",
     triggers: ["cycle-tail"],
-    cadence: "every cycle tail per account: a snapshot when a mailbox has no row, when a first import finished since its row, "
-      + "else every STORAGE_STATS_EVERY_MS (6 h); an attempt waits STORAGE_STATS_RETRY_MS (30 min) before the next, "
-      + "except that a first import finished since an attempt for another reason is counted at the next tail",
-    budget: "two indexed reads when nothing is due; else one grouped aggregate per account under STORAGE_STATS_TIMEOUT_MS (20 s), "
-      + "a timeout keeping the old rows, and one fenced upsert per mailbox",
+    cadence: "every cycle tail per account: a mailbox is due when it has no row, when its first import finished since its row, "
+      + "else every STORAGE_STATS_EVERY_MS (6 h); a round waits STORAGE_STATS_RETRY_MS (30 min) after the last began, "
+      + "except that a first import finished since an attempt for another reason is counted at the next tail; "
+      + "a round in progress continues at the next tail, and after a fault resumes at its place STORAGE_STATS_RETRY_MS on",
+    budget: "two indexed reads when nothing is due; else, within the tail slice, change-log windows of STORAGE_STATS_CHANGES_PAGE seqs "
+      + "for the due mailboxes with marks (an unchanged one is confirmed with nothing read), and pages of "
+      + "STORAGE_STATS_PAGE_LETTERS letters of each changed one, and of each last read whole STORAGE_STATS_RECOUNT_MS "
+      + "(7 d) ago, each statement under STORAGE_STATS_TIMEOUT_MS (5 s); one fenced write per mailbox",
     owns: "the storage estimate's snapshot (cloud 0057): the counts a request may not take, one row per mailbox",
     fence: "leader lock; each row through the erasure fence on its account and its mailbox; DB-only",
   },

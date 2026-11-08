@@ -5611,21 +5611,24 @@ export async function startWorkerWithLock(
       storage_stats: {
         // ── THE STORAGE ESTIMATE'S SNAPSHOT: the counts a request may not take ──────────────
         //
-        // Its own runner call, after the trim, in this serial per-account section: one grouped
-        // aggregate per account when one is due (`storage-stats.ts`), under its own statement
-        // timeout; nothing due is two indexed reads. Only where a cap is a number: an unmetered
-        // account shows no estimate, so nothing is counted for it.
+        // Its own runner call, after the trim, in this serial per-account section: a due mailbox
+        // is checked against the change log and confirmed, or read in bounded pages, each statement
+        // under its own timeout (`storage-stats.ts`), within this tail's slice; nothing due is two
+        // indexed reads. Only where a cap is a number: an unmetered account shows no estimate, so
+        // nothing is counted for it.
         run: async (accountId) => {
           // MIXED: the cap is the entitlements program's answer, through the resolver's cache.
           await runTailStage("cycle.storageStatsPass", "mixed", async () => {
             if (typeof (await storageCapFor(accountId)) !== "number") return;
-            const { taken, mailboxes } = await storageStatsPass(db as unknown as Tx, { accountId, now: new Date() });
-            if (taken !== null) log.info("storage_stats_pass", { accountId, reason: taken, mailboxes });
+            const { taken, mailboxes, more } = await storageStatsPass(db as unknown as Tx, {
+              accountId, now: new Date(), until: sliceUntil(),
+            });
+            if (mailboxes > 0) log.info("storage_stats_pass", { accountId, reason: taken, mailboxes, more });
           }, (err) => {
             log.warn("storage_stats_failed", {
               accountId, err,
-              reason: "the snapshot wrote nothing and its rows stand; the estimate reads them until the " +
-                "next attempt, half an hour on",
+              reason: "one statement failed and nothing partial was written; the rows stand, and the " +
+                "account resumes at the same place half an hour on",
             });
           });
         },

@@ -617,12 +617,13 @@ async function loadOrganizerFacts(db: AdminDb, accountId: string): Promise<Map<s
 interface ExpectedStorage { expectedBytes: number; expectedLetters: number; complete: boolean; importing: boolean }
 
 /**
- * The Expected figure per account, from the worker's snapshot alone through the estimate the
- * person's own storage block uses: ONE statement over the accounts asked (the primary key's leading
- * column, a row per mailbox, columns the role is granted). An account with no snapshot yet has no
- * entry: no figure, never a zero.
+ * The Expected figure per account, from the worker's snapshot and the counter's bytes the caller
+ * already read, through the estimate the person's own storage block uses: ONE statement over the
+ * accounts asked (the primary key's leading column, a row per mailbox, columns the role is granted).
+ * An account with no snapshot yet has no entry: no figure, never a zero.
  */
-async function loadExpected(db: AdminDb, askedAccountIds: string[]): Promise<Map<string, ExpectedStorage>> {
+async function loadExpected(db: AdminDb, usedOf: ReadonlyMap<string, number>): Promise<Map<string, ExpectedStorage>> {
+  const askedAccountIds = [...usedOf.keys()];
   if (askedAccountIds.length === 0) return new Map();
   const rows = await db
     .select({
@@ -647,7 +648,7 @@ async function loadExpected(db: AdminDb, askedAccountIds: string[]): Promise<Map
     byAccount.set(s.accountId, boxes);
   }
   return new Map([...byAccount].map(([accountId, boxes]) => {
-    const e = storageEstimateOf(boxes);
+    const e = storageEstimateOf(boxes, usedOf.get(accountId) ?? 0);
     return [accountId, {
       expectedBytes: e.expectedBytes, expectedLetters: e.expectedLetters, complete: e.complete,
       importing: boxes.some((b) => !b.imported),
@@ -752,8 +753,8 @@ export async function adminAccountDetail(
       withheldOnArrival: accountStorage.withheldOnArrival,
     })
     .from(accountStorage).where(eq(accountStorage.accountId, id)).limit(1);
-  // The storage estimate from the worker's snapshot alone (cloud 0057): counts the role is granted.
-  const expected = (await loadExpected(db, [id.toLowerCase()])).get(id.toLowerCase());
+  // The storage estimate from the worker's snapshot and the counter (cloud 0057): counts the role is granted.
+  const expected = (await loadExpected(db, new Map([[id.toLowerCase(), int(storageRow?.bytes)]]))).get(id.toLowerCase());
   const deviceRows = await db
     .select({ id: devices.id, kind: devices.kind, createdAt: devices.createdAt, lastSyncedAt: devices.lastSyncedAt })
     .from(devices).where(eq(devices.accountId, id)).orderBy(desc(devices.createdAt)).limit(ADMIN_LIST_LIMIT);
@@ -1203,7 +1204,7 @@ export async function adminStorage(
     .where(after ? sql`${accountStorage.accountId} > ${after}::uuid` : undefined)
     .orderBy(accountStorage.accountId)
     .limit(size);
-  const expected = await loadExpected(db, rows.map((r) => r.accountId));
+  const expected = await loadExpected(db, new Map(rows.map((r) => [r.accountId, int(r.bytes)])));
   return {
     now: now.toISOString(),
     totalBytes: int(total?.bytes),

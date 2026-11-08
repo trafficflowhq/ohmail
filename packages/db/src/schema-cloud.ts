@@ -1056,6 +1056,11 @@ export const mailboxStorageStats = pgTable("mailbox_storage_stats", {
   counted: boolean("counted").notNull(),
   imported: boolean("imported").notNull(),
   at: timestamp("at", { withTimezone: true }).notNull(),
+  // Cloud 0058: the account's committed next_seq and last trim when the count began, and when the
+  // last full read began.
+  throughSeq: bigint("through_seq", { mode: "bigint" }),
+  huskedAt: timestamp("husked_at", { withTimezone: true }),
+  walkedAt: timestamp("walked_at", { withTimezone: true }),
 }, (t) => ({
   pk: primaryKey({ name: "mailbox_storage_stats_pk", columns: [t.accountId, t.mailboxId] }),
   ckCounts: check("mailbox_storage_stats_counts", sql`${t.letters} >= 0 and ${t.textLetters} >= 0 and ${t.emptied} >= 0 and ${t.textBytes} >= 0 and ${t.instances} >= 0 and (${t.serverLetters} is null or ${t.serverLetters} >= 0)`),
