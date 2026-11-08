@@ -969,6 +969,222 @@ function connectReminder(d: ConnectReminderData): RenderedEmail {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Templates 10 and 11 — the storage mails, at 90% and when storage is full (cloud 0057).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Sent by the storage mail pass, once per (account, level, cap) and never two in a week, to the
+ * account's own users. The data is numbers, closed words, the program's fitted choice with its price,
+ * the app's own Settings › Storage door and the support address: no token (the door asks for sign-in),
+ * no mailbox, no address. A service mail like the lifecycle notices, so no List-Unsubscribe; the
+ * footer says where to turn them off.
+ */
+export interface StorageNoticeData {
+  locale: MailLocale;
+  usedBytes: number;
+  capBytes: number;
+  limitReason: "plan" | "trial" | "held";
+  /** When the cap held after a drop ends; null otherwise. */
+  limitDropsAt: string | null;
+  expectedBytes: number;
+  importing: boolean;
+  /** "YYYY-MM": text is kept for letters from this month on; null while none was emptied. */
+  keptFrom: string | null;
+  fit: { plan: "solo" | "plus" | "pro"; addonUnits: number; roomBytes: number; amount: number; keepsAll: boolean };
+  /** The storage the fitted choice adds on top of its plan's own room, in bytes. */
+  addonBytes: number;
+  currency: string;
+  interval: "month" | "year";
+  /** `<app>/#/settings/storage` — built from config by `MailService`, never by a caller. */
+  settingsUrl: string;
+  supportEmail: string;
+}
+
+const PLAN_NAMES: Record<StorageNoticeData["fit"]["plan"], string> = { solo: "Solo", plus: "Plus", pro: "Pro" };
+
+const MONTH_NAMES: Record<MailLocale, readonly string[]> = {
+  en: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+  de: ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"],
+};
+
+/** Decimal gigabytes with at most one decimal, in the locale's separator: 4 GB, 3.6 GB, 3,6 GB. */
+export function storageAmount(bytes: number, locale: MailLocale): string {
+  const gb = Math.max(0, bytes) / 1_000_000_000;
+  if (gb > 0 && gb < 0.1) return `${Math.max(1, Math.round(gb * 1000))} MB`;
+  const s = String(Math.round(gb * 10) / 10);
+  return `${locale === "de" ? s.replace(".", ",") : s} GB`;
+}
+
+const CURRENCY_SIGNS: Record<string, string> = { usd: "$", eur: "€", gbp: "£" };
+
+/** The program's price, as it states it: minor units of its currency, per its interval. */
+export function storagePrice(amount: number, currency: string, interval: "month" | "year", locale: MailLocale): string {
+  const whole = amount % 100 === 0;
+  const units = whole ? String(amount / 100) : (amount / 100).toFixed(2);
+  const n = locale === "de" ? units.replace(".", ",") : units;
+  const sign = CURRENCY_SIGNS[currency];
+  const money = sign ? `${sign}${n}` : `${currency.toUpperCase()} ${n}`;
+  if (locale === "de") return `${money} pro ${interval === "year" ? "Jahr" : "Monat"}`;
+  return `${money}/${interval}`;
+}
+
+/** "March 2019" / "März 2019" from "YYYY-MM"; null for anything else. */
+function monthOf(keptFrom: string | null, locale: MailLocale): string | null {
+  const m = keptFrom === null ? null : /^(\d{4})-(0[1-9]|1[0-2])$/.exec(keptFrom);
+  return m ? `${MONTH_NAMES[locale][Number(m[2]) - 1]} ${m[1]}` : null;
+}
+
+/** "21 November 2026" / "21. November 2026", UTC. */
+function dayOf(iso: string | null, locale: MailLocale): string | null {
+  const ms = iso === null ? Number.NaN : Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const d = new Date(ms);
+  const month = MONTH_NAMES[locale][d.getUTCMonth()]!;
+  return locale === "de" ? `${d.getUTCDate()}. ${month} ${d.getUTCFullYear()}` : `${d.getUTCDate()} ${month} ${d.getUTCFullYear()}`;
+}
+
+interface StorageCopy {
+  subject: string;
+  title: string;
+  /** The numbers' sentence; `used` and `need` arrive bold and escaped. */
+  used: (used: string, reason: StorageNoticeData["limitReason"], until: string | null) => string;
+  need: (need: string, importing: boolean) => string;
+  what: (d: StorageNoticeData, cap: string, month: string | null) => string;
+  fit: (choice: string, room: string, price: string, keepsAll: boolean) => string;
+  refill: string;
+  addon: (gb: string) => string;
+  action: string;
+  counts: string;
+  stop: string;
+}
+
+const STORAGE_COPY: Record<"near" | "full", Record<MailLocale, StorageCopy>> = {
+  near: {
+    en: {
+      subject: "Your ohmail storage is 90% full",
+      title: "Your storage is 90% full",
+      used: (used, reason, until) => reason === "trial" ? `${used} used, your trial room.`
+        : reason === "held" && until !== null ? `${used} used, the room you keep until ${until}.`
+        : `${used} used, your plan's storage.`,
+      need: (need, importing) => importing ? `Your mail needs about ${need} when the import finishes.` : `Your mail needs about ${need}.`,
+      what: () => "When it is full, ohmail Cloud keeps the text of your newest letters. Older letters stay complete on "
+        + "your mail server, and ohmail still lists them and finds them.",
+      fit: (choice, room, price, keepsAll) => keepsAll
+        ? `${choice} keeps all your mail: ${room} for ${price}.` : `${choice} keeps the most: ${room} for ${price}.`,
+      refill: "",
+      addon: (gb) => `${gb} storage`,
+      action: "Choose storage",
+      counts: "Only the text of your letters counts. Attachments never do.",
+      stop: "ohmail sends this once at 90% and once when storage is full. To stop storage mails, turn them off in Settings → Storage.",
+    },
+    de: {
+      subject: "Dein ohmail-Speicher ist zu 90 % voll",
+      title: "Dein Speicher ist zu 90 % voll",
+      used: (used, reason, until) => reason === "trial" ? `${used} belegt, der Speicher deiner Testphase.`
+        : reason === "held" && until !== null ? `${used} belegt, der Platz, den du bis zum ${until} behältst.`
+        : `${used} belegt, der Speicher deines Tarifs.`,
+      need: (need, importing) => importing ? `Deine Mails brauchen etwa ${need}, wenn der Import fertig ist.` : `Deine Mails brauchen etwa ${need}.`,
+      what: () => "Ist er voll, behält ohmail Cloud den Text deiner neuesten Nachrichten. Ältere Nachrichten bleiben "
+        + "vollständig auf deinem Mailserver, und ohmail listet und findet sie weiterhin.",
+      fit: (choice, room, price, keepsAll) => keepsAll
+        ? `${choice} behält alle deine Mails: ${room} für ${price}.` : `${choice} behält am meisten: ${room} für ${price}.`,
+      refill: "",
+      addon: (gb) => `${gb} Speicher`,
+      action: "Speicher wählen",
+      counts: "Es zählt nur der Text deiner Nachrichten, Anhänge nie.",
+      stop: "ohmail schickt diese Mail einmal bei 90 % und einmal, wenn der Speicher voll ist. Abschalten kannst du "
+        + "Speicher-Mails unter Einstellungen → Speicher.",
+    },
+  },
+  full: {
+    en: {
+      subject: "Your ohmail storage is full",
+      title: "Your storage is full",
+      used: (used, reason, until) => STORAGE_COPY.near.en.used(used, reason, until),
+      need: (need) => `Your mail needs about ${need}.`,
+      what: (_d, cap, month) => month !== null
+        ? `ohmail Cloud now keeps the text of your newest ${cap}, letters from ${month} on. Older letters are complete `
+          + "on your mail server and still listed and found in ohmail."
+        : `ohmail Cloud now keeps the text of your newest ${cap}. Older letters are complete on your mail server and `
+          + "still listed and found in ohmail.",
+      fit: (choice, room, price, keepsAll) => STORAGE_COPY.near.en.fit(choice, room, price, keepsAll),
+      refill: "ohmail then fetches the older text back from your mail server.",
+      addon: (gb) => `${gb} storage`,
+      action: "Choose storage",
+      counts: "Only the text of your letters counts. Attachments never do.",
+      stop: "This is the last storage mail until something changes. To stop storage mails, turn them off in Settings → Storage.",
+    },
+    de: {
+      subject: "Dein ohmail-Speicher ist voll",
+      title: "Dein Speicher ist voll",
+      used: (used, reason, until) => STORAGE_COPY.near.de.used(used, reason, until),
+      need: (need) => `Deine Mails brauchen etwa ${need}.`,
+      what: (_d, cap, month) => month !== null
+        ? `ohmail Cloud behält jetzt den Text deiner neuesten ${cap}, Nachrichten ab ${month}. Ältere Nachrichten sind `
+          + "vollständig auf deinem Mailserver und werden in ohmail weiterhin gelistet und gefunden."
+        : `ohmail Cloud behält jetzt den Text deiner neuesten ${cap}. Ältere Nachrichten sind vollständig auf deinem `
+          + "Mailserver und werden in ohmail weiterhin gelistet und gefunden.",
+      fit: (choice, room, price, keepsAll) => STORAGE_COPY.near.de.fit(choice, room, price, keepsAll),
+      refill: "Danach holt ohmail den älteren Text von deinem Mailserver zurück.",
+      addon: (gb) => `${gb} Speicher`,
+      action: "Speicher wählen",
+      counts: "Es zählt nur der Text deiner Nachrichten, Anhänge nie.",
+      stop: "Das ist die letzte Speicher-Mail, bis sich etwas ändert. Abschalten kannst du Speicher-Mails unter "
+        + "Einstellungen → Speicher.",
+    },
+  },
+};
+
+function storageNotice(level: "near" | "full", d: StorageNoticeData): RenderedEmail {
+  const url = safeUrl(d.settingsUrl);
+  const locale = mailLocaleOf(d.locale) ?? "en";
+  const c = STORAGE_COPY[level][locale];
+  const amount = (bytes: number): string => storageAmount(bytes, locale);
+  const choice = d.fit.addonUnits > 0
+    ? `${PLAN_NAMES[d.fit.plan] ?? d.fit.plan} + ${c.addon(amount(d.addonBytes))}` : PLAN_NAMES[d.fit.plan] ?? d.fit.plan;
+  const price = storagePrice(d.fit.amount, d.currency, d.interval, locale);
+  const usedFigure = locale === "de"
+    ? `${amount(d.usedBytes)} von ${amount(d.capBytes)}` : `${amount(d.usedBytes)} of ${amount(d.capBytes)}`;
+  const until = dayOf(d.limitDropsAt, locale);
+  const month = level === "full" ? monthOf(d.keptFrom, locale) : null;
+  const needs = d.expectedBytes > 0;
+  /* Each paragraph is written once with a marker where a figure goes: the text part puts the figure
+     there, the html part escapes the whole sentence and then puts the figure there bold. */
+  const mark = (i: number): string => `\u0000${i}\u0000`;
+  const paragraph = (sentence: string, figures: string[]): { text: string; html: string } => {
+    let text = sentence;
+    let html = esc(sentence);
+    figures.forEach((f, i) => {
+      text = text.replace(mark(i), f);
+      html = html.replace(mark(i), `<strong style="color:${INK};font-weight:600;">${esc(f)}</strong>`);
+    });
+    return { text, html };
+  };
+  const lines = [
+    paragraph(
+      [c.used(mark(0), d.limitReason, until), ...(needs ? [c.need(mark(1), d.importing)] : [])].join(" "),
+      [usedFigure, amount(d.expectedBytes)],
+    ),
+    paragraph(c.what(d, amount(d.capBytes), month), []),
+    paragraph(
+      [c.fit(mark(0), amount(d.fit.roomBytes), price, d.fit.keepsAll), ...(c.refill ? [c.refill] : [])].join(" "),
+      [choice],
+    ),
+  ];
+  const footer = [c.counts, c.stop, "TrafficFlow GmbH, Zürich, Switzerland"];
+  return {
+    subject: c.subject,
+    // The text part carries the URL on its own line, the plain-text counterpart of the button.
+    text: textShell(c.subject, [...lines.map((l) => l.text), url], footer),
+    html: shell({
+      lang: locale, title: c.title, blocks: lines.map((l) => l.html), action: { label: c.action, url },
+      footer: footer.map(esc),
+    }),
+    replyTo: d.supportEmail,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The registry — the single place the set is enumerated.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -993,6 +1209,8 @@ export interface TemplateDataMap {
   lifecycle_notice: LifecycleNoticeData;
   billing_link: BillingLinkData;
   connect_reminder: ConnectReminderData;
+  storage_near: StorageNoticeData;
+  storage_full: StorageNoticeData;
 }
 
 export type TemplateName = keyof TemplateDataMap;
@@ -1009,6 +1227,8 @@ const RENDERERS: { [K in TemplateName]: (data: TemplateDataMap[K]) => RenderedEm
   lifecycle_notice: lifecycleNotice,
   billing_link: billingLink,
   connect_reminder: connectReminder,
+  storage_near: (d) => storageNotice("near", d),
+  storage_full: (d) => storageNotice("full", d),
 };
 
 export const TEMPLATE_NAMES = Object.keys(RENDERERS) as TemplateName[];

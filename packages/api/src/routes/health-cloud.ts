@@ -230,6 +230,13 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // cloud 0056_push_subscription_session_family — the column every registration writes and every revoke's
   // prune reads. Absent, every registration 42703s and no browser is woken; the deploy gate names it.
   ["push_subscriptions", "session_family_id"],
+  // cloud 0057_storage_estimate_and_mails — each table's LAST column; one migration runs in one
+  // transaction, so the three imply the keys, the CHECKs and the grant. Absent, the storage reading
+  // faults and the storage block is left out, the dismissal and the mail switch answer 500, and the
+  // storage mail pass answers 503. The deploy gate names them.
+  ["mailbox_storage_stats", "at"],
+  ["account_storage_prefs", "updated_at"],
+  ["storage_mail_sent", "delivered_at"],
 ] as const;
 
 /**

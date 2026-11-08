@@ -112,7 +112,10 @@ describe("the projection the sidecar reads matches the table", () => {
     // 191 -> 192 with `POST /auth/step-up/recovery-code`, relayed like `POST /auth/step-up/totp`.
     // 192 -> 193 with `POST /drafts/:id/schedule-with-files` (mail 0180): a server keeps the files
     // now, so a desktop paired to one reaches its route, relayed like the schedule beside it.
-    expect(RELAY_ALLOWLIST.length).toBe(193);
+    // 193 -> 196 with the storage program: Load it now, read from the server that empties letters for
+    // space; the storage choices, kept where `GET /account/access` is read; and the change door,
+    // relayed like the manage link beside it.
+    expect(RELAY_ALLOWLIST.length).toBe(196);
   });
 
   it("every pattern in the projection is a real route", () => {

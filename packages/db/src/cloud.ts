@@ -158,9 +158,24 @@ export {
 
 /* A lower storage limit waits 14 days (cloud 0055): every metered cap reader applies the hold. */
 export {
-  heldStorageLimitOf, nextStorageHold, planOwn, storageHoldsOf, storageLimitFrom, utcDayCeil,
+  heldStorageLimitOf, nextStorageHold, planOwn, storageHoldsOf, storageLimitFrom, storageLimitReason, utcDayCeil,
   STORAGE_DROP_GRACE_MS, type StorageHold, type StorageLimit,
 } from "./storage-hold.js";
+
+/* The storage estimate, the card and its dismissal, the mail switch (cloud 0057). */
+export {
+  storageEstimateOf, storageSharesOf, DEFAULT_LETTER_TEXT_BYTES, ESTIMATE_MEASURED_MIN_LETTERS,
+  type EstimateMailbox, type MailboxEstimate, type StorageEstimate,
+} from "./storage-estimate.js";
+export {
+  isStorageCardLevel, storageCardHidden, storageCardLevelOf, storageCardOf, storageDismissalOf,
+  STORAGE_CARD_FULL_SNOOZE_MS, STORAGE_CARD_LEVELS, STORAGE_CARD_NEAR_RATIO,
+  type StorageCardDismissal, type StorageCardFacts, type StorageCardLevel,
+} from "./storage-card.js";
+export {
+  recordStorageDismissal, setStorageMail, storageEstimateFactsOf, storagePrefsOf, storageReadingOf,
+  type StorageEstimateFacts, type StorageEstimateMailbox, type StoragePrefs, type StorageReading,
+} from "./storage-account.js";
 
 /* The billing plane's own failures (`POST /v1/ops`): the reader the alert drivers run and the parser
  * that holds its answer to the wire contract. CLOUD-ONLY: the reader dials the program. */

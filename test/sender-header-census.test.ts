@@ -257,6 +257,10 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "a letter emptied for space gets its text back only from bytes whose id and dedup key match the stored row",
   },
+  "packages/services/src/live-body.ts": {
+    terms: ["messageIdHeader"], classes: ["dedup-content"],
+    why: "Load it now shows a letter emptied for space only from bytes whose id and dedup key match the stored row",
+  },
   "apps/worker/src/sensitive-backfill.ts": {
     terms: ["messageIdHeader"], classes: ["dedup-content"],
     why: "same verification before a backfilled row's body is rewritten",

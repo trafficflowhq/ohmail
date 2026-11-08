@@ -880,6 +880,12 @@ const UNSEEDED_TABLES: readonly string[] = [
   // codes, timestamps and an ack token's sha256, every text column held to a shape by a CHECK. No
   // `account_id`, no FK into the account graph; no staff console read selects it.
   "alert_drills",
+  // Cloud 0057, the person's storage choices and the storage mails sent: the one text column of
+  // each is a level word a CHECK holds to a closed set, so no marker could land even with a row.
+  // The staff role has no grant on either, and no staff read selects them. (The third 0057 table,
+  // `mailbox_storage_stats`, holds no text column and so is no part of this sweep.)
+  "account_storage_prefs",
+  "storage_mail_sent",
 ];
 
 /**

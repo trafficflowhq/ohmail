@@ -122,6 +122,22 @@ const FIXTURES: { [K in TemplateName]: TemplateDataMap[K] } = {
     setupUrl: "https://app.ohmail.app/login?next=join",
     supportEmail: "support@ohmail.app",
   },
+  // The storage mails (cloud 0057): numbers, closed words, the program's fitted choice and its price,
+  // the app's own Settings › Storage door and the support address. No token, no address, no mailbox.
+  storage_near: {
+    locale: "en", usedBytes: 3_600_000_000, capBytes: 4_000_000_000, limitReason: "trial", limitDropsAt: null,
+    expectedBytes: 12_500_000_000, importing: true, keptFrom: null,
+    fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, amount: 2_500, keepsAll: true },
+    addonBytes: 10_000_000_000, currency: "usd", interval: "month",
+    settingsUrl: "https://app.ohmail.app/#/settings/storage", supportEmail: "support@ohmail.app",
+  },
+  storage_full: {
+    locale: "en", usedBytes: 4_000_000_000, capBytes: 4_000_000_000, limitReason: "trial", limitDropsAt: null,
+    expectedBytes: 12_500_000_000, importing: false, keptFrom: "2019-03",
+    fit: { plan: "plus", addonUnits: 1, roomBytes: 15_000_000_000, amount: 2_500, keepsAll: true },
+    addonBytes: 10_000_000_000, currency: "usd", interval: "month",
+    settingsUrl: "https://app.ohmail.app/#/settings/storage", supportEmail: "support@ohmail.app",
+  },
 };
 
 const ALL = TEMPLATE_NAMES;
@@ -132,7 +148,7 @@ const ALL = TEMPLATE_NAMES;
 const ALLOWED_HOSTS = new Set(["ohmail.app", "app.ohmail.app", "admin.ohmail.app", "localhost"]);
 
 describe("templates — the set is closed and complete", () => {
-  it("is exactly the eleven templates — nine customer mails and two operator mails", () => {
+  it("is exactly the thirteen templates — eleven customer mails and two operator mails", () => {
     expect(ALL).toEqual([
       "waitlist_confirmation", "invite", "new_device_signin",
       // The sign-in throttle's notices, argued at the definition: a closed kind, a time and the
@@ -162,6 +178,10 @@ describe("templates — the set is closed and complete", () => {
       // Once per trial, to a trial that connected no mailbox (the lifecycle pass, behind its switch):
       // a language, a closed provider class, the sign-in door and the support address.
       "connect_reminder",
+      // Cloud 0057, the storage mails at 90% and when full: numbers, closed words, the program's
+      // fitted choice with its price, and the Settings › Storage door, which asks for sign-in.
+      "storage_near",
+      "storage_full",
     ]);
   });
 
@@ -662,5 +682,64 @@ describe("the connect reminder — once per trial, both languages, advice by log
     expect(renderTemplate("connect_reminder", { ...FIXTURES.connect_reminder, locale: "fr" as never }).subject)
       .toBe(render("en", "other").subject);
     expect(Object.keys(FIXTURES.connect_reminder).sort()).toEqual(["locale", "provider", "setupUrl", "supportEmail"]);
+  });
+});
+
+describe("the storage mails — the numbers, the fitted choice, Settings › Storage, and how to stop them", () => {
+  const SETTINGS = FIXTURES.storage_near.settingsUrl;
+  const URL_RE = /https?:\/\/[^\s"'<>]+/g;
+  const ADDRESS_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
+
+  for (const name of ["storage_near", "storage_full"] as const) {
+    for (const locale of ["en", "de"] as const) {
+      it(`${name}/${locale}: links only to Settings › Storage, names no address but support's, carries no token`, () => {
+        const out = renderTemplate(name, { ...FIXTURES[name], locale });
+        expect(out.html).toContain(`href="${SETTINGS}"`);
+        expect(out.html).toContain(`lang="${locale}"`);
+        expect(out.replyTo).toBe("support@ohmail.app");
+        for (const part of [out.subject, out.text, out.html]) {
+          for (const url of part.match(URL_RE) ?? []) expect(url, name).toBe(SETTINGS);
+          for (const a of part.match(ADDRESS_RE) ?? []) expect(a, name).toBe("support@ohmail.app");
+          expect(part, name).not.toMatch(/token=|manage\?|utm_/);
+        }
+        // Where to turn them off is said in every one.
+        expect(out.text).toMatch(locale === "de" ? /Abschalten kannst du Speicher-Mails unter Einstellungen → Speicher\./
+          : /To stop storage mails, turn them off in Settings → Storage\./);
+      });
+    }
+  }
+
+  it("says whose room it is: the trial's, the plan's, or the room kept until a date", () => {
+    const first = (reason: "plan" | "trial" | "held", locale: "en" | "de") => renderTemplate("storage_near", {
+      ...FIXTURES.storage_near, locale, limitReason: reason, limitDropsAt: reason === "held" ? "2026-11-21T00:00:00.000Z" : null,
+    }).text.split("\n").find((l) => /GB (of|von) /.test(l));
+    expect(first("trial", "en")).toMatch(/^3\.6 GB of 4 GB used, your trial room\./);
+    expect(first("plan", "en")).toMatch(/^3\.6 GB of 4 GB used, your plan's storage\./);
+    expect(first("held", "en")).toMatch(/^3\.6 GB of 4 GB used, the room you keep until 21 November 2026\./);
+    expect(first("trial", "de")).toMatch(/^3,6 GB von 4 GB belegt, der Speicher deiner Testphase\./);
+    expect(first("held", "de")).toMatch(/^3,6 GB von 4 GB belegt, der Platz, den du bis zum 21\. November 2026 behältst\./);
+  });
+
+  it("the fitted choice and its price come from the data, in its currency and interval; the largest choice says so", () => {
+    const fit = (over: Partial<TemplateDataMap["storage_near"]>) => renderTemplate("storage_near", { ...FIXTURES.storage_near, ...over }).text;
+    expect(fit({})).toContain("Plus + 10 GB storage keeps all your mail: 15 GB for $25/month.");
+    expect(fit({ fit: { plan: "pro", addonUnits: 0, roomBytes: 10_000_000_000, amount: 29_000, keepsAll: true }, addonBytes: 0, interval: "year" }))
+      .toContain("Pro keeps all your mail: 10 GB for $290/year.");
+    expect(fit({ currency: "chf", fit: { ...FIXTURES.storage_near.fit, amount: 2_450 } }))
+      .toContain("15 GB for CHF 24.50/month.");
+    expect(fit({ fit: { plan: "pro", addonUnits: 10, roomBytes: 110_000_000_000, amount: 12_900, keepsAll: false }, addonBytes: 100_000_000_000 }))
+      .toContain("Pro + 100 GB storage keeps the most: 110 GB for $129/month.");
+    expect(renderTemplate("storage_near", { ...FIXTURES.storage_near, locale: "de" }).text)
+      .toContain("Plus + 10 GB Speicher behält alle deine Mails: 15 GB für $25 pro Monat.");
+  });
+
+  it("full says from when text is kept, and that more room brings the older text back", () => {
+    const en = renderTemplate("storage_full", FIXTURES.storage_full).text;
+    expect(en).toContain("ohmail Cloud now keeps the text of your newest 4 GB, letters from March 2019 on.");
+    expect(en).toContain("ohmail then fetches the older text back from your mail server.");
+    const de = renderTemplate("storage_full", { ...FIXTURES.storage_full, locale: "de" }).text;
+    expect(de).toContain("Nachrichten ab März 2019.");
+    expect(renderTemplate("storage_full", { ...FIXTURES.storage_full, keptFrom: null }).text)
+      .toContain("ohmail Cloud now keeps the text of your newest 4 GB. Older letters");
   });
 });

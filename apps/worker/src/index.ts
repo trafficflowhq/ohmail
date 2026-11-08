@@ -130,6 +130,7 @@ import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwe
 import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
 import { goneLetterTidyAccounts, goneLetterTidyPass } from "./gone-letter-tidy.js";
 import { storageEvictPass } from "./storage-evict.js";
+import { storageStatsPass } from "./storage-stats.js";
 import { isCliEntry, flushExit, installCrashHandlers } from "./entry.js";
 import {
   startPushWake, pushEndpointGuardFromEnv, vapidFromEnv, type RunningPushWake,
@@ -5603,6 +5604,28 @@ export async function startWorkerWithLock(
               accountId, err,
               reason: "each round is one transaction, so a failure loses nothing durable; the " +
                 "counter and the husks move together or not at all, and the next cycle re-probes",
+            });
+          });
+        },
+      },
+      storage_stats: {
+        // ── THE STORAGE ESTIMATE'S SNAPSHOT: the counts a request may not take ──────────────
+        //
+        // Its own runner call, after the trim, in this serial per-account section: one grouped
+        // aggregate per account when one is due (`storage-stats.ts`), under its own statement
+        // timeout; nothing due is two indexed reads. Only where a cap is a number: an unmetered
+        // account shows no estimate, so nothing is counted for it.
+        run: async (accountId) => {
+          // MIXED: the cap is the entitlements program's answer, through the resolver's cache.
+          await runTailStage("cycle.storageStatsPass", "mixed", async () => {
+            if (typeof (await storageCapFor(accountId)) !== "number") return;
+            const { taken, mailboxes } = await storageStatsPass(db as unknown as Tx, { accountId, now: new Date() });
+            if (taken !== null) log.info("storage_stats_pass", { accountId, reason: taken, mailboxes });
+          }, (err) => {
+            log.warn("storage_stats_failed", {
+              accountId, err,
+              reason: "the snapshot wrote nothing and its rows stand; the estimate reads them until the " +
+                "next attempt, half an hour on",
             });
           });
         },

@@ -21,9 +21,12 @@ import {
   accountLifecycleNotices,
   connectAttempts,
   creditRefundObligations,
+  mailboxStorageStats,
   staffAuditEvents,
+  storageEstimateOf,
   STAFF_ROLES,
   type ContentBlind,
+  type EstimateMailbox,
   type EvaluateOptions,
 } from "@trafficflow/db/cloud";
 import { narrowedDetail, STAFF_AUDIT_ACTIONS, STAFF_REASON_CODES } from "./staff-audit-detail.js";
@@ -610,6 +613,48 @@ async function loadOrganizerFacts(db: AdminDb, accountId: string): Promise<Map<s
   }]));
 }
 
+/** The console's Expected figure for one account (cloud 0057). Counts only. */
+interface ExpectedStorage { expectedBytes: number; expectedLetters: number; complete: boolean; importing: boolean }
+
+/**
+ * The Expected figure per account, from the worker's snapshot alone through the estimate the
+ * person's own storage block uses: ONE statement over the accounts asked (the primary key's leading
+ * column, a row per mailbox, columns the role is granted). An account with no snapshot yet has no
+ * entry: no figure, never a zero.
+ */
+async function loadExpected(db: AdminDb, askedAccountIds: string[]): Promise<Map<string, ExpectedStorage>> {
+  if (askedAccountIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      accountId: mailboxStorageStats.accountId, mailboxId: mailboxStorageStats.mailboxId,
+      letters: mailboxStorageStats.letters, textLetters: mailboxStorageStats.textLetters,
+      textBytes: mailboxStorageStats.textBytes, instances: mailboxStorageStats.instances,
+      serverLetters: mailboxStorageStats.serverLetters, counted: mailboxStorageStats.counted,
+      imported: mailboxStorageStats.imported,
+    })
+    .from(mailboxStorageStats).where(inArray(mailboxStorageStats.accountId, askedAccountIds));
+  const byAccount = new Map<string, EstimateMailbox[]>();
+  for (const s of rows) {
+    const boxes = byAccount.get(s.accountId) ?? [];
+    boxes.push({
+      id: s.mailboxId, serverLetters: s.serverLetters === null ? null : int(s.serverLetters),
+      counted: s.counted, imported: s.imported,
+      stats: {
+        letters: int(s.letters), textLetters: int(s.textLetters), textBytes: int(s.textBytes),
+        instances: int(s.instances), imported: s.imported,
+      },
+    });
+    byAccount.set(s.accountId, boxes);
+  }
+  return new Map([...byAccount].map(([accountId, boxes]) => {
+    const e = storageEstimateOf(boxes);
+    return [accountId, {
+      expectedBytes: e.expectedBytes, expectedLetters: e.expectedLetters, complete: e.complete,
+      importing: boxes.some((b) => !b.imported),
+    }];
+  }));
+}
+
 /** `staff_audit_events` rows as {@link StaffEvent}s, every `detail` narrowed through the list. */
 function staffEventOf(r: {
   id: string; at: Date | string; requestId: string; staffUserId: string; actorLabel: string;
@@ -707,6 +752,8 @@ export async function adminAccountDetail(
       withheldOnArrival: accountStorage.withheldOnArrival,
     })
     .from(accountStorage).where(eq(accountStorage.accountId, id)).limit(1);
+  // The storage estimate from the worker's snapshot alone (cloud 0057): counts the role is granted.
+  const expected = (await loadExpected(db, [id.toLowerCase()])).get(id.toLowerCase());
   const deviceRows = await db
     .select({ id: devices.id, kind: devices.kind, createdAt: devices.createdAt, lastSyncedAt: devices.lastSyncedAt })
     .from(devices).where(eq(devices.accountId, id)).orderBy(desc(devices.createdAt)).limit(ADMIN_LIST_LIMIT);
@@ -762,6 +809,7 @@ export async function adminAccountDetail(
       // The column holds the month's first day; the page names the month.
       keptFrom: storageRow.keptFrom === null ? null : storageRow.keptFrom.slice(0, 7),
       withheldOnArrival: int(storageRow.withheldOnArrival),
+      ...expected,
     } : null,
     devices: deviceRows.map((d) => ({
       id: d.id, kind: deviceKindWord(d.kind), pairedAt: asDate(d.createdAt).toISOString(), lastSyncedAt: iso(d.lastSyncedAt),
@@ -1133,8 +1181,9 @@ export const ADMIN_STORAGE_MAX = 500;
 /**
  * `GET /admin/storage?cursor=&limit=` — stored message bytes per measured account, keyset by
  * account id, with the letters emptied for space, the latest, and the counter's last check: the
- * counter row's own columns, so a page reads no letter. The total and the count are over every
- * row, so each page carries the whole figure.
+ * counter row's own columns, so a page reads no letter. Each row carries the account page's
+ * Expected figure, from one snapshot read for the page's accounts (cloud 0057). The total and
+ * the count are over every row, so each page carries the whole figure.
  */
 export async function adminStorage(
   db: AdminDb, now: Date, cursor: string | null, limit: number,
@@ -1154,6 +1203,7 @@ export async function adminStorage(
     .where(after ? sql`${accountStorage.accountId} > ${after}::uuid` : undefined)
     .orderBy(accountStorage.accountId)
     .limit(size);
+  const expected = await loadExpected(db, rows.map((r) => r.accountId));
   return {
     now: now.toISOString(),
     totalBytes: int(total?.bytes),
@@ -1162,6 +1212,7 @@ export async function adminStorage(
       accountId: r.accountId, bytes: int(r.bytes), updatedAt: asDate(r.updatedAt).toISOString(),
       emptiedForSpace: int(r.emptiedForSpace), lastEmptiedAt: iso(r.lastEmptiedAt),
       checkedAt: iso(r.checkedAt), drift: r.drift === null ? null : int(r.drift),
+      ...expected.get(r.accountId),
     })),
     nextCursor: rows.length === size ? rows[rows.length - 1]!.accountId : null,
   };

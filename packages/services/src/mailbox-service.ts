@@ -3183,6 +3183,8 @@ export class MailboxService {
       folder: f.folder,
       hasSyncCursor: f.highestmodseq != null,
       updatedAt: f.updatedAt.toISOString(),
+      // Already read for the denominator below: the connect step's folder table shows it per row.
+      serverExists: typeof f.serverExists === "number" ? f.serverExists : null,
     }));
     /**
      * The first pull's DENOMINATOR: Σ `server_exists` over the rows just read. Mail 0083 added

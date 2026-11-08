@@ -589,6 +589,132 @@ TrafficFlow GmbH, Zürich, Switzerland
 "
 `;
 
+exports[`templates — snapshots > storage_full subject/text/html is unchanged > storage_full.headers 1`] = `null`;
+
+exports[`templates — snapshots > storage_full subject/text/html is unchanged > storage_full.html 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Your storage is full</title>
+</head>
+<body style="margin:0;padding:0;background:#f7f5f3;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f5f3;">
+  <tr><td align="center" style="padding:28px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e9e4de;border-radius:14px;">
+      <tr><td style="padding:26px 28px 0;">
+        <span style="font:600 22px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e1a16;letter-spacing:-0.03em;">oh<span style="color:#a3461c;">.</span></span>
+      </td></tr>
+      <tr><td style="padding:18px 28px 0;">
+        <h1 style="margin:0;font:600 20px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e1a16;letter-spacing:-0.01em;">Your storage is full</h1>
+      </td></tr>
+      <tr><td style="padding:12px 28px 4px;font:400 15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#5c534b;">
+        <p style="margin:0 0 12px;"><strong style="color:#1e1a16;font-weight:600;">4 GB of 4 GB</strong> used, your trial room. Your mail needs about <strong style="color:#1e1a16;font-weight:600;">12.5 GB</strong>.</p>
+        <p style="margin:0 0 12px;">ohmail Cloud now keeps the text of your newest 4 GB, letters from March 2019 on. Older letters are complete on your mail server and still listed and found in ohmail.</p>
+        <p style="margin:0 0 12px;"><strong style="color:#1e1a16;font-weight:600;">Plus + 10 GB storage</strong> keeps all your mail: 15 GB for $25/month. ohmail then fetches the older text back from your mail server.</p>
+      </td></tr>
+          <tr><td style="padding:8px 28px 4px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#a3461c;border-radius:10px;">
+              <a href="https://app.ohmail.app/#/settings/storage" style="display:inline-block;padding:12px 22px;font:600 15px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;text-decoration:none;">Choose storage</a>
+            </td></tr></table>
+          </td></tr>
+      <tr><td style="padding:20px 28px 26px;border-top:1px solid #e9e4de;font:400 13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#5c534b;">
+        <p style="margin:0 0 6px;">Only the text of your letters counts. Attachments never do.</p>
+        <p style="margin:0 0 6px;">This is the last storage mail until something changes. To stop storage mails, turn them off in Settings → Storage.</p>
+        <p style="margin:0 0 6px;">TrafficFlow GmbH, Zürich, Switzerland</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"
+`;
+
+exports[`templates — snapshots > storage_full subject/text/html is unchanged > storage_full.subject 1`] = `"Your ohmail storage is full"`;
+
+exports[`templates — snapshots > storage_full subject/text/html is unchanged > storage_full.text 1`] = `
+"oh. — ohmail
+
+Your ohmail storage is full
+
+4 GB of 4 GB used, your trial room. Your mail needs about 12.5 GB.
+ohmail Cloud now keeps the text of your newest 4 GB, letters from March 2019 on. Older letters are complete on your mail server and still listed and found in ohmail.
+Plus + 10 GB storage keeps all your mail: 15 GB for $25/month. ohmail then fetches the older text back from your mail server.
+https://app.ohmail.app/#/settings/storage
+
+—
+Only the text of your letters counts. Attachments never do.
+This is the last storage mail until something changes. To stop storage mails, turn them off in Settings → Storage.
+TrafficFlow GmbH, Zürich, Switzerland
+"
+`;
+
+exports[`templates — snapshots > storage_near subject/text/html is unchanged > storage_near.headers 1`] = `null`;
+
+exports[`templates — snapshots > storage_near subject/text/html is unchanged > storage_near.html 1`] = `
+"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<meta name="supported-color-schemes" content="light">
+<title>Your storage is 90% full</title>
+</head>
+<body style="margin:0;padding:0;background:#f7f5f3;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#f7f5f3;">
+  <tr><td align="center" style="padding:28px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;background:#ffffff;border:1px solid #e9e4de;border-radius:14px;">
+      <tr><td style="padding:26px 28px 0;">
+        <span style="font:600 22px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e1a16;letter-spacing:-0.03em;">oh<span style="color:#a3461c;">.</span></span>
+      </td></tr>
+      <tr><td style="padding:18px 28px 0;">
+        <h1 style="margin:0;font:600 20px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1e1a16;letter-spacing:-0.01em;">Your storage is 90% full</h1>
+      </td></tr>
+      <tr><td style="padding:12px 28px 4px;font:400 15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#5c534b;">
+        <p style="margin:0 0 12px;"><strong style="color:#1e1a16;font-weight:600;">3.6 GB of 4 GB</strong> used, your trial room. Your mail needs about <strong style="color:#1e1a16;font-weight:600;">12.5 GB</strong> when the import finishes.</p>
+        <p style="margin:0 0 12px;">When it is full, ohmail Cloud keeps the text of your newest letters. Older letters stay complete on your mail server, and ohmail still lists them and finds them.</p>
+        <p style="margin:0 0 12px;"><strong style="color:#1e1a16;font-weight:600;">Plus + 10 GB storage</strong> keeps all your mail: 15 GB for $25/month.</p>
+      </td></tr>
+          <tr><td style="padding:8px 28px 4px;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td style="background:#a3461c;border-radius:10px;">
+              <a href="https://app.ohmail.app/#/settings/storage" style="display:inline-block;padding:12px 22px;font:600 15px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#ffffff;text-decoration:none;">Choose storage</a>
+            </td></tr></table>
+          </td></tr>
+      <tr><td style="padding:20px 28px 26px;border-top:1px solid #e9e4de;font:400 13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#5c534b;">
+        <p style="margin:0 0 6px;">Only the text of your letters counts. Attachments never do.</p>
+        <p style="margin:0 0 6px;">ohmail sends this once at 90% and once when storage is full. To stop storage mails, turn them off in Settings → Storage.</p>
+        <p style="margin:0 0 6px;">TrafficFlow GmbH, Zürich, Switzerland</p>
+      </td></tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>"
+`;
+
+exports[`templates — snapshots > storage_near subject/text/html is unchanged > storage_near.subject 1`] = `"Your ohmail storage is 90% full"`;
+
+exports[`templates — snapshots > storage_near subject/text/html is unchanged > storage_near.text 1`] = `
+"oh. — ohmail
+
+Your ohmail storage is 90% full
+
+3.6 GB of 4 GB used, your trial room. Your mail needs about 12.5 GB when the import finishes.
+When it is full, ohmail Cloud keeps the text of your newest letters. Older letters stay complete on your mail server, and ohmail still lists them and finds them.
+Plus + 10 GB storage keeps all your mail: 15 GB for $25/month.
+https://app.ohmail.app/#/settings/storage
+
+—
+Only the text of your letters counts. Attachments never do.
+ohmail sends this once at 90% and once when storage is full. To stop storage mails, turn them off in Settings → Storage.
+TrafficFlow GmbH, Zürich, Switzerland
+"
+`;
+
 exports[`templates — snapshots > waitlist_confirmation subject/text/html is unchanged > waitlist_confirmation.headers 1`] = `
 {
   "List-Unsubscribe": "<mailto:support@ohmail.app?subject=Remove%20me%20from%20the%20ohmail%20waitlist>",
