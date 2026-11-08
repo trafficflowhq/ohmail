@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.0" date="2026-11-09">
+      <description>
+        <ul>
+          <li>Phone: background organizing stops cleanly at Android's time limit</li>
+          <li>A refused first Connect on the phone leaves no mailbox behind</li>
+          <li>ohmail.app/support and ohmail.app/delete-account open the website's pages</li>
+          <li>The phone links its privacy policy, imprint and support pages, and offers Delete account</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.50" date="2026-11-08">
       <description>
         <ul>
@@ -110,14 +120,6 @@
           <li>Cloud stores less per letter</li>
           <li>The Screener's waiting count no longer jumps while the app reloads your mail</li>
           <li>Send later now works with attachments on Cloud and on your own server</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.46" date="2026-11-07">
-      <description>
-        <ul>
-          <li>Clicking a link while writing a letter no longer opens it</li>
-          <li>The Screener no longer flashes a waiting count at start when nothing is waiting</li>
         </ul>
       </description>
     </release>
