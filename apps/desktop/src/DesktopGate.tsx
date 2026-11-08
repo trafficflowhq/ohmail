@@ -72,7 +72,7 @@ import { DesktopStorage, DesktopSubscription, useDesktopManageOffer, useHostedSe
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { liveBodyVia } from "../../webapp/app/shell/live-body";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
-import { useDesktopFirstPaint } from "./desktop-first-paint.js";
+import { useDesktopFirstPaint, useDesktopUnnamedWall } from "./desktop-first-paint.js";
 import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
 import { DesktopWebSection } from "./DesktopWebSection.js";
 import {
@@ -883,6 +883,11 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
     accountDoor && mount.kind === "engine" ? mount.key : null,
     (facts) => setAccessRefused((held) => held ?? facts),
   );
+  /* …and while no mailbox is named: a refused account's list never names one (`useDesktopUnnamedWall`). */
+  const unnamed = useDesktopUnnamedWall(
+    accountDoor && mount.kind === "opening" && accessRefused === null,
+    (facts) => setAccessRefused((held) => held ?? facts),
+  );
   // One window, one composer, across restarts — see `setComposerScope`.
   setComposerScope("window");
   // The hosted door stages a large send's bytes through the engine; no other door has storage.
@@ -1320,11 +1325,15 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
        behind its own grace, so the ordinary launch stays a quiet frame; the wait it exists
        for is the one-off recovery launch (`SETTLE_MS` in `doors.ts`). The words sit at the
        foot of the rail where the sync line will sit: `BootStatus` renders the engine's own
-       `status.bootPhase` ("Replaying recent changes…"); the settling poll refreshes it. */
+       `status.bootPhase` ("Replaying recent changes…"); the settling poll refreshes it. An account
+       door whose engine names no mailbox and answers offline says its server is not answering. */
+    const outage = unnamed === "unreachable"
+      ? { sentence: isManagedDoor(status) ? DOOR_COPY.cloudUnreachableTitle : DOOR_COPY.serverUnreachableTitle }
+      : {};
     return (
       <div className="gate gate-boot">
         <BootSkeleton active rail />
-        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} />
+        <BootStatus phase={status?.bootPhase} applied={status?.bootApplied} pending={status?.bootPending} {...outage} />
       </div>
     );
   }

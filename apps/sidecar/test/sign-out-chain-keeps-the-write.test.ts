@@ -70,6 +70,8 @@ async function launch(dataDir: string, s: Server, tokens: { accessToken: string;
     pollIntervalMs: 3_600_000, keks: { 1: Buffer.alloc(32, 7) }, tokens,
   });
   sidecars.push(sidecar);
+  // The window mounts once the account's list has named the mailbox it is scoped to.
+  await sidecar.start();
   const bridge = async (path: string, init?: unknown): Promise<Response> => {
     const i = (init ?? {}) as RequestInit;
     const headers = new Headers(i.headers);

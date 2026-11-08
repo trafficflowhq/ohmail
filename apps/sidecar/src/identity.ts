@@ -80,6 +80,10 @@ export interface EnsureLocalWorldInput {
   address: string | null;
   displayName?: string;
   now: Date;
+  /** Which door builds the world; a cloud door's mailboxes come from the account's list. */
+  door?: "local" | "cloud";
+  /** Cloud door: the account's mailbox list has been applied to this store. */
+  listed?: boolean;
 }
 
 /**
@@ -183,6 +187,9 @@ export async function ensureLocalWorld(db: LocalDb, input: EnsureLocalWorldInput
     activeSeedRow: seedRow !== null,
     tombstonedSeed,
     rosterEmpty: nonTombstoned.length === 0,
+    door: input.door ?? "local",
+    servableRow: nonTombstoned.some((r) => r.status !== "disabled"),
+    listed: input.listed === true,
   });
 
   if (!seed) {
@@ -568,6 +575,12 @@ export interface SeedDecisionInput {
   tombstonedSeed: boolean;
   /** Are there NO live rows at all — not merely none for this address? */
   rosterEmpty: boolean;
+  /** The door asking; absent is `local`. */
+  door?: "local" | "cloud";
+  /** Is there a row this launch could serve (`status <> 'disabled'`)? */
+  servableRow?: boolean;
+  /** Cloud door: has the account's mailbox list been applied? */
+  listed?: boolean;
 }
 
 /** Whether this launch should create the seed mailbox row. See the header's six cases. */
@@ -577,6 +590,10 @@ export function shouldSeedMailbox(input: SeedDecisionInput): boolean {
   if (!address) return false;
   // Case 2 — the row is already there. This is every ordinary launch after the first.
   if (input.activeSeedRow) return false;
+  /* A cloud door's mailboxes are the account's: a row minted here is retired by the next mailbox
+     refresh, so a session serving it keyed the window's per-mailbox state by an id no relaunch
+     serves again. It mints only when the applied list left nothing to serve. */
+  if (input.door === "cloud") return input.listed === true && input.servableRow !== true;
   /* Cases 3 and 4, which are the same tombstone and different answers. An empty roster is an
      install at first-run whatever the store remembers, so the seed is made; a roster with anything
      live in it is an install whose seed was REMOVED, and re-minting it is the resurrection. */

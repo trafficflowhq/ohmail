@@ -108,7 +108,7 @@ function standInShell(
   const status = (): Record<string, unknown> => {
     const door = readDoor();
     const run = engine
-      ? { state: "serving", mailboxId: engine.world.mailboxId, accountId: engine.world.accountId,
+      ? { state: "serving", mailboxId: engine.servedMailboxId(), accountId: engine.world.accountId,
           userId: engine.world.userId, baseUrl: "http://sidecar", credentialState: engine.signedIn() ? "ready" : "absent" }
       : starting ? { state: "starting", attempt: 1, of: 4 } : { state: "not_configured", missing: ["config.json"] };
     return {

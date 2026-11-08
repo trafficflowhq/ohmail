@@ -545,6 +545,7 @@ describe("a write on its way when Sign out is pressed", () => {
 
   it("(xi) the answer and /health say how many of the window's changes wait for this account", { timeout: 30_000 }, async () => {
     const e = await door();
+    await e.sidecar.start(); // the account's list names the mailbox the window's outbox is scoped to
     const health = async (): Promise<unknown> =>
       ((await (await e.sidecar.handle(new Request("http://sidecar/health"))).json()) as { queued?: unknown }).queued;
     const outbox = `http://sidecar/local/window/outbox?scope=${encodeURIComponent(e.sidecar.servedMailboxId())}`;
