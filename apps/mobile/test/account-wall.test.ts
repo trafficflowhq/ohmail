@@ -312,8 +312,8 @@ describe("the wall's actions, in the order a person meets them", () => {
   it("no manage URL, no button — a control that goes nowhere is worse than none", () => {
     const plan = wallSays(facts(CLOSED, { manageUrl: undefined }), "sideload");
     expect(plan.actions.map((a) => a.id)).toEqual(["export", "servers"]);
-    // And nothing tells somebody to open a page the server never named.
-    expect(plan.openElsewhere).toBeNull();
+    // And the store face offers no deletion page for an account the service keeps no page for.
+    expect(wallSays(facts(CLOSED, { manageUrl: undefined }), "store").actions.map((a) => a.id)).toEqual(["export", "servers"]);
   });
 
   it("no export path, no export — a server that serves none offers none", () => {
@@ -358,12 +358,14 @@ describe("the store face is the DEFAULT on this platform", () => {
     expect(linksOutToBilling("sideload")).toBe(true);
   });
 
-  it("THE STORE FACE DROPS BOTH OUTBOUND BUTTONS and names where to go instead", () => {
+  it("THE STORE FACE DROPS THE ACCOUNT-PAGE BUTTONS and keeps a way to delete the account", () => {
     const plan = wallSays(facts(CLOSED), "store");
-    expect(plan.actions.map((a) => a.id)).toEqual(["export", "servers"]);
-    expect(plan.openElsewhere).toBe("wallOpenInBrowser");
-    // The export stays: it opens no page and buys nothing.
-    expect(plan.actions.find((a) => a.id === "export")).toBeDefined();
+    expect(plan.actions.map((a) => a.id)).toEqual(["export", "deletePage", "servers"]);
+    // The deletion page, not the account page: it has no path to a plan.
+    const del = plan.actions.find((a) => a.id === "deletePage");
+    expect(del).toMatchObject({ label: EN.wallDeleteNow, hint: EN.wallDeletePage });
+    expect(del).not.toHaveProperty("url");
+    expect(plan).not.toHaveProperty("openElsewhere");
   });
 
   it("THE SHIPPED CONSTANT, not just the parameter: an unstamped build withholds", () => {
@@ -372,8 +374,7 @@ describe("the store face is the DEFAULT on this platform", () => {
     // and reads `DISTRIBUTION` itself, which is what the screen does.
     expect(process.env.EXPO_PUBLIC_OHMAIL_DISTRIBUTION).toBeUndefined();
     const plan = wallSays(facts(CLOSED));
-    expect(plan.actions.map((a) => a.id)).toEqual(["export", "servers"]);
-    expect(plan.openElsewhere).toBe("wallOpenInBrowser");
+    expect(plan.actions.map((a) => a.id)).toEqual(["export", "deletePage", "servers"]);
   });
 
   it("the store face keeps every SENTENCE — only the links go", () => {
@@ -652,22 +653,17 @@ describe("the census over the two screens", () => {
     }
   });
 
-  it("THE STORE FACE'S OWN SENTENCE ASKS NOBODY TO SUBSCRIBE", () => {
-    /**
-     * The sentence a store build renders in place of the withheld button, in both decks. A store
-     * copy may not carry a call to action towards a purchase page (App Review 3.1.1), and "open
-     * the site to subscribe again" is one — so it names what a person can do with the account.
-     * The SIDELOAD face's BUTTON keeps the browser wall's own word, which is the point of the
-     * flag: the withholding is the sentence's, not the vocabulary's.
-     */
+  it("THE STORE FACE'S DELETE PRESS ASKS NOBODY TO SUBSCRIBE OR MANAGE", () => {
+    /* A store copy may not carry a call to action towards a purchase page (App Review 3.1.3(f)),
+       and must let somebody start deleting the account (5.1.1(v)): the press opens the deletion
+       page, and its sentence names that page and nothing to buy or manage. */
     const plan = wallSays(facts(CLOSED), "store");
-    expect(plan.openElsewhere).toBe("wallOpenInBrowser");
-    expect(plan.actions.some((a) => a.id === "manage")).toBe(false);
-    const purchase = /\b(subscribe|subscription|abo|abos|abonnement\w*)\b/i;
+    expect(plan.actions.some((a) => a.id === "manage" || a.id === "delete")).toBe(false);
+    const purchase = /\b(subscribe|subscription|abo|abos|abonnement\w*|manage|verwalte\w*|plan|tarif)\b/i;
     for (const [name, deck] of [["en", EN], ["de", DE]] as const) {
-      const sentence = String((deck as unknown as Record<string, unknown>).wallOpenInBrowser);
+      const sentence = String((deck as unknown as Record<string, unknown>).wallDeletePage);
       expect(sentence, `the ${name} store sentence sends somebody to buy`).not.toMatch(purchase);
-      expect(sentence, `the ${name} store sentence names no site`).toContain("ohmail.app");
+      expect(sentence, `the ${name} store sentence names no page`).toContain("ohmail.app/delete-account");
     }
   });
 

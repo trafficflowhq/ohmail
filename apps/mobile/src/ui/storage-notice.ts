@@ -2,10 +2,10 @@
  * STORAGE ON THE PHONE, decided as pure functions: the card atop the Ohbox (`StorageNotice.tsx`) and
  * the Storage screen (`app/storage.tsx`). The server decides whether a card is due and keeps its
  * dismissal (`card` on `GET /account/access`); this file only says it. Numbers first, sized and
- * counted as the web says them (`storageSize`). The store face (every shipped phone build) names
- * plans and their rooms and nothing more: no amount, no purchase button, no link, only the plain "Manage your plan at ohmail.app". A
- * sideload build draws the Manage subscription press in that line's place. No price is read at all
- * (`offerOf` in `net/account.ts` keeps rooms and names only).
+ * counted as the web says them (`storageSize`). The store face (every shipped phone build) states
+ * the numbers and why the cap is what it is: no plan to move to, no add-on, no payment, no page to buy
+ * on (App Review 3.1.3(f), Play Payments). A sideload build adds the plans, the fitted choice and the
+ * Manage subscription press. No price is read at all (`offerOf` in `net/account.ts` keeps rooms and names only).
  */
 import {
   storageCardCap,
@@ -19,8 +19,8 @@ import { longDayStamp, monthStamp } from "./day-stamp";
 /** The text one letter is taken to hold before the account's own average is measured (the server's default). */
 export const DEFAULT_LETTER_BYTES = 25_000;
 
-/** What stands in place of a purchase: the plain line on the store face, the Manage subscription press on a sideload. */
-export type StorageManage = "line" | "press";
+/** The Manage subscription press on a sideload; nothing on the store face. */
+export type StorageManage = "none" | "press";
 
 /** Digits grouped by thousands: "80,000", "80.000" in German. No formatter call (Hermes). */
 export function grouped(n: number, locale: string): string {
@@ -115,7 +115,7 @@ export interface StorageCardSaid {
 
 /** The face this build draws: a store copy may not send anybody to a purchase page. */
 export function storageManageOf(distribution?: Distribution): StorageManage {
-  return (distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution)) ? "press" : "line";
+  return (distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution)) ? "press" : "none";
 }
 
 /** From this share of the cap an older server's account is nearly full, as the server decides it now. */
@@ -145,6 +145,7 @@ export function storageCardOf(
   if (facts === undefined || facts.card === null) return null;
   const level = facts.card ?? storageLevelOf(facts);
   if (level === null) return null;
+  const store = storageManageOf(distribution) === "none";
   const cap = storageCardCap(facts);
   if (facts.card === undefined && LEVELS.slice(LEVELS.indexOf(level)).some((l) => putAway(l, cap))) return null;
   const est = facts.estimate;
@@ -156,7 +157,8 @@ export function storageCardOf(
     ? (facts.keptFrom !== null ? deck.storageKeptFrom(monthStamp(facts.keptFrom, locale))
       : facts.emptiedForSpace > 0 ? deck.storageKeptOldest : null)
     : level === "drop" && plan !== null
-      ? (facts.limitDropsAt !== null ? deck.storageDropDated(longDayStamp(facts.limitDropsAt, locale), plan) : deck.storageDropUnpaid(plan))
+      ? (facts.limitDropsAt !== null ? deck.storageDropDated(longDayStamp(facts.limitDropsAt, locale), plan)
+        : store ? deck.storageDropPlain(plan) : deck.storageDropUnpaid(plan))
       : null;
   return {
     level,
@@ -166,8 +168,8 @@ export function storageCardOf(
     ratio: Math.min(1, facts.usedBytes / facts.limitBytes),
     lines: [[usedSentence(facts, deck, locale), expected].filter((s) => s !== null).join(" "), happened]
       .filter((s): s is string => s !== null),
-    fit: fitSentence(facts, deck, locale),
-    manage: storageManageOf(distribution),
+    fit: store ? null : fitSentence(facts, deck, locale),
+    manage: store ? "none" : "press",
   };
 }
 
@@ -213,16 +215,18 @@ export function storagePaneOf(
   const size = (bytes: number) => storageSize(bytes, locale);
   const letters = (bytes: number) => roomLetters(bytes, locale);
   const expectedBytes = est !== null && est.expectedBytes > 0 ? est.expectedBytes : null;
+  const store = storageManageOf(distribution) === "none";
   const offer = facts.offer;
   const current = offer === null ? null : planTitle(offer.current.plan);
   const planGb = facts.planLimitBytes === null ? null : size(facts.planLimitBytes);
   const limit = size(facts.limitBytes);
+  /* The trial's line names the first payment; the store face says it without. */
   const plan = facts.limitReason === "trial" && planGb !== null && current !== null
-    ? deck.storagePlanTrial(limit, current, planGb)
+    ? (store ? deck.storagePlanTrialPlain(limit, planGb) : deck.storagePlanTrial(limit, current, planGb))
     : planGb !== null && current !== null && facts.limitDropsAt !== null
       ? deck.storagePlanUntil(limit, longDayStamp(facts.limitDropsAt, locale), current, planGb)
       : current !== null ? deck.storagePlanKeeps(current, size(offer!.current.roomBytes)) : null;
-  const plans: StoragePlanRow[] = offer === null ? [] : [
+  const plans: StoragePlanRow[] = offer === null || store ? [] : [
     ...offer.plans.map((p) => ({
       name: p.plan === offer.current.plan ? deck.storagePlanYours(planTitle(p.plan)) : planTitle(p.plan),
       room: deck.storagePlanRoom(size(p.roomBytes), letters(p.roomBytes)),

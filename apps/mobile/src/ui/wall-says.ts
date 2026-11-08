@@ -22,9 +22,7 @@ export type WallLineKey =
   /* the body */
   | "wallStopped" | "wallMailboxUntouched" | "wallKept"
   /* the erasure sentence, or none at all */
-  | "wallErasure" | "wallErasureHeld" | "wallErasureUnknown"
-  /* the sentence that stands in for the withheld buttons on a store build */
-  | "wallOpenInBrowser";
+  | "wallErasure" | "wallErasureHeld" | "wallErasureUnknown";
 
 /**
  * What a press does. `manage` and `delete` mint the account-page link AT THE PRESS and leave for
@@ -36,6 +34,8 @@ export type WallAction =
   | { id: "manage"; label: string; hint?: string }
   | { id: "export"; label: string; hint: string; path: string }
   | { id: "delete"; label: string; hint: string }
+  /** The store face's delete: the deletion-only page (`DELETE_ACCOUNT_URL`), never the account page. */
+  | { id: "deletePage"; label: string; hint: string }
   | { id: "servers"; label: string };
 
 export interface WallSays {
@@ -44,12 +44,6 @@ export interface WallSays {
   body: WallLine[];
   /** The erasure sentence, or `null` — an ERASED account is told nothing about an erasure. */
   erasure: WallLine | null;
-  /**
-   * The sentence that REPLACES the outbound buttons on a store build, or `null`. Never both: a
-   * screen that says "open it in a browser" beside a button that opens it is telling somebody to
-   * do by hand what the control in front of them does.
-   */
-  openElsewhere: "wallOpenInBrowser" | null;
   actions: WallAction[];
 }
 
@@ -146,6 +140,10 @@ export function wallSays(
       label: Copy.wallDeleteNow,
       hint: Copy.wallDeleteElsewhere,
     });
+  } else if (facts.manageUrl) {
+    /* A store build may not open the account page, where plans are sold, so its end opens the
+       deletion-only page instead (App Review 5.1.1(v)). */
+    actions.push({ id: "deletePage", label: Copy.wallDeleteNow, hint: Copy.wallDeletePage });
   }
   /* The way off the screen. Servers holds disconnect and forget, and this wall replaces the tabs
      those used to be reachable behind. */
@@ -155,9 +153,6 @@ export function wallSays(
     headline: headlineOf(lifecycle, suspended),
     body,
     erasure,
-    /* Said ONLY where a button was withheld: a store build with no `manageUrl` at all has nothing
-       to point anybody at, and "open it in a browser" would name a page this server never gave. */
-    openElsewhere: !mayLinkOut && facts.manageUrl ? "wallOpenInBrowser" : null,
     actions,
   };
 }
@@ -167,5 +162,4 @@ export const WALL_LINE_KEYS: readonly WallLineKey[] = [
   "wallTitle", "wallSuspendedTitle", "wallTrialEnded", "wallCanceled", "wallUnpaid",
   "wallStopped", "wallMailboxUntouched", "wallKept",
   "wallErasure", "wallErasureHeld", "wallErasureUnknown",
-  "wallOpenInBrowser",
 ];

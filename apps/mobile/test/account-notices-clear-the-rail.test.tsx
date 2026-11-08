@@ -54,7 +54,8 @@ const EMPTIED = {
   usedBytes: 1_868_000_000, limitBytes: 2_000_000_000, emptiedForSpace: 3,
   firstEmptiedAt: "2026-10-20T03:00:00.000Z", keptFrom: null, withheldOnArrival: 0, emptyingNow: true, card: "full",
 };
-const trialEnds = new Date(Date.now() + 24 * 3600_000).toISOString();
+/* A grace, which the store face draws too (it says no trial end). */
+const graceUntil = new Date(Date.now() + 24 * 3600_000).toISOString();
 const session = { standalone: false, profile: { id: "p-1" }, ownerKey: "o-1" } as never;
 const STATUS_BAR = 24;
 
@@ -64,7 +65,7 @@ function pose(width: number, height: number, sides = 0) {
   live.feed = {
     answer: accessOf({
       metered: true, access: "open",
-      lifecycle: { state: "trialing", closedReason: null, trialEndsAt: trialEnds }, storage: EMPTIED,
+      lifecycle: { state: "grace", closedReason: null, graceUntil }, storage: EMPTIED,
     }),
     caughtUp: null, at: 0,
   };

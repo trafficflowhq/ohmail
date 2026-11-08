@@ -505,6 +505,16 @@ export async function readExport(
 export const SELF_HOST_GUIDE =
   "https://github.com/trafficflowhq/ohmail/blob/main/docs/self-host/README.md";
 
+/**
+ * THE OPERATOR'S PAGES the phone names in Settings and on the wall, written down here for the reason
+ * above; the system browser opens them on a press. The deletion page is deletion-only: it has no
+ * path to a plan, so a store build may offer it (App Review 5.1.1(v), Play's deletion rule).
+ */
+export const PRIVACY_URL = "https://ohmail.app/privacy";
+export const IMPRINT_URL = "https://ohmail.app/imprint";
+export const SUPPORT_URL = "https://ohmail.app/support";
+export const DELETE_ACCOUNT_URL = "https://ohmail.app/delete-account";
+
 /** The export's filename: dated, so two of them a month apart do not collide in a folder. */
 export function exportFilename(now: Date): string {
   const p = (n: number): string => String(n).padStart(2, "0");

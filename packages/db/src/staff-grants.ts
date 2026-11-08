@@ -255,6 +255,8 @@ export const STAFF_SELECT_GRANTS: Readonly<Record<string, readonly string[]>> = 
     "account_id", "mailbox_id", "letters", "text_letters", "emptied", "text_bytes", "instances",
     "server_letters", "counted", "imported", "at",
   ],
+  // Held storage limits (cloud 0055, granted by 0059): the alert pass's cap reader. Bytes and instants.
+  "public.account_storage_holds": ["account_id", "seen_bytes", "held_bytes", "held_until", "updated_at"],
   "public.staff_audit_events": [
     "id", "at", "request_id", "staff_user_id", "staff_session_id", "actor_label", "roles",
     "action", "target_account_id", "target_user_id", "target_mailbox_id", "outcome",

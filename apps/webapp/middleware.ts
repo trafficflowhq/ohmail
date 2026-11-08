@@ -41,7 +41,7 @@ import {
  *    the guard can be unconditional.
  *  - **every other HTML path this deployment answers** (`/login`, `/join`, `/verify-email`,
  *    `/de`, `/privacy`,
- *    `/imprint`, `/subprocessors`) — added for the two rules that are
+ *    `/imprint`, `/subprocessors`, `/support`, `/delete-account`) — added for the two rules that are
  *    about the ORIGIN rather than about `/`: the canonical-host redirect below, and the
  *    nonce CSP on the credential screens. They cost one edge invocation and NOT a fetch:
  *    the session gate runs on `/` and nowhere else.
@@ -504,9 +504,10 @@ export const config = {
   matcher: [
     "/", "/mailbox", "/resume", "/login", "/join", "/join/invite", "/setup", "/verify-email",
     "/link-desktop", "/authorize-desktop", "/approve", "/subscribed", "/de", "/privacy", "/imprint",
-    "/subprocessors", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt", "/api/waitlist",
+    "/subprocessors", "/support", "/delete-account", "/flathub-verification", "/.well-known/org.flathub.VerifiedApps.txt",
+    "/api/waitlist",
     "/site-assets/:path*", "/landing/:path*",
-    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Dd][Ee]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
+    { source: "/((?:[Pp][Rr][Ii][Vv][Aa][Cc][Yy]|[Ii][Mm][Pp][Rr][Ii][Nn][Tt]|[Ss][Uu][Bb][Pp][Rr][Oo][Cc][Ee][Ss][Ss][Oo][Rr][Ss]|[Ss][Uu][Pp][Pp][Oo][Rr][Tt]|[Dd][Ee][Ll][Ee][Tt][Ee]-[Aa][Cc][Cc][Oo][Uu][Nn][Tt]|[Dd][Ee]|[Aa][Pp][Ii]/[Ww][Aa][Ii][Tt][Ll][Ii][Ss][Tt]|[Ff][Ll][Aa][Tt][Hh][Uu][Bb]-[Vv][Ee][Rr][Ii][Ff][Ii][Cc][Aa][Tt][Ii][Oo][Nn]|\\.[Ww][Ee][Ll][Ll]-[Kk][Nn][Oo][Ww][Nn]/[Oo][Rr][Gg]\\.[Ff][Ll][Aa][Tt][Hh][Uu][Bb]\\.[Vv][Ee][Rr][Ii][Ff][Ii][Ee][Dd][Aa][Pp][Pp][Ss]\\.[Tt][Xx][Tt])|(?:[Ss][Ii][Tt][Ee]-[Aa][Ss][Ss][Ee][Tt][Ss]|[Ll][Aa][Nn][Dd][Ii][Nn][Gg])/.*)" },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "next-action" }] },
     { source: "/((?!api(?:/|$)|auth/refresh(?:/logout)?$|_next/).*)", has: [{ type: "header", key: "content-type" }] },
     { source: "/((?:[^/]*/)*\\.\\.?(?:/.*)?)" },

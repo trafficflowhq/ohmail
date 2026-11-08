@@ -30,6 +30,9 @@ import {
   recordDrillOutcomes,
   ackDrill,
   drillKinds,
+  evaluateAlertsWithScope,
+  accountsAtCapOf,
+  heldStorageLimitOf,
   asCapabilities,
   staffCapabilityExcess,
   staffCapabilityShortfall,
@@ -800,6 +803,50 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
       select has_any_column_privilege('${STAFF_ROLE}', 'public.account_storage_prefs', 'SELECT')
           or has_any_column_privilege('${STAFF_ROLE}', 'public.storage_mail_sent', 'SELECT') as any`);
     expect(other).toEqual({ any: false });
+  });
+
+  it("the API arm judges storage caps through held limits as the blind role (cloud 0059)", async () => {
+    const GB = 1_000_000_000;
+    const now = new Date(Date.UTC(2026, 10, 8, 12, 0, 0));
+    const [full, held] = [randomUUID(), randomUUID()];
+    await ownerClient.unsafe(`insert into accounts (id, name) values ('${full}', 'Full'), ('${held}', 'Held')`);
+    await ownerClient.unsafe(`insert into account_storage (account_id, bytes) values ('${full}', ${3 * GB}), ('${held}', ${3 * GB})`);
+    // A plan lowered from 10 GB to 2 GB: the 10 GB limit is held, so `held` is under its cap.
+    const verdict = (bytes: number | null) => ({ ok: true as const, limits: { mailboxes: null, storageBytes: bytes, canAddMailbox: true, aiEnabled: true } });
+    await heldStorageLimitOf(owner as never, held, verdict(10 * GB), now);
+    await heldStorageLimitOf(owner as never, held, verdict(2 * GB), now);
+    const caps = new Map<string, number>([[full, 2 * GB], [held, 2 * GB]]);
+    const reader = accountsAtCapOf({
+      access: async (id: string) => verdict(caps.get(id) ?? null),
+    } as never)!;
+    const { alerts, scope } = await evaluateAlertsWithScope(staff as never, { now, driver: "api", accountsAtCap: reader });
+    expect(scope.unreadReasons.get("storage_at_cap")).toBeUndefined();
+    expect(alerts.find((a) => a.kind === "storage_at_cap")?.count).toBe(1);
+    await ownerClient.unsafe(`delete from account_storage_holds where account_id in ('${full}', '${held}');
+      delete from account_storage where account_id in ('${full}', '${held}');
+      delete from accounts where id in ('${full}', '${held}')`);
+  });
+
+  it("the IMAP refusal rule sends the blind role no read of auth_throttle, and says it is refused", async () => {
+    const statements: string[] = [];
+    const logged = brandDialect(drizzle(staffClient, { schema, logger: { logQuery: (q) => { statements.push(q); } } }), "pg");
+    const { scope } = await evaluateAlertsWithScope(logged as never, { now: new Date(), driver: "api" });
+    expect(scope.unreadReasons.get("imap_admission_refused")).toBe("refused");
+    expect(statements.length).toBeGreaterThan(0);
+    expect(statements.filter((q) => /\bfrom "auth_throttle"/i.test(q))).toEqual([]);
+  });
+
+  it("cloud 0059's own grant, run alone, is the allow-list's columns and no write", async () => {
+    await ownerClient.unsafe(`revoke all on public.account_storage_holds from ${STAFF_ROLE}`);
+    await ownerClient.unsafe(readFileSync(join(CLOUD_DIR, "0059_account_storage_holds_staff_grant.sql"), "utf8"));
+    const [row] = await ownerClient.unsafe<Array<{ cols: string[]; writes: boolean }>>(`
+      select array(select column_name::text from information_schema.columns
+                    where table_schema = 'public' and table_name = 'account_storage_holds'
+                      and has_column_privilege('${STAFF_ROLE}', 'public.account_storage_holds', column_name, 'SELECT')
+                    order by 1) as cols,
+             has_any_column_privilege('${STAFF_ROLE}', 'public.account_storage_holds', 'INSERT, UPDATE')
+               or has_table_privilege('${STAFF_ROLE}', 'public.account_storage_holds', 'DELETE, TRUNCATE') as writes`);
+    expect(row).toEqual({ cols: [...(STAFF_SELECT_GRANTS["public.account_storage_holds"] ?? [])].sort(), writes: false });
   });
 
   /* ══ 3. The census — equality, so a grant nobody asserted still fails ════════════════ */

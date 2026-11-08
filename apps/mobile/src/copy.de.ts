@@ -1091,6 +1091,10 @@ export const DE: Deck = {
   helpDMailbox: "Postfach",
   helpDLastSync: "Letzter Sync-Fehler",
   helpDNone: "keiner",
+  aboutPrivacy: "Datenschutzerklärung",
+  aboutImprint: "Impressum",
+  aboutSupport: "Support-Seite",
+  deleteAccountRow: "Account löschen",
 
   /* --------------------------------------------- organizing in the background */
 
@@ -2213,14 +2217,16 @@ export const DE: Deck = {
   wallDeleteNow: "Account jetzt löschen",
   wallDeleteElsewhere:
     "Zum Löschen deines Accounts brauchst du deinen zweiten Faktor. Das passiert auf deiner Account-Seite im Browser. Dein Postfach bleibt unberührt.",
-  wallOpenInBrowser:
-    "Öffne ohmail.app im Browser, um diesen Account zu verwalten oder zu löschen.",
+  wallDeletePage:
+    "Deinen Account löschst du auf ohmail.app/delete-account im Browser. Dein Postfach bleibt unberührt.",
 
   stripGraceEnds: (date: string) =>
     `Deine Testphase ist abgelaufen. ohmail organisiert noch bis zum ${date}.`,
   stripPaymentFailed: (date: string) =>
     `Deine letzte Zahlung ist fehlgeschlagen. Bring sie bis zum ${date} in Ordnung, damit ohmail weiter organisiert.`,
   stripTrialEnds: (date: string) => `Deine Testphase endet am ${date}.`,
+  stripPaymentFailedPlain: (date: string) =>
+    `Deine letzte Zahlung ist fehlgeschlagen. ohmail organisiert noch bis zum ${date}.`,
   stripSubscribe: "Abo abschliessen",
   stripFixPayment: "Zahlung in Ordnung bringen",
   stripLater: "Später",
@@ -2243,10 +2249,11 @@ export const DE: Deck = {
     `Ab dem ${date} umfasst dein Tarif ${plan}, und ohmail behält darin den Text deiner neuesten Nachrichten.`,
   storageDropUnpaid: (plan: string) =>
     `Ab 14 Tagen nach deiner ersten Zahlung umfasst dein Tarif ${plan}, und ohmail behält darin den Text deiner neuesten Nachrichten.`,
+  storageDropPlain: (plan: string) =>
+    `Nach deiner Testphase umfasst dein Tarif ${plan}; ohmail behält darin den Text deiner neuesten Nachrichten, ältere bleiben auf deinem Mailserver.`,
   storageFitAll: (name: string, size: string) => `${name} behält alle deine Mails: ${size}.`,
   storageFitMost: (name: string, size: string) => `${name} behält am meisten: ${size}.`,
   storageWithAddon: (plan: string, size: string) => `${plan} + ${size} Speicher`,
-  storageManageAt: "Deinen Tarif verwaltest du auf ohmail.app",
   storageManage: "Abo verwalten",
   storageDismiss: "Ausblenden",
   storageDismissFailed: "Das ließ sich gerade nicht ausblenden. Versuch es gleich nochmal.",
@@ -2273,6 +2280,8 @@ export const DE: Deck = {
   storageYourPlan: "Dein Tarif",
   storagePlanTrial: (limit: string, plan: string, planGb: string) =>
     `Deine Testphase speichert bis zu ${limit}. Mit ${plan} sind es ab 14 Tagen nach deiner ersten Zahlung ${planGb}.`,
+  storagePlanTrialPlain: (limit: string, planGb: string) =>
+    `Deine Testphase speichert bis zu ${limit}. Danach umfasst dein Tarif ${planGb}.`,
   storagePlanUntil: (limit: string, date: string, plan: string, planGb: string) =>
     `Bis zum ${date} behältst du bis zu ${limit}. Danach umfasst ${plan} ${planGb}.`,
   storagePlanKeeps: (plan: string, size: string) => `${plan} umfasst ${size}.`,

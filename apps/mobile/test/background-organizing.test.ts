@@ -207,6 +207,9 @@ interface ServiceLog {
   stopThrows: boolean;
   fire: (() => void) | null;
   unsubscribed: number;
+  /** The platform's data-sync time limit — its own listener and its own unsubscribe count. */
+  fireTimedOut: (() => void) | null;
+  timedOutUnsubscribed: number;
   /** How many times JS said it was still running. */
   beats: number;
   /** What the platform reports as its watchdog interval. */
@@ -231,6 +234,8 @@ function service(over: Partial<ServiceLog> = {}): { service: BackgroundService; 
     stopThrows: false,
     fire: null,
     unsubscribed: 0,
+    fireTimedOut: null,
+    timedOutUnsubscribed: 0,
     beats: 0,
     beatIntervalMs: 20_000,
     canPost: true,
@@ -273,6 +278,10 @@ function service(over: Partial<ServiceLog> = {}): { service: BackgroundService; 
     onStopRequested: (listener) => {
       log.fire = listener;
       return () => { log.unsubscribed += 1; log.fire = null; };
+    },
+    onTimedOut: (listener) => {
+      log.fireTimedOut = listener;
+      return () => { log.timedOutUnsubscribed += 1; log.fireTimedOut = null; };
     },
   };
   return { service: impl, log };
@@ -1297,6 +1306,97 @@ describe("Android — it organizes behind a notification, and the notification i
 
 /* ── the transition order, which is where the pair of IMAP writes goes wrong ───────────────── */
 
+/* ── Android 15+: the platform's data-sync time limit ─────────────────────────────────────── */
+
+describe("Android's data-sync time limit ends the service, and the mailbox goes back", () => {
+  /** Background with the service up, then the platform stops it at its limit (Kotlin `onTimeout`). */
+  async function timedOutInBackground() {
+    const w = wire("android", { checkEveryMs: 1000 });
+    const base = vi.getTimerCount();
+    await w.live.phaseChanged("background");
+    expect(watchTimers(base)).toBe(1);
+    w.service!.running = false;
+    w.service!.fireTimedOut!();
+    await vi.advanceTimersByTimeAsync(0);
+    return { w, base };
+  }
+  const count = (calls: readonly string[], name: string): number => calls.filter((c) => c === name).length;
+
+  it("in the background: one hand-back, never the person's stop, and no stale tick", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w, base } = await timedOutInBackground();
+      expect(count(w.engine.calls, "handBack")).toBe(1);
+      expect(w.engine.calls).not.toContain("stopOrganizing");
+      expect(reason(w.logged, "organizer_service_timed_out")).toBe("system_time_limit");
+      expect(reason(w.logged, "organizer_hand_back")).toBe("system_time_limit");
+      expect(watchTimers(base)).toBe(0);
+      expect(w.live.backgrounded()).toBe(false);
+      expect(w.announced).toEqual([]);
+      expect(w.notificationsOff).toEqual([]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(count(w.engine.calls, "handBack")).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opening the app resumes after the hand-back, and the next background starts it again", async () => {
+    vi.useFakeTimers();
+    try {
+      const { w } = await timedOutInBackground();
+      await w.live.phaseChanged("active");
+      expect(w.engine.calls.lastIndexOf("resume")).toBeGreaterThan(w.engine.calls.indexOf("handBack"));
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(count(w.engine.calls, "handBack")).toBe(1);
+      await w.live.phaseChanged("background");
+      expect(count(w.service!.calls, "start")).toBe(2);
+      expect(w.live.backgrounded()).toBe(true);
+      expect(count(w.logged.map((l) => l.event), "organizer_background_holds")).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("while the app is open there is nothing to give back", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = wire("android", { checkEveryMs: 1000 });
+      await w.live.phaseChanged("background");
+      await w.live.phaseChanged("active");
+      w.service!.running = false;
+      w.service!.fireTimedOut!();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(w.engine.calls).not.toContain("handBack");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a newer service already standing is left alone, its watch armed", async () => {
+    vi.useFakeTimers();
+    try {
+      const w = wire("android", { checkEveryMs: 1000 });
+      const base = vi.getTimerCount();
+      await w.live.phaseChanged("background");
+      w.service!.fireTimedOut!();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(w.engine.calls).not.toContain("handBack");
+      expect(watchTimers(base)).toBe(1);
+      expect(w.live.backgrounded()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("dispose drops the time-limit listener", () => {
+    const w = wire("android");
+    w.live.dispose();
+    expect(w.service?.timedOutUnsubscribed).toBe(1);
+    expect(w.service?.fireTimedOut).toBeNull();
+  });
+});
+
 describe("a hand-back the platform froze on the way is said — both platforms", () => {
   /* The engine's half (`hand-back-before-the-freeze.test.ts`) ends a cycle in flight so the release
      usually lands in the few seconds a phone has. When it does not, it completes at the thaw and
@@ -2273,11 +2373,14 @@ describe("the Android service — the half a node process cannot run", () => {
 
   it("the module declares the one event, and drops its listener with the React context", () => {
     const mod = kotlin(MODULE_KT);
-    expect(mod).toMatch(/Events\("onStopRequested"\)/);
+    /* One call: a second `Events(...)` replaces the first. */
+    expect(mod).toMatch(/Events\("onStopRequested", "onTimedOut"\)/);
     expect(mod).toMatch(/Name\("OhmailOrganizerService"\)/);
     expect(blockBody(mod, "OnCreate")).toMatch(/OrganizerService\.onStopRequested = \{/);
+    expect(blockBody(mod, "OnCreate")).toMatch(/OrganizerService\.onTimedOut = \{/);
     const destroy = blockBody(mod, "OnDestroy");
     expect(destroy).toMatch(/OrganizerService\.onStopRequested = null/);
+    expect(destroy).toMatch(/OrganizerService\.onTimedOut = null/);
     /* And the service is NOT stopped on a JS teardown — see `dispose` above. Read from that
        block's OWN body: a regex from the header would match the stop function further down. */
     expect(destroy).not.toMatch(/stopService|stopSelf/);

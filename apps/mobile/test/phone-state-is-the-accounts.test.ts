@@ -489,6 +489,7 @@ function bgService() {
     beat: () => running,
     beatIntervalMs: () => 20_000,
     onStopRequested: (listener) => { fire = listener; return () => { fire = null; }; },
+    onTimedOut: () => () => undefined,
   };
   return { service: impl, calls, notices, press: () => fire?.(), up: () => running };
 }

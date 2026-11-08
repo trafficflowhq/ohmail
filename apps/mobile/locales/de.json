@@ -1,5 +1,6 @@
 {
   "ios": {
-    "NSCameraUsageDescription": "ohmail verwendet die Kamera nur, um einen Kopplungs-QR-Code zu scannen."
+    "NSCameraUsageDescription": "ohmail verwendet die Kamera nur, um einen Kopplungs-QR-Code zu scannen.",
+    "NSPhotoLibraryUsageDescription": "ohmail öffnet deine Fotomediathek nur, wenn du ein Bild auswählst, um es an eine Nachricht anzuhängen."
   }
 }

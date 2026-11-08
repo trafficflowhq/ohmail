@@ -917,6 +917,37 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
       expect(dial.configs[0]?.auth).toMatchObject({ user: ADDRESS, pass: TYPED });
     }, 120_000);
 
+    it("REMOVES the mailbox a refused first press added, so a press with another address is the only one", async () => {
+      /* The mistyped address: its row stayed signed out beside the good one, which then read as
+         "needs its password again", and two runtimes made Start refuse. */
+      const file = onDisk();
+      await expect(startPhoneEngine(deps(nodeExecutor(recorder(), file), {
+        adapterFactory: signInRefusing(),
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "mistyped@b.test", pass: "wrong" } },
+        address: "mistyped@b.test",
+        keks: RING,
+      }))).rejects.toThrow(/Authentication failed/u);
+      const left = await nodeExecutor(recorder(), file).all("select id from mailboxes", []);
+      expect(left.rows.length, "the refused press left its mailbox behind").toBe(0);
+
+      live = await startPhoneEngine(deps(nodeExecutor(recorder(), file), {
+        adapterFactory: dialRecorder({ configs: [], connects: 0 }),
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: TYPED } },
+        address: ADDRESS,
+        keks: RING,
+      }));
+      await settle();
+      const { organizer, connection } = live.runtimes();
+      expect(Object.keys(organizer).length, "one mailbox on this phone").toBe(1);
+      expect(Object.values(connection).some((c) => c.needsCredential === true), "a mailbox asks for its password").toBe(false);
+      const res = await live.handle(new Request("http://sidecar/mailboxes", {
+        headers: { authorization: `Bearer ${live.sessionToken}` },
+      }));
+      const { items } = (await res.json()) as { items: { address: string }[] };
+      expect(items.map((m) => m.address)).toEqual([ADDRESS]);
+      await expect(live.claimHere({ by: "press" })).resolves.not.toBe("refused");
+    }, 120_000);
+
     /**
      * GOOGLE'S REFUSED SIGN-IN IS STAMPED WITH WHY. The rethrown error carries `authHint`, a closed
      * word the phone's door words in its own language; each corpus shape (`gmail.refusals.json`,
@@ -962,6 +993,7 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
       await opened.stop();
       expect(await sealedRows(nodeExecutor(recorder(), file)),
         "the premise: the first launch sealed a row naming the first server").toBe(1);
+      const kept = await nodeExecutor(recorder(), file).all("select id from mailboxes", []);
 
       const second = nodeExecutor(recorder(), file);
       const dial: Dialled = { configs: [], connects: 0 };
@@ -977,6 +1009,8 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
       expect(dial.connects, "a launch that refused still opened a connection").toBe(0);
       expect(await sealedRows(nodeExecutor(recorder(), file)),
         "the row it could not use was left behind").toBe(0);
+      /* The mailbox the first launch made is not this launch's to remove. */
+      expect((await nodeExecutor(recorder(), file).all("select id from mailboxes", [])).rows).toEqual(kept.rows);
 
       /* AND THE PRESS AFTER IT WORKS, on the corrected server. A refusal a person cannot get past
          is worse than the state it replaced. */

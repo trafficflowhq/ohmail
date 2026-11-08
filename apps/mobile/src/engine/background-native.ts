@@ -29,6 +29,9 @@ interface OrganizerServiceNative {
 /** The event the Kotlin half emits for the action AND for a swipe-dismiss — one name, one act. */
 export const STOP_REQUESTED_EVENT = "onStopRequested";
 
+/** The event the Kotlin half emits when Android stopped the service at its time limit. */
+export const TIMED_OUT_EVENT = "onTimedOut";
+
 /**
  * THE SERVICE'S OWN NOTIFICATION GATE, for the panel and the start press — the same Kotlin function
  * `start` refuses on, so what Settings says and what the service does cannot come apart. `null`
@@ -57,6 +60,10 @@ export function nativeBackgroundService(): BackgroundService | null {
     beatIntervalMs: () => mod.beatIntervalMs(),
     onStopRequested: (listener: () => void) => {
       const sub = mod.addListener(STOP_REQUESTED_EVENT, listener);
+      return () => { sub.remove(); };
+    },
+    onTimedOut: (listener: () => void) => {
+      const sub = mod.addListener(TIMED_OUT_EVENT, listener);
       return () => { sub.remove(); };
     },
   };

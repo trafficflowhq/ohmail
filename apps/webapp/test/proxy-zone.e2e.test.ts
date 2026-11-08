@@ -243,7 +243,7 @@ describe.skipIf(!ENABLED)("the landing zone, over a real socket", () => {
 
   it("every other zone path: the zone saw no cookie, the bypass, and `rsc` when sent; ONE policy, the zone's", async () => {
     for (const path of [
-      "/de", "/privacy", "/imprint", "/subprocessors", "/flathub-verification",
+      "/de", "/privacy", "/imprint", "/subprocessors", "/support", "/delete-account", "/flathub-verification",
       "/.well-known/org.flathub.VerifiedApps.txt", "/site-assets/_next/static/a.js", "/landing/x.webp",
     ]) {
       zoneSeen = [];

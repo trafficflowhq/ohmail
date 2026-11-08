@@ -123,6 +123,10 @@ class OrganizerService : Service() {
     @Volatile
     var onStopRequested: (() -> Unit)? = null
 
+    /** Set by the module while it is alive; invoked when Android stops the service at its time limit. */
+    @Volatile
+    var onTimedOut: (() -> Unit)? = null
+
     /**
      * ══ THE JAVASCRIPT HAS TO BE RUNNING, AND A FOREGROUND SERVICE ALONE DOES NOT DO THAT ══
      *
@@ -221,7 +225,14 @@ class OrganizerService : Service() {
     val stopLabel = intent.getStringExtra(EXTRA_STOP_LABEL) ?: return stopBecauseUnaddressed()
 
     ensureChannel(channelName)
-    startForeground(NOTIFICATION_ID, build(body, stopLabel))
+    /* Android 15+ throws here once the data-sync time limit is spent; the module cannot catch it. */
+    try {
+      startForeground(NOTIFICATION_ID, build(body, stopLabel))
+    } catch (e: IllegalStateException) {
+      return stopBecauseRefused()
+    } catch (e: SecurityException) {
+      return stopBecauseRefused()
+    }
     running = true
     /* THE FIRST BEAT IS THE START ITSELF: JS is demonstrably running at this instant, since it is
        what asked. Without it `jsAlive` would be false for the first twenty seconds of every
@@ -287,6 +298,28 @@ class OrganizerService : Service() {
     running = false
     stopSelf()
     return START_NOT_STICKY
+  }
+
+  /** The latch stays closed: `awaitRunning` answers false and JS hands the mailbox back. */
+  private fun stopBecauseRefused(): Int {
+    running = false
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    stopSelf()
+    return START_NOT_STICKY
+  }
+
+  /**
+   * ANDROID'S DATA-SYNC TIME LIMIT (API 35+): stop now or the app is killed. Never the person's
+   * stop: JS hands the claim back and the row stays, so opening the app resumes. No `super`: the
+   * base method is empty and exists only from API 35.
+   */
+  override fun onTimeout(startId: Int, fgsType: Int) {
+    running = false
+    up = CountDownLatch(1)
+    watchdog.removeCallbacksAndMessages(null)
+    stopForeground(STOP_FOREGROUND_REMOVE)
+    stopSelf()
+    onTimedOut?.invoke()
   }
 
   override fun onDestroy() {

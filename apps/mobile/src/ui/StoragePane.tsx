@@ -1,7 +1,7 @@
 /**
  * The Storage screen's body, drawn from `storagePaneOf`: the figure, the bar, the mailboxes, the
- * estimate, the kept month, what counts and why it is limited, the plans with their rooms. On the
- * store face the manage row is the plain line; a sideload build draws `manage`, the press, instead.
+ * estimate, the kept month, what counts and why it is limited; a sideload build also the plans with
+ * their rooms and `manage`, the press. The store face draws the plan panel only for a plan line.
  */
 import type { ReactNode } from "react";
 import { View } from "react-native";
@@ -62,6 +62,7 @@ export function StoragePane({ facts, labelOf, manage, distribution }: {
         {pane.kept !== null ? <Txt variant="note" style={gap}>{pane.kept}</Txt> : null}
       </Panel>
 
+      {pane.plan !== null || pane.plans.length > 0 || pane.manage === "press" ? (
       <Panel style={{ paddingVertical: 18, marginBottom: 14, gap: 6 }}>
         {pane.plan !== null ? (
           <>
@@ -87,10 +88,9 @@ export function StoragePane({ facts, labelOf, manage, distribution }: {
             </View>
           </>
         ) : null}
-        <View style={[gap, { paddingTop: 10 }]}>
-          {pane.manage === "press" ? manage : <Txt variant="note">{Copy.storageManageAt}</Txt>}
-        </View>
+        {pane.manage === "press" ? <View style={[gap, { paddingTop: 10 }]}>{manage}</View> : null}
       </Panel>
+      ) : null}
 
       <Panel style={{ paddingVertical: 18, marginBottom: 14, gap: 6 }}>
         <Section>{Copy.storageWhatCounts}</Section>
