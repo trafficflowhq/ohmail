@@ -21,6 +21,15 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.49] — 2026-11-08
+
+### The phone's storage figures match the web for small mailboxes
+
+On the phone, Settings and the Storage screen printed every storage figure in gigabytes, so a mailbox
+under about 50 MB read "0 of 4 GB" and its letters averaged "0 KB". They now read as on the web: MB,
+KB or bytes where that is the size ("1 MB of 4 GB", "about 910 KB", "223 B"), the expected letters
+counted exactly, and each mailbox's stored and expected size side by side.
+
 ## [0.30.48] — 2026-11-08
 
 ### Checking for moves and read marks to send to the mail server costs almost nothing
@@ -17174,7 +17183,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.48...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.49...HEAD
+[0.30.49]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.49
 [0.30.48]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.48
 [0.30.47]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.47
 [0.30.46]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.46
