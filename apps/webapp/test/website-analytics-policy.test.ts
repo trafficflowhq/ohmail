@@ -111,7 +111,7 @@ describe("without an id, every route keeps today's policy (the old no-third-part
 describe("with an id, the website's documents gain Google and nothing else moves", () => {
   it("each website path carries exactly one policy: the baseline plus the Google sources", async () => {
     const rules = await rulesFor(ID);
-    expect([...MARKETING_PATHS].sort()).toEqual(["/", "/de", "/imprint", "/privacy", "/subprocessors"]);
+    expect([...MARKETING_PATHS].sort()).toEqual(["/", "/de", "/delete-account", "/imprint", "/privacy", "/subprocessors", "/support"]);
     for (const p of MARKETING_PATHS) expect(cspsFor(rules, p), p).toEqual([withAnalytics(BASELINE_CSP)]);
   });
 
@@ -134,7 +134,9 @@ describe("with an id, the website's documents gain Google and nothing else moves
 
 describe("with an armed landing zone the website carries its own tag and policy, and this config neither", () => {
   const ZONE = "https://site.ohmail.app";
-  const zonePaths = new Set(["/", "/de", "/imprint", "/privacy", "/subprocessors", "/api/waitlist", "/flathub-verification"]);
+  const zonePaths = new Set([
+    "/", "/de", "/imprint", "/privacy", "/subprocessors", "/support", "/delete-account", "/api/waitlist", "/flathub-verification",
+  ]);
 
   it("no Google source anywhere: the zone's paths carry no policy from here, every other path the baseline", async () => {
     const rules = await rulesFor(undefined, ZONE);

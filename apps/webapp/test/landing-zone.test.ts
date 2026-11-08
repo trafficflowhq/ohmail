@@ -167,6 +167,7 @@ describe("the zone decision is taken on the path the router serves, not only the
       ["/a/../subprocessors", "/subprocessors"], ["/landing%2Fa.webp", "/landing/a.webp"],
       ["/privacy/", "/privacy"], ["/privacy/.", "/privacy"], ["/privacy/%2e", "/privacy"], ["/privacy/x/..", "/privacy"],
       ["/de/.", "/de"], ["/%70rivacy/.", "/privacy"], ["/imprint/.", "/imprint"], ["/subprocessors/.", "/subprocessors"],
+      ["/%73upport", "/support"], ["/delete-account/.", "/delete-account"],
     ]) {
       expect(zonePathOf(spelling!), spelling).toBe(path);
     }
@@ -237,6 +238,17 @@ describe("armed: every zone path is rewritten to the zone and the jar stays here
     }
     const query = await run("/privacy?ref=x", { headers: { cookie: JAR } });
     expect(query.headers.get("x-middleware-rewrite")).toBe(`${ZONE}/privacy?ref=x`);
+  });
+
+  it("the store listings' support and account-deletion pages go to the zone, and the matcher runs for them", async () => {
+    arm({ LANDING_ZONE_ORIGIN: ZONE, LANDING_ZONE_BYPASS: "b" });
+    const at = await edgeRuns();
+    for (const path of ["/support", "/delete-account"]) {
+      expect(at(path), path).toBe(true);
+      const res = await run(path, { headers: { cookie: JAR } });
+      expect(res.headers.get("x-middleware-rewrite"), path).toBe(`${ZONE}${path}`);
+      expect(res.headers.get("x-middleware-request-cookie"), path).toBeNull();
+    }
   });
 
   it("the waitlist POST: method, body type and length forwarded, the jar not", async () => {
@@ -477,7 +489,7 @@ describe("armed: a zone path in other capitals is a 308 to the zone's own spelli
   /** Case variants and the spelling each names: the declared one, a prefix's remainder as sent. */
   const VARIANTS: Array<[string, string]> = [
     ["/PRIVACY", "/privacy"], ["/De", "/de"], ["/IMPRINT", "/imprint"], ["/SubProcessors", "/subprocessors"],
-    ["/Flathub-Verification", "/flathub-verification"],
+    ["/Flathub-Verification", "/flathub-verification"], ["/SUPPORT", "/support"], ["/Delete-Account", "/delete-account"],
     ["/.Well-Known/org.flathub.verifiedapps.txt", "/.well-known/org.flathub.VerifiedApps.txt"],
     ["/Landing/x.webp", "/landing/x.webp"], ["/SITE-ASSETS/_next/static/A.js", "/site-assets/_next/static/A.js"],
     ["/API/Waitlist", "/api/waitlist"],

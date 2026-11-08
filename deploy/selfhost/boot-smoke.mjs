@@ -266,7 +266,7 @@ async function main() {
   // OUR privacy policy and an imprint naming TrafficFlow GmbH as "operator of this website".
   // The self-host build refuses every one of those documents (`app/self-host-marketing.ts`), so
   // a 200 anywhere below means the web image was built without the flavor arm.
-  for (const marketing of ["/privacy", "/imprint", "/subprocessors", "/de"]) {
+  for (const marketing of ["/privacy", "/imprint", "/subprocessors", "/support", "/delete-account", "/de"]) {
     const res = await fetch(`${BASE}${marketing}`);
     assert(res.status === 404,
       `GET ${marketing} must NOT exist on a self-host install (got ${res.status}) — ` +
