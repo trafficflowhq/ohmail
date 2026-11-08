@@ -2251,7 +2251,8 @@ export class ImapAdapter implements MailboxAdapter, AdapterPort, FolderScanner {
   /**
    * May the legacy News repair run on this connection? `null` unless the last LIST put the pile at
    * `ohmail/News` and named no `ohmail/Reads` beside it (those letters fold first). `attach` counts
-   * this connection's `ensureFolders`, so a rename or a merge there re-arms the repair.
+   * this connection's `ensureFolders`; an attach re-arms only the pass's per-connection memo, never
+   * a mailbox recorded clean (mail 0182).
    */
   legacyNewsRepairGate(): { attach: number } | null {
     if (this.newsPhysical !== NEWS_FOLDER || this.newsAt === null || this.legacyNewsAt !== null) return null;

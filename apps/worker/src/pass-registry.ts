@@ -85,7 +85,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     // "visit": inside `runSyncCycle`, which the desktop and phone engines import too.
     triggers: ["visit"],
     cadence: "every organizer visit, before the filing and the cursor, until the store holds no pre-0.22 News spelling; "
-      + "once clean, checked again only after the next attach (a rename or merge there re-arms it)",
+      + "a mailbox a full read found clean is recorded (mail 0182) and never walked again",
     budget: "database only: one bounded chunk (LEGACY_NEWS_REPAIR_PER_VISIT) and its audit rows per visit, no IMAP command",
     owns: "a pre-0.22 store's old-spelling News locators, instances and folder_state spellings re-pointed onto the News copies "
       + "a re-read recorded; a letter with no live copy kept and marked missing on the server",

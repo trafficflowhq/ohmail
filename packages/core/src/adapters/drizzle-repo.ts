@@ -606,6 +606,13 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    */
   hasLegacyNewsRows?(accountId: string, mailboxId: string): Promise<boolean>;
   /**
+   * Was this mailbox found clean of the pre-0.22 spelling by a full read (mail 0182)? One
+   * primary-key read; a yes means {@link hasLegacyNewsRows} is never asked again.
+   */
+  isLegacyNewsClean?(accountId: string, mailboxId: string): Promise<boolean>;
+  /** Record that a full read found this mailbox clean (mail 0182). Only after {@link hasLegacyNewsRows} said no. */
+  markLegacyNewsClean?(accountId: string, mailboxId: string): Promise<void>;
+  /**
    * The instance this message has in one of `folders` (the spellings of ONE physical folder) under
    * the epoch `uidValidity`, else null — the reconciler's first answer to a locator whose epoch the
    * folder has left. A read. Optional: a repo without it finds none.
@@ -3800,6 +3807,19 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   /** See {@link WorkerRepo.hasLegacyNewsRows}: the repair's candidate read, one row at most. */
   async hasLegacyNewsRows(accountId: string, mailboxId: string): Promise<boolean> {
     return (await legacyNewsCandidates(this.db, accountId, mailboxId, 1)).length > 0;
+  }
+
+  /** See {@link WorkerRepo.isLegacyNewsClean}. */
+  async isLegacyNewsClean(accountId: string, mailboxId: string): Promise<boolean> {
+    const [row] = await this.db.select({ at: mailboxes.legacyNewsCleanAt }).from(mailboxes)
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId))).limit(1);
+    return row?.at != null;
+  }
+
+  /** See {@link WorkerRepo.markLegacyNewsClean}: the first mark stands. */
+  async markLegacyNewsClean(accountId: string, mailboxId: string): Promise<void> {
+    await this.db.update(mailboxes).set({ legacyNewsCleanAt: new Date() })
+      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.legacyNewsCleanAt)));
   }
 
   /**

@@ -9,7 +9,8 @@ import type { Logger } from "@trafficflow/core/mail";
  * deletes and read marks addressed a locator the server no longer resolves once News was renumbered.
  *
  * The organizer's, on every visit until the store is clean, before the cursor is built (so this
- * cycle's walk and filing read the repaired rows). Database only, content-matched, one bounded
+ * cycle's walk and filing read the repaired rows). A mailbox a full read found clean is recorded
+ * (`mailboxes.legacy_news_clean_at`, mail 0182) and its letters are never walked again. Database only, content-matched, one bounded
  * chunk per visit under the visit's fenced group: see `DrizzleRepo.repairLegacyNews`. A letter with
  * no live copy left is kept and marked missing on the server, with an audit row; a later lane puts
  * it back. A reader never repairs. Runs only while the adapter says the pile lives at News with no
@@ -19,7 +20,7 @@ import type { Logger } from "@trafficflow/core/mail";
 /** Messages one visit repairs, in one short transaction; the rest wait for the re-kick. */
 export const LEGACY_NEWS_REPAIR_PER_VISIT = 200;
 
-/** The attach each connection was found clean under: a rename or merge there re-arms the check. */
+/** The attach each connection was found clean under: spares the mark's read until the next attach. */
 const cleanAt = new WeakMap<MailboxAdapter, number>();
 
 export interface NewsRepairDeps {
@@ -40,8 +41,13 @@ export async function legacyNewsRepairPass(deps: NewsRepairDeps): Promise<NewsRe
   const gate = adapter.legacyNewsRepairGate?.() ?? null;
   if (gate === null || typeof repo.repairLegacyNews !== "function") return { owesMore: false, repair: null };
   if (cleanAt.get(adapter) === gate.attach) return { owesMore: false, repair: null };
-  // A read first: a clean store writes nothing, so the known-set memo survives the check.
+  if (await repo.isLegacyNewsClean?.(accountId, mailboxId)) {
+    cleanAt.set(adapter, gate.attach);
+    return { owesMore: false, repair: null };
+  }
+  // A read first: a clean store writes only its mark, which the known-set memo does not project.
   if (typeof repo.hasLegacyNewsRows === "function" && !(await repo.hasLegacyNewsRows(accountId, mailboxId))) {
+    if (typeof repo.markLegacyNewsClean === "function") await deps.write((r) => r.markLegacyNewsClean!(accountId, mailboxId));
     cleanAt.set(adapter, gate.attach);
     return { owesMore: false, repair: null };
   }

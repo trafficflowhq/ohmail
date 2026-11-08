@@ -495,6 +495,12 @@ export const mailboxes = pgTable("mailboxes", {
    * resolved none", and every row attached before this column until its next attach.
    */
   sentFolder: text("sent_folder"),
+  /**
+   * Mail 0182 — when a full read found no letter of this mailbox spelled the pre-0.22 way
+   * (`ohmail/Reads`): the News repair never walks its letters again. Written once, by the repair
+   * pass inside the visit's fenced write, never reset; NULL = not found clean yet.
+   */
+  legacyNewsCleanAt: timestamp("legacy_news_clean_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.

@@ -898,6 +898,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // worker's `\Seen` poll binds; a worker ahead of the migration 42703s on every cycle. Deploy order
   // setup → migration → API → worker.
   ["flag_state", "pending_account_id"],
+  // mail 0182_mailboxes_legacy_news_clean — when a full read found no pre-0.22 News spelling. LOUD:
+  // the mailbox reads select the row whole. Deploy order migration → API → worker.
+  ["mailboxes", "legacy_news_clean_at"],
 ] as const;
 
 /**
@@ -1337,7 +1340,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0181_reconcile_pending_queue";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0182_mailboxes_legacy_news_clean";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {
