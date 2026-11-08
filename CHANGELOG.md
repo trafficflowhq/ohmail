@@ -21,6 +21,20 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [0.30.50] — 2026-11-08
+
+### Cloud shows the storage estimate for very large mailboxes, never below what is kept
+
+On ohmail Cloud, the figures behind what your mailboxes need were counted in one long read per account,
+which gave up on very large mailboxes, so Settings → Storage had no estimate for them. They are now
+counted a mailbox at a time in short steps, and a mailbox that has not changed is not counted again, so
+the estimate appears for every mailbox, the largest included.
+
+The estimate could also read below what ohmail already keeps, for example while deleted letters still
+held their text, or above it once every letter was in, when one mailbox's letters were smaller than the
+others'. A mailbox is now never expected to need less than it keeps, and once every letter is in the
+estimate is what ohmail keeps. Letters still to come are counted at their own mailbox's average size.
+
 ## [0.30.49] — 2026-11-08
 
 ### The phone's storage figures match the web for small mailboxes
@@ -17183,7 +17197,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.49...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.50...HEAD
+[0.30.50]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.50
 [0.30.49]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.49
 [0.30.48]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.48
 [0.30.47]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.47

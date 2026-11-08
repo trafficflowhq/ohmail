@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.50" date="2026-11-08">
+      <description>
+        <ul>
+          <li>Cloud shows the storage estimate for very large mailboxes, never below what is kept</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.49" date="2026-11-08">
       <description>
         <ul>
@@ -111,13 +118,6 @@
         <ul>
           <li>Clicking a link while writing a letter no longer opens it</li>
           <li>The Screener no longer flashes a waiting count at start when nothing is waiting</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.45" date="2026-11-07">
-      <description>
-        <ul>
-          <li>Send later works with attachments on the desktop</li>
         </ul>
       </description>
     </release>
