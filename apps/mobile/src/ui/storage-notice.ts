@@ -1,9 +1,9 @@
 /**
  * STORAGE ON THE PHONE, decided as pure functions: the card atop the Ohbox (`StorageNotice.tsx`) and
  * the Storage screen (`app/storage.tsx`). The server decides whether a card is due and keeps its
- * dismissal (`card` on `GET /account/access`); this file only says it. Numbers first, in GB and in
- * letters. The store face (every shipped phone build) names plans and their rooms and nothing more:
- * no amount, no purchase button, no link, only the plain "Manage your plan at ohmail.app". A
+ * dismissal (`card` on `GET /account/access`); this file only says it. Numbers first, sized and
+ * counted as the web says them (`storageSize`). The store face (every shipped phone build) names
+ * plans and their rooms and nothing more: no amount, no purchase button, no link, only the plain "Manage your plan at ohmail.app". A
  * sideload build draws the Manage subscription press in that line's place. No price is read at all
  * (`offerOf` in `net/account.ts` keeps rooms and names only).
  */
@@ -22,24 +22,35 @@ export const DEFAULT_LETTER_BYTES = 25_000;
 /** What stands in place of a purchase: the plain line on the store face, the Manage subscription press on a sideload. */
 export type StorageManage = "line" | "press";
 
-const decimal = (n: number, locale: string): string =>
-  (locale.startsWith("de") ? String(n).replace(".", ",") : String(n));
-
-/** Decimal gigabytes, one place under 100 and whole above: "3.2", "12.5", "15", "3,2" in German. */
-export function gigabytes(bytes: number, locale: string): string {
-  const gb = bytes / 1_000_000_000;
-  return decimal(gb >= 100 ? Math.round(gb) : Math.round(gb * 10) / 10, locale);
-}
-
 /** Digits grouped by thousands: "80,000", "80.000" in German. No formatter call (Hermes). */
 export function grouped(n: number, locale: string): string {
   return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, locale.startsWith("de") ? "." : ",");
 }
 
-/** An estimated count, rounded as an estimate reads: to the thousand from 10,000, to the hundred from 1,000. */
-export function aboutLetters(n: number, locale: string): string {
-  const step = n >= 10_000 ? 1_000 : n >= 1_000 ? 100 : 1;
-  return grouped(Math.round(n / step) * step, locale);
+/** A number of at most one decimal place, grouped: "3.2", "1,234", "3,2" in German. */
+function decimal(n: number, locale: string): string {
+  const [whole, frac] = String(n).split(".");
+  return grouped(Number(whole), locale) + (frac === undefined ? "" : (locale.startsWith("de") ? "," : ".") + frac);
+}
+
+/**
+ * Bytes as the web's `formatStorageBytes` says them, without Intl (Hermes): decimal units, one place
+ * under 10 GB (under 100 GB when `fine`, the storage screens' figures), whole above; MB, KB and B below a
+ * gigabyte, whole. "1 MB", "910 KB", "223 B", "3.2 GB", "3,2 GB" in German.
+ */
+export function storageSize(bytes: number, locale: string, fine = true): string {
+  if (bytes >= 1_000_000_000) {
+    const gb = bytes / 1_000_000_000;
+    return `${decimal(gb >= (fine ? 100 : 10) ? Math.round(gb) : Math.round(gb * 10) / 10, locale)} GB`;
+  }
+  if (bytes >= 1_000_000) return `${grouped(bytes / 1_000_000, locale)} MB`;
+  if (bytes >= 1_000) return `${grouped(bytes / 1_000, locale)} KB`;
+  return `${grouped(bytes, locale)} B`;
+}
+
+/** A room in letters, the web's `estimatedEmails`: at the default size a letter, floored. */
+function roomLetters(bytes: number, locale: string): string {
+  return grouped(Math.floor(bytes / DEFAULT_LETTER_BYTES), locale);
 }
 
 /** The plan's name as sold: the wire's word, capitalised. */
@@ -53,7 +64,7 @@ export function choiceName(
 ): string {
   const unit = offer.addon?.unitBytes ?? 0;
   return choice.addonUnits > 0 && unit > 0
-    ? deck.storageWithAddon(planTitle(choice.plan), gigabytes(choice.addonUnits * unit, locale))
+    ? deck.storageWithAddon(planTitle(choice.plan), storageSize(choice.addonUnits * unit, locale, false))
     : planTitle(choice.plan);
 }
 
@@ -69,8 +80,8 @@ function reasonOf(facts: StorageFacts): StorageLimitReason {
 
 /** The used sentence, by why the cap is what it is. A held limit without its date reads as the plan's. */
 export function usedSentence(facts: StorageFacts, deck: Deck, locale: string): string {
-  const used = gigabytes(facts.usedBytes, locale);
-  const limit = gigabytes(facts.limitBytes, locale);
+  const used = storageSize(facts.usedBytes, locale);
+  const limit = storageSize(facts.limitBytes, locale);
   const reason = reasonOf(facts);
   if (reason === "trial") return deck.storageUsedTrial(used, limit);
   if (reason === "held" && facts.limitDropsAt !== null) {
@@ -86,7 +97,7 @@ function fitSentence(facts: StorageFacts, deck: Deck, locale: string): string | 
   const { fit, current } = offer;
   if (fit.plan === current.plan && fit.addonUnits === current.addonUnits) return null;
   const name = choiceName(deck, offer, fit, locale);
-  const gb = gigabytes(fit.roomBytes, locale);
+  const gb = storageSize(fit.roomBytes, locale);
   return fit.keepsAll ? deck.storageFitAll(name, gb) : deck.storageFitMost(name, gb);
 }
 
@@ -138,9 +149,9 @@ export function storageCardOf(
   if (facts.card === undefined && LEVELS.slice(LEVELS.indexOf(level)).some((l) => putAway(l, cap))) return null;
   const est = facts.estimate;
   const expected = est === null || est.expectedBytes <= 0 ? null
-    : facts.importing ? deck.storageExpectedImporting(gigabytes(est.expectedBytes, locale))
-      : est.expectedBytes > facts.limitBytes ? deck.storageExpectedNeeds(gigabytes(est.expectedBytes, locale)) : null;
-  const plan = facts.planLimitBytes === null ? null : gigabytes(facts.planLimitBytes, locale);
+    : facts.importing ? deck.storageExpectedImporting(storageSize(est.expectedBytes, locale))
+      : est.expectedBytes > facts.limitBytes ? deck.storageExpectedNeeds(storageSize(est.expectedBytes, locale)) : null;
+  const plan = facts.planLimitBytes === null ? null : storageSize(facts.planLimitBytes, locale);
   const happened = level === "full"
     ? (facts.keptFrom !== null ? deck.storageKeptFrom(monthStamp(facts.keptFrom, locale))
       : facts.emptiedForSpace > 0 ? deck.storageKeptOldest : null)
@@ -150,7 +161,7 @@ export function storageCardOf(
   return {
     level,
     head: level === "full" ? deck.storageCardFull
-      : level === "drop" ? deck.storageCardDrop(plan ?? gigabytes(facts.limitBytes, locale))
+      : level === "drop" ? deck.storageCardDrop(plan ?? storageSize(facts.limitBytes, locale))
         : deck.storageCardNear(deck.storagePercent(usedPercent(facts))),
     ratio: Math.min(1, facts.usedBytes / facts.limitBytes),
     lines: [[usedSentence(facts, deck, locale), expected].filter((s) => s !== null).join(" "), happened]
@@ -179,7 +190,7 @@ export interface StoragePaneSaid {
   tag: string | null;
   sub: string;
   bar: { scaleBytes: number; parts: StorageBarPart[]; limitBytes: number; expectedBytes: number | null };
-  /** Per mailbox: what it stores of what it is expected to need. */
+  /** Per mailbox: what it stores now and what it is expected to need. */
   mailboxes: { id: string; said: string }[];
   /** The estimate, the import's progress, whether it may still grow, the average. */
   estimate: string[];
@@ -199,36 +210,37 @@ export function storagePaneOf(
   const est = facts.estimate;
   const pct = usedPercent(facts);
   const avg = est !== null && est.avgLetterBytes > 0 ? est.avgLetterBytes : DEFAULT_LETTER_BYTES;
-  const letters = (bytes: number) => aboutLetters(bytes / avg, locale);
+  const size = (bytes: number) => storageSize(bytes, locale);
+  const letters = (bytes: number) => roomLetters(bytes, locale);
   const expectedBytes = est !== null && est.expectedBytes > 0 ? est.expectedBytes : null;
   const offer = facts.offer;
   const current = offer === null ? null : planTitle(offer.current.plan);
-  const planGb = facts.planLimitBytes === null ? null : gigabytes(facts.planLimitBytes, locale);
-  const limit = gigabytes(facts.limitBytes, locale);
+  const planGb = facts.planLimitBytes === null ? null : size(facts.planLimitBytes);
+  const limit = size(facts.limitBytes);
   const plan = facts.limitReason === "trial" && planGb !== null && current !== null
     ? deck.storagePlanTrial(limit, current, planGb)
     : planGb !== null && current !== null && facts.limitDropsAt !== null
       ? deck.storagePlanUntil(limit, longDayStamp(facts.limitDropsAt, locale), current, planGb)
-      : current !== null ? deck.storagePlanKeeps(current, gigabytes(offer!.current.roomBytes, locale)) : null;
+      : current !== null ? deck.storagePlanKeeps(current, size(offer!.current.roomBytes)) : null;
   const plans: StoragePlanRow[] = offer === null ? [] : [
     ...offer.plans.map((p) => ({
       name: p.plan === offer.current.plan ? deck.storagePlanYours(planTitle(p.plan)) : planTitle(p.plan),
-      room: deck.storagePlanRoom(gigabytes(p.roomBytes, locale), letters(p.roomBytes)),
+      room: deck.storagePlanRoom(size(p.roomBytes), letters(p.roomBytes)),
       fitted: null,
     })),
     ...(offer.addon === null ? [] : [{
       name: deck.storageAddon,
-      room: deck.storageAddonRoom(gigabytes(offer.addon.unitBytes, locale), letters(offer.addon.unitBytes)),
+      room: deck.storageAddonRoom(size(offer.addon.unitBytes), letters(offer.addon.unitBytes)),
       fitted: null,
     }]),
     ...(offer.fit.plan === offer.current.plan && offer.fit.addonUnits === offer.current.addonUnits ? [] : [{
       name: choiceName(deck, offer, offer.fit, locale),
-      room: deck.storagePlanRoom(gigabytes(offer.fit.roomBytes, locale), letters(offer.fit.roomBytes)),
+      room: deck.storagePlanRoom(size(offer.fit.roomBytes), letters(offer.fit.roomBytes)),
       fitted: offer.fit.keepsAll ? ("all" as const) : ("most" as const),
     }]),
   ];
   return {
-    figure: deck.storageOf(gigabytes(facts.usedBytes, locale), limit),
+    figure: deck.storageOf(size(facts.usedBytes), limit),
     tag: facts.card === "full" || facts.usedBytes >= facts.limitBytes ? deck.storageStateFull
       : pct >= 80 ? deck.storagePercent(pct) : null,
     sub: reasonOf(facts) === "trial" ? deck.storageUsedSubTrial
@@ -242,15 +254,15 @@ export function storagePaneOf(
     },
     mailboxes: facts.mailboxes.map((m) => ({
       id: m.id,
-      said: deck.storageOf(gigabytes(m.usedBytes, locale), gigabytes(Math.max(m.expectedBytes, m.usedBytes), locale)),
+      said: deck.storageMailbox(size(m.usedBytes), size(m.expectedBytes)),
     })),
     estimate: est === null || expectedBytes === null ? [] : [
       facts.importing
-        ? deck.storageExpectedImport(gigabytes(expectedBytes, locale), aboutLetters(est.expectedLetters, locale))
-        : deck.storageExpectedAll(gigabytes(expectedBytes, locale), aboutLetters(est.expectedLetters, locale)),
-      ...(facts.importing ? [deck.storageImportRunning(grouped(est.storedLetters, locale), aboutLetters(est.expectedLetters, locale))] : []),
+        ? deck.storageExpectedImport(size(expectedBytes), grouped(est.expectedLetters, locale))
+        : deck.storageExpectedAll(size(expectedBytes), grouped(est.expectedLetters, locale)),
+      ...(facts.importing ? [deck.storageImportRunning(grouped(est.storedLetters, locale), grouped(est.expectedLetters, locale))] : []),
       ...(est.complete ? [] : [deck.storageEstimateGrows]),
-      deck.storageAverage(grouped(avg / 1_000, locale)),
+      deck.storageAverage(size(avg)),
     ],
     kept: facts.keptFrom === null ? null : deck.storageKeptFromLong(monthStamp(facts.keptFrom, locale)),
     plan,
@@ -260,7 +272,7 @@ export function storagePaneOf(
   };
 }
 
-/** The Settings row's value: "3.2 of 4 GB". */
+/** The Settings row's value: "3.2 GB of 4 GB", "1 MB of 4 GB". */
 export function storageRowValue(facts: StorageFacts, deck: Deck, locale: string): string {
-  return deck.storageOf(gigabytes(facts.usedBytes, locale), gigabytes(facts.limitBytes, locale));
+  return deck.storageOf(storageSize(facts.usedBytes, locale), storageSize(facts.limitBytes, locale));
 }
