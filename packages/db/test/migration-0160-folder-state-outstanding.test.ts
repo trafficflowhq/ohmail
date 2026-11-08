@@ -28,8 +28,8 @@ const OUTSTANDING = `fs.reconcile_status = 'pending' and fs.last_set_by = 'us' a
 /** Every column the entry must leave alone, per row. */
 const SNAPSHOT = `select message_id, desired_folder, observed_folder, last_set_by, reconcile_status, attempts,
   next_attempt_at, last_error_class, updated_at from folder_state order by message_id`;
-const FILLED = `select fs.message_id, fs.outstanding_account_id as got, m.account_id as want, (${OUTSTANDING}) as outstanding
-  from folder_state fs join messages m on m.id = fs.message_id order by fs.message_id`;
+const FILLED = `select fs.message_id, fs.outstanding_account_id as got, m.account_id as want, (${OUTSTANDING}) as outstanding,
+  (fs.reconcile_status = 'pending') as pending from folder_state fs join messages m on m.id = fs.message_id order by fs.message_id`;
 const BY_JOIN = `select m.mailbox_id, count(*) as n from folder_state fs join messages m on m.id = fs.message_id
   where ${OUTSTANDING} group by m.mailbox_id order by m.mailbox_id`;
 const BY_INDEX = `select m.mailbox_id, count(*) as n from folder_state fs join messages m on m.id = fs.message_id
@@ -57,7 +57,9 @@ describe("mail 0160 on Postgres (PGlite), from 0159", () => {
   it("fills the outstanding filings alone, changes nothing else, and replays", async () => {
     const db = await makeTestDb();
     const run = async (s: string) => rows<Record<string, unknown>>(await db.execute(sql.raw(s)));
-    // Back to 0159: no trigger, no function, no index, no column; and 0161's index gone.
+    // Back to 0159: no trigger, no function, no index, no column; and 0161's index gone. Mail 0181's
+    // trigger runs 0160's function, so it goes first.
+    await run("drop trigger if exists folder_state_pending_account_tg on folder_state");
     await run("drop trigger if exists folder_state_outstanding_account_tg on folder_state");
     await run("drop function if exists folder_state_outstanding_account()");
     await run("drop index if exists folder_state_outstanding_idx");
@@ -136,7 +138,8 @@ describe("mail 0160 on the device store, from 0159", () => {
     expect(db.prepare(SNAPSHOT).all()).toEqual(before);
     const filled = db.prepare(FILLED).all();
     expect(filled.filter((r) => r.outstanding).length).toBe(counts.reduce((n, r) => n + Number(r.n), 0));
-    for (const r of filled) expect(r.got, String(r.message_id)).toBe(r.outstanding ? r.want : null);
+    // The tail runs through mail 0181, which fills every other pending row too.
+    for (const r of filled) expect(r.got, String(r.message_id)).toBe(r.pending ? r.want : null);
     expect(db.prepare(BY_INDEX).all()).toEqual(counts);
   });
 });

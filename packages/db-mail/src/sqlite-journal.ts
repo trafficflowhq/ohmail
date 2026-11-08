@@ -685,5 +685,19 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"scheduled_send_files\" ADD COLUMN \"dek_enc\" text;",
       "ALTER TABLE \"scheduled_send_files\" ADD COLUMN \"dek_key_version\" integer;"
     ]
+  },
+  {
+    "name": "0181_reconcile_pending_queue.sql",
+    "statements": [
+      "CREATE TRIGGER IF NOT EXISTS folder_state_pending_account_insert AFTER INSERT ON folder_state\n  WHEN NEW.\"reconcile_status\" = 'pending' and not (NEW.\"last_set_by\" = 'us' and NEW.\"desired_folder\" <> NEW.\"observed_folder\")\nBEGIN\n  UPDATE folder_state SET outstanding_account_id = (SELECT account_id FROM messages WHERE id = NEW.message_id)\n   WHERE id = NEW.id;\nEND;",
+      "CREATE TRIGGER IF NOT EXISTS folder_state_pending_account_update AFTER UPDATE ON folder_state\n  WHEN NEW.\"reconcile_status\" = 'pending' and not (NEW.\"last_set_by\" = 'us' and NEW.\"desired_folder\" <> NEW.\"observed_folder\")\nBEGIN\n  UPDATE folder_state SET outstanding_account_id = (SELECT account_id FROM messages WHERE id = NEW.message_id)\n   WHERE id = NEW.id AND outstanding_account_id IS NOT (SELECT account_id FROM messages WHERE id = NEW.message_id);\nEND;",
+      "UPDATE folder_state SET outstanding_account_id = (SELECT account_id FROM messages WHERE id = folder_state.message_id)\n WHERE \"reconcile_status\" = 'pending' AND outstanding_account_id IS NOT (SELECT account_id FROM messages WHERE id = folder_state.message_id);",
+      "CREATE INDEX IF NOT EXISTS \"folder_state_pending_queue_idx\" ON \"folder_state\" (\"outstanding_account_id\", \"updated_at\", \"message_id\") WHERE \"reconcile_status\" = 'pending';",
+      "ALTER TABLE \"flag_state\" ADD COLUMN \"pending_account_id\" text;",
+      "CREATE TRIGGER IF NOT EXISTS flag_state_pending_account_insert AFTER INSERT ON flag_state\n  WHEN NEW.\"reconcile_status\" = 'pending'\nBEGIN\n  UPDATE flag_state SET pending_account_id = (SELECT account_id FROM messages WHERE id = NEW.message_id)\n   WHERE id = NEW.id;\nEND;",
+      "CREATE TRIGGER IF NOT EXISTS flag_state_pending_account_update AFTER UPDATE ON flag_state\n  WHEN NEW.\"reconcile_status\" = 'pending'\nBEGIN\n  UPDATE flag_state SET pending_account_id = (SELECT account_id FROM messages WHERE id = NEW.message_id)\n   WHERE id = NEW.id AND pending_account_id IS NOT (SELECT account_id FROM messages WHERE id = NEW.message_id);\nEND;",
+      "UPDATE flag_state SET pending_account_id = (SELECT account_id FROM messages WHERE id = flag_state.message_id)\n WHERE \"reconcile_status\" = 'pending' AND pending_account_id IS NOT (SELECT account_id FROM messages WHERE id = flag_state.message_id);",
+      "CREATE INDEX IF NOT EXISTS \"flag_state_pending_queue_idx\" ON \"flag_state\" (\"pending_account_id\", \"updated_at\", \"message_id\") WHERE \"reconcile_status\" = 'pending';"
+    ]
   }
 ] as const;

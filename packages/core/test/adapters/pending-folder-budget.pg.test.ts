@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { sql } from "drizzle-orm";
+import postgres from "postgres";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, mailboxes, messages, folderState } from "@trafficflow/db";
-import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
+import { accounts, mailboxes, messages, folderState, flagState } from "@trafficflow/db";
+import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "../../src/adapters/drizzle-repo.js";
 
@@ -118,5 +121,68 @@ describe.skipIf(!AVAILABLE)("listPendingFolderStates — the reconciler's budget
     const repo = makeDrizzleRepo(owned.db);
     const all = await repo.listPendingFolderStates(mailboxId);
     expect(all.length).toBe(20);   // the ten settled above are no longer pending
+  });
+});
+
+/**
+ * MAIL 0181: each queue's poll reads a partial index of its pending rows, entered at the mailbox's
+ * account and in its ORDER BY, instead of every row of the table (16–34 polls a minute on Cloud,
+ * almost all answering nothing) or every account's queue. The repo's own statements, captured by
+ * drizzle's logger and EXPLAINed with their own parameters; scans and sorts priced out, so the plan
+ * names the index only when its predicate and order serve the read. The device stores' half is
+ * `reconcile-pending-index-dialect.test.ts`.
+ */
+describe.skipIf(!AVAILABLE)("mail 0181 — the reconcile polls ride their pending indexes", () => {
+  const client = postgres(PG_TEST_URL, { max: 2, onnotice: () => {} });
+  const logged: Array<{ query: string; params: unknown[] }> = [];
+  const db = brandDialect(drizzle(client, {
+    schema, logger: { logQuery: (query, params) => { logged.push({ query, params }); } },
+  }), "pg");
+  let mailboxId: string;
+
+  beforeAll(async () => {
+    await runMigrations(PG_TEST_URL);
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: `queue-${accountId.slice(0, 8)}` });
+    const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${accountId}@queue.test` }).returning();
+    mailboxId = mb!.id;
+    const [m] = await db.insert(messages).values({
+      accountId, mailboxId, bodyHash: "h", dedupKey: `d:${randomUUID()}`, fromAddress: "a@example.com",
+      nativeLocator: { folder: "INBOX", ref: "1:1" },
+    }).returning({ id: messages.id });
+    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "Junk", lastSetBy: "us" });
+    await db.insert(flagState).values({ messageId: m!.id, desiredSeen: true, observedSeen: false, lastSetBy: "us" });
+  }, 180_000);
+
+  afterAll(async () => { await client.end({ timeout: 5 }); });
+
+  const planOf = async (table: string, read: () => Promise<unknown[]>): Promise<string> => {
+    logged.length = 0;
+    expect(await read()).toHaveLength(1);
+    const s = logged.find((l) => l.query.includes(`from "${table}"`))!;
+    const rows = await client.begin(async (tx) => {
+      await tx`set local enable_seqscan = off`;
+      await tx`set local enable_sort = off`;
+      return tx.unsafe(`explain ${s.query}`, s.params as never[]);
+    });
+    return rows.map((r) => String(Object.values(r)[0])).join("\n");
+  };
+
+  it("listPendingFolderStates reads folder_state_pending_queue_idx at the mailbox's account, in queue order", async () => {
+    const plan = await planOf("folder_state", () => makeDrizzleRepo(db).listPendingFolderStates(mailboxId, 11));
+    expect(plan).toContain("Index Scan using folder_state_pending_queue_idx on folder_state");
+    expect(plan).toMatch(/Index Cond: \(outstanding_account_id = /);
+    expect(plan).not.toMatch(/\bSort\b/);
+    const [ix] = await client`select indexdef from pg_indexes where indexname = 'folder_state_pending_queue_idx'`;
+    expect(ix!.indexdef).toContain("(outstanding_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)");
+  });
+
+  it("listPendingFlagStates reads flag_state_pending_queue_idx at the mailbox's account, in queue order", async () => {
+    const plan = await planOf("flag_state", () => makeDrizzleRepo(db).listPendingFlagStates(mailboxId, 11));
+    expect(plan).toContain("Index Scan using flag_state_pending_queue_idx on flag_state");
+    expect(plan).toMatch(/Index Cond: \(pending_account_id = /);
+    expect(plan).not.toMatch(/\bSort\b/);
+    const [ix] = await client`select indexdef from pg_indexes where indexname = 'flag_state_pending_queue_idx'`;
+    expect(ix!.indexdef).toContain("(pending_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)");
   });
 });
