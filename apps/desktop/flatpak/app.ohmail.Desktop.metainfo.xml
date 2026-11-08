@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="0.30.49" date="2026-11-08">
+      <description>
+        <ul>
+          <li>The phone's storage figures match the web for small mailboxes</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.30.48" date="2026-11-08">
       <description>
         <ul>
@@ -111,16 +118,6 @@
       <description>
         <ul>
           <li>Send later works with attachments on the desktop</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.44" date="2026-11-06">
-      <description>
-        <ul>
-          <li>Adding a mailbox bigger than your storage finishes much sooner too</li>
-          <li>The iPhone connects to a mail server that encrypts with STARTTLS</li>
-          <li>Replies saved to a Sent folder made after connecting read as yours</li>
-          <li>Searching inside one folder is faster</li>
         </ul>
       </description>
     </release>
