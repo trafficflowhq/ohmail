@@ -42,10 +42,12 @@ class OrganizerServiceModule : Module() {
      * `OrganizerService.ACTION_STOP`, which invokes the callback registered below — so JS has one
      * listener for one act and cannot handle the press while missing the swipe.
      */
-    Events("onStopRequested")
+    /* One call: a second `Events(...)` replaces the first. `onTimedOut` is Android's time limit. */
+    Events("onStopRequested", "onTimedOut")
 
     OnCreate {
       OrganizerService.onStopRequested = { sendEvent("onStopRequested", mapOf<String, Any>()) }
+      OrganizerService.onTimedOut = { sendEvent("onTimedOut", mapOf<String, Any>()) }
     }
 
     OnDestroy {
@@ -53,6 +55,7 @@ class OrganizerServiceModule : Module() {
          service is NOT stopped here: a JS reload is not a person's decision to stop organizing,
          and `background.ts` re-subscribes on the way back up. */
       OrganizerService.onStopRequested = null
+      OrganizerService.onTimedOut = null
     }
 
     AsyncFunction("start") { channelName: String, body: String, stopLabel: String ->

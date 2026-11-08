@@ -210,6 +210,7 @@ function serviceDouble(over: Partial<ServiceState> = {}): { service: BackgroundS
     restricted: () => state.restricted,
     canPost: () => true,
     onStopRequested: () => (): void => undefined,
+    onTimedOut: () => (): void => undefined,
   };
   return { service, state };
 }
