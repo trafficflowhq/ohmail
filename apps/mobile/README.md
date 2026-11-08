@@ -167,6 +167,7 @@ false, and the person reading the prompt has no way to check it.
 | Key | Why it is there |
 | --- | --- |
 | `NSCameraUsageDescription` | `app/scan.tsx` asks for the camera to read a pairing QR code, and treats a refusal as a state rather than a dead end. Supplied through `expo-camera`'s `cameraPermission` so the string is written once. |
+| `NSPhotoLibraryUsageDescription` | The composer's Attach a photo opens the photo library (`src/compose/attach-native.ts`). `expo-image-picker` is applied whether or not `app.json` lists it, with a generic default; its `photosPermission` gives the sentence, and `locales/<lang>.json` the German. |
 | `ITSAppUsesNonExemptEncryption: false` | The app implements no encryption. Transport is the platform's own HTTPS, credentials sit in the platform Keychain, and the only use of `expo-crypto` is `randomUUID()` for identifiers. Answering here means the question is not asked again on every upload. |
 
 And the keys that are deliberately **absent**, each one a capability this app
@@ -178,8 +179,11 @@ declines rather than one nobody thought about:
   "we never set it" was shipping *"Allow ohmail to access your microphone"* for an
   app that records nothing. It is now `microphonePermission: false`. On Android,
   `recordAudioAndroid: false` alone did not keep `RECORD_AUDIO` out: the image
-  picker's plugin adds it with its defaults. `android.blockedPermissions` in
-  `app.json` removes it from the merged manifest, together with the
+  picker's plugin adds it with its defaults. The Android half is
+  `recordAudioAndroid: false` on `expo-camera` and `microphonePermission: false`
+  on `expo-image-picker`; the second also blocks the permission for every library
+  (`test/app-permissions.test.ts`). `android.blockedPermissions` in `app.json`
+  removes it from the merged manifest as well, together with the
   `SYSTEM_ALERT_WINDOW` Expo's template declares and nothing here uses.
 - **Android storage.** `expo-image-picker` and `expo-file-system` declare
   `READ_EXTERNAL_STORAGE` and `WRITE_EXTERNAL_STORAGE` (up to Android 12L), and
@@ -192,8 +196,7 @@ declines rather than one nobody thought about:
   way. This app stores refresh tokens with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` and
   never asks for biometric authentication, so the key is removed with
   `faceIDPermission: false`.
-- **Photo library, contacts, calendar, location.** No API for any of them appears
-  in the app.
+- **Contacts, calendar, location.** No API for any of them appears in the app.
 - **Local network.** Nothing browses for services, and a same-network address is
   refused rather than reached (see *Pairing, in one paragraph*). A purpose string
   would describe a capability the app turns down.

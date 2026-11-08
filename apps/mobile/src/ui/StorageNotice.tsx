@@ -2,8 +2,8 @@
  * THE STORAGE CARD atop the Ohbox, near the cap, at it, or when the plan's own lower limit is below
  * what is stored. It decides nothing: the server says whether a card is due (`card`), and
  * `storage-notice.ts` says it. The bar, the numbers, what is expected, the fitted plan named with
- * its room, then the plain "Manage your plan at ohmail.app" (a sideload build: the Manage
- * subscription press) and Dismiss, which the server keeps per account (an older server: this run).
+ * its room and the Manage subscription press on a sideload build (the store face: neither), and
+ * Dismiss, which the server keeps per account (an older server: this run).
  */
 
 import { useCallback, useState, useSyncExternalStore } from "react";
@@ -77,10 +77,8 @@ export function StorageNotice({ session, ohbox = true }: {
       <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
         {card.manage === "press" ? (
           <Button label={Copy.storageManage} variant="solid" onPress={() => { void leave(); }} />
-        ) : (
-          <Txt variant="note" style={{ flex: 1 }}>{Copy.storageManageAt}</Txt>
-        )}
-        <Button label={Copy.storageDismiss} variant="quiet" onPress={dismiss} style={card.manage === "press" ? { marginLeft: "auto" } : undefined} />
+        ) : null}
+        <Button label={Copy.storageDismiss} variant="quiet" onPress={dismiss} style={{ marginLeft: "auto" }} />
       </View>
       {failed !== null ? (
         <Txt variant="note" tone="ink2" accessibilityRole="alert">

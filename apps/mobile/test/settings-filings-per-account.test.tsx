@@ -15,9 +15,13 @@ import type { PhoneMailbox } from "../src/net/mailboxes";
 const scene = vi.hoisted(() => ({
   world: null as unknown,
   session: null as unknown,
+  opened: [] as string[],
 }));
 
-vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
+vi.mock("react-native", async () => ({
+  ...(await import("./_rendered-dom")).rnDom,
+  Linking: { openURL: async (url: string) => { scene.opened.push(url); } },
+}));
 vi.mock("expo-constants", () => ({ default: { expoConfig: {} } }));
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
 vi.mock("../src/theme", async () => {
@@ -42,7 +46,9 @@ vi.mock("../src/ui/base", async () => {
   };
 });
 vi.mock("../src/ui/Sheet", () => ({ Sheet: () => null, SheetRow: () => null }));
-vi.mock("../src/ui/MoreNav", () => ({ Nav: () => null }));
+vi.mock("../src/ui/MoreNav", () => ({
+  Nav: (p: { label: string; sub?: string; onPress: () => void }) => h("button", { "data-nav": p.label, onClick: p.onPress }, p.label, p.sub),
+}));
 vi.mock("../src/ui/Field", () => ({ Field: () => null }));
 vi.mock("../src/engine/backup-exclusion", () => ({ backupExclusion: () => null, subscribeBackupExclusion: () => () => undefined }));
 vi.mock("../src/engine/engine-artifact", () => ({ phoneEngineStart: () => () => undefined }));
@@ -125,7 +131,7 @@ function cloudAccount(rows: PhoneMailbox[]) {
 
 const settle = () => act(async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); });
 
-afterEach(() => { forgetOrganizerSessionForTests(); document.body.innerHTML = ""; });
+afterEach(() => { forgetOrganizerSessionForTests(); document.body.innerHTML = ""; scene.opened.length = 0; });
 
 describe("Settings under a Cloud account while the phone's own engine still runs", () => {
   it("shows the Cloud mailbox's block with Try again and Leave, and Try again reaches its route", async () => {
@@ -194,5 +200,41 @@ describe("the Look on a standalone phone", () => {
   it("CONTROL: signed in to an account, the press is offered and a stored look says all devices", async () => {
     expect((await look(false, null)).applyAll).toBe(true);
     expect((await look(false, "ohmarchy")).text).toContain("Applies on all your devices.");
+  });
+});
+
+/** The stores' rules: the privacy policy inside the app, and a way to start deleting a Cloud account. */
+describe("Settings links to the operator's pages", () => {
+  const LINKS = {
+    "Privacy policy": "https://ohmail.app/privacy",
+    "Imprint": "https://ohmail.app/imprint",
+    "Support page": "https://ohmail.app/support",
+  };
+  const rows = async (account: "cloud" | "selfhost" | "standalone") => {
+    holdStandaloneDoor(ownEngine());
+    cloudAccount([]);
+    Object.assign((scene.session as { profile: object }).profile, { flavor: account === "cloud" ? "managed" : "selfhost" });
+    (scene.session as { standalone: boolean }).standalone = account === "standalone";
+    (scene.world as { standalone: boolean }).standalone = account === "standalone";
+    const view = mount(h(SettingsScreen));
+    await settle();
+    const pressed: Record<string, string> = {};
+    for (const label of [...Object.keys(LINKS), "Delete account"]) {
+      const row = view.el.querySelector(`[data-nav="${label}"]`) as HTMLButtonElement | null;
+      if (row === null) continue;
+      scene.opened.length = 0;
+      act(() => row.click());
+      pressed[label] = scene.opened.join(" ");
+    }
+    view.unmount();
+    return pressed;
+  };
+
+  it("a Cloud account: privacy policy, imprint and support, and Delete account opening the deletion page", async () => {
+    expect(await rows("cloud")).toEqual({ ...LINKS, "Delete account": "https://ohmail.app/delete-account" });
+  });
+
+  it.each(["selfhost", "standalone"] as const)("%s: the three pages, and no Delete account for an account ohmail.app does not keep", async (account) => {
+    expect(await rows(account)).toEqual(LINKS);
   });
 });

@@ -1,5 +1,6 @@
 {
   "ios": {
-    "NSCameraUsageDescription": "ohmail uses the camera only to scan a pairing QR code."
+    "NSCameraUsageDescription": "ohmail uses the camera only to scan a pairing QR code.",
+    "NSPhotoLibraryUsageDescription": "ohmail opens your photo library only when you choose a picture to attach to a letter."
   }
 }

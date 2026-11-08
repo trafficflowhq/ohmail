@@ -15,8 +15,8 @@ import { formatStorageBytes } from "../../webapp/app/shell/storage-state";
 /**
  * STORAGE ON THE PHONE: the access answer's storage block as the phone narrows it, the card the
  * server decided, said in the person's words for why the cap is what it is, the Storage screen's
- * numbers, and the two doors (a storage choice, an emptied letter's text). The store face names
- * plans and rooms and never an amount: no price is even read.
+ * numbers, and the two doors (a storage choice, an emptied letter's text). No price is even read;
+ * the store face states the numbers and names no plan to move to and no page to buy on.
  */
 
 const GB = 1_000_000_000;
@@ -99,22 +99,22 @@ describe("the storage block, as the phone narrows it", () => {
 });
 
 describe("the card", () => {
-  it("near, on the store face: the numbers, the expected size, the fitted plan named with its room, the plain line", () => {
+  it("near, on the store face: the numbers and the expected size, no plan to move to and nothing to manage", () => {
     expect(storageCardOf(feed(NEAR), EN, "en", "store")).toEqual({
       level: "near",
       head: "Storage is 80% full",
       ratio: 0.8,
       lines: ["3.2 GB of your trial room of 4 GB used. Expected about 12.5 GB when the import finishes."],
-      fit: "Plus + 10 GB storage keeps all your mail: 15 GB.",
-      manage: "line",
+      fit: null,
+      manage: "none",
     });
-    expect(EN.storageManageAt).toBe("Manage your plan at ohmail.app");
   });
 
-  it("a sideload build draws the press in the line's place, with the same words", () => {
+  it("a sideload build adds the fitted plan named with its room, and the press", () => {
     const side = storageCardOf(feed(NEAR), EN, "en", "sideload")!;
     expect(side.manage).toBe("press");
-    expect(side.fit).toBe(storageCardOf(feed(NEAR), EN, "en", "store")!.fit);
+    expect(side.fit).toBe("Plus + 10 GB storage keeps all your mail: 15 GB.");
+    expect(side.lines).toEqual(storageCardOf(feed(NEAR), EN, "en", "store")!.lines);
   });
 
   it("is worded by why the cap is what it is: the trial's room, the plan's own, a lower limit held to its date", () => {
@@ -133,19 +133,27 @@ describe("the card", () => {
     expect(full.head).toBe("Storage is full");
     expect(full.lines[1]).toBe("Text kept for letters from March 2019 on; older ones stay on your mail server.");
     const drop = { ...NEAR, usedBytes: 3.1 * GB, card: "drop" };
-    expect(storageCardOf(feed(drop), EN, "en", "store")).toMatchObject({
+    expect(storageCardOf(feed(drop), EN, "en", "sideload")).toMatchObject({
       head: "Your storage drops to 2 GB",
       lines: [expect.any(String), "From 14 days after your first payment your plan keeps 2 GB, and ohmail keeps the text of your newest letters within it."],
     });
+    /* The store face says no payment, and still says when the drop comes and what it keeps. */
+    expect(storageCardOf(feed(drop), EN, "en", "store")).toMatchObject({
+      head: "Your storage drops to 2 GB",
+      lines: ["3.1 GB of your trial room of 4 GB used. Expected about 12.5 GB when the import finishes.",
+        "After your trial your plan keeps 2 GB; ohmail keeps the text of your newest letters within it, and older letters stay on your mail server."],
+    });
+    expect(storageCardOf(feed(drop), DE, "de", "store")!.lines[1]).toBe(
+      "Nach deiner Testphase umfasst dein Tarif 2 GB; ohmail behält darin den Text deiner neuesten Nachrichten, ältere bleiben auf deinem Mailserver.");
     expect(storageCardOf(feed({ ...drop, limitDropsAt: "2026-11-21T12:00:00.000Z" }), EN, "en", "store")!.lines[1])
       .toBe("From November 21, 2026 your plan keeps 2 GB, and ohmail keeps the text of your newest letters within it.");
   });
 
   it("no fitted plan without an offer, or when the plan held is the fit; the largest named when nothing keeps it all", () => {
-    expect(storageCardOf(feed({ ...NEAR, offer: undefined }), EN, "en", "store")!.fit).toBeNull();
-    expect(storageCardOf(feed({ ...NEAR, offer: { ...OFFER, fit: { ...OFFER.fit, plan: "solo", addonUnits: 0 } } }), EN, "en", "store")!.fit).toBeNull();
+    expect(storageCardOf(feed({ ...NEAR, offer: undefined }), EN, "en", "sideload")!.fit).toBeNull();
+    expect(storageCardOf(feed({ ...NEAR, offer: { ...OFFER, fit: { ...OFFER.fit, plan: "solo", addonUnits: 0 } } }), EN, "en", "sideload")!.fit).toBeNull();
     const most = { ...OFFER, fit: { plan: "pro", addonUnits: 10, roomBytes: 110 * GB, amount: 12900, keepsAll: false } };
-    expect(storageCardOf(feed({ ...NEAR, offer: most }), EN, "en", "store")!.fit).toBe("Pro + 100 GB storage keeps the most: 110 GB.");
+    expect(storageCardOf(feed({ ...NEAR, offer: most }), EN, "en", "sideload")!.fit).toBe("Pro + 100 GB storage keeps the most: 110 GB.");
   });
 
   it("none when the server decided none, or with no feed", () => {
@@ -159,13 +167,14 @@ describe("the card", () => {
     expect(older({ usedBytes: 4 * GB, emptiedForSpace: 286_000, emptyingNow: true, keptFrom: "2019-03" })).toEqual({
       level: "full", head: "Storage is full", ratio: 1,
       lines: ["4 GB of your plan's 4 GB used.", "Text kept for letters from March 2019 on; older ones stay on your mail server."],
-      fit: null, manage: "line",
+      fit: null, manage: "none",
     });
     expect(older({ usedBytes: 3 * GB, emptiedForSpace: 12, emptyingNow: true })?.head).toBe("Storage is full");
     expect(older({ usedBytes: 3.2 * GB })).toMatchObject({ level: "near", head: "Storage is 80% full", lines: ["3.2 GB of your plan's 4 GB used."] });
     expect(older({ usedBytes: 3.1 * GB })).toBeNull();
     expect(older({ usedBytes: 2 * GB, planLimitBytes: 2 * GB })).toMatchObject({
-      level: "drop", head: "Your storage drops to 2 GB", lines: ["2 GB of your trial room of 4 GB used.", expect.any(String)],
+      level: "drop", head: "Your storage drops to 2 GB", lines: ["2 GB of your trial room of 4 GB used.",
+        "After your trial your plan keeps 2 GB; ohmail keeps the text of your newest letters within it, and older letters stay on your mail server."],
     });
     expect(older({ usedBytes: 3 * GB, planLimitBytes: 2 * GB, limitDropsAt: "2026-11-21T12:00:00.000Z" })!.lines[0])
       .toBe("3 GB used of the 4 GB you keep until November 21, 2026.");
@@ -174,22 +183,28 @@ describe("the card", () => {
     expect(pane({ usedBytes: 2 * GB }).sub).toBe(storagePaneOf(accessOf(open({ ...NEAR, limitReason: "plan", planLimitBytes: null }))!.storage!, EN, "en", "store").sub);
   });
 
-  it("no amount reaches any sentence the store face draws, in either language", () => {
+  it("no amount, payment or page to buy on reaches any sentence the store face draws, in either language", () => {
+    const pointer = /ohmail\.app|payment|Zahlung|add-on|Zusatz|keeps all your mail|alle deine Mails/i;
     for (const [deck, locale] of [[EN, "en"], [DE, "de"]] as const) {
       for (const storage of [NEAR, FULL, { ...NEAR, card: "drop" }]) {
         const card = storageCardOf(feed(storage), deck, locale, "store")!;
         const pane = storagePaneOf(accessOf(open(storage))!.storage!, deck, locale, "store");
         const said = [card.head, ...card.lines, card.fit, pane.figure, pane.plan, ...pane.estimate,
-          ...pane.plans.flatMap((r) => [r.name, r.room]), deck.storageManageAt].join(" ");
+          ...pane.plans.flatMap((r) => [r.name, r.room])].join(" ");
         expect(said, locale).not.toMatch(PRICE);
+        expect(said, locale).not.toMatch(pointer);
+        expect([card.manage, pane.manage, pane.plans.length]).toEqual(["none", "none", 0]);
+        /* What the trial's room becomes is said all the same, on the card at the drop and in the pane. */
+        if (card.level === "drop") expect(card.lines[1], locale).toBe(deck.storageDropPlain("2 GB"));
+        expect(pane.plan, locale).toBe(deck.storagePlanTrialPlain("4 GB", "2 GB"));
       }
     }
   });
 });
 
 describe("the Storage screen", () => {
-  it("draws the numbers: used of the cap, per mailbox, expected in GB and letters, the plans with their rooms", () => {
-    const pane = storagePaneOf(accessOf(open(NEAR))!.storage!, EN, "en", "store");
+  it("draws the numbers: used of the cap, per mailbox, expected in GB and letters; a sideload build the plans with their rooms", () => {
+    const pane = storagePaneOf(accessOf(open(NEAR))!.storage!, EN, "en", "sideload");
     expect(pane).toMatchObject({
       figure: "3.2 GB of 4 GB", tag: "80%", sub: "used, your trial room",
       mailboxes: [{ id: "mb-1", said: "2.6 GB kept · 10 GB expected" }, { id: "mb-2", said: "600 MB kept · 2.5 GB expected" }],
@@ -200,7 +215,7 @@ describe("the Storage screen", () => {
       ],
       kept: null,
       plan: "Your trial keeps up to 4 GB. On Solo, 2 GB from 14 days after your first payment.",
-      manage: "line",
+      manage: "press",
       mail: true,
     });
     expect(pane.plans).toEqual([
@@ -215,6 +230,17 @@ describe("the Storage screen", () => {
       limitBytes: 4 * GB, expectedBytes: 12.5 * GB,
     });
     expect(storageRowValue(accessOf(open(NEAR))!.storage!, EN, "en")).toBe("3.2 GB of 4 GB");
+    /* The store face: the same numbers; no plans, no add-on, the trial's line without the payment, nothing to manage. */
+    const store = storagePaneOf(accessOf(open(NEAR))!.storage!, EN, "en", "store");
+    expect(store).toMatchObject({
+      figure: pane.figure, sub: pane.sub, mailboxes: pane.mailboxes, estimate: pane.estimate, plans: [], manage: "none",
+      plan: "Your trial keeps up to 4 GB. After it, your plan keeps 2 GB.",
+    });
+    expect(storagePaneOf(accessOf(open(NEAR))!.storage!, DE, "de", "store").plan)
+      .toBe("Deine Testphase speichert bis zu 4 GB. Danach umfasst dein Tarif 2 GB.");
+    const held = { ...NEAR, limitBytes: 15 * GB, usedBytes: 13 * GB, planLimitBytes: 5 * GB, limitDropsAt: "2026-11-21T12:00:00.000Z", limitReason: "held" };
+    expect(storagePaneOf(accessOf(open(held))!.storage!, EN, "en", "store").plan)
+      .toBe("You keep up to 15 GB until November 21, 2026. Then Solo keeps 5 GB.");
   });
 
   it("full: the kept month; an estimate still growing says so; no offer, no plans", () => {
@@ -224,7 +250,7 @@ describe("the Storage screen", () => {
     expect(pane.estimate).toContain("The figure grows as ohmail opens more of your folders.");
     expect(pane.plans).toEqual([]);
     expect(pane.plan).toBeNull();
-    const de = storagePaneOf(accessOf(open(NEAR))!.storage!, DE, "de", "store");
+    const de = storagePaneOf(accessOf(open(NEAR))!.storage!, DE, "de", "sideload");
     expect(de.figure).toBe("3,2 GB von 4 GB");
     expect(de.plans[0]).toEqual({ name: "Solo · dein Tarif", room: "2 GB · etwa 80.000 Nachrichten", fitted: null });
   });
@@ -247,7 +273,7 @@ describe("the Storage screen", () => {
   });
 
   it("a plan's room in letters is the web's count, whatever this account's average", () => {
-    expect(storagePaneOf(accessOf(open({ ...SMALL, offer: OFFER }))!.storage!, EN, "en", "store").plans[0])
+    expect(storagePaneOf(accessOf(open({ ...SMALL, offer: OFFER }))!.storage!, EN, "en", "sideload").plans[0])
       .toEqual({ name: "Solo · your plan", room: "2 GB · about 80,000 letters", fitted: null });
   });
 
