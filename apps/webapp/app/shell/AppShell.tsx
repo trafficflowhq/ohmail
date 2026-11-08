@@ -96,6 +96,7 @@ import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkPileKey, useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
+import type { LiveBodyWire } from "./live-body";
 import { syncMayRead } from "./sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import type { SuggestStanding } from "./no-suggestion";
@@ -607,6 +608,9 @@ export function AppShell({
   mailboxSection,
   aiSection,
   billingSection,
+  storageSection,
+  storageCard,
+  liveBodyWire,
   accountNotice,
   invitesSection,
   securitySection,
@@ -742,6 +746,12 @@ export function AppShell({
    */
   aiSection?: ReactNode;
   billingSection?: ReactNode;
+  /** The host's Settings → Storage pane: what is stored, what the mail needs, the plans. Absent where nothing is metered. */
+  storageSection?: ReactNode;
+  /** The storage card the host draws atop the Ohbox, from the same read as the pane. Absent ⇒ none. */
+  storageCard?: ReactNode;
+  /** Load it now's transport for a letter emptied for space (`live-body.ts`); absent ⇒ no Load it now. */
+  liveBodyWire?: LiveBodyWire;
   /**
    * ONE STRIP ABOVE THE APP ABOUT THE ACCOUNT ITSELF — a trial running out, a payment that
    * failed, a catch-up after the account reopened. Injected for the reason the panes above are:
@@ -1029,6 +1039,9 @@ export function AppShell({
             mailboxSection={mailboxSection}
             aiSection={aiSection}
             billingSection={billingSection}
+            storageSection={storageSection}
+            storageCard={storageCard}
+            liveBodyWire={liveBodyWire}
             accountNotice={accountNotice}
             invitesSection={invitesSection}
             securitySection={securitySection}
@@ -1107,7 +1120,7 @@ function MailStateHost({ probe, freshnessProbe, children }: { probe?: MailboxPro
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sessionRefused, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, accountNotice, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -1124,6 +1137,12 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   mailboxSection?: ReactNode;
   aiSection?: ReactNode;
   billingSection?: ReactNode;
+  /** The host's Settings → Storage pane: what is stored, what the mail needs, the plans. Absent where nothing is metered. */
+  storageSection?: ReactNode;
+  /** The storage card the host draws atop the Ohbox, from the same read as the pane. Absent ⇒ none. */
+  storageCard?: ReactNode;
+  /** Load it now's transport for a letter emptied for space (`live-body.ts`); absent ⇒ no Load it now. */
+  liveBodyWire?: LiveBodyWire;
   /** See `AppShell`'s prop of this name — absent withholds the account strip entirely. */
   accountNotice?: ReactNode;
   invitesSection?: ReactNode;
@@ -1983,7 +2002,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
     facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
     receiptsNew,
-    accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
+    accountSection, mailboxSection, aiSection, billingSection, storageSection, invitesSection, securitySection,
     aboutSection, helpOffered: support != null, desktopSection, devicesSection, onUnread, savedSettings: profileImportOffer.declined.length + profileImportOffer.unkept.length > 0,
     runArmedUndo,
     allOhbox, presented, pressSendAndDone,
@@ -2162,6 +2181,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       conversationOf,
       bodyOf: bodyOfMessage, hydrateBody, hydrateThread,
       attachments, remoteImages,
+      /* Load it now, where the host has a transport for it. */
+      liveBody: liveBodyWire,
       // The action bar's open destination strip — held here for the mounted-twice reason the
       // reply draft is (a strip opened by key in the column must be the strip the sheet
       // shows). Keyed by message id in the value itself; cleared on focus moves below.
@@ -2188,7 +2209,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       consent.signatures, consent.signaturesHtml, consent.signaturesKnown,
       sendSurfaceMaxTotalBytes, replyBook,
       openSenderMenu, senderMenu?.messageId, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, writeTo, openReply, openForward, forwardTargetFor,
-      openSubjectRule, conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages,
+      openSubjectRule, conversationOf, bodyOfMessage, hydrateBody, hydrateThread, attachments, remoteImages, liveBodyWire,
       consent.foldersEnabled, consent.resurfaceTime, rememberResurfaceTime, reader, barPanel, nowAt],
   );
 
@@ -2589,7 +2610,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                           piles={awayNotice.piles}
                         />
                       );
-                    return away ?? undefined;
+                    /* The storage card follows the away line: the line is pinned, the card scrolls with the rows. */
+                    const card = demo ? null : storageCard ?? null;
+                    return away === null && card === null ? undefined : <>{away}{card}</>;
                   })()
                 }
                 noticeSection={
@@ -3550,6 +3573,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 )}
                 aiSection={demo ? undefined : aiSection}
                 billingSection={demo ? undefined : billingSection}
+                storageSection={demo ? undefined : storageSection}
                 /* ABOUT — the one injected pane the demo also gets, because the demo has
                    something true to say here and no API to say it with. The live body comes
                    from the Cloud client (which mailbox, synced when, which build, and who

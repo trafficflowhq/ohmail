@@ -298,6 +298,32 @@ const MATRIX: Record<PaneId, Record<Door, Cell>> = {
       why: "no account and no server to ask, so there is no page to link to and nothing to draw",
     },
   },
+  storage: {
+    managedWeb: {
+      state: "present",
+      why:
+        "offered where `GET /account/access` carries a storage block, which is a metered cap on " +
+        "stored letter text: the numbers, what the mail needs, the plans and the mails switch",
+    },
+    selfHostWeb: {
+      state: "absent",
+      why: "a server somebody runs meters no stored text: its access answer carries no storage block, so no node",
+    },
+    desktopCloud: {
+      state: "present",
+      why:
+        "`DesktopStorage`, from the storage block the forwarded `GET /account/access` carries, its " +
+        "writes over the bridge; a store build draws the numbers with no purchase",
+    },
+    desktopSelfHost: {
+      state: "absent",
+      why: "the same unmetered access answer the self-hosted tab reads: no storage block, no node",
+    },
+    desktopStandalone: {
+      state: "absent",
+      why: "every letter's text is on this computer and nothing meters it; there is no account to ask",
+    },
+  },
   invites: {
     managedWeb: {
       state: "absent",
@@ -565,7 +591,9 @@ function fakeShell(status: EngineStatus, signedIn: boolean): void {
         if (url === ACCOUNT_AI_PATH) return encode(200, JSON.stringify({ aiEnabled: true }));
         if (url === ACCOUNT_ACCESS_PATH) {
           return encode(200, JSON.stringify(
-            metered ? { metered: true, canAddMailbox: true, mailboxes: 1 } : { metered: false },
+            metered
+              ? { metered: true, canAddMailbox: true, mailboxes: 1, storage: { usedBytes: 1_000, limitBytes: 2_000_000_000, emptiedForSpace: 0 } }
+              : { metered: false },
           ));
         }
         // The hosted session, forwarded on the account door: whose account this window is.
@@ -891,8 +919,10 @@ describe("SET-C — the desktop's two doors draw exactly what the census says", 
     manageLink = null;
     const nav = await navFor(CLOUD_SERVING, true);
     expect(nav, "the entry survived a 404").not.toContain(label("billing"));
+    // An unmetered answer carries no storage block either, so Storage goes with it.
+    expect(nav).not.toContain(label("storage"));
     // …and the rest of the nav is untouched, so this is a withheld pane and not a broken mount.
-    expect(nav.sort()).toEqual(drawnOn("desktopCloud").filter((p) => p !== "billing").map(label).sort());
+    expect(nav.sort()).toEqual(drawnOn("desktopCloud").filter((p) => p !== "billing" && p !== "storage").map(label).sort());
   });
 
   /**

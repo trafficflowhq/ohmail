@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { SettingsRow, SettingsSection } from "@ohmail/ui";
-import { account, accessFeedFor, accessStorage, apiConfigured, onAccessFeed } from "../../api-client";
-import { formatStorageBytes, storageKeptLine, storageState, storageTrimRecorded } from "../../shell/storage-state";
+import { account, accessFeedFor, apiConfigured, onAccessFeed } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { readOwner } from "../../shell/owner-cookie";
 
@@ -14,8 +13,9 @@ import { readOwner } from "../../shell/owner-cookie";
  * do is take the customer to the page that does. THE ADDRESS IS MINTED BY THE PRESS: it used to be
  * minted by the MOUNT, so every shell mount and every settings visit minted a link for an account that
  * was only reading its mail. {@link useManageOffer} answers whether to offer the pane; the address is
- * asked for here, when somebody asks to go there. `settings` keys and not a namespace of its own,
- * because whole namespaces travel into the desktop binary and `DesktopSubscription` reads the same two.
+ * asked for here, when somebody asks to go there. What is stored is Settings → Storage's
+ * (`StorageSection`). `settings` keys and not a namespace of its own, because whole namespaces travel
+ * into the desktop binary and `DesktopSubscription` reads the same two.
  */
 export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   const t = useTranslations("settings");
@@ -23,22 +23,6 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
   const lang = useLocale() === "de" ? "de" : "en";
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
-  /* THE STORED LETTER TEXT, from the access feed the pane is offered on: the numbers, and once any
-     letter's text was emptied for space, how many. Absent block, absent row. */
-  const entry = useSyncExternalStore(onAccessFeed, () => accessFeedFor(readOwner()), () => null);
-  const storage = accessStorage(entry?.answer);
-  const said = storageState(storage);
-  /* Once letters are emptied: how many of the oldest, then the month text is kept from with the letters
-     that arrived while the storage was full; those alone say that the letters stay on the server. */
-  const kept = storage !== null && said?.kind === "emptied" ? storageKeptLine(storage, lang) : null;
-  const emptiedLine = said?.kind === "emptied" ? [
-    // A count with no recorded trim is said plainly: not which letters, not under which cap.
-    said.count === 0 ? null : !storageTrimRecorded(storage!)
-      ? t("webStorageNotStored", { count: said.count })
-      : t(said.current ? "webStorageEmptied" : "webStorageEmptiedBefore", { count: said.count }),
-    kept === null ? null : t(kept.key, kept.values),
-    said.count > 0 ? null : t("storageNoticeSafe"),
-  ].filter((line) => line !== null).join(" ") : null;
   /** The pane can be left mid-press; nothing may set state after that. */
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -78,17 +62,6 @@ export function SubscriptionSection({ onNowhere }: { onNowhere: () => void }) {
           </button>
         }
       />
-      {storage !== null ? (
-        <SettingsRow
-          label={t("webStorage")}
-          description={said === null
-            ? t("webStorageSub")
-            : emptiedLine ?? t(said.kind === "full" ? "webStorageFull" : "webStorageNear")}
-          value={t("webStorageOf", {
-            used: formatStorageBytes(storage.usedBytes, lang), cap: formatStorageBytes(storage.limitBytes, lang),
-          })}
-        />
-      ) : null}
     </SettingsSection>
   );
 }

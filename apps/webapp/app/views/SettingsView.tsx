@@ -391,7 +391,7 @@ export function paneAskedByUrl(): boolean {
  */
 export const SETTINGS_GROUPS: ReadonlyArray<{ key: "groupMail" | "groupAccount" | "groupAbout"; panes: readonly PaneId[] }> = [
   { key: "groupMail", panes: ["general", "notifications", "mailboxes", "screener", "ai", "away", "rules", "tags", "folders", "signatures", "desktop"] },
-  { key: "groupAccount", panes: ["devices", "billing", "invites", "security", "account"] },
+  { key: "groupAccount", panes: ["devices", "billing", "storage", "invites", "security", "account"] },
   { key: "groupAbout", panes: ["about", "help"] },
 ];
 
@@ -407,6 +407,7 @@ export function SettingsView({
   seedSection,
   aiSection,
   billingSection,
+  storageSection,
   invitesSection,
   securitySection,
   aboutSection,
@@ -542,6 +543,8 @@ export function SettingsView({
    */
   aiSection?: ReactNode;
   billingSection?: ReactNode;
+  /** Settings → Storage, the host's node; absent ⇒ no pane. */
+  storageSection?: ReactNode;
   /**
    * THE INVITES PANE — invite a user onto the server, list the open invites, revoke one.
    * Self-host only, and the gate lives in the HOST, not here: the mint routes (`/pair*`) are
@@ -923,6 +926,7 @@ export function SettingsView({
       desktop: desktopSection ? desktopSection.label : null,
       devices: Boolean(devicesSection),
       billing: Boolean(billingSection),
+      storage: Boolean(storageSection),
       invites: Boolean(invitesSection),
       security: Boolean(securitySection),
       account: Boolean(accountSection),
@@ -1331,6 +1335,7 @@ export function SettingsView({
           {shown === "ai" ? aiSection : null}
 
           {shown === "billing" ? billingSection : null}
+          {shown === "storage" ? storageSection : null}
 
           {/* INVITES — the node brings its own `SettingsSection`, like Security below. */}
           {shown === "invites" ? invitesSection : null}

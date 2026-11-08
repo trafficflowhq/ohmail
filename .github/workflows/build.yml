@@ -601,6 +601,7 @@ jobs:
               # revoking a device is a step-up ceremony on the hosted door, and the
               # Settings pane reaches that pane by key through the same fixed table.
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
+              'https://ohmail.app/mailbox?settings=storage#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
@@ -1602,6 +1603,7 @@ jobs:
               # revoking a device is a step-up ceremony on the hosted door, and the
               # Settings pane reaches that pane by key through the same fixed table.
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
+              'https://ohmail.app/mailbox?settings=storage#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
@@ -2443,6 +2445,7 @@ jobs:
               # revoking a device is a step-up ceremony on the hosted door, and the
               # Settings pane reaches that pane by key through the same fixed table.
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
+              'https://ohmail.app/mailbox?settings=storage#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;
@@ -3619,6 +3622,7 @@ jobs:
               'https://ohmail.app/mailbox#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=mailboxes#/settings'*) : ;;
               'https://ohmail.app/mailbox?settings=devices#/settings'*) : ;;
+              'https://ohmail.app/mailbox?settings=storage#/settings'*) : ;;
               'https://ohmail.app/link-desktop'*) : ;;
               'https://ohmail.app/approve'*) : ;;
               'https://ohmail.app/privacy'*) : ;;

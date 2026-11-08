@@ -145,6 +145,8 @@ const DESKTOP_CLOUD_DOOR: Record<PaneId, Ruling> = {
   //    to whoever operates the service. Not an omission papered over — see `DesktopWebSection`
   //    and `DesktopSubscription`. ─────────────────────────────────────────────────────────────
   billing: { kind: "wired", prop: "billingSection", via: "DesktopSubscription" },
+  /* What is stored, what the mail needs and the plans: the account's own access read, forwarded. */
+  storage: { kind: "wired", prop: "storageSection", via: "DesktopStorage" },
   security: { kind: "wired", prop: "securitySection", via: "DesktopWebSection" },
   account: { kind: "wired", prop: "accountSection", via: "DesktopWebSection" },
 
@@ -312,7 +314,7 @@ describe("SET-P — the desktop's hosted door wires every pane its ruling says i
       call,
       "`accountDoor` reads something other than the live `hostedSession` verdict",
     ).toContain(", hostedSession) === \"cloud\"");
-    for (const prop of ["suggestWire", "billingSection", "securitySection", "accountSection"]) {
+    for (const prop of ["suggestWire", "billingSection", "storageSection", "securitySection", "accountSection"]) {
       const at = GATE.indexOf(`${prop}:`);
       expect(at, `${prop} is not wired at all`).toBeGreaterThan(0);
       /* The spread that carries it opens with the gate. Searched backwards from the property to

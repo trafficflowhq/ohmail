@@ -152,6 +152,7 @@ export interface ShellKeysInput {
   savedSettings: boolean;
   aiSection: ReactNode | undefined;
   billingSection: ReactNode | undefined;
+  storageSection: ReactNode | undefined;
   invitesSection: ReactNode | undefined;
   securitySection: ReactNode | undefined;
   aboutSection: ReactNode | undefined;
@@ -238,7 +239,7 @@ export function useShellKeys({
   engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
   facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
   receiptsNew,
-  accountSection, mailboxSection, aiSection, billingSection, invitesSection, securitySection,
+  accountSection, mailboxSection, aiSection, billingSection, storageSection, invitesSection, securitySection,
   aboutSection, helpOffered, desktopSection, devicesSection, onUnread, savedSettings,
   runArmedUndo,
   allOhbox, presented, pressSendAndDone, drafts, folderMailboxes, folderMessages, folderOlder, folders, folderUnread, history,
@@ -911,13 +912,14 @@ export function useShellKeys({
     desktop: desktopSection ? desktopSection.label : null,
     devices: !demo && devicesSection != null,
     billing: !demo && billingSection != null,
+    storage: !demo && storageSection != null,
     invites: !demo && invitesSection != null,
     security: !demo && securitySection != null,
     account: !demo && accountSection != null,
     // The demo gets its own About node (two true sentences about the fixture world).
     about: demo || aboutSection != null,
     help: !demo && helpOffered,
-  }), [demo, mailboxSection, savedSettings, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, invitesSection, securitySection, accountSection, aboutSection, helpOffered]);
+  }), [demo, mailboxSection, savedSettings, aiSection, awaySupported, consent.known, consent.foldersStorable, consent.signaturesKnown, facts, desktopSection, devicesSection, billingSection, storageSection, invitesSection, securitySection, accountSection, aboutSection, helpOffered]);
 
   /* ── the palette command map (every command from the prototype) ── */
   const moveKey = useEnabledBinding("m");

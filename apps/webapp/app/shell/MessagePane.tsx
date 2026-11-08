@@ -38,6 +38,8 @@ import { ThreadMarks } from "./ThreadMarks";
 import type { ThreadWalkChannel } from "./thread-walk-channel";
 import { autoLoadsImages } from "./remote-images";
 import "./action-bar.css";
+import { useLiveBody } from "./live-body";
+import { EmptiedLetter } from "./EmptiedLetter";
 
 /**
  * MOVE CARRIES ITS DESTINATION.
@@ -1753,8 +1755,24 @@ export function MessagePane({
     [needCidImages, message.id],
   );
 
+  /* LOAD IT NOW, for a letter emptied for space in a mailbox ohmail still reads: the server's text for
+     this view only, drawn through the same body renderer, never written anywhere (`live-body.ts`). */
+  const emptiedForSpace = body.state === "withheld" && body.withheld === "storage_cap"
+    && chrome.mailboxStatusOf?.(message.mailboxId) !== "disabled";
+  const { live, load: loadLive } = useLiveBody(message.id, emptiedForSpace ? chrome.liveBody : undefined);
+  const liveText = "kind" in live && live.kind === "loaded" ? live : null;
+  /* A verdict's husk on a message moved out of Junk is text on its way — `useWithheldSentence`. */
+  const reaskBody = useCallback(() => chrome.hydrateBody(message.id), [chrome, message.id]);
+  const withheldSentence = useWithheldSentence(
+    message.id, body.state, withheldCopyKey(body.withheld, message.folder, chrome.mailboxStatusOf?.(message.mailboxId)), reaskBody,
+  );
+  const emptied = loadLive !== null
+    ? <EmptiedLetter sentence={tb(withheldSentence)} live={live} onLoad={loadLive} />
+    : null;
+
   const focusedBody = (
     <>
+      {liveText !== null ? emptied : null}
       {/* WHERE OHMAIL KNOWS IT CANNOT SHOW THE EVENT, IT SAYS SO — an Outlook Web App stub from the
           body text, else the stored-header fact. OUTSIDE `.msg-body` on purpose: that element holds
           the mail and nothing else. See `InvitationNote`. */}
@@ -1778,8 +1796,8 @@ export function MessagePane({
           withheld there, removing the button — a press over images already showing does nothing. */}
       <MessageBody
         messageId={message.id}
-        text={body.text}
-        html={body.html}
+        text={liveText !== null ? liveText.text : body.text}
+        html={liveText !== null ? liveText.html : body.html}
         subject={message.subject}
         remoteLoaded={
           body.loadedRemoteContent ||
@@ -1809,6 +1827,7 @@ export function MessagePane({
         onNotice={onNotice}
         />
       </div>
+      {liveText === null ? emptied : null}
     </>
   );
 
@@ -1848,11 +1867,6 @@ export function MessagePane({
    */
   const waitingForBody = body.state === "loading" || body.state === "snippet";
   const stalled = useBodyStalled(message.id, waitingForBody);
-  /* A verdict's husk on a message moved out of Junk is text on its way — `useWithheldSentence`. */
-  const reaskBody = useCallback(() => chrome.hydrateBody(message.id), [chrome, message.id]);
-  const withheldSentence = useWithheldSentence(
-    message.id, body.state, withheldCopyKey(body.withheld, message.folder, chrome.mailboxStatusOf?.(message.mailboxId)), reaskBody,
-  );
   /**
    * THE FAILURE'S TAXONOMY: AUTH LOSS IS NOT A CONTENT FAILURE: "Couldn't load the full message — Retry" was this
    * pane's one sentence for every failure, and during a dead session it was the WRONG one: the message is fine, the
@@ -1876,7 +1890,7 @@ export function MessagePane({
     return subscribeSessionRevival(() => chrome.hydrateBody(message.id, { retry: true }));
   }, [bodyFailed, chrome, message.id]);
   const bodyNote =
-    body.state === "full" ? undefined : body.state === "withheld" ? (
+    body.state === "full" || emptied !== null ? undefined : body.state === "withheld" ? (
       /* ── WITHHELD IS ANSWERED, NOT FAILED — so no Retry and no spinner. ─────────────────────
          The server said it holds no content for this message, which a retry cannot change and
          a "couldn't load" would misstate: nothing failed. WHICH policy emptied it decides the

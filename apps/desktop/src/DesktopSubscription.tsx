@@ -6,12 +6,16 @@
  * that". Absent when there is no page to link to — see {@link useDesktopManageOffer} for why that
  * decision is the GATE's. THE ADDRESS IS MINTED BY THE PRESS: it used to be minted by the MOUNT, so
  * every launch asked for a link nobody had asked to follow. The offer is read without minting; the
- * address is asked for on the press, and drawn as a link the person's own click opens.
+ * address is asked for on the press, and drawn as a link the person's own click opens. What is stored
+ * and what the mail needs is Settings → Storage's, below (`DesktopStorage`), from the same access read.
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactElement } from "react";
 import { useTranslations } from "next-intl";
-import { SettingsRow, SettingsSection } from "@ohmail/ui";
+import { Button, SettingsRow, SettingsSection } from "@ohmail/ui";
+import { StoragePane } from "../../webapp/app/shell/StoragePane";
+import type { StorageChange } from "../../webapp/app/shell/StorageNotice";
+import { openWeb } from "./native.js";
 
 import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
 import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
@@ -53,8 +57,10 @@ export interface ManageOffer {
   withdrawManage: () => void;
   /** The same answer's storage block (`storage-state.ts`), for the emptied-text notice; null for none. */
   storage: StorageFacts | null;
-  /** The same answer's lifecycle state, which picks the notice's plan sentence. */
+  /** The same answer's lifecycle state. */
   lifecycleState: string | null;
+  /** Ask again now, after a storage write (a dismissal, the mails switch). */
+  reread: () => void;
 }
 
 /** What the offer knows: nothing yet (a failed read leaves it here), or an answer's verdict. */
@@ -133,7 +139,8 @@ export function useDesktopManageOffer(accountDoor: boolean): ManageOffer {
   });
   // A withdrawal holds for the session: a later answer does not bring the pane back.
   const withdrawManage = useCallback(() => { withdrawn.current = true; setState("not-offered"); }, []);
-  return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState };
+  const reread = useCallback(() => { void readOffer(); }, [readOffer]);
+  return { manageOffered: state === "offered", withdrawManage, storage, lifecycleState, reread };
 }
 
 /** What the account door's one session read says: whose account, and the reuse sweeps to tell. */
@@ -279,5 +286,75 @@ export function DesktopSubscription({ onNowhere }: { onNowhere: () => void }) {
         }
       />
     </SettingsSection>
+  );
+}
+
+/** The storage choices: a card put away, the storage mails off or on. */
+export const ACCOUNT_STORAGE_PATH = "/account/storage";
+const JSON_HEADERS = { "content-type": "application/json" };
+
+/** Write one storage choice over the bridge; `true` when the account took it. */
+export async function writeStorageChoice(body: { dismiss: string } | { mail: boolean }): Promise<boolean> {
+  try {
+    const res = await bridgeFetch(ACCOUNT_STORAGE_PATH, { method: "PATCH", headers: JSON_HEADERS, body: JSON.stringify(body) });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * CHANGE PLAN AND ADD STORAGE in this window: the page that changes the plan is minted only after a
+ * recent second factor, which this window cannot assert (`DesktopWebSection`). So the press opens
+ * Settings → Storage in the browser, where the factor is asked and the page minted.
+ */
+export function useDesktopStorageChange(): StorageChange {
+  const t = useTranslations("settings");
+  const [noBrowser, setNoBrowser] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  const press = useCallback(() => {
+    setNoBrowser(false);
+    void openWeb("storage").catch(() => { if (alive.current) setNoBrowser(true); });
+  }, []);
+  const note = noBrowser ? <p className="acct-warn" role="alert">{t("webNoBrowser")}</p> : null;
+  return { press, busy: false, note };
+}
+
+/**
+ * SETTINGS → STORAGE ON THE CLOUD DOOR — the browser's pane over the same access read, its writes
+ * over the bridge. A build that may not link out (the Mac App Store) gets the numbers and the plans
+ * with no amount, no purchase button and no link.
+ */
+export function DesktopStorage({ facts, linksOut, reread }: {
+  facts: StorageFacts;
+  linksOut: boolean;
+  reread: () => void;
+}): ReactElement {
+  const change = useDesktopStorageChange();
+  const [mail, setMail] = useState<{ on: boolean; busy: boolean; failed: boolean } | null>(null);
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  const toggle = useCallback((on: boolean) => {
+    setMail({ on, busy: true, failed: false });
+    void writeStorageChoice({ mail: on }).then((ok) => {
+      if (!alive.current) return;
+      setMail(ok ? { on, busy: false, failed: false } : { on: !on, busy: false, failed: true });
+      if (ok) reread();
+    });
+  }, [reread]);
+  return (
+    <StoragePane
+      facts={facts}
+      linksOut={linksOut}
+      change={linksOut ? change : null}
+      mail={{ on: mail?.on ?? facts.mail, busy: mail?.busy ?? false, failed: mail?.failed ?? false, onChange: toggle }}
+    />
   );
 }

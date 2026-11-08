@@ -28,6 +28,7 @@ import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 import type { WithheldCopyKey } from "./format";
 import type { ForwardFilesPlan } from "./forward-files";
+import type { LiveBodyWire } from "./live-body";
 
 /**
  * The three sub-rows that can take the action bar's place. Declared HERE and not in
@@ -308,6 +309,8 @@ export interface MessageChrome {
    * `mailboxLabelOf` reads. Optional, and absent is that same null.
    */
   mailboxStatusOf?: (mailboxId: string) => string | null;
+  /** Load it now's read of a letter emptied for space (`live-body.ts`); absent where the host has none. */
+  liveBody?: LiveBodyWire;
   /**
    * PREFILL A NEW MESSAGE to `address` — the contact popover's Write verb.
    *

@@ -68,8 +68,9 @@ import { BUILD_PLATFORM } from "./platform.js";
 import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { linksOutToBilling } from "./distribution.js";
-import { DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
+import { DesktopStorage, DesktopSubscription, useDesktopManageOffer, useHostedSession } from "./DesktopSubscription.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
+import { liveBodyVia } from "../../webapp/app/shell/live-body";
 import { DesktopAccessLock } from "./DesktopAccessLock.js";
 import { useDesktopFirstPaint } from "./desktop-first-paint.js";
 import { reviveStandingDown } from "../../webapp/app/shell/sync-scheduler";
@@ -88,6 +89,10 @@ import { profileImportOverBridge } from "./local-profile-import.js";
 import { localImageDoor } from "./local-images.js";
 import { consentOverBridge, consentOverBridgeStandalone } from "./local-consent.js";
 import { olderBodyOverBridge } from "./local-older-body.js";
+
+/** Load it now over the bridge: the hosted door forwards `GET /messages/:id/live-body`. */
+function liveBodyBridge(path: string): Promise<Response> { return bridgeFetch(path); }
+const liveBodyOverBridge = liveBodyVia(liveBodyBridge);
 import { junkOverBridge } from "./local-junk.js";
 import { trashOverBridge } from "./local-trash.js";
 import { cloudSuggestWire } from "./cloud-suggest.js";
@@ -604,10 +609,12 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
    * on some paths only ("Rendered more hooks than during the previous render"). `accountDoor`
    * gates the ask as well as the mount: a door with no hosted account has nothing to ask.
    */
-  const { manageOffered, withdrawManage, storage, lifecycleState } = useDesktopManageOffer(accountDoor);
+  const { manageOffered, withdrawManage, storage, reread: rereadAccess } = useDesktopManageOffer(accountDoor);
   const { accountId: hostedAccountId, reuseSweeps, recheck: recheckHostedSession } = useHostedSession(accountDoor);
   /** The Subscription pane is offered AND this build may point at a purchase (not the Mac App Store). */
-  const billingLinksOut = accountDoor && manageOffered && linksOutToBilling();
+  /** May this build point at a purchase at all (not the Mac App Store)? */
+  const mayLinkOut = linksOutToBilling();
+  const billingLinksOut = accountDoor && manageOffered && mayLinkOut;
 
   /**
    * HAS THE SERVICE REFUSED THIS ACCOUNT — subscribed once, for the whole window.
@@ -1433,27 +1440,25 @@ function GateScreens({ onLinkAsk: showAsk }: { onLinkAsk: (ask: HeldPress) => vo
            `Notification.requestPermission()` resolves here without granting anything: the master
            switch could not be turned on and nothing on the pane said why. See `notify-host.ts`. */
         notificationHost={desktopNotificationHost}
-        /* THE STORAGE NOTICE, on the Cloud door only: the same answer the Subscription offer
-           reads carries the storage block. Standalone has none and draws nothing. Beside it, the
-           reuse sweeps the account's session read lists, acknowledged over the bridge. */
-        {...(accountDoor && (storage !== null || reuseSweeps.length > 0)
+        /* THE REUSE SWEEPS the account's session read lists, acknowledged over the bridge. */
+        {...(accountDoor && reuseSweeps.length > 0
           ? {
               accountNotice: (
-                <>
-                  {storage !== null ? (
-                    <DesktopStorageNotice
-                      facts={storage}
-                      lifecycleState={lifecycleState}
-                      linksOut={billingLinksOut}
-                    />
-                  ) : null}
-                  {reuseSweeps.length > 0
-                    ? <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} onRecheck={recheckHostedSession} />
-                    : null}
-                </>
+                <ReuseSweepNotice sweeps={reuseSweeps} onAcknowledge={reuseSweepsOverBridge} onRecheck={recheckHostedSession} />
               ),
             }
           : {})}
+        /* STORAGE, on the Cloud door only: the card atop the Ohbox and Settings → Storage, from the
+           storage block the same access answer carries, and Load it now for a letter emptied for
+           space. Standalone holds every body and has no storage block. A store build gets the
+           numbers with no purchase (`linksOutToBilling`). */
+        {...(accountDoor && storage !== null
+          ? {
+              storageCard: <DesktopStorageNotice facts={storage} linksOut={mayLinkOut} reread={rereadAccess} />,
+              storageSection: <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} />,
+            }
+          : {})}
+        {...(accountDoor ? { liveBodyWire: liveBodyOverBridge } : {})}
         /* SETTINGS → ABOUT. Injected everywhere, because the facts differ by surface — and the
            facts a standalone install has to answer are not the hosted service's. */
         {...(status ? { aboutSection: <DesktopAbout status={status} /> } : {})}
