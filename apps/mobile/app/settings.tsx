@@ -33,6 +33,9 @@ import { Field } from "../src/ui/Field";
 import { SenderNamePanel } from "../src/ui/SenderNamePanel";
 import { SignaturesPanel } from "../src/ui/SignaturesPanel";
 import { useConnection } from "../src/net/connection";
+import { accessFeedFor, onAccessFeed } from "../src/net/account";
+import type { ConnectedSession } from "../src/net/pairing";
+import { storageRowValue } from "../src/ui/storage-notice";
 import { changeServerSettings, checkMailbox, resupplyPassword, selfChecksThisSession } from "../src/net/mailboxes";
 import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-exclusion";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
@@ -363,6 +366,9 @@ function SettingsBody() {
         {/* WHAT THE SCREENER FILED ON ITS OWN, with Put back — beside the other automatic act.
             The phone has no auto-apply switch of its own; the panel reads the same route pair. */}
         {session !== null ? <AutoFiledPanel session={session} /> : null}
+
+        {/* STORAGE — the card's numbers in full, where the account keeps a storage limit. */}
+        {session !== null ? <StorageRow session={session} /> : null}
 
         {/*
           THE AWAY RESPONDER — a row rather than the form, because the form is
@@ -1197,6 +1203,21 @@ function FoldersPanel({
           </Txt>
         ) : null}
       </View>
+    </Panel>
+  );
+}
+
+/** Settings → Storage, drawn only while the access answer carries a storage block. */
+function StorageRow({ session }: { session: ConnectedSession }) {
+  const locale = useLocale();
+  const profileId = session.standalone ? null : session.profile.id;
+  const feedOf = useCallback(() => (profileId === null ? null : accessFeedFor(profileId)), [profileId]);
+  const entry = useSyncExternalStore(onAccessFeed, feedOf, feedOf);
+  const facts = entry?.answer.metered ? entry.answer.storage : undefined;
+  if (facts === undefined) return null;
+  return (
+    <Panel style={{ paddingBottom: 8, marginBottom: 14 }}>
+      <Nav label={Copy.storageTitle} sub={storageRowValue(facts, Copy, locale)} chevron onPress={() => router.push("/storage")} />
     </Panel>
   );
 }

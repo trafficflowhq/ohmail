@@ -36,19 +36,17 @@ describe("the phone's withheld note", () => {
 
   it("each other marker keeps its own sentence — the storage cap's is no longer said for them", () => {
     expect(withheldNote(row("INBOX", "expunged"), false, null)).toBe(Copy.liveBodyWithheldExpunged);
-    expect(withheldNote(row("INBOX", "storage_cap"), false, null)).toBe(Copy.liveBodyWithheld);
-    expect(Copy.liveBodyWithheld).toContain("storage space");
-    expect(Copy.liveBodyWithheld).toContain("When there is room again, ohmail fetches this text back from your mail server.");
-    expect(Copy.liveBodyWithheldJunk).not.toContain("storage space");
+    expect(withheldNote(row("INBOX", "storage_cap"), false, null)).toBe(Copy.storageEmptied);
+    expect(Copy.storageEmptied).toBe("This letter's text isn't kept on Cloud because your storage is full. It's complete on your mail server.");
+    expect(Copy.liveBodyWithheldJunk).not.toContain("storage");
   });
 
   it("emptied for space in a mailbox ohmail no longer reads, the text does not come back", () => {
     const capped = row("INBOX", "storage_cap");
-    expect(withheldNote(capped, false, "disabled")).toBe(Copy.liveBodyWithheldRemoved);
-    expect(Copy.liveBodyWithheldRemoved).toContain("storage space");
-    expect(Copy.liveBodyWithheldRemoved).toContain("ohmail no longer reads this mailbox, so this text does not come back here.");
-    expect(DE.liveBodyWithheldRemoved).toContain("ohmail liest dieses Postfach nicht mehr, darum kommt dieser Text hier nicht zurück.");
-    for (const status of ["connected", "error", null]) expect(withheldNote(capped, false, status)).toBe(Copy.liveBodyWithheld);
+    expect(withheldNote(capped, false, "disabled")).toBe(Copy.storageEmptiedRemoved);
+    expect(Copy.storageEmptiedRemoved).toContain("ohmail no longer reads this mailbox, so it does not come back here.");
+    expect(DE.storageEmptiedRemoved).toContain("ohmail liest dieses Postfach nicht mehr, darum kommt er hier nicht zurück.");
+    for (const status of ["connected", "error", null]) expect(withheldNote(capped, false, status)).toBe(Copy.storageEmptied);
     expect(withheldNote(row("INBOX", "expunged"), false, "disabled")).toBe(Copy.liveBodyWithheldExpunged);
   });
 
@@ -78,7 +76,7 @@ describe("the phone's withheld note", () => {
     await engine.hydrateBody("m1");
     const h = { id: "m1", ...liveBody(engine, "m1")! };
     const rows = [{ id: "mb_1", status: "connected" }, { id: "mb_gone", status: "disabled" }];
-    expect(withheldNote(h, true, mailboxStatusOf(rows, h.mailboxId))).toBe(Copy.liveBodyWithheldRemoved);
+    expect(withheldNote(h, true, mailboxStatusOf(rows, h.mailboxId))).toBe(Copy.storageEmptiedRemoved);
     expect(mailboxStatusOf(rows, "mb_other")).toBeNull();
     expect(mailboxStatusOf(rows, undefined)).toBeNull();
   });

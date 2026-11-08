@@ -1898,19 +1898,6 @@ const TABLE = {
   liveBodyLoading: "Loading the whole message…",
   liveBodyFailed: "Only the preview could be loaded. Reopen to try again.",
   /**
-   * THE STORAGE CAP'S TERMINAL STATE — an ANSWER, not a failure, so it must not borrow
-   * {@link liveBodyFailed}'s "reopen to try again": reopening does not change it, the storage refill
-   * does once there is room. The server holds
-   * no content for this message because the account's storage space was full when it arrived;
-   * the mail itself is untouched on the user's own mail server, which is the half the reader
-   * needs, and the preview above the note is real.
-   */
-  liveBodyWithheld:
-    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. When there is room again, ohmail fetches this text back from your mail server.",
-  /** The same letter in a mailbox ohmail no longer reads (removed): the refill never visits it. */
-  liveBodyWithheldRemoved:
-    "Its text is not stored here — to stay within your plan's storage space, ohmail stopped storing the text of older letters, this one included (or space was full when it arrived). This is the preview; the message itself is complete in your mailbox on your mail server. ohmail no longer reads this mailbox, so this text does not come back here.",
-  /**
    * The other two markers, and the one that is not terminal. A spam verdict's husk is the verdict's
    * sentence ONLY while the message is in the spam pile; moved out, its text is on its way back
    * from the mail server and the reader says that ({@link liveBodyJunkLoading}), bounded.
@@ -3195,52 +3182,83 @@ const TABLE = {
   stripCaughtUp: (date: string) => `ohmail is catching up on mail that arrived since ${date}.`,
   stripDismiss: "Got it",
   /**
-   * THE EMPTIED-TEXT NOTICE (`ui/StorageNotice.tsx`): what happened, that the letters stay complete
-   * on the mail server, what keeps more text from now on, and that with room ohmail fetches emptied
-   * text back, newest first, for the mailboxes it still reads. Never that all of it comes back.
+   * STORAGE (`ui/StorageNotice.tsx`, `app/storage.tsx`, the emptied letter): numbers first, in GB and
+   * in letters. The store face names plans and rooms, never an amount, a purchase or a link.
    */
-  storageNoticeEmptied: (cap: string, count: number) =>
-    `To stay within your plan's ${cap} GB, ohmail no longer stores the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
-  storageNoticeEmptiedBefore: (count: number) =>
-    `To stay within your plan's storage at the time, ohmail stopped storing the text of ${count === 1 ? "your oldest letter" : `your ${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} oldest letters`}.`,
-  /** A count with no recorded trim: not which letters, not under which cap. */
-  storageNoticeNotStored: (count: number) =>
-    `The text of ${count === 1 ? "one letter is" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters is`} not stored here.`,
-  storageNoticeKeptFrom: (month: string) => `Text is kept for letters from ${month} on.`,
-  /** The month's sentence with the letters that arrived while the storage was full excepted. */
-  storageNoticeKeptFromExcept: (month: string, count: number) =>
-    `Text is kept for letters from ${month} on, apart from ${count === 1 ? "one letter that" : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that`} arrived while your storage was full.`,
-  /** Those letters alone, when no month is recorded. */
-  storageNoticeOnArrival: (count: number) =>
-    count === 1
-      ? "One letter that arrived while your storage was full is stored without its text."
-      : `${String(count).replace(/\B(?=(\d{3})+(?!\d))/g, ",")} letters that arrived while your storage was full are stored without their text.`,
-  storageNoticeSafe: "Those letters stay complete in your mailbox on your mail server, and stay listed and findable here.",
-  /** Near the cap and at it before any text is emptied: the web's Settings sentences. */
-  storageNoticeNear:
-    "Storage is nearly full. When it is full, ohmail stops storing the text of your oldest letters to make room for new mail. Those letters stay complete in your mailbox on your mail server.",
-  storageNoticeFull:
-    "Storage is full. ohmail stops storing the text of your oldest letters to make room for new mail. Those letters stay complete in your mailbox on your mail server.",
-  /** Inside the trial's 4 GB floor: when the plan's own limit applies, dated or not yet. */
-  storageNoticeCarry: (date: string, limit: string, cap: string) =>
-    `Until ${date}, ohmail keeps up to ${limit} GB of letter text. From then on your plan keeps ${cap} GB, and ohmail stops storing the text of your oldest letters beyond it. Those letters stay complete in your mailbox on your mail server.`,
-  storageNoticeCarryUnpaid: (limit: string, cap: string) =>
-    `Until 14 days after your first payment, ohmail keeps up to ${limit} GB of letter text. From then on your plan keeps ${cap} GB, and ohmail stops storing the text of your oldest letters beyond it. Those letters stay complete in your mailbox on your mail server.`,
-  /** What keeps more text: by subscription, and on the largest plan the add-on alone. */
-  storageOfferTrial: "A bigger plan keeps more text from now on.",
-  storageOfferTrialTop: "Once your subscription is paid, the storage add-on keeps more text from now on.",
-  storageOfferActive: "A bigger plan or the storage add-on keeps more text from now on.",
-  storageOfferActiveTop: "The storage add-on keeps more text from now on.",
-  /** After the offer, only where the refill never runs: ohmail reads none of the mailboxes. */
-  storageNoticeNoRestore: "It does not bring back text that was already emptied.",
-  /** After the offer, where the refill runs. */
-  storageNoticeRefill:
-    "With more room, ohmail fetches the text of emptied letters back from your mail server, newest first, for the mailboxes it still reads.",
-  /** Text emptied under an earlier cap, with room under the refill's mark, where the refill runs. */
-  storageNoticeRefilling:
-    "There is room again: for the mailboxes ohmail still reads, it fetches the text of emptied letters back from your mail server, newest first, as far as the room allows.",
-  storageNoticeManage: "Manage subscription",
-  storageNoticeDismiss: "Dismiss",
+  storageCardNear: (pct: string) => `Storage is ${pct} full`,
+  storageCardFull: "Storage is full",
+  storageCardDrop: (gb: string) => `Your storage drops to ${gb} GB`,
+  storageOf: (used: string, limit: string) => `${used} of ${limit} GB`,
+  storagePercent: (n: number) => `${n}%`,
+  storageUsedTrial: (used: string, limit: string) => `${used} GB of your trial room of ${limit} GB used.`,
+  storageUsedPlan: (used: string, limit: string) => `${used} GB of your plan's ${limit} GB used.`,
+  storageUsedHeld: (used: string, limit: string, date: string) => `${used} GB used of the ${limit} GB you keep until ${date}.`,
+  storageExpectedImporting: (gb: string) => `Expected about ${gb} GB when the import finishes.`,
+  storageExpectedNeeds: (gb: string) => `Your mail needs about ${gb} GB.`,
+  storageKeptFrom: (month: string) => `Text kept for letters from ${month} on; older ones stay on your mail server.`,
+  storageKeptOldest: "The text of your oldest letters stays on your mail server.",
+  storageDropDated: (date: string, plan: string) =>
+    `From ${date} your plan keeps ${plan} GB, and ohmail keeps the text of your newest letters within it.`,
+  storageDropUnpaid: (plan: string) =>
+    `From 14 days after your first payment your plan keeps ${plan} GB, and ohmail keeps the text of your newest letters within it.`,
+  storageFitAll: (name: string, gb: string) => `${name} keeps all your mail: ${gb} GB.`,
+  storageFitMost: (name: string, gb: string) => `${name} keeps the most: ${gb} GB.`,
+  storageWithAddon: (plan: string, gb: string) => `${plan} + ${gb} GB storage`,
+  /** The store face's line in place of any button: plain text, no link. */
+  storageManageAt: "Manage your plan at ohmail.app",
+  storageManage: "Manage subscription",
+  storageDismiss: "Dismiss",
+  storageDismissFailed: "This could not be hidden just now. Try again in a moment.",
+  storageTitle: "Storage",
+  storageStateFull: "Full",
+  storageUsedSubTrial: "used, your trial room",
+  storageUsedSubPlan: "used, your plan",
+  storageUsedSubHeld: (date: string) => `used, kept until ${date}`,
+  storageExpectedImport: (gb: string, letters: string) =>
+    `Expected when the import finishes: about ${gb} GB, ${letters} letters.`,
+  storageExpectedAll: (gb: string, letters: string) => `All your mail: about ${gb} GB, ${letters} letters.`,
+  storageImportRunning: (stored: string, expected: string) => `First import running: ${stored} of ${expected} letters.`,
+  storageEstimateGrows: "The figure grows as ohmail opens more of your folders.",
+  storageAverage: (kb: string) => `Your letters average about ${kb} KB of text.`,
+  storageKeptFromLong: (month: string) =>
+    `Text kept for letters from ${month} on. Older letters are complete on your mail server, and still listed and findable here.`,
+  storageWhatCounts: "What counts",
+  storageWhatCountsText:
+    "Only the text of your letters counts. Attachments never do: they stay on your mail server and open from there.",
+  storageWhyLimited: "Why it's limited",
+  storageWhyLimitedText:
+    "We keep your letters' text in our database so reading and finding mail are instant on every device. That database is the costly part of ohmail Cloud, so each plan includes a set amount.",
+  storageYourPlan: "Your plan",
+  storagePlanTrial: (limit: string, plan: string, planGb: string) =>
+    `Your trial keeps up to ${limit} GB. On ${plan}, ${planGb} GB from 14 days after your first payment.`,
+  storagePlanUntil: (limit: string, date: string, plan: string, planGb: string) =>
+    `You keep up to ${limit} GB until ${date}. Then ${plan} keeps ${planGb} GB.`,
+  storagePlanKeeps: (plan: string, gb: string) => `${plan} keeps ${gb} GB.`,
+  storagePlans: "Plans",
+  storagePlanYours: (plan: string) => `${plan} · your plan`,
+  storagePlanRoom: (gb: string, letters: string) => `${gb} GB · about ${letters} letters`,
+  storageAddon: "Storage add-on",
+  storageAddonRoom: (gb: string, letters: string) => `+${gb} GB · about ${letters} letters each`,
+  storageFitted: "Keeps all your mail",
+  storageFittedMost: "Keeps the most",
+  storageMails: "Storage mails",
+  storageMailsOn: "ohmail mails you once at 90% and once when storage is full.",
+  storageMailsOff: "ohmail sends you no storage mails.",
+  storageMailsFailed: "This could not be saved just now. Try again in a moment.",
+  storageNone: "This server keeps no storage limit.",
+  /** An emptied letter in the reader: the demo's sentence; its mailbox no longer read, nothing comes back. */
+  storageEmptied: "This letter's text isn't kept on Cloud because your storage is full. It's complete on your mail server.",
+  storageEmptiedRemoved:
+    "This letter's text isn't kept on Cloud because your storage was full, and ohmail no longer reads this mailbox, so it does not come back here. It's complete on your mail server.",
+  storageLoadNow: "Load it now",
+  storageLoading: "Loading from your mail server…",
+  storageLoadNote: "Load it now fetches it from your mail server for this view. It is not stored.",
+  storageLoaded: "Loaded from your mail server for this view. Not stored on Cloud.",
+  storageSettings: "Storage settings",
+  storageLoadGone: "Your mail server no longer holds this letter where ohmail last saw it.",
+  storageLoadTooLarge: "This letter is too large to load here. It's complete on your mail server.",
+  storageLoadBusy: "Many letters were loaded this hour. Try again later.",
+  storageLoadFailed: "The letter could not be loaded just now. Try again in a moment.",
   /* A RENDER ERROR, CAUGHT — `ui/ErrorBoundary.tsx`. One sentence, the surface it took, one
      verb. The cause goes to the device's log, never to the screen. */
   renderErrorTitle: "Something went wrong on this screen.",
