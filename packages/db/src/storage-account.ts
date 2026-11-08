@@ -20,8 +20,6 @@ import { isStorageCardLevel, type StorageCardDismissal } from "./storage-card.js
 export interface StorageEstimateMailbox extends EstimateMailbox {
   /** Still on its first import: neither finished nor stopped (`storageRefillHold`'s reading). */
   importing: boolean;
-  /** The snapshot's text bytes, which split the live counter between the mailboxes. */
-  textBytes: number;
 }
 
 export interface StorageEstimateFacts {
@@ -68,7 +66,6 @@ export async function storageEstimateFactsOf(db: Tx, accountId: string): Promise
         letters: Number(s.letters), textLetters: Number(s.textLetters),
         textBytes: Number(s.textBytes), instances: Number(s.instances), imported: s.imported,
       } : null,
-      textBytes: s ? Number(s.textBytes) : 0,
     };
   });
   return { mailboxes: out, at };
@@ -121,7 +118,7 @@ export async function storageReadingOf(db: Tx, accountId: string): Promise<Stora
   const counter = await storageFactsOf(db, accountId);
   const facts = await storageEstimateFactsOf(db, accountId);
   const prefs = await storagePrefsOf(db, accountId);
-  const estimate = storageEstimateOf(facts.mailboxes);
+  const estimate = storageEstimateOf(facts.mailboxes, counter.usedBytes);
   return {
     counter, facts, prefs, estimate,
     need: {

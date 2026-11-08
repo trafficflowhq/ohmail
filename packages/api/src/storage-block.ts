@@ -1,6 +1,6 @@
 import { storageEmptyingNow, storageUpgradeOf, type AccessVerdict, type StorageOffer } from "@trafficflow/db";
 import {
-  storageCardOf, storageLimitReason, storageSharesOf,
+  storageCardOf, storageLimitReason,
   type StorageCardFacts, type StorageCardLevel, type StorageLimit, type StorageReading,
 } from "@trafficflow/db/cloud";
 
@@ -54,7 +54,6 @@ export function storageBlockOf(
 ): StorageBlock {
   const { counter, estimate, facts } = reading;
   const card = storageCardFactsOf(reading, limit, now);
-  const shares = storageSharesOf(counter.usedBytes, facts.mailboxes);
   const byId = new Map(estimate.mailboxes.map((m) => [m.id, m]));
   return {
     usedBytes: counter.usedBytes, limitBytes: limit.capBytes, emptiedForSpace: counter.emptiedForSpace,
@@ -76,7 +75,7 @@ export function storageBlockOf(
     mailboxes: facts.mailboxes.map((m) => {
       const e = byId.get(m.id)!;
       return {
-        id: m.id, usedBytes: shares.get(m.id) ?? 0, letters: e.letters,
+        id: m.id, usedBytes: e.usedBytes, letters: e.letters,
         expectedLetters: e.expectedLetters, expectedBytes: e.expectedBytes, importing: m.importing,
       };
     }),

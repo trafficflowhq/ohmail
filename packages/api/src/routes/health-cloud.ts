@@ -237,6 +237,9 @@ export const CLOUD_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   ["mailbox_storage_stats", "at"],
   ["account_storage_prefs", "updated_at"],
   ["storage_mail_sent", "delivered_at"],
+  // cloud 0058_storage_stats_marks — the last of its three columns. Absent, the worker's storage snapshot
+  // faults and the old rows stand. The deploy gate names it.
+  ["mailbox_storage_stats", "walked_at"],
 ] as const;
 
 /**

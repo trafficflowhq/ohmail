@@ -202,20 +202,23 @@ describe("GET /admin/storage — stored bytes per measured account, keyset by id
         letters: 76_000, textBytes: 1_900_000_000, instances: 76_000, serverLetters: 76_000, counted: true, imported: true,
       }),
     ]);
+    // C keeps more than its snapshot counted (letters deleted and not yet emptied).
+    await w.deps.db.update(accountStorage).set({ bytes: 2_000_000_000 }).where(eq(accountStorage.accountId, C));
     const unchecked = { emptiedForSpace: 0, lastEmptiedAt: null, checkedAt: null, drift: null };
     const page = await read<StoragePage>(w.deps, w.token, "/admin/storage");
     expect(page.rows).toEqual([
-      // 500,000 letters on the importing mailbox's server and the 1,000 held whole, at the account's
-      // own 20,000 bytes a letter (60 MB of text over 3,000 letters).
+      // The importing mailbox's 500,000 letters at its own 25,000 bytes a letter, and the 10 MB of text
+      // the whole mailbox's 1,000 letters hold; the account's 20,000 bytes a letter is neither's.
       {
         accountId: A, bytes: 100, updatedAt: ago(HOUR).toISOString(), ...unchecked,
-        expectedBytes: 10_020_000_000, expectedLetters: 501_000, complete: false, importing: true,
+        expectedBytes: 12_510_000_000, expectedLetters: 501_000, complete: false, importing: true,
       },
       // No snapshot yet: no figure, never a zero.
       { accountId: B, bytes: 200, updatedAt: ago(2 * HOUR).toISOString(), ...unchecked },
+      // Never less than it keeps: its 76,000 letters at 25,000 bytes are less.
       {
-        accountId: C, bytes: 300, updatedAt: ago(3 * HOUR).toISOString(), ...unchecked,
-        expectedBytes: 1_900_000_000, expectedLetters: 76_000, complete: true, importing: false,
+        accountId: C, bytes: 2_000_000_000, updatedAt: ago(3 * HOUR).toISOString(), ...unchecked,
+        expectedBytes: 2_000_000_000, expectedLetters: 76_000, complete: true, importing: false,
       },
     ]);
     // The Customers board says what each account page says.
