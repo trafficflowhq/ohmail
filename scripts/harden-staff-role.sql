@@ -880,6 +880,14 @@ GRANT SELECT (account_id, mailbox_id, letters, text_letters, emptied, text_bytes
   server_letters, counted, imported, at)
   ON public.mailbox_storage_stats TO ohmail_admin;
 
+-- `account_storage_holds` (cloud 0055) — a lowered storage limit held for 14 days: the plan's limit as
+-- last seen, the held limit and its end, in bytes and instants. The API's alert pass reads it to judge
+-- storage caps. SELECT ONLY: the API and the worker write it through the erasure fence. Cloud 0059
+-- grants the same stanza where this role exists.
+REVOKE ALL ON public.account_storage_holds FROM ohmail_admin;
+GRANT SELECT (account_id, seen_bytes, held_bytes, held_until, updated_at)
+  ON public.account_storage_holds TO ohmail_admin;
+
 -- ── 11. WHAT IS DELIBERATELY NOT GRANTED, and is enforced by the step-2 blanket revoke ────
 --
 --   messages            the ROW is the oracle; §4 has the argument
