@@ -33,6 +33,7 @@ import {
   holdStandaloneDoor,
   organizerBackgrounded,
   organizerHandedBack,
+  organizerInstruction,
   organizerRestrictedSaid,
   organizerSessionLive,
   organizerSettingsLeft,
@@ -46,6 +47,7 @@ import {
   stopOrganizerSession,
 } from "../src/engine/organizer-session";
 import { CLAIM_LAPSES_AFTER_MINUTES, type StandaloneEngine } from "../src/engine/standalone-door";
+import { organizerStripOf } from "../src/ui/organizer-strip";
 import { claimChipLabel, claimHere, settingsLeftLine } from "../src/ui/standalone-form";
 import { EN } from "../src/copy.en";
 
@@ -291,6 +293,51 @@ describe("the door's confirm starts the organizer session", () => {
     expect(claimChipLabel(claimHere(back, "idle", organizerHandedBack())))
       .toBe(EN.phoneStateNotOrganized);
   });
+
+  /* THE RETURN IS A TAKE-BACK: the Ohbox drew "Handed back — Another computer can take this mailbox
+     now." for the length of the resume on every warm start, over the phone taking it back. Both
+     phones, one machine; Android after "Not now" hands back the way iOS does. */
+  for (const platform of ["ios", "android"] as const) {
+    it(`${platform}: reads Starting, never Handed back, while the returning phone takes the mailbox back`, async () => {
+      const e = engine();
+      let answer: (served: { mailboxId: string; served: number }[]) => void = () => undefined;
+      let fail: (err: Error) => void = () => undefined;
+      const resume = () => new Promise<{ mailboxId: string; served: number }[]>((ok, no) => { answer = ok; fail = no; });
+      const p = phases();
+      holdStandaloneDoor(fakeDoor());
+      startOrganizerSession(standaloneLaunchGeneration(), {
+        platform, engine: { ...e.engine, resume }, service: platform === "ios" ? null : service({ showing: false }).service,
+        notice: () => ({ channelName: EN.stateOrganizing, body: EN.notifBody("a@b.test"), stopLabel: EN.notifStop, stopFailedBody: EN.notifStopFailed }),
+        appPhases: p.appPhases,
+      });
+      const flush = async (): Promise<void> => { for (let i = 0; i < 4; i += 1) await new Promise((r) => setTimeout(r, 0)); };
+      const claim = () => claimHere(standaloneHere()!, organizerInstruction(), organizerHandedBack());
+      const strip = () => organizerStripOf(claim(), { stoppedHere: false, late: false, os: platform });
+
+      p.log.push!("background");
+      await flush();
+      expect(strip()?.label, "premise: behind the person the mailbox reads handed back").toBe(EN.phoneStateHandedBack);
+
+      p.log.push!("active");
+      await flush();
+      expect(claimChipLabel(claim()), "Settings during the take-back").toBe(EN.phoneStateStarting);
+      expect(strip(), "the Ohbox drew a hand-back over the phone taking it back").toBeNull();
+
+      answer([{ mailboxId: "mb-1", served: 1 }]);
+      await flush();
+      expect(organizerHandedBack()).toBe(false);
+
+      /* A TAKE-BACK THE GATE REFUSES says the hand-back again: it is then the true state. */
+      p.log.push!("background");
+      await flush();
+      p.log.push!("active");
+      await flush();
+      expect(claimChipLabel(claim())).toBe(EN.phoneStateStarting);
+      fail(new Error("the lease could not be read"));
+      await flush();
+      expect(strip()?.label, "a refused take-back hid the hand-back").toBe(EN.phoneStateHandedBack);
+    });
+  }
 
   /**
    * EXACTLY ONE ACTIVE ORGANIZER PER MAILBOX is the product's invariant, and two sessions are two
