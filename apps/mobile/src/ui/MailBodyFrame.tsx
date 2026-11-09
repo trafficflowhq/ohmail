@@ -21,7 +21,9 @@ import { buildPhoneMailDocument } from "../mail/mail-document";
 import {
   armFrameTimer,
   FRAME_UNANSWERED_MS,
+  frameAwaits,
   frameFinal,
+  frameFit,
   frameHeightFor,
   frameLayout,
   nextFrameHeight,
@@ -137,7 +139,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const settleKey = sized.measured === null ? null : `${sized.key}@${sized.width}:${sized.measured}`;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => armFrameTimer(settleDelayMs(sized, Date.now()), () => update(settleFrameHeight)), [settleKey]);
-  const awaiting = loadedFor === frameId && !sized.answered && sized.text === null ? `${sized.key}@${sized.width}` : null;
+  const awaiting = loadedFor === frameId ? frameAwaits(sized) : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => armFrameTimer(awaiting === null ? null : FRAME_UNANSWERED_MS, () => update(unansweredFrameHeight)), [awaiting]);
 
@@ -167,15 +169,18 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject }),
     [m.inlineImages, resolvedRemote, folding, m.subject],
   );
+  // A letter wider than the frame is drawn zoomed to it; every document below is the fitted one.
+  const fit = frameFit(sized);
+  const drawnTheme = useMemo(() => (fit === 1 ? theme : { ...theme, fit }), [theme, fit]);
   const pictured = (m.inlineImages?.size ?? 0) > 0 || (resolvedRemote?.size ?? 0) > 0;
   const drawnChars = useMemo(() => {
     if (!pictured || bare === UNREADABLE) return null;
     try {
-      return drawnLength(html, pictures, bare, theme);
+      return drawnLength(html, pictures, bare, drawnTheme);
     } catch {
       return Number.NaN;
     }
-  }, [pictured, html, pictures, bare, theme]);
+  }, [pictured, html, pictures, bare, drawnTheme]);
   const tooLong = drawnChars !== null && drawnChars > ceiling;
   const lengthThrew = Number.isNaN(drawnChars);
   const sanitized = useMemo(
@@ -189,7 +194,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // this consent state, counted a step per macrotask before it is drawn. While a new state is counted
   // (a picture arrived, Show images), the frame keeps drawing the last document of this same html whose
   // own count fitted, and keeps it, saying why, when the new state is refused.
-  const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, unreadable, sanitized.html, theme]);
+  const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, drawnTheme)), [tooLong, unreadable, sanitized.html, drawnTheme]);
   const plan = useMemo(
     () => (unreadable ? null : current === null ? planFrameLength(drawnChars ?? 0, ceiling) : planFrameCount(current, sanitized.oversize === true, ceiling)),
     [unreadable, current, drawnChars, sanitized.oversize, ceiling],
@@ -202,8 +207,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // html with no picture is counted, and once it fits it is the kept document (the images sentence).
   const needBare = pictured && kept === null && reading !== null && !reading.fits;
   const barePlan = useMemo(
-    () => (needBare ? planFrameCount(buildPhoneMailDocument(bare.html, theme), bare.oversize === true, ceiling) : null),
-    [needBare, bare, theme, ceiling],
+    () => (needBare ? planFrameCount(buildPhoneMailDocument(bare.html, drawnTheme), bare.oversize === true, ceiling) : null),
+    [needBare, bare, drawnTheme, ceiling],
   );
   const bareReading = useFrameCount(barePlan, frameId, html, setDrawn);
 
@@ -272,7 +277,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     return (
       <View>
         <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
-          {unreadable ? Copy.mailUnreadable : Copy.mailOversize}
+          {unreadable ? Copy.mailUnreadable : sized.text === null || sized.text === "ceiling" ? Copy.mailOversize : Copy.mailLayoutUndrawn}
         </Txt>
         <HistoryFold foldKey={m.id} html={unreadable ? null : html} subject={m.subject}>
           <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
@@ -366,7 +371,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
                 const reported = e.nativeEvent.contentSize.height;
                 const view = e.nativeEvent.layoutMeasurement.height;
                 const at = Date.now();
-                update((s) => nextFrameHeight(s, reported, view, at));
+                const widths = { doc: e.nativeEvent.contentSize.width, frame: e.nativeEvent.layoutMeasurement.width };
+                update((s) => nextFrameHeight(s, reported, view, at, widths));
               }}
               onLoadEnd={() => setLoadedFor(frameId)}
               style={{ height, backgroundColor: sheetBg }}

@@ -14,11 +14,14 @@ import {
   FRAME_GROW_STEP_DP,
   FRAME_MAX_DP,
   FRAME_MAX_READINGS,
+  FRAME_MIN_FIT,
   FRAME_RUNAWAY_GROWS,
   FRAME_SEED_DP,
   FRAME_SETTLE_BOUND_MS,
   FRAME_SETTLE_MS,
   FRAME_UNANSWERED_MS,
+  frameFinal,
+  frameFit,
   frameHeightFor,
   frameLayout,
   nextFrameHeight,
@@ -242,6 +245,97 @@ describe("a document too tall to draw as one page reads as text, never as a box"
   });
 });
 
+describe("a document wider than its frame is fitted to it, not grown", () => {
+  // The rig skeleton at a 371 dp pane: 618 dp as written, 236 dp tall; fitted, under the seed.
+  const wide = { doc: 618, frame: 371 };
+  const fitted = { doc: 371, frame: 371 };
+
+  it("its reading records the width, grows nothing, and answers; the fit is the frame over the document", () => {
+    const s = nextFrameHeight(frameHeightFor(null, "m1", W), 236, FRAME_SEED_DP, 0, wide);
+    expect(s.dp).toBe(FRAME_SEED_DP);
+    expect(s.answered).toBe(true);
+    expect(frameFit(s)).toBeCloseTo(371 / 618, 6);
+    expect(frameFit(frameHeightFor(null, "m2", W))).toBe(1);
+  });
+
+  it("the fitted document's height counts; the unfitted one read late changes nothing", () => {
+    const s = nextFrameHeight(frameHeightFor(null, "m1", W), 1_900, FRAME_SEED_DP, 0, wide);
+    expect(nextFrameHeight(s, 1_900, FRAME_SEED_DP, 0, wide)).toBe(s);
+    const grown = nextFrameHeight(s, 1_140, FRAME_SEED_DP, 0, fitted);
+    expect(grown.dp).toBe(1_140);
+    expect(frameFit(grown)).toBe(frameFit(s));
+    // Fitted but still a little wide (a picture the zoom did not reach): drawn, and its height counts.
+    expect(nextFrameHeight(grown, 1_300, 1_140, 0, { doc: 380, frame: 371 }).dp).toBe(1_300);
+    // A wider reading of the document as written fits again, to the wider width.
+    expect(frameFit(nextFrameHeight(grown, 1_900, 1_140, 0, { doc: 700, frame: 371 }))).toBeCloseTo(371 / 700, 6);
+  });
+
+  it("a reading within the slack fits as written", () => {
+    expect(frameFit(nextFrameHeight(frameHeightFor(null, "m1", W), 300, FRAME_SEED_DP, 0, { doc: 372, frame: 371 }))).toBe(1);
+  });
+
+  it("re-measuring at a new width: a wide reading no taller than the seed arms the settle, a taller one waits for the fitted reading", () => {
+    vi.useFakeTimers();
+    try {
+      const remeasure = frameHeightFor(feed([7_880]), "m1", 360);
+      const s = nextFrameHeight(remeasure, FRAME_SEED_DP, FRAME_SEED_DP, 0, { doc: 618, frame: 320 });
+      expect(settleDelayMs(s, 0)).toBe(FRAME_SETTLE_MS);
+      expect(frameFit(s)).toBeCloseTo(320 / 618, 6);
+      expect(settleFrameHeight(s).dp).toBe(FRAME_SEED_DP);
+      expect(frameFit(frameHeightFor(settleFrameHeight(s), "m1", 411)), "a new width reads the width again").toBe(1);
+      const tall = nextFrameHeight(remeasure, 900, FRAME_SEED_DP, 0, { doc: 618, frame: 320 });
+      expect(settleDelayMs(tall, 0), "the seed is not this letter's height").toBeNull();
+      const fitted = nextFrameHeight(tall, 470, FRAME_SEED_DP, 10, { doc: 320, frame: 320 });
+      expect(settleDelayMs(fitted, 10)).toBe(FRAME_SETTLE_MS);
+      expect(settleFrameHeight(fitted).dp).toBe(470);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a fit below the floor is never drawn: the letter reads as text, for its layout", () => {
+    // A 120-column log line in a <pre>, a long sentence in a nowrap cell, a 5,000,000 px table.
+    for (const [doc, frame] of [[1_175, 320], [1_175, 371], [4_891, 320], [5_000_016, 371]] as const) {
+      const s = nextFrameHeight(frameHeightFor(null, "m1", W), 900, FRAME_SEED_DP, 0, { doc, frame });
+      expect(s.text, `${doc} in ${frame}`).toBe("wide");
+      expect(frameFinal(s, false)).toBe(true);
+    }
+    // A 640 px card at the narrowest pane (a 360 dp phone) clears it.
+    const card = nextFrameHeight(frameHeightFor(null, "m1", W), 900, FRAME_SEED_DP, 0, { doc: 658, frame: 320 });
+    expect(card.text).toBeNull();
+    expect(frameFit(card)).toBeGreaterThanOrEqual(FRAME_MIN_FIT);
+  });
+
+  it("too wide at one width, drawn again at a wider one", () => {
+    const s = nextFrameHeight(frameHeightFor(null, "m1", 360), 900, FRAME_SEED_DP, 0, { doc: 1_175, frame: 320 });
+    expect(frameHeightFor(s, "m1", 360)).toBe(s);
+    expect(frameHeightFor(s, "m1", 673).text).toBeNull();
+  });
+
+  it("a fit no fitted reading answers is not final, and its bound reads it as text, never a clip at the seed", () => {
+    // A sender's root width keeps the fitted document as wide as the first: nothing narrower ever reads.
+    const s = nextFrameHeight(frameHeightFor(null, "mw", W), 700, FRAME_SEED_DP, 0, { doc: 640, frame: 371 });
+    expect(frameFinal(s, false)).toBe(false);
+    const again = nextFrameHeight(s, 449, FRAME_SEED_DP, 0, { doc: 640, frame: 371 });
+    expect(again.dp).toBe(FRAME_SEED_DP);
+    expect(frameFinal(again, false)).toBe(false);
+    expect(unansweredFrameHeight(again).text).toBe("wide");
+    rememberFrameHeight(again);
+    expect(rememberedFrameHeight("mw"), "an unanswered fit is not remembered").toBeNull();
+    // A fitted reading answers it: final, its height counts, and the bound changes nothing.
+    const drawn = nextFrameHeight(again, 420, FRAME_SEED_DP, 0, { doc: 371, frame: 371 });
+    expect(drawn.dp).toBe(420);
+    expect(frameFinal(drawn, false)).toBe(true);
+    expect(unansweredFrameHeight(drawn)).toBe(drawn);
+  });
+
+  it("a wide letter no taller than its frame is final at once: its fitted document is shorter still", () => {
+    const s = nextFrameHeight(frameHeightFor(null, "m1", W), FRAME_SEED_DP, FRAME_SEED_DP, 0, { doc: 618, frame: 371 });
+    expect(frameFinal(s, false)).toBe(true);
+    expect(unansweredFrameHeight(s)).toBe(s);
+  });
+});
+
 describe("LOW 3: every frame timer is cancelled by what arms it", () => {
   it("a cancelled timer never fires; a re-armed settle fires once", () => {
     const fired: number[] = [];
@@ -265,7 +359,7 @@ describe("the frame is wired to that height, with JavaScript still off", () => {
   it("its height is the learned one; the settle is armed only by a seed-size reading", () => {
     expect(FRAME).toContain("const sized = frameHeightFor(frameHeight, frameId, windowWidth, rememberedFrameHeight(frameId));");
     expect(FRAME).toContain("if (frameHeight !== null) rememberFrameHeight(frameHeight);");
-    expect(FRAME).toContain("update((s) => nextFrameHeight(s, reported, view, at));");
+    expect(FRAME).toContain("update((s) => nextFrameHeight(s, reported, view, at, widths));");
     expect(FRAME).toContain("const reported = e.nativeEvent.contentSize.height;");
     expect(FRAME).toContain("const view = e.nativeEvent.layoutMeasurement.height;");
     expect(FRAME).toContain("const { frame: height, spacer } = frameLayout(sized);");
