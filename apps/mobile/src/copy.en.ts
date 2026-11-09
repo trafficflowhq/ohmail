@@ -1985,6 +1985,8 @@ const TABLE = {
   bodyHistoryHide: "Hide history",
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
+  /** The frame's layout never settled at this width (or never reported): not a size, so not "too large". */
+  mailLayoutUndrawn: "This message's layout could not be drawn on this screen. Showing the plain-text version.",
   /** The html part could not be read (a pass threw on it): this one letter is shown as text. */
   mailUnreadable: "This message's HTML part could not be read. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */

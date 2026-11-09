@@ -1349,6 +1349,7 @@ export const DE: Deck = {
   bodyHistoryHide: "Verlauf ausblenden",
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
+  mailLayoutUndrawn: "Das Layout dieser Nachricht ließ sich auf diesem Bildschirm nicht darstellen. Die Textfassung wird gezeigt.",
   mailUnreadable: "Der HTML-Teil dieser Nachricht ließ sich nicht lesen. Die Textfassung wird gezeigt.",
   mailPicture: "Bild",
   mailOpenLinkTitle: "Diesen Link öffnen?",

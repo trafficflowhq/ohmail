@@ -113,7 +113,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   });
 
   it("the counted document is the one handed to the WebView, and a drawn one only ever came from a fitted count", () => {
-    expect(FRAME).toContain("const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, unreadable, sanitized.html, theme]);");
+    expect(FRAME).toContain("const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, drawnTheme)), [tooLong, unreadable, sanitized.html, drawnTheme]);");
     expect(FRAME).toMatch(/unreadable \? null : current === null \? planFrameLength\(drawnChars \?\? 0, ceiling\) : planFrameCount\(current, sanitized\.oversize === true, ceiling\)/);
     expect(FRAME).toContain("const kept = drawn !== null && drawn.id === frameId && drawn.html === html ? drawn.doc : null;");
     expect(FRAME).toContain('const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);');
@@ -124,7 +124,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
 
   it("the pictures are written only into a document whose length was read inside the ceiling first", () => {
     expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, {})), [folding, folded, html]);");
-    expect(FRAME).toMatch(/if \(!pictured \|\| bare === UNREADABLE\) return null;\s*try \{\s*return drawnLength\(html, pictures, bare, theme\);/);
+    expect(FRAME).toMatch(/if \(!pictured \|\| bare === UNREADABLE\) return null;\s*try \{\s*return drawnLength\(html, pictures, bare, drawnTheme\);/);
     expect(FRAME).toContain("const tooLong = drawnChars !== null && drawnChars > ceiling;");
     expect(FRAME).toContain("(lengthThrew ? UNREADABLE : pictured && !tooLong && bare !== UNREADABLE ? sanitizeGuarded(html, pictures) : bare)");
     // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`), each guarded.
@@ -160,7 +160,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
 
   it("a pictured state refused with nothing kept counts the bare document, never the text part for its pictures' sake", () => {
     expect(FRAME).toContain("const needBare = pictured && kept === null && reading !== null && !reading.fits;");
-    expect(FRAME).toContain("(needBare ? planFrameCount(buildPhoneMailDocument(bare.html, theme), bare.oversize === true, ceiling) : null)");
+    expect(FRAME).toContain("(needBare ? planFrameCount(buildPhoneMailDocument(bare.html, drawnTheme), bare.oversize === true, ceiling) : null)");
     expect(FRAME).toContain("const bareReading = useFrameCount(barePlan, frameId, html, setDrawn);");
     expect(code(FRAME).split("useFrameCount(").length - 1).toBe(3);
   });

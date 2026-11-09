@@ -26,8 +26,14 @@ vi.mock("react-native", async () => {
   };
 });
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
+/** The frame's last props: the document handed over, its height, and the native reading's handler. */
+type FrameProps = { source?: { html?: string }; style?: { height?: number }; onScroll?: (e: unknown) => void; onLoadEnd?: () => void };
+const webview = vi.hoisted(() => ({ props: null as FrameProps | null }));
 vi.mock("react-native-webview", () => ({
-  WebView: ({ source }: { source?: { html?: string } }) => h("div", { "data-webview": "", "data-html": source?.html ?? "" }),
+  WebView: (props: FrameProps) => {
+    webview.props = props;
+    return h("div", { "data-webview": "", "data-html": props.source?.html ?? "" });
+  },
 }));
 const live = vi.hoisted(() => ({ engine: null as unknown, actions: null as unknown }));
 vi.mock("../src/net/connection", () => ({
@@ -81,6 +87,7 @@ vi.mock("../src/state/world", () => ({
 
 const { MailBodyFrame } = await import("../src/ui/MailBodyFrame");
 const { Copy } = await import("../src/copy");
+const { FRAME_MIN_FIT, FRAME_UNANSWERED_MS } = await import("../src/mail/frame-height");
 const { liveActions, liveMessage } = await import("../src/state/live");
 const { useFilesStamp } = await import("../src/state/files-stamp");
 
@@ -649,5 +656,195 @@ describe("a sanitizer throw costs this one letter its drawing, never the reader"
     await settle();
     expect(mounted.el.textContent).not.toContain(Copy.mailUnreadable);
     expect(mounted.el.querySelector("[data-webview]")?.getAttribute("data-html")).toContain(`src="${PICTURE}"`);
+  });
+});
+
+/**
+ * A LETTER WIDER THAN THE PANE IS DRAWN SCALED TO IT. The skeleton most bulk mail is built on, a 100%
+ * table around a fixed 520-600 px card, is wider than a phone's pane. The frame is driven the way the
+ * patched Android WebView reports (the document's CSS height on a draw that changes it, the scroll range
+ * as its width), by headless Chromium under a phone's viewport rules, at the pane of a 360, 411 and 673 dp
+ * window (20 dp each side).
+ */
+describe("a letter wider than its pane is drawn fitted to it, never as text", () => {
+  const require_ = createRequire(resolve(process.cwd(), "package.json"));
+  const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");
+  let browser: Awaited<ReturnType<typeof chromium.launch>> | null = null;
+  beforeAll(async () => { browser = await chromium.launch(); }, 120_000);
+  afterAll(async () => { await browser?.close(); });
+  afterEach(() => { look.scheme = "light"; webview.props = null; });
+
+  const para = "<p>This week: the new trail map, two cabin openings and the winter timetable.</p>".repeat(3);
+  const card = (w: number, pad = 0) => `<table width="${w}" cellpadding="${pad}" style="width:${w}px"><tr><td>${para}</td></tr></table>`;
+  const outer = (inner: string, bg = "") => `<table width="100%"${bg}><tr><td align="center">${inner}</td></tr></table>`;
+  const WIDE: [string, string][] = [
+    ["a 100% table around a 600 px card", outer(card(600))],
+    ["a 100% table around a 520 px card padded 24 px", outer(card(520, 24))],
+    ["the same on a dark page", outer(card(520, 24), ' bgcolor="#111111"')],
+    ["a 100% table around a 360 px card", outer(card(360))],
+  ];
+  const NARROW: [string, string][] = [["a 520 px card alone", card(520)], ["a 100% table around a 300 px card", outer(card(300))]];
+
+  /** The native side until it has nothing new to say; the documents the frame handed over, and the last reading. */
+  async function drawNatively(pane: number): Promise<{ docs: Set<string>; width: number; height: number; doc: number }> {
+    const page = await (await browser!.newContext({ viewport: { width: pane, height: 220 }, isMobile: true, deviceScaleFactor: 2.625 })).newPage();
+    const docs = new Set<string>();
+    let html = "";
+    let size = "";
+    let reported = -1;
+    let read = { w: 0, h: 0 };
+    try {
+      for (let i = 0; i < 60; i++) {
+        const p = webview.props;
+        if (p === null || mounted!.el.querySelector("[data-webview]") === null) break;
+        const height = p.style!.height!;
+        const changed = p.source!.html! !== html || `${pane}x${height}` !== size;
+        // A resized view reports again whatever it reads (the patch's onSizeChanged).
+        if (`${pane}x${height}` !== size) { size = `${pane}x${height}`; reported = -1; await page.setViewportSize({ width: pane, height }); }
+        if (p.source!.html! !== html) { html = p.source!.html!; docs.add(html); await page.setContent(html); act(() => p.onLoadEnd?.()); }
+        read = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }));
+        if (read.h === reported && !changed) break;
+        if (read.h !== reported) {
+          reported = read.h;
+          act(() => p.onScroll!({ nativeEvent: { contentSize: { width: read.w, height: read.h }, layoutMeasurement: { width: pane, height } } }));
+        }
+        await settle();
+      }
+      const height = webview.props?.style?.height ?? 0;
+      await page.setViewportSize({ width: pane, height: 1 });
+      const doc = await page.evaluate(() => document.documentElement.scrollHeight);
+      return { docs, width: read.w, height, doc };
+    } finally {
+      await page.context().close();
+    }
+  }
+
+  const PANES = [320, 371];
+  it.each(PANES.flatMap((pane) => WIDE.map(([how, html]) => ({ pane, how, html }))))("$how at a $pane dp pane: scaled to the pane, as tall as its document", async ({ pane, how, html }) => {
+    mounted = mount(h(MailBodyFrame, { m: { id: `wide-${pane}-${how}`, html, body: "The letter as text.", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    const got = await drawNatively(pane);
+    expect(mounted.el.textContent).not.toContain(Copy.mailOversize);
+    expect(mounted.el.querySelector("[data-webview]"), "drawn in its frame").not.toBeNull();
+    expect(got.width, "nothing past the pane's right edge").toBeLessThanOrEqual(pane + 1);
+    expect(got.height - Math.max(220, got.doc), "no blank tail, no clipped end").toBeLessThanOrEqual(4);
+    expect(got.height).toBeGreaterThanOrEqual(got.doc);
+    expect(got.docs.size, "laid out as written once, then zoomed").toBe(2);
+  }, 60_000);
+
+  it("reopened at the same width, it is drawn fitted at once", async () => {
+    const m = { id: "wide-reopen", html: WIDE[0]![1], body: "", loadedRemoteContent: false } as never;
+    mounted = mount(h(MailBodyFrame, { m, onShowAsText: () => undefined }));
+    await settle();
+    expect((await drawNatively(371)).docs.size).toBe(2);
+    mounted.unmount();
+    mounted = mount(h(MailBodyFrame, { m, onShowAsText: () => undefined }));
+    await settle();
+    const again = await drawNatively(371);
+    expect(again.docs.size).toBe(1);
+    expect(again.width).toBeLessThanOrEqual(372);
+  }, 60_000);
+
+  it.each(WIDE.map(([how, html]) => ({ how, html })))("$how at a 633 dp pane (an unfolded 673 dp window) fits as written", async ({ how, html }) => {
+    mounted = mount(h(MailBodyFrame, { m: { id: `wide-633-${how}`, html, body: "", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    const got = await drawNatively(633);
+    expect(got.docs.size, "one document, never refitted").toBe(1);
+    expect(got.width).toBeLessThanOrEqual(633);
+  }, 60_000);
+
+  it.each(NARROW.flatMap(([how, html]) => PANES.map((pane) => ({ pane, how, html }))))("$how at a $pane dp pane reflows at full size", async ({ pane, how, html }) => {
+    mounted = mount(h(MailBodyFrame, { m: { id: `narrow-${pane}-${how}`, html, body: "", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    const got = await drawNatively(pane);
+    expect(got.docs.size).toBe(1);
+    expect(got.width).toBeLessThanOrEqual(pane + 1);
+    expect(got.height - Math.max(220, got.doc)).toBeLessThanOrEqual(4);
+  }, 60_000);
+
+  /** The zooms of the documents handed over (1 for one drawn as written). */
+  const zooms = (docs: Set<string>) => [...docs].map((d) => Number(/body\{zoom:([\d.]+)/.exec(d)?.[1] ?? 1));
+
+  it("a 640 px card at the narrowest pane is drawn fitted", async () => {
+    mounted = mount(h(MailBodyFrame, { m: { id: "wide-640", html: outer(card(640)), body: "", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    const got = await drawNatively(320);
+    expect(mounted.el.querySelector("[data-webview]")).not.toBeNull();
+    expect(got.width).toBeLessThanOrEqual(321);
+    expect(got.height - Math.max(220, got.doc)).toBeLessThanOrEqual(4);
+  }, 60_000);
+
+  // One wide line sets no zoom for the whole letter: below the floor its text is shown, and says why.
+  const log = `<pre style="white-space:pre">${"2026-11-09T12:00:00Z worker[4121]: sync pass done ".repeat(3).slice(0, 120)}</pre>`;
+  const TOO_WIDE: [string, string][] = [
+    ["a 120-column log line", `${para}${log}${para}`],
+    ["a long sentence in a nowrap cell", `${para}<table><tr><td style="white-space:nowrap">${"The winter timetable starts on the first Monday of December and runs until Easter. ".repeat(8)}</td></tr></table>`],
+  ];
+  it.each(TOO_WIDE.flatMap(([how, html]) => PANES.map((pane) => ({ pane, how, html }))))("$how at a $pane dp pane is never zoomed below the floor", async ({ pane, how, html }) => {
+    mounted = mount(h(MailBodyFrame, { m: { id: `too-wide-${pane}-${how}`, html, body: "The letter as text.", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    const got = await drawNatively(pane);
+    for (const z of zooms(got.docs)) expect(z).toBeGreaterThanOrEqual(FRAME_MIN_FIT);
+    expect(mounted.el.textContent).toContain(Copy.mailLayoutUndrawn);
+    expect(mounted.el.querySelector("[data-body-text]")?.textContent).toBe("The letter as text.");
+  }, 60_000);
+
+  // A sender's sheet that the fit cannot narrow, or that undoes it, and a hostile width; taller than the frame.
+  const tall = outer(`<table width="600" style="width:600px"><tr><td>${para.repeat(4)}</td></tr></table>`);
+  const HOSTILE: [string, string][] = [
+    ["a root min-width", `<style>html{min-width:640px}</style>${tall}`],
+    ["a root width", `<style>:root{width:700px}</style>${tall}`],
+    ["a body zoom", `<style>body{zoom:1}</style>${tall}`],
+    ["a 5,000,000 px table", `<table width="5000000"><tr><td>${para}</td></tr></table>`],
+  ];
+  it.each(HOSTILE.map(([how, html]) => ({ how, html })))("$how ends drawn whole or as text, never cut at the seed", async ({ how, html }) => {
+    const finals: boolean[] = [];
+    mounted = mount(h(MailBodyFrame, { m: { id: `hostile-${how}`, html, body: "The letter as text.", loadedRemoteContent: false } as never, onShowAsText: () => undefined, onFinal: (f: boolean) => finals.push(f) }));
+    await settle();
+    const got = await drawNatively(371);
+    await act(async () => { await new Promise((r) => setTimeout(r, FRAME_UNANSWERED_MS + 200)); });
+    await settle();
+    expect(finals.at(-1), "final").toBe(true);
+    if (mounted.el.querySelector("[data-webview]") === null) {
+      expect(mounted.el.textContent).toContain(Copy.mailLayoutUndrawn);
+      expect(mounted.el.querySelector("[data-body-text]")?.textContent).toBe("The letter as text.");
+    } else {
+      expect(got.width, "nothing past the pane's right edge").toBeLessThanOrEqual(372);
+      expect(got.height).toBeGreaterThanOrEqual(got.doc);
+    }
+  }, 60_000);
+
+  it("in a dark scheme the inverted letter is fitted the same", async () => {
+    look.scheme = "dark";
+    mounted = mount(h(MailBodyFrame, { m: { id: "wide-dark", html: WIDE[0]![1], body: "", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    const got = await drawNatively(371);
+    expect(mounted.el.textContent).not.toContain(Copy.mailOversize);
+    expect(got.width).toBeLessThanOrEqual(372);
+    expect(got.height - Math.max(220, got.doc)).toBeLessThanOrEqual(4);
+  }, 60_000);
+});
+
+describe("a frame that reads as text says why, truly", () => {
+  afterEach(() => { webview.props = null; });
+  const reading = (height: number, h = webview.props?.style?.height ?? 220) =>
+    act(() => webview.props!.onScroll!({ nativeEvent: { contentSize: { width: 371, height }, layoutMeasurement: { width: 371, height: h } } }));
+
+  it("a layout that grows with its own frame: the layout sentence, never 'too large'", async () => {
+    mounted = mount(h(MailBodyFrame, { m: { id: "runaway", html: "<p>Hi</p>", body: "Hi as text.", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    for (let i = 0; i <= 25 && mounted.el.querySelector("[data-webview]") !== null; i++) reading(900 + 34 * i);
+    await settle();
+    expect(mounted.el.textContent).toContain(Copy.mailLayoutUndrawn);
+    expect(mounted.el.textContent).not.toContain(Copy.mailOversize);
+    expect(mounted.el.querySelector("[data-body-text]")?.textContent).toBe("Hi as text.");
+  });
+
+  it("a document past the tallest frame is too large to draw, and says so", async () => {
+    mounted = mount(h(MailBodyFrame, { m: { id: "tall", html: "<p>Hi</p>", body: "Hi as text.", loadedRemoteContent: false } as never, onShowAsText: () => undefined }));
+    await settle();
+    reading(170_034);
+    await settle();
+    expect(mounted.el.textContent).toContain(Copy.mailOversize);
   });
 });
