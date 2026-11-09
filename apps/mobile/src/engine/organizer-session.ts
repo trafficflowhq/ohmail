@@ -632,7 +632,8 @@ function settleInstruction(organizing: boolean | null): void {
  */
 export function organizerInstruction(): OrganizeInstruction {
   settleInstruction(standaloneHere()?.organizing ?? null);
-  return instruction;
+  /* A RETURN TAKING BACK OUR OWN HAND-BACK is a start in flight, though nobody pressed one. */
+  return instruction === "idle" && live?.organizing.takingBack() === true ? "starting" : instruction;
 }
 
 /**
@@ -1106,6 +1107,7 @@ export function pokeOrganizerState(): void {
        panel renders and this fingerprint does not carry is a chip nothing re-derives: the claim
        watch would compare an unchanged string and notify nobody. */
     live?.organizing.handedBack() ?? false,
+    live?.organizing.takingBack() ?? false,
     restrictedSaid,
     notificationsOff,
     handBackLate,

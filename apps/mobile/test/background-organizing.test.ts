@@ -376,6 +376,23 @@ describe("iPhone — the mailbox goes back when you leave and is taken again whe
     expect(w.live.handedBack()).toBe(false);
   });
 
+  it("TAKING BACK: from the return until its resume answers, and a leave before then ends it", async () => {
+    const w = wire("ios", { service: null });
+    await w.live.phaseChanged("background");
+    expect(w.live.takingBack(), "behind the person nothing is taken back").toBe(false);
+    const back = w.live.phaseChanged("active");
+    expect(w.live.takingBack(), "the return did not say so at its edge").toBe(true);
+    await back;
+    expect(w.live.takingBack()).toBe(false);
+    await w.live.phaseChanged("background");
+    const second = w.live.phaseChanged("active");
+    const left = w.live.phaseChanged("background");
+    expect(w.live.takingBack(), "a leave queued behind the return still read as taking back").toBe(false);
+    await Promise.all([second, left]);
+    expect(w.live.handedBack()).toBe(true);
+    expect(w.live.takingBack()).toBe(false);
+  });
+
   it("REFUSED: a resume that cannot take the mailbox back leaves the state saying handed back", async () => {
     /**
      * The contention cell's third outcome. A desktop took the mailbox while the phone was asleep,
