@@ -21,6 +21,101 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.1] — 2026-11-09
+
+### Phone: one ring on a selected segment, the server confirm fits, a calmer News head
+
+On the phone (Android and iOS): under the ohmarchy face in light mode, the selected part of a segmented
+control (the Screener's shelves, the face setting, a sender's scope) wore two rings at once; it now wears
+the face's one. The AI's suggested destination on a sender's page keeps its lift under the paper face.
+"Remove and delete drafts" on Servers no longer runs past the panel on a narrow screen or in German: the two
+buttons wrap. The read rule under the News heading is its own sentence instead of trailing the line above.
+Held sideways, and on a short phone such as the iPhone SE, a sender's page lays its choices out in one row
+with the scope control at its end, so the held mail stays readable above it. The row opens with the
+suggested choice in view, and the notes under it keep clear of the screen's edges. On a phone held sideways the
+heading of a list (Ohbox, News, Receipts, Screener) takes one line, so more of the list shows.
+
+### HTML letters are readable on the phone in dark appearance
+
+On Android and iOS in dark appearance, an HTML letter that set its own dark text was drawn straight onto
+the app's dark background, so its headings and paragraphs were nearly invisible. The phone now reads
+letters the way the web reader does: each letter sits on its own light sheet, and in dark appearance a
+letter drawn for a light page is shown in dark colours with its pictures kept as they are. A letter its
+sender already drew dark is left alone, in its own colours. "Original" beside "Show as text" shows a
+letter in its own colours, and "Adapt to dark" goes back. A letter's own dark-mode styles no longer follow the
+phone's system appearance, so a receipt that darkens itself for a dark phone stays readable in both of
+ohmail's appearances. A reply whose quoted history is folded takes its colours from the reply itself, not
+from the history it hides. On a wide iPad pane the blocked-images sentence stands on its own line, with
+"Show images" and "Show as text" together in one row under it. A letter whose HTML part cannot be read is shown as
+text with a short note saying so, and the rest of the reader stays as it is.
+
+### Foldables and the iPad: the rail on mid-width screens, one list of places, Settings always in reach
+
+On a foldable's inner screen held upright (about 600 to 700 dp wide, too narrow for two panes) ohmail no
+longer draws a phone stretched across it: the navigation is the side rail instead of the bottom dock, and
+the mail list reads as one centred column instead of rows the width of the screen. On Android the rail
+also stands off the screen's edge instead of touching it.
+
+With two panes on Android, the places are listed on the rail and under More, and the extra sidebar
+button with a third copy of the same list is gone. On the iPad the sidebar keeps Settings and "Connect to
+a server" pinned at its foot, so they are reachable without scrolling on the iPad mini held sideways, and
+the list pane ends in a soft fade above the Search and New mail buttons instead of a hard edge.
+
+### More opens its destinations beside its list on a tablet or an unfolded phone
+
+On the phone app, Android and iOS, a window with two panes (an unfolded foldable, an iPad) draws
+More as a list with the destination it opened beside it: Settings, the piles, a tag or a folder,
+History, Drafts, Scheduled, Trash, Search and the server picker open in the right-hand pane, and
+the row stays marked while it is open. More no longer stretches one list across the whole window,
+and Settings on a foldable held like a book no longer leaves the left half empty. A signature or
+an away message not yet saved is asked about before another row replaces it. A phone is unchanged.
+
+### Phone: sheets with a text field stay above the keyboard, and notices stand where you acted
+
+On iPhone and iPad, typing a tag name in the Tag sheet raised the keyboard over the whole sheet: the
+field, your tags, Create and Cancel were all hidden. The Tag sheet, and the Sign in again and Server
+settings sheets in Settings, now rise above the keyboard on iOS and Android.
+
+On an iPad, an unfolded foldable or an Android tablet, a notice such as "Queued in Answer Later · Undo"
+now stands in the pane you acted in: over the message while one is open, over the list otherwise. It
+used to sit in the middle of the screen, half over the list and half over the reader. Beside a navigation
+rail it is centred in the content. A sheet over the reading pane now ends at the pane's foot with
+rounded corners instead of running to the bottom of the screen.
+
+### The phone's message bar keeps Later and Park in reach on narrow screens and panes
+
+On the phone, the bar under an open message now shows Forward as its icon when the word would push
+Later off the bar, so a German bar shows Antworten, Später and ⋯ instead of Antworten, Weiterleiten
+and ⋯. English phone bars are unchanged. On the narrowest screens and at larger text sizes Forward
+moves behind ⋯ so Later can stay. On a foldable, an iPad in portrait and other tablets where the
+reader is narrower than 560 points, including a message opened from search on one half of a book
+fold, the reader uses the same bar as the phone rather than the desktop one, which showed Reply all
+and Mark unread while Later, Park and Resurface folded away. The small ⋯ beside the time of an open
+message no longer offers Mark unread a second time where the bar already does. Android and iOS.
+
+### The phone no longer says "Handed back" when you return to it
+
+On a phone that organizes its mailbox on its own (Android and iPhone), coming back to ohmail showed a "Handed back — Another computer can take this mailbox now." card above the Ohbox for a few seconds while the phone took the mailbox back. The Ohbox now shows nothing there and Settings says "Starting" until the phone holds the mailbox again. If the phone cannot take it back, both still say "Handed back".
+
+### The phone keeps the composer on screen while you type in landscape
+
+On an Android phone held sideways, typing a reply or a new mail opened the keyboard's full-screen editor:
+a bare text field and a Done key took the whole screen, and the composer's head, attachments and Send were
+gone until you closed it. Every text field in the phone app (the composer, search, folder names, Settings,
+sign-in) now stays where it is, with the keyboard below it. iPhone and iPad already behaved this way.
+
+On iPhone and iPad the keyboard now follows the app's theme: with ohmail set to Dark on a device in Light
+mode, the keyboard opened light under the dark composer; it now opens dark, and light with the Light theme.
+
+### Dark letters read on the web and desktop
+
+A letter that sets its own dark page and light text, such as `<body bgcolor=#000 text=#fff>`, is no longer drawn
+in near-black text on that dark page; the reader now uses the letter's own text colour when it reads on that
+dark page, and its usual dark text otherwise. A letter whose stylesheet
+paints the page dark only for dark mode is no longer shown on that dark page in the light theme too, and in the
+dark theme its dark-mode rules no longer stack with the reader's own inversion, which left such a letter grey on
+grey. Web and desktop.
+
 ## [1.0.0] — 2026-11-09
 
 ### Phone: background organizing stops cleanly at Android's time limit
@@ -17229,7 +17324,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.1
 [1.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.0
 [0.30.50]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.50
 [0.30.49]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.49
