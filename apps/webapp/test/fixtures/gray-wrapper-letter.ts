@@ -7,7 +7,7 @@
  * captured here rather than the sender's words — a declared canvas plus a light-but-colourless
  * body background is all the classification and the paper depend on.
  *
- * `clampedPaper` must drop that grey to the app's own white, so a component render of this
+ * `paintedPaper` must drop that grey to the app's own white, so a component render of this
  * message carries no `--ohmail-paper` at all.
  */
 export const GRAY_WRAPPER_HTML =
@@ -21,7 +21,7 @@ export const GRAY_WRAPPER_TEXT =
 /**
  * THE OTHER SIDE OF THE CLAMP: a deliberately COLOURED light canvas. The same 600px frame, but
  * the page is a real pale blue (`#cfe0ff`) — a chroma well past the neutral band — so it is a
- * design the reader chose to keep, and `clampedPaper` must leave its ground alone.
+ * design the reader chose to keep, and `paintedPaper` must leave its ground alone.
  */
 export const TINTED_WRAPPER_HTML =
   '<body bgcolor="#cfe0ff"><table width="600"><tr><td><p>A designed card.</p></td></tr></table></body>';

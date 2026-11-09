@@ -57,12 +57,17 @@ export function htmlHistoryVerdict(html: string, subject?: string | null): Quote
   if (known !== undefined) return known;
   let v: QuotedVerdict = "unread";
   if (html.length <= MAIL_MAX_HTML_CHARS && html.length <= QUOTED_HISTORY_LIMITS.chars) {
-    const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
-    const htmlEl = doc.children.find((n): n is Element => n instanceof Element && n.tagName === "html");
-    const body = (htmlEl ?? doc).children.find((n): n is Element => n instanceof Element && n.tagName === "body");
-    const head = (htmlEl ?? doc).children.find((n): n is Element => n instanceof Element && n.tagName === "head");
-    const sheets = (head?.children ?? []).filter((n): n is Element => n instanceof Element && n.tagName === "style").map(sheetText);
-    v = quotedHistoryVerdictOfHtml<AnyNode>(body ?? doc, phoneQuotedTree, { sheets, subject });
+    try {
+      const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
+      const htmlEl = doc.children.find((n): n is Element => n instanceof Element && n.tagName === "html");
+      const body = (htmlEl ?? doc).children.find((n): n is Element => n instanceof Element && n.tagName === "body");
+      const head = (htmlEl ?? doc).children.find((n): n is Element => n instanceof Element && n.tagName === "head");
+      const sheets = (head?.children ?? []).filter((n): n is Element => n instanceof Element && n.tagName === "style").map(sheetText);
+      v = quotedHistoryVerdictOfHtml<AnyNode>(body ?? doc, phoneQuotedTree, { sheets, subject });
+    } catch {
+      // Hostile html never takes the reader down: its text folds by its own reading.
+      return "unread";
+    }
   }
   if (verdicts.size >= 64) verdicts.delete(verdicts.keys().next().value!);
   verdicts.set(key, v);

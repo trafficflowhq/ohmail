@@ -626,7 +626,9 @@ describe("a message cannot reach the app around it", () => {
     // place, and no security assertion in this file would notice.
     const doc = await docFor(OWNER_BILLING_HTML);
     expect(doc).toContain(".cta");
-    expect(doc).toContain("@media only screen and (max-width:620px)");
+    // Its width block decided for the 572-px frame: the rules it holds apply, the condition is gone.
+    expect(doc).toContain(".card { width:100% !important;");
+    expect(doc).not.toContain("@media only screen and (max-width:620px)");
     expect(doc).toContain("background:#d97757");
   });
 
