@@ -186,10 +186,10 @@ describe("the way back mints its link at the press — never a held address", ()
     const wall = read("src/ui/AccountWall.tsx");
     expect(wall).toContain("mintManageLink(session, locale)");
     expect(wall).toMatch(/if \(link\.kind === "url"\) \{[\s\S]*?leave\(link\.url\);/);
-    // Nothing on the wall opens an address it holds: the only other page is the guide.
+    // Nothing on the wall opens an address it holds: the only other pages are the guide and the deletion page.
     expect(wall).not.toMatch(/leave\(action\.url\)|facts\.manageUrl/);
     const opened = [...wall.matchAll(/leave\(([^)]*)\)/g)].map((m) => m[1]);
-    expect(new Set(opened)).toEqual(new Set(["link.url", "SELF_HOST_GUIDE"]));
+    expect(new Set(opened)).toEqual(new Set(["link.url", "SELF_HOST_GUIDE", "DELETE_ACCOUNT_URL"]));
   });
 
   it("only the way back arms the poll — a deletion is no payment", () => {

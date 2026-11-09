@@ -20,7 +20,7 @@ import { wallSays, type WallAction, type WallLine } from "./wall-says";
 import { WALL_READ_MS, wallLift, type WallCheck, type WallLift } from "./wall-lift";
 import { useTheme } from "../theme";
 import {
-  exportFilename, mintManageLink, opensTheWall, readAccess, readExport, SELF_HOST_GUIDE,
+  DELETE_ACCOUNT_URL, exportFilename, mintManageLink, opensTheWall, readAccess, readExport, SELF_HOST_GUIDE,
 } from "../net/account";
 import { shareAttachmentBytes } from "../mail/open-attachment-native";
 import { Buffer } from "buffer";
@@ -55,7 +55,6 @@ function say(line: WallLine): string {
     case "wallErasure": return Copy.wallErasure(line.date ?? "");
     case "wallErasureHeld": return Copy.wallErasureHeld;
     case "wallErasureUnknown": return Copy.wallErasureUnknown;
-    case "wallOpenInBrowser": return Copy.wallOpenInBrowser;
   }
 }
 
@@ -157,6 +156,7 @@ export function AccountWall(
     (action: WallAction) => {
       if (action.id === "manage" || action.id === "delete") { void mintAndLeave(action.id); return; }
       if (action.id === "export") { void moveOut(action.path); return; }
+      if (action.id === "deletePage") { leave(DELETE_ACCOUNT_URL); return; }
       /* The way off the screen: Servers holds disconnect and forget, and this wall stands where
          the tabs those were reachable behind used to be. */
       router.push("/servers");
@@ -184,9 +184,6 @@ export function AccountWall(
         ))}
         {plan.erasure ? (
           <Txt variant="note" tone="ink3">{say(stamp(plan.erasure))}</Txt>
-        ) : null}
-        {plan.openElsewhere ? (
-          <Txt variant="body" tone="ink2">{say({ key: plan.openElsewhere })}</Txt>
         ) : null}
 
         {/* THE ACTIONS ARE THE SCREEN'S ONLY EMPHASIS — one column, in the order a person meets
@@ -238,7 +235,7 @@ export function AccountWall(
               {action.id === "manage" && action.hint ? (
                 <Txt variant="note" tone="ink3">{action.hint}</Txt>
               ) : null}
-              {action.id === "export" || action.id === "delete" ? (
+              {action.id === "export" || action.id === "delete" || action.id === "deletePage" ? (
                 <Txt variant="note" tone="ink3">{action.hint}</Txt>
               ) : null}
               {action.id === "export" ? (

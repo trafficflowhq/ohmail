@@ -36,6 +36,7 @@ import { useConnection } from "../src/net/connection";
 import { accessFeedFor, onAccessFeed } from "../src/net/account";
 import type { ConnectedSession } from "../src/net/pairing";
 import { storageRowValue } from "../src/ui/storage-notice";
+import { aboutLinks } from "../src/ui/about-links";
 import { changeServerSettings, checkMailbox, resupplyPassword, selfChecksThisSession } from "../src/net/mailboxes";
 import { backupExclusion, subscribeBackupExclusion } from "../src/engine/backup-exclusion";
 import { phoneEngineStart } from "../src/engine/engine-artifact";
@@ -438,6 +439,16 @@ function SettingsBody() {
               else void Linking.openURL(mail.mailto).catch(() => undefined);
             }}
           />
+          {/* The privacy policy, imprint and support pages, and Delete account for a Cloud account. */}
+          {aboutLinks(session).map((link) => (
+            <Nav
+              key={link.url}
+              label={link.label}
+              sub={link.sub}
+              chevron
+              onPress={() => { void Linking.openURL(link.url).catch(() => undefined); }}
+            />
+          ))}
         </Panel>
       </Scroller>
     </Screen>

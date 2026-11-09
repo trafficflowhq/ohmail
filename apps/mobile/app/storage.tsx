@@ -1,8 +1,8 @@
 /**
  * Settings → Storage: the numbers the card shows, in full. Used of the cap, per mailbox, what the
  * mail is expected to need in GB and in letters, from which month text is kept, what counts and why
- * it is limited, the plans with their rooms and the fitted one, and the storage mails switch. The
- * store face names no amount and links nowhere: "Manage your plan at ohmail.app" is plain text.
+ * it is limited, and the storage mails switch. The store face names no amount, no plan to move to
+ * and links nowhere; a sideload build adds the plans, the fitted one and the Manage press.
  */
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Linking, View } from "react-native";

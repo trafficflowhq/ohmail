@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * STORAGE ON THE PHONE, RENDERED: the Ohbox card and the Storage screen draw the numbers and, on the
- * store face, no amount, no purchase press and no link (no `Linking` call, whatever is pressed);
+ * store face, no amount, no plan to move to, no purchase press and no link (no `Linking` call, whatever is pressed);
  * Dismiss is the server's to keep; Load it now shows an emptied letter's text for this view and
  * writes nothing anywhere: one GET, and nothing else asked of the server or the device.
  */
@@ -95,15 +95,15 @@ beforeEach(() => {
 afterEach(() => { open?.unmount(); open = null; });
 
 describe("the card atop the Ohbox, store face", () => {
-  it("draws the numbers and the fitted plan, no amount, no press but Dismiss, no link", async () => {
+  it("draws the numbers, no plan to move to, no amount, no press but Dismiss, no link", async () => {
     const { s } = door({ "GET /account/access": json(ANSWER) });
     await readAccess(s);
     open = mount(createElement(StorageNotice, { session: s }));
     const text = open.el.textContent ?? "";
     expect(text).toContain("Storage is 80% full");
     expect(text).toContain("3.2 GB of your trial room of 4 GB used. Expected about 12.5 GB when the import finishes.");
-    expect(text).toContain("Plus + 10 GB storage keeps all your mail: 15 GB.");
-    expect(text).toContain("Manage your plan at ohmail.app");
+    expect(text).not.toContain("Plus");
+    expect(text).not.toContain("ohmail.app");
     expect(text).not.toMatch(PRICE);
     expect(roles(open.el, "button")).toEqual(["Dismiss"]);
     expect(roles(open.el, "link")).toEqual([]);
@@ -150,7 +150,7 @@ describe("the card atop the Ohbox, store face", () => {
 });
 
 describe("the Storage screen's body, store face", () => {
-  it("draws used of the cap, the mailbox, the estimate, the plans with GB and letters; no amount, no link", () => {
+  it("draws used of the cap, the mailbox, the estimate, what the trial's room becomes; no plans, no add-on, no amount, no link", () => {
     const facts = accessOf(ANSWER)!.storage!;
     open = mount(createElement(StoragePane, {
       facts, labelOf: () => "sam@example.com", manage: createElement("span", null, "PRESS"), distribution: "store",
@@ -158,23 +158,25 @@ describe("the Storage screen's body, store face", () => {
     const text = open.el.textContent ?? "";
     for (const said of [
       "3.2 GB of 4 GB", "80%", "used, your trial room", "sam@example.com", "3.2 GB kept · 12.5 GB expected",
-      "Expected when the import finishes: about 12.5 GB, 500,000 letters.",
-      "Solo · your plan", "2 GB · about 80,000 letters", "Plus + 10 GB storage", "Keeps all your mail",
-      "Manage your plan at ohmail.app", "Only the text of your letters counts.",
+      "Expected when the import finishes: about 12.5 GB, 500,000 letters.", "Only the text of your letters counts.",
+      "Your trial keeps up to 4 GB. After it, your plan keeps 2 GB.",
     ]) expect(text, said).toContain(said);
-    expect(text).not.toContain("PRESS");
+    for (const pointer of ["PRESS", "Plans", "Solo", "Plus", "Storage add-on", "payment", "ohmail.app"]) {
+      expect(text, pointer).not.toContain(pointer);
+    }
     expect(text).not.toMatch(PRICE);
     expect(roles(open.el, "button")).toEqual([]);
     expect(roles(open.el, "link")).toEqual([]);
   });
 
-  it("a sideload build draws its press in the line's place", () => {
+  it("a sideload build draws the plans with their rooms and its press", () => {
     const facts = accessOf(ANSWER)!.storage!;
     open = mount(createElement(StoragePane, {
       facts, labelOf: () => "", manage: createElement("span", null, "PRESS"), distribution: "sideload",
     }));
-    expect(open.el.textContent).toContain("PRESS");
-    expect(open.el.textContent).not.toContain("Manage your plan at ohmail.app");
+    for (const said of ["PRESS", "Solo · your plan", "2 GB · about 80,000 letters", "Plus + 10 GB storage", "Keeps all your mail"]) {
+      expect(open.el.textContent, said).toContain(said);
+    }
   });
 });
 

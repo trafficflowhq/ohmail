@@ -18,7 +18,7 @@ import { appLifecycle } from "./AccountWall";
 import { Button, Panel, Txt, useCardSides, useTopPad } from "./base";
 import { dayStamp } from "./day-stamp";
 import {
-  QUIET_RETURN_MS, dismissKey, remember, settlesTheStrip, stripNotice, stripPress,
+  QUIET_RETURN_MS, dismissKey, remember, settlesTheStrip, stripLineKey, stripNotice, stripPress,
 } from "./lifecycle-strip";
 import { RETURN_DEBOUNCE_MS, wallLift, type WallLift } from "./wall-lift";
 import {
@@ -113,9 +113,9 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
   }
 
   const date = dayStamp(notice.deadline, locale);
-  /* THE PRESS IS `stripPress`'s alone. The store face says the same sentence and offers no door,
-     because the page it would open is where a subscription is bought (App Review 3.1.1, Play's
-     billing rule); the deadline is a fact whatever the build is. */
+  /* THE PRESS IS `stripPress`'s alone, and the sentence `stripLineKey`'s. The store face offers no
+     door, because the page it would open is where a subscription is bought (App Review 3.1.1, Play's
+     billing rule), and says when organizing stops without asking anybody to pay. */
   const press = stripPress(notice);
   return (
     <Panel
@@ -127,11 +127,7 @@ export function LifecycleStrip({ session }: { session: ConnectedSession | null }
       }}
     >
       <Txt variant="body" accessibilityRole="summary">
-        {notice.kind === "grace"
-          ? Copy.stripGraceEnds(date)
-          : notice.kind === "pastDue"
-            ? Copy.stripPaymentFailed(date)
-            : Copy.stripTrialEnds(date)}
+        {Copy[stripLineKey(notice)](date)}
       </Txt>
       <View style={{ flexDirection: "row", gap: 8 }}>
         {press !== null ? (

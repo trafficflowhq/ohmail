@@ -1595,6 +1595,11 @@ const TABLE = {
   helpDMailbox: "Mailbox",
   helpDLastSync: "Last sync error",
   helpDNone: "none",
+  /** Settings › About's pages on ohmail.app (`ui/about-links.ts`), each opened in the browser. */
+  aboutPrivacy: "Privacy policy",
+  aboutImprint: "Imprint",
+  aboutSupport: "Support page",
+  deleteAccountRow: "Delete account",
 
   /* --------------------------------------------- organizing in the background */
 
@@ -3166,16 +3171,16 @@ const TABLE = {
      the honest control; a button that could only ever be refused is not. */
   wallDeleteElsewhere:
     "Deleting your account needs your second factor, so it happens on your account page in a browser. Your mailbox is not touched.",
-  /* THE STORE FACE'S ONE SENTENCE, and it asks nobody to buy anything: a store copy may not carry
-     a call to action towards a purchase page (App Review 3.1.1), and "open the site to subscribe"
-     is one. It names what a person can do with the account instead. */
-  wallOpenInBrowser:
-    "Open ohmail.app in a browser to manage or delete this account.",
+  /* THE STORE FACE'S DELETE: the deletion-only page, which sells nothing (App Review 3.1.3(f)). */
+  wallDeletePage:
+    "Deleting your account happens on ohmail.app/delete-account in a browser. Your mailbox is not touched.",
 
   stripGraceEnds: (date: string) => `Your trial ended. ohmail keeps organizing until ${date}.`,
   stripPaymentFailed: (date: string) =>
     `Your last payment failed. Fix it by ${date} to keep ohmail organizing.`,
   stripTrialEnds: (date: string) => `Your trial ends on ${date}.`,
+  /** The store face's failed payment: the fact and its date, no request to fix it. */
+  stripPaymentFailedPlain: (date: string) => `Your last payment failed. ohmail keeps organizing until ${date}.`,
   stripSubscribe: "Subscribe",
   stripFixPayment: "Fix payment",
   stripLater: "Later",
@@ -3183,7 +3188,7 @@ const TABLE = {
   stripDismiss: "Got it",
   /**
    * STORAGE (`ui/StorageNotice.tsx`, `app/storage.tsx`, the emptied letter): numbers first, each size
-   * with its unit as the web says it. The store face names plans and rooms, never an amount, a purchase or a link.
+   * with its unit as the web says it. The store face draws no plan, payment, purchase or link; a sideload build adds the plans.
    */
   storageCardNear: (pct: string) => `Storage is ${pct} full`,
   storageCardFull: "Storage is full",
@@ -3201,11 +3206,11 @@ const TABLE = {
     `From ${date} your plan keeps ${plan}, and ohmail keeps the text of your newest letters within it.`,
   storageDropUnpaid: (plan: string) =>
     `From 14 days after your first payment your plan keeps ${plan}, and ohmail keeps the text of your newest letters within it.`,
+  storageDropPlain: (plan: string) =>
+    `After your trial your plan keeps ${plan}; ohmail keeps the text of your newest letters within it, and older letters stay on your mail server.`,
   storageFitAll: (name: string, size: string) => `${name} keeps all your mail: ${size}.`,
   storageFitMost: (name: string, size: string) => `${name} keeps the most: ${size}.`,
   storageWithAddon: (plan: string, size: string) => `${plan} + ${size} storage`,
-  /** The store face's line in place of any button: plain text, no link. */
-  storageManageAt: "Manage your plan at ohmail.app",
   storageManage: "Manage subscription",
   storageDismiss: "Dismiss",
   storageDismissFailed: "This could not be hidden just now. Try again in a moment.",
@@ -3232,6 +3237,7 @@ const TABLE = {
   storageYourPlan: "Your plan",
   storagePlanTrial: (limit: string, plan: string, planGb: string) =>
     `Your trial keeps up to ${limit}. On ${plan}, ${planGb} from 14 days after your first payment.`,
+  storagePlanTrialPlain: (limit: string, planGb: string) => `Your trial keeps up to ${limit}. After it, your plan keeps ${planGb}.`,
   storagePlanUntil: (limit: string, date: string, plan: string, planGb: string) =>
     `You keep up to ${limit} until ${date}. Then ${plan} keeps ${planGb}.`,
   storagePlanKeeps: (plan: string, size: string) => `${plan} keeps ${size}.`,

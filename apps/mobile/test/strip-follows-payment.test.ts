@@ -14,8 +14,10 @@ import { resetAccessLockForTests } from "../src/net/access-lock";
 import type { AppLifecycle, CadenceTimers } from "../src/net/drain-cadence";
 import type { ConnectedSession } from "../src/net/pairing";
 import {
-  QUIET_RETURN_MS, resetDismissalsForTests, settlesTheStrip, stripNotice, stripPress,
+  QUIET_RETURN_MS, resetDismissalsForTests, settlesTheStrip, stripLineKey, stripNotice, stripPress,
 } from "../src/ui/lifecycle-strip";
+import { EN } from "../src/copy.en";
+import { DE } from "../src/copy.de";
 import { RETURN_DEBOUNCE_MS, wallLift } from "../src/ui/wall-lift";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
@@ -274,12 +276,27 @@ describe("the strip's press", () => {
       await readAccess(s);
       const entry = accessFeedFor("pairing-1");
       expect(entry?.answer.manageUrl, "the open arm names no link").toBeUndefined();
-      const notice = stripNotice(entry, s.ownerKey ?? null, new Set(), clock);
+      const notice = stripNotice(entry, s.ownerKey ?? null, new Set(), clock, "sideload");
       expect(notice, "a strip is drawn").not.toBeNull();
       expect(stripPress(notice!, "sideload")).toBe(want);
       expect(stripPress(notice!, "store")).toBeNull();
     });
   }
+
+  it("the store face says no trial end and no 'fix it': a grace and a failed payment state when organizing stops", async () => {
+    const { s } = session(() => OPEN_TRIAL);
+    await readAccess(s);
+    const entry = accessFeedFor("pairing-1");
+    expect(stripNotice(entry, s.ownerKey ?? null, new Set(), clock, "store"), "a trial's end is a pointer to buying").toBeNull();
+    expect(stripNotice(entry, s.ownerKey ?? null, new Set(), clock), "the shipped build is the store face").toBeNull();
+    const deadline = "2026-10-01T09:00:00.000Z";
+    expect(stripLineKey({ kind: "pastDue", deadline }, "store")).toBe("stripPaymentFailedPlain");
+    expect(stripLineKey({ kind: "grace", deadline }, "store")).toBe("stripGraceEnds");
+    expect(stripLineKey({ kind: "pastDue", deadline }, "sideload")).toBe("stripPaymentFailed");
+    expect(stripLineKey({ kind: "trialEnding", deadline }, "sideload")).toBe("stripTrialEnds");
+    expect(EN.stripPaymentFailedPlain("October 1")).toBe("Your last payment failed. ohmail keeps organizing until October 1.");
+    expect(DE.stripPaymentFailedPlain("1. Oktober")).toBe("Deine letzte Zahlung ist fehlgeschlagen. ohmail organisiert noch bis zum 1. Oktober.");
+  });
 
   it("a failed first read publishes nothing, and the next return to the foreground asks again", async () => {
     let fail = true;
@@ -305,7 +322,7 @@ describe("the strip's press", () => {
     await r.flush();
     await r.flush();
     expect(reads(), "the return asked again").toBe(2);
-    expect(stripNotice(accessFeedFor("pairing-1"), s.ownerKey ?? null, new Set(), clock)?.kind).toBe("trialEnding");
+    expect(stripNotice(accessFeedFor("pairing-1"), s.ownerKey ?? null, new Set(), clock, "sideload")?.kind).toBe("trialEnding");
     machine.stop();
   });
 });

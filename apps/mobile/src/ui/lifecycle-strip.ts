@@ -88,10 +88,13 @@ export function remember(key: string): void {
  */
 export function stripNotice(
   entry: AccessFeed | null, owner: string | null, hidden: ReadonlySet<string>, now: number,
+  distribution?: Distribution,
 ): Notice | null {
   if (entry === null || !entry.answer.metered) return null;
   const next = noticeOf(entry.answer.lifecycle, entry.caughtUp ?? undefined, now);
   if (next === null) return null;
+  /* A trial's end, with nothing stopping yet, only points at buying: the store face says none. */
+  if (next.kind === "trialEnding" && !mayLinkOut(distribution)) return null;
   const key = dismissKey(next, owner);
   return hidden.has(key) || dismissed(key) ? null : next;
 }
@@ -106,14 +109,29 @@ export function stripNotice(
 export function stripPress(
   notice: Notice, distribution?: Distribution,
 ): "subscribe" | "fixPayment" | null {
-  const mayLinkOut = distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution);
-  if (!mayLinkOut) return null;
+  if (!mayLinkOut(distribution)) return null;
   switch (notice.kind) {
     case "grace":
     case "trialEnding": return "subscribe";
     case "pastDue": return "fixPayment";
     case "caughtUp": return null;
   }
+}
+
+/**
+ * The deadline strip's sentence. The store face states when organizing stops and asks nobody to
+ * fix a payment (App Review 3.1.3(f), Play Payments); a sideload keeps the browser's own words.
+ */
+export function stripLineKey(
+  notice: Exclude<Notice, { kind: "caughtUp" }>, distribution?: Distribution,
+): "stripGraceEnds" | "stripPaymentFailed" | "stripPaymentFailedPlain" | "stripTrialEnds" {
+  if (notice.kind === "grace") return "stripGraceEnds";
+  if (notice.kind === "trialEnding") return "stripTrialEnds";
+  return mayLinkOut(distribution) ? "stripPaymentFailed" : "stripPaymentFailedPlain";
+}
+
+function mayLinkOut(distribution: Distribution | undefined): boolean {
+  return distribution === undefined ? linksOutToBilling() : linksOutToBilling(distribution);
 }
 
 /** The schedule's read is done once an answer earns no deadline: that ends a hand-off poll. */
