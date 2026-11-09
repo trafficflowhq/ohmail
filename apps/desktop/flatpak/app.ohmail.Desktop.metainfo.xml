@@ -78,6 +78,16 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.2" date="2026-11-09">
+      <description>
+        <ul>
+          <li>On ohmail Cloud, a sent message with uploaded files gets its Sent copy later too</li>
+          <li>A sent message whose Sent copy could not be saved now says so, and why</li>
+          <li>Letters are read at the width they are drawn</li>
+          <li>Phone: newsletters wider than the screen are drawn scaled to it, not shown as text</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.1" date="2026-11-09">
       <description>
         <ul>
@@ -114,17 +124,6 @@
       <description>
         <ul>
           <li>The phone's storage figures match the web for small mailboxes</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.48" date="2026-11-08">
-      <description>
-        <ul>
-          <li>Checking for moves and read marks to send to the mail server costs almost nothing</li>
-          <li>Cloud storage says what your mailboxes need</li>
-          <li>Settings → Storage shows what your mail needs, and a letter emptied for space opens on request</li>
-          <li>Screener decisions made just before quitting are no longer lost</li>
-          <li>The phone shows your Cloud storage and loads an emptied letter</li>
         </ul>
       </description>
     </release>
