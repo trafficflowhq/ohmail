@@ -282,7 +282,8 @@ describe("the frame is wired to that height, with JavaScript still off", () => {
     expect(FRAME).toContain("scrollEnabled={false}");
     // `nestedScrollEnabled` in any form is the trap: the library then refuses the reader every touch.
     expect(code(FRAME)).not.toContain("nestedScrollEnabled");
-    expect(FRAME).toContain('if (shows.show === "text" || sized.text !== null) {');
+    expect(FRAME).toContain('const asText = unreadable || shows.show === "text" || sized.text !== null;');
+    expect(FRAME).toContain("if (asText) {");
     expect(code(FRAME)).not.toContain("frameHeightEstimate");
   });
 

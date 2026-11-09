@@ -217,3 +217,9 @@ export const palettes: Record<SchemeName, Palette> = {
 export function paletteOf(scheme: SchemeName, face: FaceName = DEFAULT_FACE): Palette {
   return face === "ohmarchy" ? ohmarchyPalettes[scheme] : palettes[scheme];
 }
+
+/**
+ * A letter shown inverted in a dark reader — the web's pair (`message-body.css`, `.mb-sheet[data-dark]`):
+ * the document's paper is `paper`, which the inversion turns into exactly `canvas`, the sheet behind it.
+ */
+export const letterInDark = { paper: "#e4e4e4", canvas: "#1b1b1b" } as const;

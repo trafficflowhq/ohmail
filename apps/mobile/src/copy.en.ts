@@ -1973,6 +1973,11 @@ const TABLE = {
   mailShowImages: "Show images",
   mailShowAsText: "Show as text",
   mailShowOriginal: "Show original",
+  /** A dark reader's per-message flip — the web's `mailBody.darkOriginal` / `darkAdapt` and their titles. */
+  mailDarkOriginal: "Original",
+  mailDarkAdapt: "Adapt to dark",
+  mailDarkOriginalTitle: "Show this message in its original colours",
+  mailDarkAdaptTitle: "Adapt this message to the dark theme",
   /** The press under a body drawn a page at a time — the web's `bodyText.more`, word for word. */
   bodyShowMore: (percent: number) => `Show more (${percent}% shown)`,
   /** The quoted-history toggle under a body — the web's `bodyText.show` / `bodyText.hide`, word for word. */
@@ -1980,6 +1985,8 @@ const TABLE = {
   bodyHistoryHide: "Hide history",
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
+  /** The html part could not be read (a pass threw on it): this one letter is shown as text. */
+  mailUnreadable: "This message's HTML part could not be read. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */
   /** What a screen reader calls a picture in a letter that the sender gave no alt text. */
   mailPicture: "Picture",

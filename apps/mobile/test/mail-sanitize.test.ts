@@ -14,6 +14,9 @@ import { BLANK_GIF } from "@ohmail/client-engine";
 import { sanitizeMailHtmlPhone, PHONE_LINK_SCHEME } from "../src/mail/sanitize";
 import { frameNavDecision } from "../src/mail/frame-nav";
 import { buildPhoneMailDocument } from "../src/mail/mail-document";
+import {
+  BACKGROUND_VALUE_MAX, MEDIA_DEPTH_MAX, MEDIA_QUERY_MAX, backgroundTokens, mailIsLight, parseCssColor, schemeFreeCss, schemeFreeMedia, sheetPageBackground,
+} from "../src/mail/paper";
 import { shareFilename } from "../src/mail/open-attachment";
 import { blockedNotice } from "../src/mail/notice";
 import { DECKS } from "../src/copy";
@@ -299,7 +302,7 @@ describe("the document shell and the strip's helpers", () => {
   });
   it("the reader's gutter carries the body's alignment, and a table cell breaks words only where it must", () => {
     const doc = buildPhoneMailDocument("<p>x</p>", THEME);
-    expect(doc).toContain("body{margin:0;padding:14px 0 20px;");
+    expect(doc).toContain("body{margin:0;padding:14px 16px 20px;");
     // `word-break:break-word` on body collapsed an auto-layout column to one glyph a line ("Ro / w / 1").
     expect(doc).toContain("td,th{word-break:normal}");
     expect(doc).toContain("overflow-wrap:break-word");
@@ -311,6 +314,204 @@ describe("the document shell and the strip's helpers", () => {
     expect(shareFilename("a/b\\c:d.pdf")).toBe("a_b_c_d.pdf");
     expect(shareFilename("...")).toBe("attachment");
     expect(shareFilename("x".repeat(300)).length).toBe(128);
+  });
+});
+
+describe("a letter is set on a light sheet, and a dark reader inverts only a light one", () => {
+  const INVERT = { paper: "#e4e4e4", canvas: "#1b1b1b" };
+  const FILTER = "filter:invert(1) hue-rotate(180deg)";
+  it("the sheet is light whatever the app's scheme: the light paper and ink, no dark colour scheme", () => {
+    const doc = buildPhoneMailDocument("<p>x</p>", THEME);
+    expect(doc).toContain(":root{color-scheme:light}");
+    expect(doc).toContain(`background:${THEME.bg};color:${THEME.ink}`);
+    expect(doc).not.toContain(FILTER);
+  });
+  it("inverted, the body flips as a whole onto the dark sheet and every picture flips back", () => {
+    const doc = buildPhoneMailDocument('<p style="color:#333">Hi</p><img src="x">', { ...THEME, invert: INVERT });
+    expect(doc).toContain(`body{background:${INVERT.paper};${FILTER}}`);
+    expect(doc).toContain(`:root{background:${INVERT.canvas}}`);
+    expect(doc).toContain(`img,video,picture,[style*="url(" i]{${FILTER}}`);
+    // After the base rule, so the inverted paper wins over the light one.
+    expect(doc.indexOf(`body{background:${INVERT.paper}`)).toBeGreaterThan(doc.indexOf(`background:${THEME.bg}`));
+  });
+  it("a mail that declares no paper, or a light one, is light; a dark canvas is not", () => {
+    const light = (html: string) => sanitizeMailHtmlPhone(html).light;
+    expect(light('<p style="color:#333">Plain bulk mail</p>')).toBe(true);
+    expect(light('<table bgcolor="#ffffff"><tr><td>x</td></tr></table>')).toBe(true);
+    expect(light('<body bgcolor="#111"><p>x</p></body>')).toBe(false);
+    expect(light('<html><head><style>body{background:#0b0b0b}</style></head><body><p>x</p></body></html>')).toBe(false);
+    expect(light('<div style="background:#111 url(x) no-repeat"><p style="color:#eee">x</p></div>')).toBe(false);
+    expect(light('<table style="background-color:rgb(17,17,17)"><tr><td>x</td></tr></table>')).toBe(false);
+    // A translucent wash or a highlighted word is not the paper.
+    expect(light('<div style="background:rgba(0,0,0,.2)"><p>x</p></div>')).toBe(true);
+    expect(light('<p>a <span style="background:#000;color:#fff">word</span></p>')).toBe(true);
+  });
+  it("the page's own paper and ink are read off body; a wrapper's ground paints only itself", () => {
+    const of = (html: string) => { const m = sanitizeMailHtmlPhone(html); return { paper: m.paper, ink: m.ink }; };
+    expect(of('<body bgcolor="#000" text="#fff"><p>x</p></body>')).toEqual({ paper: "#000000", ink: "#ffffff" });
+    expect(of('<body style="background-color:#121212;color:#f5f5f5"><p>x</p></body>')).toEqual({ paper: "#121212", ink: "#f5f5f5" });
+    // A function colour keeps its spaces (rgb(18, 18, 18)), inline and in the page's own rule.
+    const spaced = sanitizeMailHtmlPhone('<body style="background-color: rgb(18, 18, 18); color: rgb(245, 245, 245)"><p>x</p></body>');
+    expect({ light: spaced.light, paper: spaced.paper, ink: spaced.ink }).toEqual({ light: false, paper: "#121212", ink: "#f5f5f5" });
+    expect(of('<html><head><style>body{background: url(x.png) rgb(16, 16, 16)}</style></head><body><p>x</p></body></html>').paper).toBe("#101010");
+    expect(of('<table><tr><td bgcolor="#111">Brand</td></tr><tr><td style="color:#333">Shipped</td></tr></table>')).toEqual({ paper: null, ink: null });
+    // A body that writes light ink for its dark wrapper keeps that wrapper's ground as the page's.
+    expect(of('<body style="color:#fff"><table bgcolor="#000"><tr><td>x</td></tr></table></body>')).toEqual({ paper: "#000000", ink: "#ffffff" });
+  });
+  it("a body rule inside an at-rule block (the sender's own dark adaptation) is not the page's paper", () => {
+    const of = (sheet: string) => {
+      const m = sanitizeMailHtmlPhone(`<html><head><style>${sheet}</style></head><body><table><tr><td style="color:#333333">Your receipt</td></tr></table></body></html>`);
+      return { light: m.light, paper: m.paper };
+    };
+    const LIGHT = { light: true, paper: null };
+    expect(of("@media (prefers-color-scheme: dark){ .logo{display:none} body{background-color:#1e1e1e !important} }")).toEqual(LIGHT);
+    expect(of("@media (prefers-color-scheme: dark){ body{background:#1e1e1e} .logo{display:none} }")).toEqual(LIGHT);
+    expect(of("@supports (color:red){ @media (prefers-color-scheme:dark){ .a{color:#fff} html,body{background:#000} } } .b{color:red}")).toEqual(LIGHT);
+    expect(of("p{margin:0}/* body{background:#000} */")).toEqual(LIGHT);
+    // A top-level rule after the blocks, or in a picture's url, still reads.
+    expect(of("@import url(x.css); @media screen{ body{background:#fff} } body{background:#0b0b0b}")).toEqual({ light: false, paper: "#0b0b0b" });
+    expect(of("body{background:url(logo@2x.png) #101010}")).toEqual({ light: false, paper: "#101010" });
+  });
+  it("a prefers-color-scheme condition never depends on the device: dark never matches, light always does", () => {
+    const cases: Array<[string, string | null]> = [
+      ["(prefers-color-scheme: dark)", null],
+      ["(prefers-color-scheme: light)", "all"],
+      ["/* x */ ( PREFERS-COLOR-SCHEME : LIGHT )", "all"],
+      ["screen and (prefers-color-scheme: dark)", null],
+      ["only screen and (prefers-color-scheme: light) and (max-width: 600px)", "only screen and (max-width: 600px)"],
+      ["not all and (prefers-color-scheme: dark)", "all"],
+      ["not screen and (prefers-color-scheme: light)", "not screen"],
+      ["(prefers-color-scheme: dark), print", "print"],
+      ["not (prefers-color-scheme: dark)", "all"],
+      ["(max-width: 600px) and (not (prefers-color-scheme: light))", null],
+      ["(prefers-color-scheme: dark) or (max-width: 600px)", "(max-width: 600px)"],
+      ["((prefers-color-scheme: dark) and (min-width: 1px)), (prefers-color-scheme: light)", "all"],
+      ["(prefers-color-scheme: dark) and", null],
+      ["(prefers-color-sch\\65me: dark)", null],
+      ["screen and (max-width: 600px)", "screen and (max-width: 600px)"],
+    ];
+    for (const [query, want] of cases) expect(schemeFreeMedia(query), query).toBe(want);
+    // Past the bound a scheme-naming list never matches, however deep: the reading stays bounded.
+    const deep = `${"(".repeat(MEDIA_QUERY_MAX)}prefers-color-scheme: light${")".repeat(MEDIA_QUERY_MAX)}`;
+    expect(schemeFreeMedia(deep)).toBeNull();
+    // Within the nesting cap a list reads; one bracket past it never matches.
+    expect(schemeFreeMedia(`${"(".repeat(MEDIA_DEPTH_MAX)}prefers-color-scheme: light${")".repeat(MEDIA_DEPTH_MAX)}`)).toBe("all");
+    expect(schemeFreeMedia(`${"(".repeat(MEDIA_DEPTH_MAX + 1)}prefers-color-scheme: light${")".repeat(MEDIA_DEPTH_MAX + 1)}`)).toBeNull();
+    const { html } = sanitizeMailHtmlPhone(
+      '<html><head><style>@media (prefers-color-scheme: dark){body{background:#1e1e1e !important}} @media (prefers-color-scheme: light){.x{color:red}}'
+      + ' .q::after{content:"@media (prefers-color-scheme: dark){"} @supports (color:red){@media screen and (prefers-color-scheme:dark){.y{color:#fff}}}</style></head><body><p>x</p></body></html>',
+    );
+    // A block that never matches is dropped whole; a light one applies everywhere.
+    expect(html).not.toContain("#1e1e1e");
+    expect(html).toContain("@media all{.x{color:red}}");
+    expect(html).toContain('content:"@media (prefers-color-scheme: dark){"');
+    expect(html).toContain("@supports (color:red){}");
+    // A sheet's own media attribute is read by the same rule: a dark-only sheet is dropped, a light one kept.
+    const dark = sanitizeMailHtmlPhone('<html><head><style media="(prefers-color-scheme: dark)">body{background:#111111}</style></head><body><p>x</p></body></html>');
+    expect(dark.html).not.toContain("#111111");
+    expect(dark.light).toBe(true);
+    const light = sanitizeMailHtmlPhone('<html><head><style media="screen and (prefers-color-scheme: light)">body{background:#0b0b0b}</style></head><body><p>x</p></body></html>');
+    expect(light.html).toContain("body{background:#0b0b0b}");
+    expect({ light: light.light, paper: light.paper }).toEqual({ light: false, paper: "#0b0b0b" });
+  });
+  it("the page rule the gate reads is the one painted: a light-scheme block applies, the last body rule wins, a quoted brace is text", () => {
+    const of = (sheet: string) => {
+      const m = sanitizeMailHtmlPhone(`<html><head><style>${sheet}</style></head><body><table><tr><td style="color:#333333">Your receipt</td></tr></table></body></html>`);
+      return { light: m.light, paper: m.paper };
+    };
+    const LIGHT = { light: true, paper: null };
+    const DARK = { light: false, paper: "#0b0b0b" };
+    expect(of("@media (prefers-color-scheme: light){ body{background:#0b0b0b} }")).toEqual(DARK);
+    expect(of("body{background:#ffffff} @media screen{ body{background-color:#0b0b0b} }")).toEqual(DARK);
+    expect(of("body{background:#0b0b0b} @media (prefers-color-scheme: light){ body{background:#ffffff} }")).toEqual(LIGHT);
+    expect(of("body{background:#ffffff} html{background:#0b0b0b}")).toEqual(LIGHT);
+    expect(of('@media print{.a::after{content:"}"} body{background:#0b0b0b}}')).toEqual(LIGHT);
+    expect(of('@media (prefers-color-scheme: dark){.a::after{content:"\\"}"} body{background:#0b0b0b}}')).toEqual(LIGHT);
+    expect(of("@media print{.a{color:red}/* } */ body{background:#0b0b0b}}")).toEqual(LIGHT);
+    expect(of('.a::after{content:"}"} body{background:#0b0b0b}')).toEqual(DARK);
+  });
+  it("the page is read only from rules that hold at every width: a width, height, aspect-ratio or orientation block and @container are left to the web view", () => {
+    const of = (sheet: string) => {
+      const m = sanitizeMailHtmlPhone(`<html><head><style>${sheet}</style></head><body><p style="color:#eeeeee">Night edition</p></body></html>`);
+      return { light: m.light, paper: m.paper };
+    };
+    const LIGHT = { light: true, paper: null };
+    const DARK = { light: false, paper: "#0b0b0b" };
+    for (const wrap of ["@media all", "@media screen", "@media only screen", "@media screen, print", "@media not print", "@media screen and (hover: hover)",
+      "@supports (display:grid)", "@layer base", "@media (prefers-color-scheme: light)"]) {
+      expect(of(`${wrap}{ .a{color:red} body{background:#0b0b0b} }`), wrap).toEqual(DARK);
+    }
+    expect(of("@supports (display:grid){ @media screen{ html{background:#0b0b0b} } }")).toEqual(DARK);
+    for (const wrap of ["@media (min-width:0)", "@media screen and (max-width: 600px)", "@media only all and (orientation: portrait)", "@media (max-height: 900px)",
+      "@media (min-aspect-ratio: 1/1)", "@media screen and (max-device-width: 480px)", "@media print, (max-width: 600px)", "@media tv", "@media not screen",
+      "@container (min-width: 0)", "@media (prefers-color-scheme: light) and (min-width: 0)",
+      "@media print", "@media speech", "@media screen and (prefers-color-scheme: dark)", "@media (prefers-reduced-motion: reduce)", "@font-face", "@keyframes k"]) {
+      expect(of(`${wrap}{ body{background:#0b0b0b} }`), wrap).toEqual(LIGHT);
+    }
+    expect(of("@supports (display:grid){ @media (min-width:0){ html{background:#0b0b0b} } }")).toEqual(LIGHT);
+    // A phone-width dark body is not the page of a letter read wide.
+    expect(sanitizeMailHtmlPhone("<style>@media only screen and (max-width:600px){body{background-color:#000000}}</style><p>Wide words</p>").light).toBe(true);
+  });
+  it("the page is the html/body rule the frame paints, not the body's own background, which the frame never draws", () => {
+    const of = (html: string) => {
+      const m = sanitizeMailHtmlPhone(html);
+      return { light: m.light, paper: m.paper, ink: m.ink };
+    };
+    const BLACK_BODY = 'style="background:#000;color:#fff"';
+    expect(of(`<html><head><style>body{background:#ffffff}</style></head><body ${BLACK_BODY}><p>words</p></body></html>`))
+      .toEqual({ light: true, paper: null, ink: "#ffffff" });
+    expect(of(`<html><body ${BLACK_BODY}><style>body{background:#ffffff}</style><p>words</p></body></html>`))
+      .toEqual({ light: true, paper: null, ink: "#ffffff" });
+    expect(of('<html><head><style>html{background:#0b0b0b}</style></head><body style="background:#fff;color:#eee"><p>words</p></body></html>'))
+      .toEqual({ light: false, paper: "#0b0b0b", ink: "#eeeeee" });
+    // With no such rule the body's own background is the page.
+    expect(of(`<html><body ${BLACK_BODY}><p>words</p></body></html>`)).toEqual({ light: false, paper: "#000000", ink: "#ffffff" });
+    // A sheet the frame never draws (beside the body, outside the head) is not the page either.
+    expect(of('<style>body{background:#000000}</style><body style="background:#fff;color:#111"><p>words</p></body>'))
+      .toEqual({ light: true, paper: null, ink: "#111111" });
+  });
+  it("the page reading is linear on deep at-rule nesting, and the sanitizer reads such a sheet without throwing", () => {
+    // Counted work, not time: characters visited by the scheme pass and the page reading together.
+    const work = (css: string) => { const meter = { visited: 0 }; sheetPageBackground(schemeFreeCss(css, meter), meter); return meter.visited; };
+    for (const k of [1_000, 12_000, 30_000]) {
+      for (const open of ["@layer a{", "@supports (a){", "@media (prefers-color-scheme: light){", "@media (min-width:0){", "@media (prefers-color-scheme: dark){"]) {
+        const css = `${open.repeat(k)}body{background:#0b0b0b}${"}".repeat(k)}`;
+        const visited = work(css);
+        expect(visited, `${open} x${k}`).toBeGreaterThanOrEqual(css.length);
+        expect(visited, `${open} x${k}`).toBeLessThanOrEqual(6 * css.length);
+      }
+      // The web's HIGH shape: thousands of nested every-width blocks still read the body rule inside them.
+      for (const open of ["@layer a{", "@supports (a){"]) {
+        const m = sanitizeMailHtmlPhone(`<html><head><style>${open.repeat(k)}body{background:#0b0b0b}${"}".repeat(k)}</style></head><body><p>x</p></body></html>`);
+        expect({ oversize: m.oversize, light: m.light, paper: m.paper }, `${open} x${k}`).toEqual({ oversize: undefined, light: false, paper: "#0b0b0b" });
+      }
+    }
+    // A scheme-naming list nested to the cap reads each bracket level's group at most three times; past the cap, one pass.
+    const list = (d: number) => `${"(".repeat(d)}prefers-color-scheme: light${")".repeat(d)}`;
+    const listWork = (q: string) => { const meter = { visited: 0 }; schemeFreeMedia(q, meter); return meter.visited; };
+    expect(listWork(list(MEDIA_DEPTH_MAX))).toBeLessThanOrEqual(3 * (MEDIA_DEPTH_MAX + 2) * list(MEDIA_DEPTH_MAX).length);
+    expect(listWork(list(400))).toBeLessThanOrEqual(4 * list(400).length);
+  });
+  it("a background value is split in one bounded pass, a function's parentheses kept whole", () => {
+    expect(backgroundTokens("url(a b.png)  rgb(18, 18, 18) no-repeat")).toEqual(["url(a b.png)", "rgb(18, 18, 18)", "no-repeat"]);
+    const visits = (value: string) => { const meter = { visited: 0 }; backgroundTokens(value, meter); return meter.visited; };
+    // Counted work, not time: each character is visited at most once, and only the first 4 KB are read.
+    const short = "a ".repeat(1000);
+    expect(visits(short)).toBeLessThanOrEqual(short.length);
+    // What comes back is read off the first 4 KB too, whatever splits it.
+    expect(backgroundTokens("a ".repeat(200_000)).length).toBeLessThanOrEqual(BACKGROUND_VALUE_MAX / 2);
+    expect(visits("a ".repeat(200_000))).toBeLessThanOrEqual(BACKGROUND_VALUE_MAX);
+    expect(visits("(".repeat(200_000))).toBeLessThanOrEqual(BACKGROUND_VALUE_MAX);
+    // A crafted body style or page rule stays a light letter, read in bounded work.
+    expect(sanitizeMailHtmlPhone(`<body style="background: ${"a ".repeat(120_000)}"><p>x</p></body>`).light).toBe(true);
+    expect(sanitizeMailHtmlPhone(`<html><head><style>body{background: ${"a ".repeat(120_000)}}</style></head><body><p>x</p></body></html>`).light).toBe(true);
+  });
+  it("the threshold is where black and white ink tie: a mid grey is light, a dark slate is not", () => {
+    expect(mailIsLight(null)).toBe(true);
+    expect(mailIsLight(parseCssColor("#808080"))).toBe(true);
+    expect(mailIsLight(parseCssColor("darkslategray"))).toBe(false);
+    expect(parseCssColor("transparent")).toBeNull();
+    expect(parseCssColor("rgb(1 2 3 / 50%)")).toEqual({ r: 1, g: 2, b: 3, a: 0.5 });
   });
 });
 

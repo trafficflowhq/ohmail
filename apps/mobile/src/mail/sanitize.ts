@@ -31,6 +31,7 @@ import {
 } from "@ohmail/client-engine";
 import { DROP_CONTENT, phoneQuotedTree, sheetText } from "./quoted-tree";
 import { Copy } from "../copy";
+import { letterPaperOf, schemeFreeSheet } from "./paper";
 
 /** One blocked remote reference — the web's `BlockedAsset` shape, minted by the same rules. */
 export interface PhoneBlockedAsset {
@@ -56,6 +57,12 @@ export interface PhoneSanitizedMail {
    * and a raw href would reach the browser past the confirm.
    */
   links: string[];
+  /** The mail's own paper reads light, so a dark reader may invert it (`./paper.ts`, the web's gate). */
+  light: boolean;
+  /** The paper to paint the sheet with when it is not the light sheet's own (`paintedPaper`), or null. */
+  paper: string | null;
+  /** The body's own ink, as `#rrggbb`, or null when it declares none. */
+  ink: string | null;
   /** The html part was past {@link MAIL_MAX_HTML_CHARS} and was not rendered at all. */
   oversize?: boolean;
   /** Asked with {@link PhoneSanitizeOptions.fold}: the quoted history this document leaves out, or null. */
@@ -136,7 +143,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const cids: string[] = [];
   const links: string[] = [];
   if (html.length > MAIL_MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, cids, links, oversize: true };
+    return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, oversize: true };
   }
 
   const seen = new Set<string>();
@@ -191,9 +198,14 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   findHeadStyles(doc.children);
 
   const out: string[] = [];
+  /** The sheets the frame draws, which the page is read from. */
+  const drawn: string[] = [];
 
   const emitStyle = (el: Element): void => {
-    const text = el.children.map((c) => (c instanceof Text ? c.data : "")).join("");
+    // The device's own scheme never reaches the frame: a dark-only sheet or block never applies.
+    const text = schemeFreeSheet(el.children.map((c) => (c instanceof Text ? c.data : "")).join(""), el.attribs.media);
+    if (text === null) return;
+    drawn.push(text);
     const neutral = neutraliseCss(text, (url) => cssUrl(url), recordSheet);
     out.push("<style>", cssTextSafe(neutral), "</style>");
   };
@@ -359,7 +371,7 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const skip = new Set<AnyNode>(range === null ? [] : quotedHistoryCut(root, phoneQuotedTree, range).history);
   walk(body ? body.children : doc.children, skip);
 
-  const mail: PhoneSanitizedMail = { html: out.join(""), blocked, sheets, cids, links };
+  const mail: PhoneSanitizedMail = { html: out.join(""), blocked, sheets, cids, links, ...letterPaperOf(doc.children, drawn, skip) };
   if (opts.fold === true) mail.history = range === null || skip.size === 0 ? null : { at: range.at };
   return mail;
 }
