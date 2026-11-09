@@ -78,6 +78,21 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.1" date="2026-11-09">
+      <description>
+        <ul>
+          <li>Phone: one ring on a selected segment, the server confirm fits, a calmer News head</li>
+          <li>HTML letters are readable on the phone in dark appearance</li>
+          <li>Foldables and the iPad: the rail on mid-width screens, one list of places, Settings always in reach</li>
+          <li>More opens its destinations beside its list on a tablet or an unfolded phone</li>
+          <li>Phone: sheets with a text field stay above the keyboard, and notices stand where you acted</li>
+          <li>The phone's message bar keeps Later and Park in reach on narrow screens and panes</li>
+          <li>The phone no longer says "Handed back" when you return to it</li>
+          <li>The phone keeps the composer on screen while you type in landscape</li>
+          <li>Dark letters read on the web and desktop</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.0" date="2026-11-09">
       <description>
         <ul>
@@ -110,16 +125,6 @@
           <li>Settings → Storage shows what your mail needs, and a letter emptied for space opens on request</li>
           <li>Screener decisions made just before quitting are no longer lost</li>
           <li>The phone shows your Cloud storage and loads an emptied letter</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.47" date="2026-11-07">
-      <description>
-        <ul>
-          <li>The Cloud worker reads far less from the database while a large mailbox is being imported</li>
-          <li>Cloud stores less per letter</li>
-          <li>The Screener's waiting count no longer jumps while the app reloads your mail</li>
-          <li>Send later now works with attachments on Cloud and on your own server</li>
         </ul>
       </description>
     </release>
