@@ -17,7 +17,11 @@ import { Rule, Section, TagDot, TapRow, Txt } from "./base";
 import { FoldersGroup } from "./FoldersGroup";
 import { Icon } from "./Icon";
 
-export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
+export function MoreNav({ onNavigate, foot = true }: {
+  onNavigate?: () => void;
+  /** Settings and the pairing door at the end; the drawer pins them itself ({@link MoreNavFoot}). */
+  foot?: boolean;
+}) {
   const w = useWorld();
   const t = useTheme();
   const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
@@ -131,6 +135,19 @@ export function MoreNav({ onNavigate }: { onNavigate?: () => void }) {
 
       {/* Search over the synced mirror — a destination like the rail's. */}
       <Nav label={Copy.search} onPress={() => go("/search")} chevron />
+      {foot ? <MoreNavFoot onNavigate={onNavigate} /> : null}
+    </>
+  );
+}
+
+/** The list's last two rows: Settings and the pairing door. */
+export function MoreNavFoot({ onNavigate }: { onNavigate?: () => void }) {
+  const go = (path: Href) => {
+    onNavigate?.();
+    router.push(path);
+  };
+  return (
+    <>
       <Nav label={Copy.settings} onPress={() => go("/settings")} chevron />
       {/* The pairing door: the server picker (QR scan, own-server, managed). */}
       <Nav label={Copy.serversRow} onPress={() => go("/servers")} chevron />

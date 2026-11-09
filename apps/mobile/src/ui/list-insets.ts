@@ -37,16 +37,22 @@ export interface ListSpace {
  */
 export const CHROME_GAP = 16;
 
+/** A one-pane mail list's measure past compact width: rows a window wide read as a stretched phone. */
+export const LIST_MEASURE = 560;
+
 /**
- * The gutters are the deck's alone: a one-pane rail's side is paid by `Screen` for every screen at
- * once, and the two-pane surfaces pay their own. The foot clears the nav's own clearance plus the
- * inset, or the tallest chrome standing there (`useBottomChromeExtent`: the reader's bar, the dock)
- * plus the gap — whichever reaches higher, so the last line of a message stops above the bar.
+ * The gutters are the deck's: a one-pane rail's side is paid by `Screen` for every screen at
+ * once, and the two-pane surfaces pay their own. Given the `room` a one-pane list spans, past the
+ * measure and its two gutters the list centres a {@link LIST_MEASURE} column instead. The foot
+ * clears the nav's own clearance plus the inset, or the tallest chrome standing there
+ * (`useBottomChromeExtent`: the reader's bar, the dock) plus the gap — whichever reaches higher,
+ * so the last line of a message stops above the bar.
  */
-export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav, chromeExtent = 0): ListInsets {
+export function listInsets(space: ListSpace, insetBottom: number, nav: ListNav, chromeExtent = 0, room = 0): ListInsets {
+  const side = room > LIST_MEASURE + 2 * space.deckCompact ? (room - LIST_MEASURE) / 2 : space.deckCompact;
   return {
-    paddingLeft: space.deckCompact,
-    paddingRight: space.deckCompact,
+    paddingLeft: side,
+    paddingRight: side,
     paddingBottom: Math.max(nav.bottom + insetBottom, chromeExtent > 0 ? chromeExtent + CHROME_GAP : 0),
   };
 }

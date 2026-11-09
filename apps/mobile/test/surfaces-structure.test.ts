@@ -90,7 +90,8 @@ describe("one rail, one nav — the yields", () => {
 describe("the drawer, the pane search and the empty pane", () => {
   const ld = read("../src/ui/list-detail.tsx");
   it("the drawer holds the account line, the destinations and everything More carries", () => {
-    expect(ld).toContain("<MoreNav onNavigate={onNavigate} />");
+    expect(ld).toContain("<MoreNav onNavigate={onNavigate} foot={false} />");
+    expect(ld).toContain("<MoreNavFoot onNavigate={onNavigate} />");
     for (const dest of ["Copy.ohbox", "Copy.screener", "Copy.reads", "Copy.receipts"] as const) {
       expect(ld).toContain(dest);
     }

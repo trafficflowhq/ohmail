@@ -16,7 +16,7 @@ import { usePosture } from "../posture";
 import { GlassDock, type DockItem } from "../glass/GlassDock";
 import { GlassRail, type RailAction } from "../glass/GlassRail";
 import { GlassSidebar } from "../glass/GlassSidebar";
-import { paneSplit, scaffoldPlan, RAIL_W, type ScaffoldPlan } from "./plan";
+import { paneSplit, railSpan, scaffoldPlan, type ScaffoldPlan } from "./plan";
 
 export { scaffoldPlan, paneSplit } from "./plan";
 
@@ -97,8 +97,8 @@ export function AppScaffold({
             flex: 1,
             flexDirection: plan.paneAxis,
             padding: plan.gutter,
-            paddingLeft: plan.gutter + (plan.nav === "rail" && plan.navSide === "left" ? RAIL_W : 0),
-            paddingRight: plan.gutter + (plan.nav === "rail" && plan.navSide === "right" ? RAIL_W : 0),
+            paddingLeft: plan.gutter + (plan.nav === "rail" && plan.navSide === "left" ? railSpan(plan) : 0),
+            paddingRight: plan.gutter + (plan.nav === "rail" && plan.navSide === "right" ? railSpan(plan) : 0),
           }}
         >
           <View style={plan.paneAxis === "row" ? { width: split.first } : { height: split.first }}>
@@ -152,8 +152,8 @@ export function AppScaffold({
             position: "absolute",
             top: insets.top + 6,
             bottom: railBottom,
-            left: plan.navSide === "left" ? Math.max(insets.left, 0) : undefined,
-            right: plan.navSide === "right" ? Math.max(insets.right, 0) : undefined,
+            left: plan.navSide === "left" ? Math.max(insets.left, 0) + plan.railEdge : undefined,
+            right: plan.navSide === "right" ? Math.max(insets.right, 0) + plan.railEdge : undefined,
             zIndex: t.zLayer.tabBar,
           }}
         >
@@ -168,7 +168,7 @@ export function AppScaffold({
           style={[
             StyleSheet.absoluteFill,
             two && plan.paneAxis === "row"
-              ? { right: undefined, width: plan.gutter + split.first + (plan.navSide === "left" ? RAIL_W : 0) }
+              ? { right: undefined, width: plan.gutter + split.first + (plan.navSide === "left" ? railSpan(plan) : 0) }
               : null,
           ]}
         >

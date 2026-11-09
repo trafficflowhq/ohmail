@@ -64,7 +64,8 @@ vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/ui/Skeleton", () => ({ SkeletonList: () => null }));
 vi.mock("../src/ui/glass", () => ({ GlassRail: () => null, GlassSidebar: () => null }));
 vi.mock("../src/ui/Icon", () => ({ Icon: () => null }));
-vi.mock("../src/ui/MoreNav", () => ({ MoreNav: () => null, Nav: () => null }));
+vi.mock("../src/ui/MoreNav", () => ({ MoreNav: () => null, MoreNavFoot: () => null, Nav: () => null }));
+vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
 vi.mock("../src/ui/reader-rail", () => ({ useReaderRail: () => null }));
 vi.mock("../src/ui/MailRow", () => ({
   MailRow: (p: { m: { id: string }; onPress: () => void }) => createElement("button", { "data-row": p.m.id, onClick: p.onPress }),

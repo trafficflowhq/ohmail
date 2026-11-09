@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { creaseAcross, derivePosture, type FoldFeature } from "../src/ui/posture/derive";
 import {
-  detailPaneRect, pairPadding, paneSplit, RAIL_W, scaffoldPlan, screenFillsWindow, screenRailClearance, screenSideInsets,
+  detailPaneRect, pairPadding, paneSplit, railSpan, scaffoldPlan, screenFillsWindow, screenRailClearance, screenSideInsets,
 } from "../src/ui/scaffold/plan";
 import { SHEET_TOP_ROOM, sheetPanelBounds, sheetRoom } from "../src/ui/sheet-bounds";
 
@@ -155,14 +155,14 @@ describe("the rail and the side insets are paid once around the pair", () => {
     const plan = scaffoldPlan(coverSideways, "android");
     expect(plan.panes).toBe(1);
     expect(plan.nav, "not a rail posture; this measures nothing").toBe("rail");
-    expect(screenRailClearance(plan, screenFillsWindow(false, false)), "the pair's own Screen").toEqual({ left: RAIL_W + plan.gutter, right: 0 });
+    expect(screenRailClearance(plan, screenFillsWindow(false, false)), "the pair's own Screen").toEqual({ left: railSpan(plan) + plan.gutter, right: 0 });
     expect(pairPadding(plan).left, "the pair's padding pays the rail again").toBe(plan.gutter);
     expect(screenRailClearance(plan, screenFillsWindow(undefined, true), true), "a pane's Screen pays it a third time").toEqual({ left: 0, right: 0 });
   });
   it("two panes: the padding pays the rail, no Screen does", () => {
     const p = inner(821, 905, "flat");
     const plan = scaffoldPlan(p, "android");
-    expect(pairPadding(plan).left).toBe(plan.gutter + RAIL_W);
+    expect(pairPadding(plan).left).toBe(plan.gutter + railSpan(plan));
     expect(screenRailClearance(plan, screenFillsWindow(false, false))).toEqual({ left: 0, right: 0 });
     expect(screenRailClearance(plan, screenFillsWindow(undefined, true), true)).toEqual({ left: 0, right: 0 });
   });
