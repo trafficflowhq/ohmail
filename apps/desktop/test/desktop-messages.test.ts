@@ -193,6 +193,38 @@ function namespacesUsed(): Set<string> {
     if (/useTranslations\(\s*\)/.test(src)) {
       for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) found.add(m[1]!);
     }
+    for (const ns of computedKeyNamespaces(src)) found.add(ns);
+  }
+  return found;
+}
+
+/**
+ * The FOURTH shape: a key computed away from its `t` and handed over in a variable
+ * (`mail-send.ts`'s `sentCopySay` returns `` `sentCopy.${…}` `` to `SendingLine`'s unscoped `t`). A quoted
+ * or template literal naming an en.json key, an interpolated template opening on an en.json namespace,
+ * or a literal "ns." that something is concatenated onto, is a read.
+ */
+const EN = JSON.parse(read("apps/webapp/messages/en.json")) as Record<string, unknown>;
+const isKey = (dotted: string): boolean => {
+  let at: unknown = EN;
+  for (const part of dotted.split(".")) {
+    if (at === null || typeof at !== "object" || !(part in at)) return false;
+    at = (at as Record<string, unknown>)[part];
+  }
+  return true;
+};
+function computedKeyNamespaces(raw: string): Set<string> {
+  const found = new Set<string>();
+  // Comments name keys in backticks; `//` must follow a space or punctuation so "https://" stays.
+  const src = raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[\s;{}(),])\/\/[^\n]*/g, "$1");
+  // A whole key: quoted, or a template with no interpolation.
+  for (const m of src.matchAll(/(["'`])([A-Za-z0-9_]+)\.([A-Za-z0-9_.]+)\1/g)) {
+    if (isKey(`${m[2]}.${m[3]}`)) found.add(m[2]!);
+  }
+  // A namespace prefix the rest is added to: `ns.${…}`, or "ns." + … in any quote.
+  for (const m of src.matchAll(/`([A-Za-z0-9_]+)\.[A-Za-z0-9_.]*\$\{|(["'`])([A-Za-z0-9_]+)\.\2\s*\+/g)) {
+    const ns = m[1] ?? m[3]!;
+    if (typeof EN[ns] === "object") found.add(ns);
   }
   return found;
 }
@@ -252,7 +284,7 @@ function importGraph(entryRel: string): string[] {
   return [...seen].map((f) => path.relative(REPO, f));
 }
 
-/** Namespaces read by a set of files, by the same three call shapes {@link namespacesUsed} counts. */
+/** Namespaces read by a set of files, by the same call shapes {@link namespacesUsed} counts. */
 function namespacesIn(files: string[]): Map<string, string[]> {
   const found = new Map<string, string[]>();
   const add = (ns: string, file: string): void => {
@@ -269,6 +301,7 @@ function namespacesIn(files: string[]): Map<string, string[]> {
     if (/useTranslations\(\s*\)/.test(src)) {
       for (const m of src.matchAll(/\bt\(\s*"([A-Za-z0-9_]+)\.[A-Za-z0-9_.]+"/g)) add(m[1]!, rel);
     }
+    for (const ns of computedKeyNamespaces(src)) add(ns, rel);
   }
   return found;
 }
@@ -292,6 +325,28 @@ describe("desktop message filter", () => {
     }
     expect(sourceFiles().length).toBeGreaterThan(40);
     expect(namespacesUsed().size).toBeGreaterThan(10);
+  });
+
+  /** A key computed in one file and translated in another is seen where it is computed, in every shape. */
+  it.each([
+    ["quoted key", `const k = "sentCopy.missing";`],
+    ["single-quoted key", `const k = 'sentCopy.missing';`],
+    ["plain template key", "const k = `sentCopy.missing`;"],
+    ["interpolated template", "const k = `sentCopy.${reason}`;"],
+    ["quoted prefix concatenated", `const k = "sentCopy." + reason;`],
+    ["single-quoted prefix concatenated", `const k = 'sentCopy.' + reason;`],
+    ["template prefix concatenated", "const k = `sentCopy.` + reason;"],
+  ])("a computed key read counts its namespace: %s", (_shape, src) => {
+    expect([...computedKeyNamespaces(src)]).toEqual(["sentCopy"]);
+  });
+
+  it("a dotted string that is not a catalogue namespace counts nothing", () => {
+    expect([...computedKeyNamespaces(`a = "noSuchNs." + x; b = \`noSuchNs.\${x}\`; c = \`noSuchNs.k\`;`)]).toEqual([]);
+  });
+
+  it("a key named in a comment is not a read, and a URL does not hide the code after it", () => {
+    expect([...computedKeyNamespaces("/** reads `sentCopy.missing` */\n// or `sentCopy.missing`\nx = 1;")]).toEqual([]);
+    expect([...computedKeyNamespaces(`u = "https://x"; k = "sentCopy." + r;`)]).toEqual(["sentCopy"]);
   });
 
   /**
