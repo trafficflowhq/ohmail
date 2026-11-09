@@ -21,6 +21,38 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.0] — 2026-11-09
+
+### Phone: background organizing stops cleanly at Android's time limit
+
+On Android 15 and later the system lets a data-sync service run for six hours a day while the app is in the background. When that limit is reached, ohmail now ends background organizing, takes its notification down and hands the mailbox back right away, so your other devices can organize it, instead of Android stopping the app. Opening ohmail resumes organizing. The Android app also no longer declares the "display over other apps", microphone and storage permissions, which it never used.
+
+### A refused first Connect on the phone leaves no mailbox behind
+
+On the phone (iOS and Android), a first Connect the mail server refused, for example with a mistyped
+address or password, kept the mailbox it had started to set up. After the next Connect with the right
+address, the app said "This mailbox needs its password again" and "ohmail is not organizing this mailbox
+yet" while the real mailbox synced, and Start could not organize it. A refused first Connect now removes
+the mailbox it added, so the mailbox you connect next is the only one on the phone. A mailbox the phone
+already had is never removed.
+
+### ohmail.app/support and ohmail.app/delete-account open the website's pages
+
+The support page and the account-deletion page the app store listings link to are now served at
+ohmail.app/support and ohmail.app/delete-account, the same way the privacy policy and the imprint are.
+
+### The phone links its privacy policy, imprint and support pages, and offers Delete account
+
+Phone Settings now lists Privacy policy, Imprint and Support page, each opening ohmail.app in your
+browser, and Delete account for an ohmail Cloud account, which opens the account deletion page. A Cloud
+account's closed-account screen offers the same deletion page.
+
+Phone builds from the app stores no longer point to plans or payments: the storage card and screen show
+your usage and limit, and what your trial's room becomes after it, without plans, add-ons or a link to
+manage them, and the account strip says when
+ohmail stops organizing without asking you to pay. The photo library prompt now says why ohmail asks, in
+English and German, and the Android app no longer declares the microphone permission.
+
 ## [0.30.50] — 2026-11-08
 
 ### Cloud shows the storage estimate for very large mailboxes, never below what is kept
@@ -17197,7 +17229,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v0.30.50...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.0
 [0.30.50]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.50
 [0.30.49]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.49
 [0.30.48]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.48
