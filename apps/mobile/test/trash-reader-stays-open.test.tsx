@@ -172,3 +172,35 @@ describe("one pane: a letter pushed from Trash stays open", () => {
     s.unmount();
   });
 });
+
+/* THE PILL'S PANE comes from the pair in front: the root toast cannot tell a pair from a full-window
+   screen, so the pair says which of its panes a verb belongs to, and stops saying it once it is not
+   in front. */
+const { BottomChromeProvider, useToastPane } = await import("../src/ui/bottom-chrome");
+describe("the pair in front tells the toast its pane", () => {
+  const seen = { pane: undefined as string | null | undefined };
+  const Probe = () => { seen.pane = useToastPane(); return null; };
+
+  it("the list's with nothing open, the reader's with a letter open, none when another screen is in front", async () => {
+    nav.routes = { ohbox: {}, settings: {} };
+    nav.front = "ohbox";
+    const s = mount(<BottomChromeProvider><Route k="ohbox"><OhboxPair /></Route><Probe /></BottomChromeProvider>);
+    expect(seen.pane).toBe("list");
+    await act(async () => { nav.routes = { ...nav.routes, ohbox: { open: "a" } }; tell(); });
+    expect(seen.pane).toBe("detail");
+    await act(async () => { nav.front = "settings"; nav.routes = { ...nav.routes }; tell(); });
+    expect(seen.pane, "a full-window screen in front").toBeNull();
+    await act(async () => { nav.front = "ohbox"; nav.routes = { ...nav.routes }; tell(); });
+    expect(seen.pane).toBe("detail");
+    s.unmount();
+  });
+
+  it("one pane: no pane to tell", async () => {
+    Object.assign(win, { width: 412, height: 915, hasFold: false });
+    nav.routes = { ohbox: {} };
+    nav.front = "ohbox";
+    const s = mount(<BottomChromeProvider><Route k="ohbox"><OhboxPair /></Route><Probe /></BottomChromeProvider>);
+    expect(seen.pane).toBeNull();
+    s.unmount();
+  });
+});

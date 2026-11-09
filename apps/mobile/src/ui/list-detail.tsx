@@ -17,6 +17,7 @@ import { useTheme } from "../theme";
 import { useWorld } from "../state/world";
 import { beginMark } from "../engine/ui-marks";
 import { Empty, Rule, Screen, Tap, Txt } from "./base";
+import { useToastPaneSlot } from "./bottom-chrome";
 import { SurfaceBoundary } from "./ErrorBoundary";
 import { GlassRail, GlassSidebar } from "./glass";
 import { Icon } from "./Icon";
@@ -115,6 +116,11 @@ export function ListDetail({
     const sub = BackHandler.addEventListener("hardwareBackPress", () => { closeRef.current(); return true; });
     return () => sub.remove();
   }, [twoPane, open, focused]);
+  /* THE TOAST STANDS IN THE PANE THE VERB CAME FROM (`bottom-chrome.ts#toastSpan`); only the pair in front says. */
+  const pillPane = useToastPaneSlot();
+  useEffect(() => {
+    pillPane(plan.panes === 2 && focused ? (open !== null ? "detail" : "list") : null);
+  }, [pillPane, plan.panes, focused, open]);
   // The sidebar over the list closes before the reading pane: the newest listener answers first.
   // A fold hides it, so it answers no Back there and the next unfold shows it closed.
   useEffect(() => {

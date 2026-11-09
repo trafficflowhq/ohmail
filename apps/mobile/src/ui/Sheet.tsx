@@ -33,10 +33,12 @@ export function useSheetPanelBounds(): ViewStyle {
   const { width: w, height: h } = useWindowDimensions();
   const posture = usePosture();
   const insets = useSafeAreaInsets();
-  const pane = detailPaneRect(posture, scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android"), { w, h }, insets);
+  const t = useTheme();
+  const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
+  const pane = detailPaneRect(posture, plan, { w, h }, insets);
   /* One pane hands no hinge (a flat fold has no width), except a book fold, which a sheet keeps off. */
   const hinge = posture.panes === 2 || separatingVerticalHinge(posture.fold, posture.hinge) !== null ? posture.hinge : null;
-  return sheetPanelBounds(w, h, insets.top, pane, hinge);
+  return sheetPanelBounds(w, h, insets.top, pane, hinge, { gutter: plan.gutter, radius: t.radius.panel });
 }
 
 /** The room a sheet rises in, above the keyboard and, over a crease, above the crease (`sheetRoom`). */

@@ -25,7 +25,7 @@ vi.mock("../src/ui/reader-cover", () => ({ useReaderCover: () => undefined }));
 vi.mock("../src/ui/posture", () => ({
   usePosture: () => ({ panes: 1, fold: null, hinge: null }), separatingVerticalHinge: () => null, creaseAcross: () => null,
 }));
-vi.mock("../src/ui/scaffold/plan", () => ({ detailPaneRect: () => null, scaffoldPlan: () => null }));
+vi.mock("../src/ui/scaffold/plan", () => ({ detailPaneRect: () => null, scaffoldPlan: () => ({ gutter: 16 }) }));
 vi.mock("../src/ui/sheet-bounds", () => ({ sheetPanelBounds: () => ({}), sheetRoom: () => ({}) }));
 vi.mock("../src/ui/Icon", () => ({ Icon: (p: { name: string }) => h("i", { "data-icon": p.name }) }));
 vi.mock("../src/ui/base", () => ({

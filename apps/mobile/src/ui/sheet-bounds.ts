@@ -7,7 +7,8 @@ export const SHEET_TOP_ROOM = 12;
  * THE MODAL BELONGS TO THE WHOLE WINDOW, so its panel is bounded by the window on EVERY posture —
  * its height less the top inset — and the sheet scrolls inside that bound (ruling 159). On a
  * two-pane posture the panel stands over the DETAIL PANE (`pane`, from `detailPaneRect`) at the
- * pane's own x and width, so it never straddles the list nor reaches under a side inset. A horizontal hinge
+ * pane's own x and width, so it never straddles the list nor reaches under a side inset, and ends at the
+ * pane's foot (`foot`: the pair's gutter under it, all four corners round). A horizontal hinge
  * (tabletop) keeps the lower segment and wins; a vertical one with no pane keeps the reading half.
  * One pane: the full-width thumb sheet, bounded and centred on a wide window.
  */
@@ -17,6 +18,7 @@ export function sheetPanelBounds(
   top: number,
   pane: { x: number; w: number } | null,
   hinge: { x: number; y: number; w: number; h: number } | null,
+  foot: { gutter: number; radius: number } = { gutter: 0, radius: 0 },
 ): ViewStyle {
   const tall = Math.max(0, h - top);
   if (hinge !== null && hinge.h < hinge.w) {
@@ -25,7 +27,10 @@ export function sheetPanelBounds(
   /* In flow (flex-start + a left margin), never absolute: the keyboard's lift is the modal's bottom
      padding, which an absolutely placed panel would ignore. */
   if (pane !== null) {
-    return { alignSelf: "flex-start", marginLeft: pane.x, width: pane.w, maxHeight: Math.max(0, tall - SHEET_TOP_ROOM) };
+    return {
+      alignSelf: "flex-start", marginLeft: pane.x, width: pane.w, maxHeight: Math.max(0, tall - SHEET_TOP_ROOM - foot.gutter),
+      marginBottom: foot.gutter, borderBottomLeftRadius: foot.radius, borderBottomRightRadius: foot.radius,
+    };
   }
   /* No pane beside a vertical hinge: the reading side, never a floor that reaches back over the crease. */
   if (hinge !== null) {
