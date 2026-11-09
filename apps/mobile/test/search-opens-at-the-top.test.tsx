@@ -9,7 +9,8 @@
  * scrolled down with the count line and the newest matches above the view.
  *
  * And a result opened from Search stays over it: Search holds the pushed reader's move to the
- * pair's pane, so Back returns to the query instead of past it.
+ * pair's pane, so Back returns to the query instead of past it. In More's pane, which stays mounted
+ * behind the other tabs, only until a tab is in front again.
  */
 import { act, createElement as h, useImperativeHandle, useLayoutEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -86,10 +87,13 @@ vi.mock("../src/ui/base", async () => {
     useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingTop: 0, paddingBottom: 0 }),
   };
 });
-vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
+vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null, PaneTop: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: ({ children }: { children: unknown }) => children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: ({ children }: { children: unknown }) => children }));
-vi.mock("../src/ui/MailRow", () => ({ MailRow: () => null }));
+vi.mock("../src/ui/MailRow", async () => {
+  const React = await import("react");
+  return { MailRow: (p: { m: { id: string }; onPress: () => void }) => React.createElement("button", { "data-row": p.m.id, onClick: p.onPress }) };
+});
 vi.mock("../src/ui/Segmented", async () => {
   const React = await import("react");
   return {
@@ -100,7 +104,11 @@ vi.mock("../src/ui/Segmented", async () => {
 });
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en" }));
 vi.mock("../src/net/network-door", () => ({ useNetworkNow: () => "online" }));
-vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
+const nav = vi.hoisted(() => ({ pushed: [] as unknown[], path: "/more" }));
+vi.mock("expo-router", () => ({
+  router: { push: (to: unknown) => { nav.pushed.push(to); } },
+  usePathname: () => nav.path,
+}));
 vi.mock("../src/state/live", () => ({ addressShaped: (q: string) => (q.includes("@") ? q.trim() : null), unansweredSaid: () => "" }));
 
 /** The device's own matches: every query finds its first eleven here, newest first. */
@@ -144,7 +152,7 @@ beforeEach(() => {
   archive.asked = [];
   screen = mount(h(SearchScreen));
 });
-afterEach(() => { screen?.unmount(); screen = null; });
+afterEach(() => { screen?.unmount(); screen = null; nav.pushed = []; nav.path = "/more"; });
 
 const type = (text: string): void => { screen!.render(h(SearchScreen)); input.change!(text); screen!.render(h(SearchScreen)); };
 const answer = (length: number): void => { store.ready = true; store.length = length; screen!.render(h(SearchScreen)); };
@@ -194,6 +202,24 @@ describe("a result opened from Search stays over it", () => {
     screen!.unmount();
     screen = null;
     expect(readerHeldNow(), "Search closed").toBe(false);
+  });
+
+  it("in More's pane: held while its result is open, given back when another tab pops it", () => {
+    screen!.unmount();
+    const pane = () => h(SearchScreen, { inPane: true });
+    screen = mount(pane());
+    expect(readerHeldNow(), "the pane holds nothing by itself").toBe(false);
+    input.change!("fenwick");
+    screen.render(pane());
+    act(() => (screen!.el.querySelector('[data-row="fenwick-d0"]') as HTMLElement).click());
+    expect(nav.pushed).toEqual(["/message/fenwick-d0"]);
+    nav.path = "/message/fenwick-d0";
+    screen.render(pane());
+    expect(readerHeldNow(), "the result is open").toBe(true);
+    // The rail's Ohbox pops the result; More stays mounted behind it.
+    nav.path = "/";
+    screen.render(pane());
+    expect(readerHeldNow()).toBe(false);
   });
 });
 

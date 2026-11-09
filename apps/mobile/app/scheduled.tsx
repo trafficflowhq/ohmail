@@ -13,7 +13,8 @@ import { Copy } from "../src/copy";
 import { usePullToSync } from "../src/state/pull";
 import { useWorld, type WorldScheduled } from "../src/state/world";
 import { Button, Panel, Rule, Screen, Scroller, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
+import { YieldToMore } from "../src/ui/more-move";
 import { Gated } from "../src/ui/Gated";
 import { SkeletonList } from "../src/ui/Skeleton";
 import { scheduledNotHereSentence } from "../src/ui/standalone-form";
@@ -21,20 +22,22 @@ import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
-export default function ScheduledScreen() {
+export default function ScheduledScreen({ inPane = false }: { inPane?: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="scheduled">
       <Gated>
-        <ScheduledBody />
+        <YieldToMore paneKey={inPane ? null : "scheduled"}>
+          <ScheduledBody inPane={inPane} />
+        </YieldToMore>
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function ScheduledBody() {
+function ScheduledBody({ inPane }: { inPane: boolean }) {
   const w = useWorld();
   const pull = usePullToSync();
   // Unknown ≠ empty (`state/surface.ts`): before this mirror has settled a drain, no rows means
@@ -46,7 +49,7 @@ function ScheduledBody() {
   return (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.scheduled}</Txt>

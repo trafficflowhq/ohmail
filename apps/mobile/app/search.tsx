@@ -20,7 +20,7 @@ import { useAddressArchive, useStoreSearch } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { useTheme } from "../src/theme";
 import { Empty, Screen, Tap, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Gated } from "../src/ui/Gated";
 import { MailList, type ListGroup } from "../src/ui/MailList";
 import { MailRow } from "../src/ui/MailRow";
@@ -28,7 +28,8 @@ import { SlotHeights } from "../src/ui/history-slot";
 import { Segmented } from "../src/ui/Segmented";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
-import { holdWhileOpen } from "../src/ui/reader-held";
+import { holdReader, holdWhileOpen } from "../src/ui/reader-held";
+import { ReleaseOnReturn } from "../src/ui/more-pane";
 import type { WorldMail } from "../src/state/world";
 import type { StoreMessage } from "../src/state/live";
 
@@ -36,20 +37,20 @@ import type { StoreMessage } from "../src/state/live";
 type Row = { key: string; device: WorldMail } | { key: string; slot: number } | { key: string; archive: StoreMessage; mail: WorldMail };
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
-export default function SearchScreen() {
+export default function SearchScreen({ inPane = false }: { inPane?: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="search">
       <Gated>
-        <SearchBody />
+        <SearchBody inPane={inPane} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function SearchBody() {
+function SearchBody({ inPane }: { inPane: boolean }) {
   const t = useTheme();
   const w = useWorld();
   const network = useNetworkNow();
@@ -70,10 +71,17 @@ function SearchBody() {
   useEffect(() => {
     warm.current();
   }, []);
-  /* A result opened from here stays over Search, on two panes too: Back returns to the query. */
+  /* A result opened from here stays over Search, on two panes too: Back returns to the query. In
+     More's pane only while that result is open: the pane stays mounted behind the other tabs. */
   useEffect(() => {
-    return holdWhileOpen(Symbol("search"));
+    return inPane ? undefined : holdWhileOpen(Symbol("search"));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one place per mount
   }, []);
+  const [paneHold] = useState(() => Symbol("search-pane"));
+  const openMessage = (id: string) => {
+    if (inPane) holdReader(paneHold, true);
+    router.push(`/message/${id}`);
+  };
 
   const trimmed = q.trim();
   const answer = addr === null ? w.search.query(q) : null;
@@ -143,7 +151,8 @@ function SearchBody() {
 
   return (
     <Screen>
-      <DetailBar title={Copy.search} />
+      {inPane ? <PaneTop /> : <DetailBar title={Copy.search} />}
+      {inPane ? <ReleaseOnReturn token={paneHold} /> : null}
       <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
         <TextInput
           maxFontSizeMultiplier={t.textCap}
@@ -179,10 +188,10 @@ function SearchBody() {
         topFor={addr === null ? `q:${trimmed}` : `a:${dir}:${addr}`}
         renderRow={(r): ReactElement => {
           if ("device" in r) {
-            return <MailRow m={r.device} onPress={() => router.push(`/message/${r.device.id}`)} />;
+            return <MailRow m={r.device} onPress={() => openMessage(r.device.id)} />;
           }
           if ("archive" in r) {
-            return <MailRow m={r.mail} onPress={() => { w.store.open(r.archive); router.push(`/message/${r.archive.id}`); }} />;
+            return <MailRow m={r.mail} onPress={() => { w.store.open(r.archive); openMessage(r.archive.id); }} />;
           }
           const m = store.rowAt(r.slot);
           return (
@@ -199,7 +208,7 @@ function SearchBody() {
                     onPress={() => {
                       const src = store.sourceAt(r.slot);
                       if (src) w.store.open(src);
-                      router.push(`/message/${m.id}`);
+                      openMessage(m.id);
                     }}
                   />
                 </View>

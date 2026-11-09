@@ -16,27 +16,28 @@ import { tagHueOf } from "../theme/palette";
 import { Rule, Section, TagDot, TapRow, Txt } from "./base";
 import { FoldersGroup } from "./FoldersGroup";
 import { Icon } from "./Icon";
+import { morePaneKeyOf, type MoreHref } from "./pane-routes";
 
-export function MoreNav({ onNavigate, foot = true }: {
+export function MoreNav({ onNavigate, foot = true, selected, onPick }: {
   onNavigate?: () => void;
   /** Settings and the pairing door at the end; the drawer pins them itself ({@link MoreNavFoot}). */
   foot?: boolean;
+  /** More's pair (two panes): the open destination's key, and the pick that opens one beside the rows. */
+  selected?: string | null;
+  onPick?: (key: string) => void;
 }) {
   const w = useWorld();
   const t = useTheme();
   const pileCountOf = (kind: string) => w.piles.find((p) => p.kind === kind)?.items.length ?? 0;
   const pile = (kind: PileKind): Href => ({ pathname: "/triage", params: { pile: kind } });
-  const go = (path: Href) => {
-    onNavigate?.();
-    router.push(path);
-  };
+  const { go, at } = moreRows(onNavigate, selected, onPick);
 
   return (
     <>
       <Section style={{ paddingTop: 16 }}>{Copy.triage}</Section>
-      <Nav label={Copy.replyLater} count={pileCountOf("replyLater")} onPress={() => go(pile("replyLater"))} />
-      <Nav label={Copy.setAside} count={pileCountOf("setAside")} onPress={() => go(pile("setAside"))} />
-      <Nav label={Copy.resurface} count={pileCountOf("resurface")} onPress={() => go(pile("resurface"))} />
+      <Nav label={Copy.replyLater} count={pileCountOf("replyLater")} selected={at(pile("replyLater"))} onPress={() => go(pile("replyLater"))} />
+      <Nav label={Copy.setAside} count={pileCountOf("setAside")} selected={at(pile("setAside"))} onPress={() => go(pile("setAside"))} />
+      <Nav label={Copy.resurface} count={pileCountOf("resurface")} selected={at(pile("resurface"))} onPress={() => go(pile("resurface"))} />
 
       {/* TAGS — the web rail's group, above Folders as there: each tag with the count of its
           mail, opening the tag's list. Present while the account has a tag; tags are made
@@ -51,6 +52,7 @@ export function MoreNav({ onNavigate, foot = true }: {
               label={tag.name}
               dot={t.c.tag[tagHueOf(tag.hue)].ink}
               count={w.boot.settled ? w.tagged.count(tag.id) : undefined}
+              selected={at(`/tag/${encodeURIComponent(tag.id)}`)}
               onPress={() => go(`/tag/${encodeURIComponent(tag.id)}`)}
             />
           ))}
@@ -69,6 +71,7 @@ export function MoreNav({ onNavigate, foot = true }: {
           folders={w.folders.list}
           unread={w.folders.unread}
           onOpen={(id) => go(`/folder/${encodeURIComponent(id)}`)}
+          selectedId={selected?.startsWith("folder:") ? selected.slice(7) : null}
           verbs={{
             create: w.actions.folderCreate,
             rename: w.actions.folderRename,
@@ -91,7 +94,7 @@ export function MoreNav({ onNavigate, foot = true }: {
           wants. Shown unconditionally, unlike Scheduled below — this is a PLACE the mailbox
           always has, and hiding it on zero would be the phone asserting an empty History
           from a mirror that may simply not have synced. */}
-      <Nav label={Copy.history} sub={Copy.historyNavSub} onPress={() => go("/history")} chevron />
+      <Nav label={Copy.history} sub={Copy.historyNavSub} selected={at("/history")} onPress={() => go("/history")} chevron />
 
       {/* DRAFTS — the browser rail's own order puts it directly under History
           and above Trash. Present while the account HOLDS one, and also while the mirror has
@@ -105,6 +108,7 @@ export function MoreNav({ onNavigate, foot = true }: {
         <Nav
           label={Copy.draftsTitle}
           count={w.boot.settled ? w.drafts.length : undefined}
+          selected={at("/drafts")}
           onPress={() => go("/drafts")}
         />
       ) : null}
@@ -121,6 +125,7 @@ export function MoreNav({ onNavigate, foot = true }: {
         <Nav
           label={Copy.scheduled}
           count={w.boot.settled ? w.scheduled.length : undefined}
+          selected={at("/scheduled")}
           onPress={() => go("/scheduled")}
         />
       ) : null}
@@ -131,28 +136,42 @@ export function MoreNav({ onNavigate, foot = true }: {
           (list + restore, one predicate) — the webapp disables its palette row on the same
           answer, and a row opening "not available here" teaches nothing on a phone. NO COUNT,
           like History: a number here would claim attention deleted mail does not want. */}
-      {w.trash.available ? <Nav label={Copy.trashTitle} onPress={() => go("/trash")} chevron /> : null}
+      {w.trash.available ? <Nav label={Copy.trashTitle} selected={at("/trash")} onPress={() => go("/trash")} chevron /> : null}
 
       {/* Search over the synced mirror — a destination like the rail's. */}
-      <Nav label={Copy.search} onPress={() => go("/search")} chevron />
-      {foot ? <MoreNavFoot onNavigate={onNavigate} /> : null}
+      <Nav label={Copy.search} selected={at("/search")} onPress={() => go("/search")} chevron />
+      {foot ? <MoreNavFoot onNavigate={onNavigate} selected={selected} onPick={onPick} /> : null}
     </>
   );
 }
 
 /** The list's last two rows: Settings and the pairing door. */
-export function MoreNavFoot({ onNavigate }: { onNavigate?: () => void }) {
-  const go = (path: Href) => {
-    onNavigate?.();
-    router.push(path);
-  };
+export function MoreNavFoot({ onNavigate, selected, onPick }: {
+  onNavigate?: () => void;
+  selected?: string | null;
+  onPick?: (key: string) => void;
+}) {
+  const { go, at } = moreRows(onNavigate, selected, onPick);
   return (
     <>
-      <Nav label={Copy.settings} onPress={() => go("/settings")} chevron />
+      <Nav label={Copy.settings} selected={at("/settings")} onPress={() => go("/settings")} chevron />
       {/* The pairing door: the server picker (QR scan, own-server, managed). */}
-      <Nav label={Copy.serversRow} onPress={() => go("/servers")} chevron />
+      <Nav label={Copy.serversRow} selected={at("/servers")} onPress={() => go("/servers")} chevron />
     </>
   );
+}
+
+/** A row's press (picked beside More's rows, else pushed) and whether its destination is the one open. */
+function moreRows(onNavigate?: () => void, selected?: string | null, onPick?: (key: string) => void) {
+  return {
+    go: (path: Href) => {
+      onNavigate?.();
+      const key = onPick ? morePaneKeyOf(path as MoreHref) : null;
+      if (onPick && key !== null) onPick(key);
+      else router.push(path);
+    },
+    at: (path: Href) => selected != null && morePaneKeyOf(path as MoreHref) === selected,
+  };
 }
 
 export function Nav({
@@ -161,6 +180,7 @@ export function Nav({
   dot,
   count,
   chevron,
+  selected,
   onPress,
 }: {
   label: string;
@@ -170,12 +190,16 @@ export function Nav({
   dot?: string;
   count?: number;
   chevron?: boolean;
+  /** The destination open beside More's rows. */
+  selected?: boolean;
   onPress: () => void;
 }) {
   const t = useTheme();
   return (
     <TapRow
       onPress={onPress}
+      selected={selected}
+      accessibilityState={{ selected: selected === true }}
       accessibilityRole="link"
       accessibilityLabel={
         sub !== undefined
