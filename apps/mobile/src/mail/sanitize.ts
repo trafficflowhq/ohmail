@@ -28,10 +28,17 @@ import {
   neutraliseCss,
   REMOTE_URL,
   SAFE_HREF,
+  cssHex,
+  letterMediaAt,
+  letterPaperOf,
+  type LetterBreak,
+  type LetterFrame,
 } from "@ohmail/client-engine";
 import { DROP_CONTENT, phoneQuotedTree, sheetText } from "./quoted-tree";
+
+/** Which band of a letter's widths a frame width falls in: the frame reads the letter again on a crossing. */
+export { letterBand, type LetterBreak } from "@ohmail/client-engine";
 import { Copy } from "../copy";
-import { letterPaperOf, schemeFreeSheet } from "./paper";
 
 /** One blocked remote reference — the web's `BlockedAsset` shape, minted by the same rules. */
 export interface PhoneBlockedAsset {
@@ -57,12 +64,15 @@ export interface PhoneSanitizedMail {
    * and a raw href would reach the browser past the confirm.
    */
   links: string[];
-  /** The mail's own paper reads light, so a dark reader may invert it (`./paper.ts`, the web's gate). */
+  /** The letter's own paper reads light at this width, so a dark reader may invert it (`letterPaperOf`). */
   light: boolean;
-  /** The paper to paint the sheet with when it is not the light sheet's own (`paintedPaper`), or null. */
+  /** The paper to paint the sheet with when it is not the light sheet's own, as `#rrggbb`, or null. */
   paper: string | null;
-  /** The body's own ink, as `#rrggbb`, or null when it declares none. */
+  /** The ink to set unstyled text in, as `#rrggbb`, or null for the sheet's own. */
   ink: string | null;
+  /** The frame width the sheets were resolved at, and the widths they compared against (`letterBand`). */
+  frameWidth: number;
+  breaks: readonly LetterBreak[];
   /** The html part was past {@link MAIL_MAX_HTML_CHARS} and was not rendered at all. */
   oversize?: boolean;
   /** Asked with {@link PhoneSanitizeOptions.fold}: the quoted history this document leaves out, or null. */
@@ -83,7 +93,12 @@ export interface PhoneSanitizeOptions {
   fold?: boolean;
   /** The message's subject, read with {@link fold}: a forward's prefix keeps the forwarded message in. */
   subject?: string | null;
+  /** The frame the document is drawn in: the sender's width conditions are decided for it. */
+  frame?: LetterFrame;
 }
+
+/** The frame width a pass resolves at when the caller names none (a phone's narrow pane). */
+export const PHONE_DEFAULT_FRAME_PX = 360;
 
 /** The scheme the document's links carry instead of their targets. */
 export const PHONE_LINK_SCHEME = "ohmail-link:";
@@ -142,9 +157,11 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const sheets: string[] = [];
   const cids: string[] = [];
   const links: string[] = [];
+  const frameWidth = opts.frame?.width ?? PHONE_DEFAULT_FRAME_PX;
   if (html.length > MAIL_MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, oversize: true };
+    return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, frameWidth, breaks: [], oversize: true };
   }
+  const media = letterMediaAt({ width: frameWidth });
 
   const seen = new Set<string>();
   const record = (url: string, via: PhoneBlockedAsset["via"], pixel: boolean): void => {
@@ -170,10 +187,29 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
 
   const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
 
+  /** The body's children when the mail has a document structure; the whole parse otherwise. */
+  const findBody = (nodes: readonly AnyNode[]): Element | null => {
+    const stack: Array<{ nodes: readonly AnyNode[]; at: number }> = [{ nodes, at: 0 }];
+    while (stack.length > 0) {
+      const top = stack[stack.length - 1]!;
+      if (top.at === top.nodes.length) {
+        stack.pop();
+        continue;
+      }
+      const n = top.nodes[top.at++]!;
+      if (!(n instanceof Element)) continue;
+      if (n.tagName === "body") return n;
+      if (n.tagName === "html") stack.push({ nodes: n.children, at: 0 });
+    }
+    return null;
+  };
+  const body = findBody(doc.children);
+
   /**
    * `<style>` lives in `<head>` and the walk refuses `head` whole, so — exactly as the web
    * moves head styles into the body before DOMPurify sees them — the head's sheets are emitted
-   * FIRST, in source order, neutralised like any other.
+   * FIRST, in source order, neutralised like any other. A sheet before `<body>` outside the head
+   * is one too: a browser's parser puts it there.
    */
   const headStyles: Element[] = [];
   const findHeadStyles = (nodes: readonly ChildNode[]): void => {
@@ -186,12 +222,17 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
       }
       const n = top.nodes[top.at++]!;
       if (!(n instanceof Element)) continue;
+      if (n === body) {
+        stack.length = 0;
+        break;
+      }
       if (n.tagName === "head") {
         for (const c of n.children) {
           if (c instanceof Element && c.tagName === "style") headStyles.push(c);
         }
         continue;
       }
+      if (n.tagName === "style" && body !== null) headStyles.push(n);
       if (n.tagName === "html") stack.push({ nodes: n.children, at: 0 });
     }
   };
@@ -202,8 +243,8 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const drawn: string[] = [];
 
   const emitStyle = (el: Element): void => {
-    // The device's own scheme never reaches the frame: a dark-only sheet or block never applies.
-    const text = schemeFreeSheet(el.children.map((c) => (c instanceof Text ? c.data : "")).join(""), el.attribs.media);
+    // Decided for the frame: no sender condition reaches it, so it paints what the page is read from.
+    const text = media.sheet(el.children.map((c) => (c instanceof Text ? c.data : "")).join(""), { media: el.attribs.media, type: el.attribs.type });
     if (text === null) return;
     drawn.push(text);
     const neutral = neutraliseCss(text, (url) => cssUrl(url), recordSheet);
@@ -347,23 +388,6 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
 
   for (const s of headStyles) emitStyle(s);
 
-  /** The body's children when the mail has a document structure; the whole parse otherwise. */
-  const findBody = (nodes: readonly AnyNode[]): Element | null => {
-    const stack: Array<{ nodes: readonly AnyNode[]; at: number }> = [{ nodes, at: 0 }];
-    while (stack.length > 0) {
-      const top = stack[stack.length - 1]!;
-      if (top.at === top.nodes.length) {
-        stack.pop();
-        continue;
-      }
-      const n = top.nodes[top.at++]!;
-      if (!(n instanceof Element)) continue;
-      if (n.tagName === "body") return n;
-      if (n.tagName === "html") stack.push({ nodes: n.children, at: 0 });
-    }
-    return null;
-  };
-  const body = findBody(doc.children);
   const root: AnyNode = body ?? doc;
   // The folded document: the history's nodes are never walked, so nothing in them is emitted,
   // counted, fetched or linked.
@@ -371,7 +395,13 @@ export function sanitizeMailHtmlPhone(html: string, opts: PhoneSanitizeOptions =
   const skip = new Set<AnyNode>(range === null ? [] : quotedHistoryCut(root, phoneQuotedTree, range).history);
   walk(body ? body.children : doc.children, skip);
 
-  const mail: PhoneSanitizedMail = { html: out.join(""), blocked, sheets, cids, links, ...letterPaperOf(doc.children, drawn, skip) };
+  const own = body === null ? null : { bgcolor: body.attribs.bgcolor ?? null, text: body.attribs.text ?? null, style: body.attribs.style ?? null };
+  const reading = letterPaperOf({ sheets: drawn, body: own, root, tree: phoneQuotedTree, skip });
+  const mail: PhoneSanitizedMail = {
+    html: out.join(""), blocked, sheets, cids, links, light: reading.light,
+    paper: reading.paper === null ? null : cssHex(reading.paper), ink: reading.ink === null ? null : cssHex(reading.ink),
+    frameWidth, breaks: media.breaks,
+  };
   if (opts.fold === true) mail.history = range === null || skip.size === 0 ? null : { at: range.at };
   return mail;
 }

@@ -1,21 +1,24 @@
 import { describe, it, expect } from "vitest";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import net from "node:net";
 import { Duplex } from "node:stream";
 import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
-import { ImapAdapter } from "@trafficflow/core/adapters/imap";
+import { createLogger, SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
+import { ImapAdapter, outboundToMail } from "@trafficflow/core/adapters/imap";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   SendService, SEND_COPY_OWED_MAX_ATTEMPTS, SEND_COPY_OWED_WAITS_MS, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE,
   OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_OWED_DEFER_MS, SEND_COPY_OWED_HOLD_MS, SEND_COPY_OWED_SETTLE_MS,
-  runOwedSentCopyPass,
+  SEND_COPY_OWED_STAGED_NOT_DUE, runOwedSentCopyPass, sentCopyRefusalOf,
 } from "../src/index.js";
-import type { ServiceContext } from "../src/index.js";
+import type { ServiceContext, StagedAttachmentSource } from "../src/index.js";
+import { ServiceError } from "../src/errors.js";
 import { SENT_COPY_MAILBOX_WAITS_MS, SENT_COPY_TURN_MAX, SENT_COPY_TURN_UNIT } from "../src/sent-copy-pass.js";
+import { ownAttempts, SEND_COPY_OWED_MAILBOX_UNIT } from "../src/send-service.js";
 
 const svc = new SendService();
 const NOW = new Date("2026-07-28T12:00:00Z");
@@ -452,6 +455,15 @@ describe("SendService — reply threading (RFC 5322 §3.6.4)", () => {
   });
 });
 
+/** The Sent copy as the real adapter builds it (`buildRaw` over `outboundToMail`). */
+function composed(msg: OutboundMessage): Promise<Buffer> {
+  const mail = outboundToMail(msg, msg.messageId!, new Date("2026-07-28T12:00:00Z"));
+  return new Promise((resolve, reject) => {
+    new MailComposer({ ...mail, disableFileAccess: true, disableUrlAccess: true }).compile()
+      .build((err: Error | null, raw: Buffer) => (err ? reject(err) : resolve(raw)));
+  });
+}
+
 /**
  * A SLOW SUBMISSION, over a double that fails the way the real adapter does: the end of the
  * message waits for `beforeRelease`, the IMAP leg dialled before SMTP idles out while the 250 is
@@ -461,6 +473,10 @@ function slowSmtp(o: {
   copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean; bodyBytes?: number;
   /** The first connection's APPEND never answers: before it lands, or after. */
   appendHangs?: "before" | "after";
+  /** Every APPEND is answered with this refusal. */
+  appendRefuses?: () => Error;
+  /** The copy is the message composed as the real adapter composes it, files and all. */
+  composes?: boolean;
 } = {}) {
   const sentFolder: string[] = [];
   const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0, raws: [] as Buffer[], filed: [] as Buffer[], forceCloses: 0 };
@@ -483,7 +499,8 @@ function slowSmtp(o: {
         state.delivered += 1;
         // The padding is incompressible, like an attachment: the store's size readings depend on it.
         const pad = randomBytes(Math.ceil(((o.bodyBytes ?? 0) * 3) / 4)).toString("base64").slice(0, o.bodyBytes ?? 0);
-        const raw = Buffer.from(`Message-ID: ${msg.messageId!}\r\nTo: you@example.com\r\nSubject: Re: hi\r\n\r\nThanks!\r\n${pad}`);
+        const raw = o.composes ? await composed(msg)
+          : Buffer.from(`Message-ID: ${msg.messageId!}\r\nTo: you@example.com\r\nSubject: Re: hi\r\n\r\nThanks!\r\n${pad}`);
         state.raws.push(raw);
         return opts?.copy === "caller" ? { providerMessageId: msg.messageId!, unfiledCopy: raw } : { providerMessageId: msg.messageId! };
       },
@@ -491,6 +508,7 @@ function slowSmtp(o: {
         if (!live) throw dead();
         state.looks.push(look?.look === true);
         if (look?.look === true && sentFolder.includes(id)) return null;
+        if (o.appendRefuses) throw o.appendRefuses();
         if (n === 1 && o.appendHangs === "before") return new Promise<never>(() => undefined);
         sentFolder.push(id);
         state.filed.push(raw);
@@ -889,6 +907,286 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
     expect(await owedRows(o.db)).toEqual([]);
     const plain = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD });
     expect({ sentCopy: plain.res.sentCopy, rows: (await owedRows(plain.db)).length }).toEqual({ sentCopy: "pending", rows: 1 });
+  });
+
+  /** A refused APPEND as imapflow 1.7.8 raises Dovecot's answer: no `code`, the server's words in `responseText`. */
+  const imapNo = (code: string): Error => Object.assign(new Error("Command failed"), {
+    responseStatus: "NO", serverResponseCode: code, responseText: "Mail size is larger than the maximum size allowed by server configuration",
+  });
+  /** Cloud's door over a server whose every APPEND is refused with `code`; `files`: the letter carries a photo. */
+  const refusedCopy = async (code: string | (() => Error), files: boolean, log?: ReturnType<typeof createLogger>) => {
+    const photo = { filename: "photo.jpg", contentType: "image/jpeg", content: Buffer.alloc(1024, 7) };
+    const o = await owedSend(
+      { keepOwedCopy: OWED_COPY_CLOUD, copyTiming: { graceMs: 2_000, deadlineMs: 2_000, waitsMs: [0, 10, 10] }, ...(log ? { log } : {}) }, 0,
+      { copyDiesOnFirst: false, reopenUnreachable: false, appendRefuses: typeof code === "string" ? () => imapNo(code) : code },
+      files ? { attachments: [photo] } : {},
+    );
+    return { ...o, appends: o.smtp.state.looks.length, rows: (await owedRows(o.db)).length };
+  };
+
+  it("Cloud: a letter with files its server refuses for size (LIMIT) is `missing`, `too_big`, after one APPEND", async () => {
+    const o = await refusedCopy("LIMIT", true);
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy, reason: o.res.sentCopyReason, appends: o.appends, rows: o.rows })
+      .toEqual({ status: "sent", sentCopy: "missing", reason: "too_big", appends: 1, rows: 0 });
+    const full = await refusedCopy("OVERQUOTA", true);
+    expect({ sentCopy: full.res.sentCopy, reason: full.res.sentCopyReason, appends: full.appends })
+      .toEqual({ sentCopy: "missing", reason: "full", appends: 1 });
+  });
+
+  it("Cloud without files: a full mailbox keeps the row, a too-big copy drops it, LIMIT is a retried refusal", async () => {
+    const full = await refusedCopy("OVERQUOTA", false);
+    expect({ sentCopy: full.res.sentCopy, reason: full.res.sentCopyReason, appends: full.appends, rows: full.rows })
+      .toEqual({ sentCopy: "pending", reason: "full", appends: 1, rows: 1 });
+    const big = await refusedCopy("TOOBIG", false);
+    expect({ sentCopy: big.res.sentCopy, reason: big.res.sentCopyReason, appends: big.appends, rows: big.rows })
+      .toEqual({ sentCopy: "missing", reason: "too_big", appends: 1, rows: 0 });
+    const limit = await refusedCopy("LIMIT", false);
+    expect({ sentCopy: limit.res.sentCopy, reason: limit.res.sentCopyReason, appends: limit.appends, rows: limit.rows })
+      .toEqual({ sentCopy: "pending", reason: "refused", appends: 4, rows: 1 });
+  });
+
+  /** Two uploads held in object storage until `expiresAt`, as the staging source answers for them. */
+  const uploads = (expiresAt: Date) => {
+    const files: Record<string, Buffer> = { "t-photo": randomBytes(300_000), "t-note": Buffer.from("plan\r\n") };
+    const state = { fetches: 0, gone: new Set<string>(), unavailable: false, swapped: null as Buffer | null };
+    const source: StagedAttachmentSource = {
+      async declare(_account, ids) {
+        return ids.filter((id) => files[id] && !state.gone.has(id)).map((id) => ({
+          id, sizeBytes: files[id]!.length, expiresAt, filename: `${id}.bin`, contentType: "application/octet-stream",
+        }));
+      },
+      async fetch(_account, ids) {
+        state.fetches += 1;
+        if (state.unavailable) throw new ServiceError("unavailable", 503, "an uploaded attachment could not be read. Try sending again.");
+        if (ids.some((id) => state.gone.has(id))) throw new ServiceError("not_found", 404, "an uploaded attachment was not found");
+        return ids.map((id) => ({
+          filename: `${id}.bin`, contentType: "application/octet-stream",
+          content: id === "t-photo" && state.swapped ? state.swapped : files[id]!,
+        }));
+      },
+    };
+    return { source, state, files };
+  };
+  const FILES_UNTIL = new Date(NOW.getTime() + 20 * HOUR);
+  /** Cloud: a letter whose two files are uploads, its first APPEND hung past a 200 ms deadline. */
+  const stagedSend = async (more: Record<string, unknown> = {}, input: Record<string, unknown> = {}) => {
+    const up = uploads(FILES_UNTIL);
+    const o = await owedSend(
+      { keepOwedCopy: OWED_COPY_CLOUD, stagedAttachments: up.source, copyTiming: { graceMs: 200, deadlineMs: 200, waitsMs: [0] }, ...more }, 0,
+      { copyDiesOnFirst: false, appendHangs: "before", composes: true }, { stagedAttachmentIds: ["t-photo", "t-note"], ...input },
+    );
+    return { ...o, up, due: NOW.getTime() + 200 + SEND_COPY_OWED_SETTLE_MS };
+  };
+
+  it("Cloud: a copy whose files are all uploads is owed without them until the uploads expire", async () => {
+    const o = await stagedSend();
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy, until: o.res.sentCopyUntil })
+      .toEqual({ status: "sent", sentCopy: "pending", until: FILES_UNTIL.toISOString() });
+    const rows = await owedRows(o.db);
+    expect(rows).toHaveLength(1);
+    const parts = JSON.parse(rows[0]!.stagedParts!) as { v: number; sha256: string; skeleton: string; parts: Array<{ ticket: string }> };
+    const kept = Buffer.from(parts.skeleton, "base64");
+    expect(kept.length, "the row keeps the letter, not its files").toBeLessThan(4_096);
+    expect(kept.includes(Buffer.from(o.up.files["t-photo"]!.subarray(0, 57).toString("base64"))), "the photo is in the row").toBe(false);
+    expect({ v: parts.v, sha256: parts.sha256, tickets: parts.parts.map((p) => p.ticket), until: rows[0]!.filesUntil?.getTime() }).toEqual({
+      v: 1, sha256: createHash("sha256").update(o.smtp.state.raws[0]!).digest("hex"), tickets: ["t-photo", "t-note"], until: FILES_UNTIL.getTime(),
+    });
+    expect({ raw: rows[0]!.rawB64, next: rows[0]!.nextAttemptAt.getTime(), filesNext: rows[0]!.filesNextAttemptAt?.getTime() }, "what a build before 0183 reads")
+      .toEqual({ raw: "", next: SEND_COPY_OWED_STAGED_NOT_DUE.getTime(), filesNext: o.due });
+  });
+
+  it("a build before mail 0183, which reads none of its columns, never files a copy kept without its files", async () => {
+    const o = await stagedSend();
+    o.reachable();
+    // The row as such a build reads it: without `staged_parts`, `files_until` and `files_next_attempt_at`.
+    await o.db.update(outboundSentCopies).set({ stagedParts: null, filesUntil: null, createdAt: NOW });
+    for (const at of [o.due, FILES_UNTIL.getTime(), NOW.getTime() + SEND_COPY_OWED_HOLD_MS - MIN]) {
+      expect(await serverPass(o, { now: () => new Date(at) }), "taken").toMatchObject({ claimed: 0, filed: 0, dropped: 0 });
+    }
+    expect(await serverPass(o, { now: () => new Date(NOW.getTime() + SEND_COPY_OWED_HOLD_MS + MIN) }), "given up past the hold")
+      .toMatchObject({ dropped: 1, filed: 0, remaining: 0 });
+    expect(o.smtp.state.filed, "a copy filed without its files").toEqual([]);
+    // A row with no bytes and no files to splice is dropped, never filed as an empty message.
+    const empty = await owedSend({ keepOwedCopy: OWED_COPY_SELF_HOST, copyOutlivesAnswer: true });
+    await empty.db.update(outboundSentCopies).set({ rawB64: "" });
+    empty.reachable();
+    expect(await serverPass(empty)).toMatchObject({ dropped: 1, filed: 0, remaining: 0 });
+    expect(empty.smtp.state.filed).toEqual([]);
+  });
+
+  it("the server's pass splices the uploads back and files the delivered bytes, looking in Sent first", async () => {
+    const o = await stagedSend();
+    o.reachable();
+    const out = await serverPass(o, { stagedAttachments: o.up.source, now: () => new Date(o.due) });
+    expect({ filed: out.filed, dropped: out.dropped, folder: o.smtp.sentFolder }).toEqual({ filed: 1, dropped: 0, folder: [o.res.providerMessageId] });
+    expect(o.smtp.state.looks.at(-1), "it looks in Sent first").toBe(true);
+    expect(o.smtp.state.filed.at(-1)!.equals(o.smtp.state.raws[0]!), "the filed copy is the delivered one, byte for byte").toBe(true);
+    expect(await owedRows(o.db)).toEqual([]);
+  });
+
+  it("uploads gone or past their time drop the row; changed bytes append nothing; no storage leaves it", async () => {
+    const late = await stagedSend();
+    late.reachable();
+    expect(await serverPass(late, { stagedAttachments: late.up.source, now: () => new Date(FILES_UNTIL.getTime() + 1) }))
+      .toMatchObject({ dropped: 1, filed: 0, remaining: 0 });
+    const gone = await stagedSend();
+    gone.reachable();
+    gone.up.state.gone.add("t-note");
+    expect(await serverPass(gone, { stagedAttachments: gone.up.source, now: () => new Date(gone.due) })).toMatchObject({ dropped: 1, filed: 0 });
+    const changed = await stagedSend();
+    changed.reachable();
+    changed.up.state.swapped = randomBytes(300_000);
+    expect(await serverPass(changed, { stagedAttachments: changed.up.source, now: () => new Date(changed.due) })).toMatchObject({ dropped: 1, filed: 0 });
+    for (const o of [late, gone, changed]) {
+      expect({ appended: o.smtp.state.filed.length, rows: (await owedRows(o.db)).length }, "a copy without its files").toEqual({ appended: 0, rows: 0 });
+    }
+    const down = await stagedSend();
+    down.reachable();
+    down.up.state.unavailable = true;
+    expect(await serverPass(down, { stagedAttachments: down.up.source, now: () => new Date(down.due) })).toMatchObject({ filed: 0, dropped: 0, failed: 0, deferred: 1 });
+    const unwired = await stagedSend();
+    unwired.reachable();
+    expect(await serverPass(unwired, { now: () => new Date(unwired.due) })).toMatchObject({ filed: 0, dropped: 0, deferred: 1 });
+    for (const o of [down, unwired]) {
+      const [row] = await owedRows(o.db);
+      expect({ appended: o.smtp.state.filed.length, attempts: ownAttempts(row!.attempts) }, "left for a later pass, no attempt spent")
+        .toEqual({ appended: 0, attempts: 0 });
+    }
+  });
+
+  it("a letter with an inline file beside its uploads keeps no row", async () => {
+    const photo = { filename: "inline.jpg", contentType: "image/jpeg", content: Buffer.alloc(1024, 7) };
+    const o = await stagedSend({}, { attachments: [photo] });
+    expect({ sentCopy: o.res.sentCopy, until: o.res.sentCopyUntil, rows: (await owedRows(o.db)).length }).toEqual({ sentCopy: "pending", until: undefined, rows: 0 });
+  });
+
+  /** One more letter like {@link stagedSend}'s, in its world; under account B, on B's own mailbox, when `b`. */
+  const stagedAgain = async (o: Awaited<ReturnType<typeof stagedSend>>, b = false) => {
+    const [mb] = b ? await o.db.insert(mailboxes).values({ accountId: o.B, provider: "imap", address: "jon@lichtgrat.example" }).returning() : [];
+    const mailboxId = mb?.id ?? o.mailboxId;
+    const [d] = await o.db.insert(drafts).values({
+      accountId: b ? o.B : o.A, mailboxId, subject: "Re: hi", body: "Thanks!", to: [{ name: null, address: "you@example.com" }], status: "draft",
+    }).returning();
+    const smtp = slowSmtp({ appendHangs: "before", composes: true });
+    const res = await svc.send(b ? o.ctxB : o.ctx, d!.id, `owed-${randomUUID()}`, {
+      openSendAdapter: smtp.factory, resolveStorageCap: cap, keepOwedCopy: OWED_COPY_CLOUD, stagedAttachments: o.up.source,
+      copyTiming: { graceMs: 200, deadlineMs: 200, waitsMs: [0] },
+    }, { stagedAttachmentIds: ["t-photo", "t-note"] } as never);
+    return { res, mailboxId };
+  };
+  /** The pass's transport, its APPEND of the copy `id` answered by `filing` instead. */
+  const filingOf = (o: Awaited<ReturnType<typeof stagedSend>>, id: string, filing: () => Promise<never> | void): OpenSendAdapter =>
+    async (mailboxId) => {
+      const a = await o.smtp.factory(mailboxId);
+      return {
+        ...a,
+        fileSentCopy: async (raw: Buffer, sent: string, look?: { look?: boolean }) => {
+          if (sent === id) await filing();
+          return a.fileSentCopy!(raw, sent, look);
+        },
+      };
+    };
+
+  it("copies with files take turns across accounts: one whose uploads cannot be read now is not taken first again", async () => {
+    const o = await stagedSend();
+    const b = await stagedAgain(o, true);
+    expect(b.res.sentCopyUntil).toBe(FILES_UNTIL.toISOString());
+    o.reachable();
+    o.up.state.unavailable = true;
+    const asked: string[] = [];
+    const source: StagedAttachmentSource = {
+      declare: async (accountId, ids) => { asked.push(accountId === o.A ? "A" : "B"); return o.up.source.declare(accountId, ids); },
+      fetch: (accountId, ids, at) => o.up.source.fetch(accountId, ids, at),
+    };
+    const outs = [];
+    for (let pass = 0, at = o.due; pass < 4; pass += 1, at += POKE_MS) {
+      outs.push(await serverPass(o, { stagedAttachments: source, now: () => new Date(at) }));
+    }
+    expect(asked, "the same copy taken first again").toEqual(["A", "B", "A", "B"]);
+    expect(outs.map((r) => ({ filed: r.filed, deferred: r.deferred }))).toEqual(Array(4).fill({ filed: 0, deferred: 1 }));
+  });
+
+  it("a slow copy with files defers no copy without files: those go first, on the pass's own deadline", async () => {
+    const o = await stagedSend();
+    const plain = await oweRow(o, 5, { due: o.due });
+    o.reachable();
+    let at = o.due;
+    // Its upload takes twenty seconds of the pass.
+    const open = filingOf(o, o.res.providerMessageId!, () => { at += 20_000; });
+    const out = await serverPass(o, { openSendAdapter: open, stagedAttachments: o.up.source, now: () => new Date(at), budgetMs: 60_000 });
+    expect({ filed: out.filed, deferred: out.deferred }).toEqual({ filed: 2, deferred: 0 });
+    expect(o.smtp.sentFolder, "the copy without files waited behind the one with files").toEqual([plain, o.res.providerMessageId]);
+  });
+
+  it("a copy with files past its bound is charged for itself: its mailbox's other copies keep their time, on no ladder", async () => {
+    const o = await stagedSend();
+    const soon = await oweRow(o, 5, { due: o.due + 30_000 });
+    o.reachable();
+    const open = filingOf(o, o.res.providerMessageId!, () => new Promise<never>(() => undefined));
+    const out = await serverPass(o, {
+      openSendAdapter: open, stagedAttachments: o.up.source, now: () => new Date(o.due), budgetMs: 60_000, filesClock: { endMs: 300, leastMs: 300 },
+    });
+    expect({ filed: out.filed, failed: out.failed, onLadder: out.onLadder }).toEqual({ filed: 0, failed: 1, onLadder: 0 });
+    const rows = await owedRows(o.db);
+    const files = rows.find((r) => r.stagedParts !== null)!;
+    const whole = rows.find((r) => r.stagedParts === null)!;
+    expect({ own: ownAttempts(files.attempts), next: files.filesNextAttemptAt?.getTime() }).toEqual({ own: 1, next: o.due + SEND_COPY_OWED_WAITS_MS[0]! });
+    expect({ next: whole.nextAttemptAt.getTime(), run: Math.floor(whole.attempts / SEND_COPY_OWED_MAILBOX_UNIT) % 100 }, "held by the copy with files")
+      .toEqual({ next: o.due + 30_000, run: 0 });
+    expect((await serverPass(o, { now: () => new Date(o.due + 30_000) })).filed).toBe(1);
+    expect(o.smtp.sentFolder).toEqual([soon]);
+  });
+
+  it("a copy with files refused for its size is given up at once, as its request gives it up", async () => {
+    const o = await stagedSend();
+    o.reachable();
+    const open = filingOf(o, o.res.providerMessageId!, () => { throw imapNo("TOOBIG"); });
+    const out = await serverPass(o, { openSendAdapter: open, stagedAttachments: o.up.source, now: () => new Date(o.due) });
+    expect({ gaveUp: out.gaveUp, failed: out.failed, rows: (await owedRows(o.db)).length }).toEqual({ gaveUp: 1, failed: 0, rows: 0 });
+  });
+
+  it("an unavailable server and a dead connection are still tried again", async () => {
+    const busy = await refusedCopy("UNAVAILABLE", true);
+    expect({ sentCopy: busy.res.sentCopy, reason: busy.res.sentCopyReason, appends: busy.appends })
+      .toEqual({ sentCopy: "missing", reason: "unreachable", appends: 4 });
+    const dead = await refusedCopy(() => Object.assign(new Error("Connection not available"), { code: "NoConnection" }), true);
+    expect({ sentCopy: dead.res.sentCopy, reason: dead.res.sentCopyReason, appends: dead.appends })
+      .toEqual({ sentCopy: "missing", reason: "unreachable", appends: 4 });
+  });
+
+  it("the missing copy's line names the server's answer by its code and the copy's size, never its words", async () => {
+    const lines: string[] = [];
+    const log = createLogger({ service: "send", sink: (l) => { lines.push(l); } });
+    const o = await refusedCopy("LIMIT", true, log);
+    const missing = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.event === "send_sent_copy_missing");
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toMatchObject({ kind: "too_big", state: "NO", detail: "LIMIT", attempts: 1, errorClass: "Error", errorCode: null });
+    expect(missing[0]!.bytes).toBe(o.smtp.state.raws[0]!.length);
+    expect(missing[0]!.droppedFields).toBeUndefined();
+    expect(lines.join("\n")).not.toMatch(/maximum size|Command failed/);
+    lines.length = 0;
+    await refusedCopy(() => Object.assign(imapNo("LIMIT"), { serverResponseCode: "LIMIT mila@lichtgrat.example" }), true, log);
+    const forged = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.event === "send_sent_copy_missing");
+    expect(forged).toMatchObject({ kind: "refused", state: "NO" });
+    expect(forged!.detail, "a code outside the known set is not logged").toBeUndefined();
+    expect(lines.join("\n")).not.toContain("mila@");
+  });
+
+  it.each([
+    [{ responseStatus: "NO", serverResponseCode: "TOOBIG" }, false, "too_big"],
+    [{ serverResponseCode: "APPENDLIMIT" }, false, "too_big"],
+    [{ responseStatus: "NO", serverResponseCode: "LIMIT" }, true, "too_big"],
+    [{ responseStatus: "NO", serverResponseCode: "LIMIT" }, false, "refused"],
+    [{ responseStatus: "NO", serverResponseCode: "OVERQUOTA" }, false, "full"],
+    [{ responseStatus: "BAD" }, true, "refused"],
+    [{ responseStatus: "NO", serverResponseCode: "INUSE" }, true, "unreachable"],
+    [{ code: "ECONNREFUSED" }, true, "unreachable"],
+    [{ code: "EIMAPBOUND", bound: "size" }, true, "unreachable"],
+    [{ code: "ERR_TLS_CERT_ALTNAME_INVALID" }, true, "refused"],
+    [{ authenticationFailed: true }, true, "refused"],
+    [{ code: "ENOENT" }, true, null],
+  ] as const)("sentCopyRefusalOf(%j, files %s) is %s", (shape, files, reason) => {
+    expect(sentCopyRefusalOf(Object.assign(new Error("x"), shape), files)).toBe(reason);
   });
 
   it("the server's pass drops past the hold or on a disabled mailbox, and dials no `error`, stamped, parked or unsent row", async () => {

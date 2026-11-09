@@ -1985,6 +1985,8 @@ const TABLE = {
   bodyHistoryHide: "Hide history",
   mailOversize:
     "This message's HTML part is too large to render safely. Showing the plain-text version.",
+  /** The frame's layout never settled at this width (or never reported): not a size, so not "too large". */
+  mailLayoutUndrawn: "This message's layout could not be drawn on this screen. Showing the plain-text version.",
   /** The html part could not be read (a pass threw on it): this one letter is shown as text. */
   mailUnreadable: "This message's HTML part could not be read. Showing the plain-text version.",
   /** The link confirm — the destination said out loud before anything leaves the app. */
@@ -2375,8 +2377,24 @@ const TABLE = {
   composeFromSubstitutedUnknown: "The address this draft was written from is disconnected, so it sends from the address above.",
   composeSent: "Sent.",
   composeEarlierWent: "This message had already been sent. Your newer text was not sent as a second copy.",
-  /** PHONE-ONLY: a delivered letter whose Sent copy could not be written, one line after what it says. */
-  sentCopyMissing: (said: string) => `${said} Its copy couldn't be put in your Sent folder.`,
+  /** PHONE-ONLY: a delivered letter whose Sent copy could not be written, and why (`""`: no reason given), after what it says. */
+  sentCopyMissing: (reason: string, said: string) => `${said} ${
+    reason === "too_big" ? "Your mail server would not keep a copy this large in your Sent folder. The message went out; nothing to send again."
+      : reason === "full" ? "Your mailbox on your mail server is full, so no copy was saved in your Sent folder. The message went out; free up space there."
+        : reason === "refused" ? "Your mail server refused the copy for your Sent folder, so none was saved there. The message went out; nothing to send again."
+          : reason === "unreachable" ? "Your mail server could not be reached to save the copy in your Sent folder. The message went out; nothing to send again."
+            : "The copy for your Sent folder could not be saved. The message went out; nothing to send again."}`,
+  /** PHONE-ONLY: a delivered letter whose Sent copy is still owed, for the reason its server gave. */
+  sentCopyWaiting: (reason: string, said: string) => `${said} ${
+    reason === "full" ? "Your mailbox on your mail server is full, so the copy for your Sent folder is not saved yet. The message went out; free up space there and ohmail tries again."
+      : reason === "unreachable" ? "Your mail server could not be reached to save the copy in your Sent folder. The message went out; ohmail tries again later."
+        : "Your mail server refused the copy for your Sent folder for now. The message went out; ohmail tries again later."}`,
+  /** PHONE-ONLY: a delivered letter whose Sent copy is kept without its files, tried until `until` (`reason` may be `""`). */
+  sentCopyWaitingUntil: (reason: string, said: string, until: string) => `${said} ${
+    reason === "full" ? `Your mailbox on your mail server is full, so the copy for your Sent folder is not saved yet. The message went out; free up space there, and ohmail tries again until ${until}.`
+      : reason === "unreachable" ? `Your mail server could not be reached to save the copy in your Sent folder. The message went out; ohmail tries again until ${until}.`
+        : reason === "refused" ? `Your mail server refused the copy for your Sent folder for now. The message went out; ohmail tries again until ${until}.`
+          : `The copy for your Sent folder is not saved yet. The message went out; ohmail tries again until ${until}.`}`,
   /* A CLOSED COMPOSER KEEPS ITS TEXT. The pill's Undo discards the draft it just kept. */
   composeKept: "Kept in Drafts.",
   composeKeptWithoutFiles: "Kept in Drafts. The attachments were not kept.",

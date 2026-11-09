@@ -3749,6 +3749,20 @@
     "open": "Open",
     "dismiss": "Dismiss"
   },
+  "sentCopy": {
+    "missing": "The copy for your Sent folder could not be saved. The message went out; nothing to send again.",
+    "missingTooBig": "Your mail server would not keep a copy this large in your Sent folder. The message went out; nothing to send again.",
+    "missingFull": "Your mailbox on your mail server is full, so no copy was saved in your Sent folder. The message went out; free up space there.",
+    "missingRefused": "Your mail server refused the copy for your Sent folder, so none was saved there. The message went out; nothing to send again.",
+    "missingUnreachable": "Your mail server could not be reached to save the copy in your Sent folder. The message went out; nothing to send again.",
+    "waitingFull": "Your mailbox on your mail server is full, so the copy for your Sent folder is not saved yet. The message went out; free up space there and ohmail tries again.",
+    "waitingRefused": "Your mail server refused the copy for your Sent folder for now. The message went out; ohmail tries again later.",
+    "waitingUnreachable": "Your mail server could not be reached to save the copy in your Sent folder. The message went out; ohmail tries again later.",
+    "waitingUntil": "The copy for your Sent folder is not saved yet. The message went out; ohmail tries again until {time}.",
+    "waitingFullUntil": "Your mailbox on your mail server is full, so the copy for your Sent folder is not saved yet. The message went out; free up space there, and ohmail tries again until {time}.",
+    "waitingRefusedUntil": "Your mail server refused the copy for your Sent folder for now. The message went out; ohmail tries again until {time}.",
+    "waitingUnreachableUntil": "Your mail server could not be reached to save the copy in your Sent folder. The message went out; ohmail tries again until {time}."
+  },
   "screening": {
     "scopeShared": "{domain} is a shared provider. Decisions here are per address.",
     "action": "Screening",

@@ -24,9 +24,12 @@ import {
   neutraliseCss,
   REMOTE_URL,
   SAFE_HREF,
+  cssHex,
+  letterMediaAt,
+  letterPaperOf,
 } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
-import { letterPaperOf, schemeFreeSheet } from "../src/mail/paper";
+import { phoneQuotedTree } from "../src/mail/quoted-tree";
 import type { PhoneBlockedAsset, PhoneSanitizedMail, PhoneSanitizeOptions } from "../src/mail/sanitize";
 import * as XSS from "../../webapp/test/fixtures/mutation-xss-payloads";
 import { HOSTILE_HTML, OWNER_BILLING_HTML } from "../../webapp/test/fixtures/owner-billing-email";
@@ -81,9 +84,11 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
   const sheets: string[] = [];
   const cids: string[] = [];
   const links: string[] = [];
+  const frameWidth = opts.frame?.width ?? 360;
   if (html.length > MAIL_MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, oversize: true };
+    return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, frameWidth, breaks: [], oversize: true };
   }
+  const media = letterMediaAt({ width: frameWidth });
   const seen = new Set<string>();
   const record = (url: string, via: PhoneBlockedAsset["via"], pixel: boolean): void => {
     const key = `${via}:${url}`;
@@ -104,24 +109,39 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
     return minted !== undefined && INLINE_IMAGE_SRC.test(minted) ? minted : null;
   };
   const doc = parseDocument(html, { lowerCaseTags: true, lowerCaseAttributeNames: true });
-  const headStyles: Element[] = [];
-  const findHeadStyles = (nodes: readonly ChildNode[]): void => {
+  const findBody = (nodes: readonly AnyNode[]): Element | null => {
     for (const n of nodes) {
       if (!(n instanceof Element)) continue;
+      if (n.tagName === "body") return n;
+      if (n.tagName === "html") {
+        const inner = findBody(n.children);
+        if (inner) return inner;
+      }
+    }
+    return null;
+  };
+  const body = findBody(doc.children);
+  const headStyles: Element[] = [];
+  const findHeadStyles = (nodes: readonly ChildNode[]): boolean => {
+    for (const n of nodes) {
+      if (!(n instanceof Element)) continue;
+      if (n === body) return true;
       if (n.tagName === "head") {
         for (const c of n.children) {
           if (c instanceof Element && c.tagName === "style") headStyles.push(c);
         }
         continue;
       }
-      if (n.tagName === "html") findHeadStyles(n.children);
+      if (n.tagName === "style" && body !== null) headStyles.push(n);
+      if (n.tagName === "html" && findHeadStyles(n.children)) return true;
     }
+    return false;
   };
   findHeadStyles(doc.children);
   const out: string[] = [];
   const drawn: string[] = [];
   const emitStyle = (el: Element): void => {
-    const text = schemeFreeSheet(el.children.map((c) => (c instanceof Text ? c.data : "")).join(""), el.attribs.media);
+    const text = media.sheet(el.children.map((c) => (c instanceof Text ? c.data : "")).join(""), { media: el.attribs.media, type: el.attribs.type });
     if (text === null) return;
     drawn.push(text);
     const neutral = neutraliseCss(text, (url) => cssUrl(url), recordSheet);
@@ -227,21 +247,14 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
     }
   };
   for (const s of headStyles) emitStyle(s);
-  const findBody = (nodes: readonly AnyNode[]): Element | null => {
-    for (const n of nodes) {
-      if (!(n instanceof Element)) continue;
-      if (n.tagName === "body") return n;
-      if (n.tagName === "html") {
-        const inner = findBody(n.children);
-        if (inner) return inner;
-      }
-    }
-    return null;
-  };
-  const body = findBody(doc.children);
   walk(body ? body.children : doc.children);
   // The paper is read off the parse and the sheets drawn, not the walk under test.
-  return { html: out.join(""), blocked, sheets, cids, links, ...letterPaperOf(doc.children, drawn) };
+  const own = body === null ? null : { bgcolor: body.attribs.bgcolor ?? null, text: body.attribs.text ?? null, style: body.attribs.style ?? null };
+  const p = letterPaperOf({ sheets: drawn, body: own, root: (body ?? doc) as AnyNode, tree: phoneQuotedTree });
+  return {
+    html: out.join(""), blocked, sheets, cids, links, light: p.light, paper: p.paper === null ? null : cssHex(p.paper),
+    ink: p.ink === null ? null : cssHex(p.ink), frameWidth, breaks: media.breaks,
+  };
 }
 
 // ── THE DIFFERENTIAL ────────────────────────────────────────────────────────────────────────────

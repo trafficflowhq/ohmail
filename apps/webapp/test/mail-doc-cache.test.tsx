@@ -219,6 +219,18 @@ describe("the keep itself", () => {
     expect(cache.size).toBe(MAIL_DOC_ENTRIES_MAX);
     expect(cache.read(inputs()), "the oldest entry outlived the bound").toBeUndefined();
   });
+
+  it("a document serves frame widths in the band it was resolved for, and no other", () => {
+    const engine = new OhmailEngine({ adapter: inertAdapter() });
+    const cache = mailDocCacheFor<string>(engine);
+    cache.write(inputs({ frameWidth: 572 }), "wide", 10, { width: 572, breaks: [{ px: 480, strict: false }] });
+    expect(cache.read(inputs({ frameWidth: 560 }))?.value).toBe("wide");
+    expect(cache.read(inputs({ frameWidth: 900 }))?.value).toBe("wide");
+    expect(cache.read(inputs({ frameWidth: 400 })), "a document resolved for a wide frame was served to a narrow one").toBeUndefined();
+    // A letter with no width threshold is one document at every width.
+    cache.write(inputs({ messageId: "flat", frameWidth: 572 }), "flat", 10, { width: 572, breaks: [] });
+    expect(cache.read(inputs({ messageId: "flat", frameWidth: 343 }))?.value).toBe("flat");
+  });
 });
 
 describe("the server render and the hydration agree", () => {

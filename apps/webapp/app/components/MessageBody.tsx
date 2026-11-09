@@ -12,7 +12,7 @@
  */
 
 import DOMPurify from "dompurify";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { BODY_PAGE_CHARS, useOptionalTheme, type TagHueName } from "@ohmail/ui";
 import { decodeUnreservedEscapes } from "@trafficflow/core/url-escapes";
@@ -43,6 +43,9 @@ import { CAPTION_KEY, type BlockNotice, type NoticeKind } from "./BlockNotice";
 import { treeWithin } from "@ohmail/client-engine/html-tree-budget";
 import { DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, proxiedImages } from "./proxied-images";
 import { QUOTED_HISTORY_LIMITS, drawsNoWords, hiddenByOwnStyle, isForwardSubject, quotedDomTree, quotedHistoryVerdictOfHtml, withoutFiller, type QuotedDomNode, type QuotedVerdict } from "@ohmail/client-engine";
+import {
+  letterBand, letterMediaAt, letterPaperOf, parseCssColor, type LetterBody, type LetterBreak, type LetterFrame, type LetterPaper, type Rgb,
+} from "@ohmail/client-engine";
 import { scrollProgrammatically } from "../shell/programmatic-scroll";
 import { useEngineOrNull } from "../shell/engine";
 import { mailDocCacheFor, type MailDocCache, type MailDocInputs } from "./mail-doc-cache";
@@ -1685,373 +1688,12 @@ function drawnStrings(value: string, out: string[], idents = false): void {
 
 // ── how light is this mail? ────────────────────────────────────────────────────────────
 
-/**
- * WHY THE DARK RENDERING HAS TO ASK THIS AT ALL: The dark rendering is one filter — `invert(1) hue-rotate(180deg)` —
- * and a filter has no opinion about what it is given. Applied to a mail that is ALREADY dark it produces a light one,
- * so a reader in a dark theme gets a white flash from exactly the senders who took the trouble to design for dark.
- * That is not a rough edge; it is the transform doing its job to the wrong input, and no amount of tuning the filter
- * fixes it. So the filter is gated on a cheap reading of the mail's own paper: invert what is light, leave alone what
- * is not. Everything below exists to answer that one question from the document this file already has in its hands,
- * and nothing else reads it.
+/*
+ * The dark rendering is one filter, `invert(1) hue-rotate(180deg)`, gated on the letter's own paper: invert
+ * what is light, leave alone what is not. The reading is the shared gate's (`letterPaperOf` in
+ * `@ohmail/client-engine`, which the phone runs too), at the frame's own width: the sender's conditions are
+ * decided for the frame in the pre-pass below, so what the frame paints is what the gate read.
  */
-
-/**
- * The colour keywords bulk mail is actually written with. Deliberately NOT the full CSS list:
- * every entry here is a name this scanner must recognise to avoid mistaking a declared
- * background for "none declared", and the ones that matter are the neutrals a page is painted
- * with. A name that is absent falls through to "no opinion", which defaults to light — the
- * same answer as a mail that declares nothing, and the safe direction (see {@link mailIsLight}).
- */
-const NAMED_COLORS: Record<string, string> = {
-  white: "#ffffff", snow: "#fffafa", ivory: "#fffff0", floralwhite: "#fffaf0",
-  ghostwhite: "#f8f8ff", whitesmoke: "#f5f5f5", seashell: "#fff5ee", beige: "#f5f5dc",
-  oldlace: "#fdf5e6", linen: "#faf0e6", antiquewhite: "#faebd7", aliceblue: "#f0f8ff",
-  azure: "#f0ffff", mintcream: "#f5fffa", honeydew: "#f0fff0", lavender: "#e6e6fa",
-  gainsboro: "#dcdcdc", lightgray: "#d3d3d3", lightgrey: "#d3d3d3", silver: "#c0c0c0",
-  darkgray: "#a9a9a9", darkgrey: "#a9a9a9", gray: "#808080", grey: "#808080",
-  dimgray: "#696969", dimgrey: "#696969", black: "#000000",
-  navy: "#000080", darkslategray: "#2f4f4f", darkslategrey: "#2f4f4f", midnightblue: "#191970",
-};
-
-export interface Rgb { r: number; g: number; b: number; a: number }
-
-/**
- * A CSS colour, as numbers, or `null` for "this file has no opinion".
- *
- * `null` is a real answer and not a failure: `transparent`, `inherit`, a gradient, a colour
- * function this does not parse, and plain nonsense all mean the same thing to the caller —
- * KEEP LOOKING — and none of them may be mistaken for an opaque background that was declared.
- * The alpha is carried for exactly that reason: `rgba(0,0,0,0)` is spelled like a colour and
- * paints nothing, and treating it as black is how a light mail gets classified dark.
- */
-export function parseCssColor(input: string): Rgb | null {
-  const v = input.trim().toLowerCase();
-  if (v.length === 0) return null;
-  const named = NAMED_COLORS[v];
-  const hex = named ?? v;
-  if (hex.startsWith("#")) {
-    const d = hex.slice(1);
-    const ok = /^[0-9a-f]+$/.test(d);
-    if (ok && (d.length === 3 || d.length === 4)) {
-      const p = (i: number): number => Number.parseInt(d[i]! + d[i]!, 16);
-      return { r: p(0), g: p(1), b: p(2), a: d.length === 4 ? p(3) / 255 : 1 };
-    }
-    if (ok && (d.length === 6 || d.length === 8)) {
-      const p = (i: number): number => Number.parseInt(d.slice(i, i + 2), 16);
-      return { r: p(0), g: p(2), b: p(4), a: d.length === 8 ? p(6) / 255 : 1 };
-    }
-    return null;
-  }
-  // `rgb(1,2,3)`, `rgba(1,2,3,.5)` and the space-separated `rgb(1 2 3 / 50%)` form.
-  const fn = /^rgba?\(([^)]*)\)$/.exec(v);
-  if (!fn) return null;
-  const parts = fn[1]!.split(/[,/\s]+/).filter((s) => s.length > 0);
-  if (parts.length < 3) return null;
-  const chan = (s: string): number => {
-    const n = Number.parseFloat(s);
-    if (!Number.isFinite(n)) return Number.NaN;
-    return s.endsWith("%") ? (n / 100) * 255 : n;
-  };
-  const r = chan(parts[0]!), g = chan(parts[1]!), b = chan(parts[2]!);
-  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return null;
-  let a = 1;
-  if (parts.length >= 4) {
-    const rawAlpha = parts[3]!;
-    const n = Number.parseFloat(rawAlpha);
-    if (!Number.isFinite(n)) return null;
-    a = rawAlpha.endsWith("%") ? n / 100 : n;
-  }
-  return { r, g, b, a };
-}
-
-/**
- * WCAG 2.x relative luminance. The sRGB channels are linearised before they are weighted,
- * which is the difference between "how bright is this number" and "how bright does this look";
- * a plain channel average calls `#008000` light and it is not.
- */
-export function relativeLuminance({ r, g, b }: Rgb): number {
-  const lin = (c: number): number => {
-    const s = Math.min(Math.max(c, 0), 255) / 255;
-    return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
-}
-
-/**
- * THE THRESHOLD, AND IT IS NOT A ROUND NUMBER BY ACCIDENT.
- *
- * 0.179 is the relative luminance at which black and white text have equal contrast against a
- * background — the crossover the WCAG contrast formula produces from `(L+0.05)` on both sides.
- * Above it a designer reaches for dark ink, below it for light ink, which is precisely the
- * question the dark rendering needs answered: "was this mail drawn to be read as dark-on-light?"
- * A mid grey therefore reads as light, which is the right call — inverting `#808080` returns
- * very nearly `#808080`, so the cost of being wrong in that region is nil either way.
- */
-export const LIGHT_LUMINANCE = 0.179;
-
-/**
- * An OPAQUE-ENOUGH background declared on one element, or `null` for "nothing declared here". Both spellings mail
- * uses: the html 3.2 `bgcolor` attribute, which is still what a table-based newsletter is built from, and a
- * `background`/`background-color` declaration in the inline `style`. The shorthand is scanned token by token because
- * `background:#fff url(x) no-repeat` is one declaration with the colour buried in it. A translucent value (alpha
- * under a half) is `null` — it lets the surface behind it through, so it is not what the mail is painted on.
- */
-function declaredBackground(el: Element): Rgb | null {
-  const opaque = (c: Rgb | null): Rgb | null => (c && c.a >= 0.5 ? c : null);
-  const attr = el.getAttribute("bgcolor");
-  const fromAttr = attr ? opaque(parseCssColor(attr)) : null;
-  if (fromAttr) return fromAttr;
-  const style = el.getAttribute("style");
-  if (!style) return null;
-  const decl = /(?:^|;)\s*background(?:-color)?\s*:\s*([^;!]+)/i.exec(style);
-  if (!decl) return null;
-  for (const token of colourTokens(decl[1]!)) {
-    const c = opaque(parseCssColor(token));
-    if (c) return c;
-  }
-  return null;
-}
-
-/** A `html{…}` / `body{…}` rule's background colour in a stylesheet's text, or `null`. */
-const SHEET_PAGE_BG =
-  /(?:^|[};])\s*(?:html|body)\s*(?:,\s*(?:html|body)\s*)*\{[^{}]*?background(?:-color)?\s*:\s*([^;!}]+)/i;
-
-/** How much of a background value is read: mail is untrusted, and a colour sits in its first tokens. */
-const COLOUR_VALUE_CAP = 4096;
-
-/**
- * A background value's tokens, a function's arguments kept together: `rgb(18, 18, 18) url(x)` is two. One pass over
- * the first {@link COLOUR_VALUE_CAP} characters, split on whitespace outside parentheses; `work` counts the visits.
- */
-export function colourTokens(value: string, work: { visited: number } = { visited: 0 }): string[] {
-  const tokens: string[] = [];
-  const end = Math.min(value.length, COLOUR_VALUE_CAP);
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < end; i++) {
-    work.visited++;
-    const ch = value[i]!;
-    if (depth === 0 && /\s/.test(ch)) {
-      if (start >= 0) tokens.push(value.slice(start, i));
-      start = -1;
-      continue;
-    }
-    if (start < 0) start = i;
-    if (ch === "(") depth++;
-    else if (ch === ")" && depth > 0) depth--;
-  }
-  if (start >= 0) tokens.push(value.slice(start, end));
-  return tokens;
-}
-
-/**
- * A condition the page reading does not take: print or speech, a reader preference such as the colour scheme, or a
- * size (width, height, aspect ratio, orientation), which holds at some widths only and is left to the browser.
- */
-const UNPAINTED_MEDIA = /\bprefers-|width|height|aspect-ratio|orientation|(?<!\bnot\s+)\b(?:print|speech)\b/i;
-
-/**
- * The rules that paint the letter on screen at every width. A block for print, a preference
- * (`prefers-color-scheme: dark`) or a size (`max-width:600px`), `@container`, `@import` and blocks that hold no page
- * rule (`@font-face`, `@keyframes`) are dropped; `@media screen`/`all`, `@supports` and `@layer` are unwrapped so a
- * page rule inside them still counts.
- *
- * Mail is untrusted: ONE pass over the first {@link SCREEN_RULES_CHARS} characters, no recursion. Blocks unwrapped
- * nest at most {@link SCREEN_BLOCK_DEPTH} deep (a deeper one is dropped), a prelude past {@link SCREEN_PRELUDE_CHARS}
- * is dropped; `work` counts the characters visited.
- */
-export function screenRules(css: string, work: { visited: number } = { visited: 0 }): string {
-  const end = Math.min(css.length, SCREEN_RULES_CHARS);
-  let out = "";
-  let open = 0; // unwrapped at-rule blocks enclosing the cursor
-  let rule = 0; // brace depth inside a style rule at the current block's level
-  let skip = 0; // brace depth inside a dropped block; 0 when outside one
-  for (let i = 0; i < end; i++) {
-    work.visited++;
-    const ch = css[i]!;
-    if (skip > 0) {
-      if (ch === "{") skip++;
-      else if (ch === "}" && --skip === 0) out += ";";
-      continue;
-    }
-    if (ch === "@" && rule === 0) {
-      // The prelude runs to the block's `{`, or a `;` or `}` that ends the statement.
-      let j = i + 1;
-      while (j < end && css[j] !== "{" && css[j] !== ";" && css[j] !== "}") { work.visited++; j++; }
-      out += ";";
-      if (css[j] === "{" && j < end) {
-        const prelude = css.slice(i, j);
-        const unwrap = open < SCREEN_BLOCK_DEPTH && prelude.length <= SCREEN_PRELUDE_CHARS
-          && (/^@(?:supports|layer)\b/i.test(prelude) || (/^@media\b/i.test(prelude) && !UNPAINTED_MEDIA.test(prelude)));
-        if (unwrap) open++;
-        else skip = 1;
-        i = j;
-      } else {
-        // A `}` closes the enclosing block: read it next.
-        i = css[j] === "}" ? j - 1 : j;
-      }
-      continue;
-    }
-    if (ch === "{") rule++;
-    else if (ch === "}") {
-      if (rule > 0) rule--;
-      else if (open > 0) { open--; out += ";"; continue; }
-    }
-    out += ch;
-  }
-  return out;
-}
-
-/** How much of a letter's sheets {@link screenRules} reads, how deep it unwraps, and the longest prelude it reads. */
-const SCREEN_RULES_CHARS = 512 * 1024;
-const SCREEN_BLOCK_DEPTH = 32;
-const SCREEN_PRELUDE_CHARS = 1024;
-
-/** The body's own ink (`text` or an inline `color`); the sanitizer keeps only the body's children. */
-export function declaredInk(el: Element | null): Rgb | null {
-  if (!el) return null;
-  const solid = (c: Rgb | null): Rgb | null => (c && c.a >= 0.5 ? c : null);
-  const attr = el.getAttribute("text");
-  const fromAttr = attr ? solid(parseCssColor(attr)) : null;
-  if (fromAttr) return fromAttr;
-  const decl = /(?:^|;)\s*color\s*:\s*([^;!]+)/i.exec(el.getAttribute("style") ?? "");
-  return decl ? solid(parseCssColor(decl[1]!)) : null;
-}
-
-/** WCAG 2.x contrast ratio of two colours. */
-export function contrastRatio(a: Rgb, b: Rgb): number {
-  const x = relativeLuminance(a), y = relativeLuminance(b);
-  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
-}
-
-/**
- * The ink a letter's unstyled text is set in: the body's `own` when the letter's own `page` ({@link pageBackground})
- * is dark, so it is painted as sent, and the ink reads on it at WCAG AA; else `null`, the frame's #1b1b1b. A light page
- * is painted on the app's white or inverted, where a light ink would vanish. Nothing is guessed: a dark page that names
- * no ink is drawn as every renderer draws it.
- */
-export function letterInk(page: Rgb | null, own: Rgb | null): Rgb | null {
-  if (!own || page === null || mailIsLight(page)) return null;
-  const painted = clampedPaper(page) ?? page;
-  return contrastRatio(own, painted) >= 4.5 ? own : null;
-}
-
-/**
- * The tags a PAGE is painted with. A background on an `<a>` or a `<span>` is a highlight on a
- * word, not the paper, and letting one of those decide would classify a newsletter by whichever
- * inline flourish happened to come first in the document.
- */
-const PAINTS_THE_PAGE = new Set([
-  "table", "tbody", "tr", "td", "th", "div", "center", "section", "article", "main", "body",
-]);
-
-/**
- * How far into the document the wrapper chain is followed. A table-based newsletter nests
- * `table > tbody > tr > td` three deep before it reaches anything visible and often does it
- * twice, so this has to be more than a handful — and it must still be a CONSTANT, because the
- * scan runs synchronously inside `useMemo` on the thread that paints the app, like everything
- * else in this file.
- */
-const BG_SCAN_LIMIT = 40;
-
-/**
- * The mail's effective paper, from the document and not from a guess. Three places a mail says what it is painted on,
- * in the order they win: `<body bgcolor>` / `<body style>` — the most explicit statement, read from the PARSED
- * document because DOMPurify returns the body's CONTENT and the body element's own attributes never survive; a
- * `html{…}` or `body{…}` rule in the mail's own stylesheet — how a designed newsletter says it; and the outermost
- * container that declares one — document order is the wrapper chain in a table-based mail, so the first hit IS the
- * outermost. `null` means the mail declared nothing, the ordinary case: such mail is drawn on the browser's white,
- * and {@link mailIsLight} says so. What it cannot see, stated: there is no layout here — this runs before the frame
- * exists — so "dominant" is decided by depth and tag, not painted area.
- */
-
-/**
- * A mail whose outermost wrapper is a narrow dark bar over a white page reads as dark and is left alone; that costs
- * one mail its original colours in a dark theme (a rendering the reader can ask for by name), while the opposite
- * error is a white flash. Biased on purpose, and the per-message toggle is the exit.
- */
-export function effectiveBackground(
-  parsedBody: Element | null,
-  sanitized: Element | null,
-  styleText: string,
-): Rgb | null {
-  const page = pageBackground(parsedBody, styleText);
-  if (page) return page;
-  if (sanitized) {
-    let seen = 0;
-    for (const el of sanitized.querySelectorAll("*")) {
-      if (++seen > BG_SCAN_LIMIT) break;
-      if (!PAINTS_THE_PAGE.has(el.tagName.toLowerCase())) continue;
-      const c = declaredBackground(el);
-      if (c) return c;
-    }
-  }
-  return null;
-}
-
-/**
- * The page as the frame paints it: a screen `html`/`body` rule's background ({@link screenRules}), which the frame
- * keeps, else the body's own, which the sanitizer drops with the body and only {@link clampedPaper} repaints; `null`
- * when neither names a solid colour.
- */
-export function pageBackground(parsedBody: Element | null, styleText: string): Rgb | null {
-  const sheet = SHEET_PAGE_BG.exec(screenRules(styleText));
-  if (sheet) {
-    for (const token of colourTokens(sheet[1]!)) {
-      const c = parseCssColor(token);
-      if (c && c.a >= 0.5) return c;
-    }
-    return null;
-  }
-  return parsedBody ? declaredBackground(parsedBody) : null;
-}
-
-/**
- * Is this mail worth inverting?
- *
- * `null` — nothing declared — is TRUE, and that default is the whole product: mail that names
- * no background is drawn on white by every renderer there has ever been, including
- * {@link FRAME_CSS}'s own `body{background:#fff}`, and it is the overwhelming majority of what
- * arrives. Defaulting the other way would switch dark viewing off for almost everything.
- */
-export function mailIsLight(bg: Rgb | null): boolean {
-  return bg === null || relativeLuminance(bg) > LIGHT_LUMINANCE;
-}
-
-/**
- * HOW FAR FROM GREY A PAPER MAY DRIFT AND STILL COUNT AS "NO COLOUR", on the 0–255 channel scale. It is a chroma —
- * the spread between the strongest and weakest sRGB channel — so it needs no colour-space conversion and reads as
- * exactly "how far from grey is this". 12 is chosen against the two things it has to separate. A template's habit —
- * the faint off-white or grey a mail builder drops behind a white card (`#efefef`, `#f5f5f5`, a warm `#faf8f2`) — has
- * a chroma at or near 0 and is caught. A DELIBERATE pale tint — a brand's `#eef2ff`, a pale-yellow highlight card —
- * clears it (17, 51) and is kept. The band is narrow on purpose: clamping a paper that WAS meant costs one letter
- * drawn on white instead of near-white, which the "Show original" flip returns; not clamping costs the dull grey
- * sheet behind an otherwise white letter, which is the reported defect.
- */
-export const NEUTRAL_CHROMA = 12;
-
-/**
- * ── THE PAPER ACTUALLY PAINTED, WITH A NEAR-NEUTRAL LIGHT GROUND CLAMPED TO THE APP'S WHITE ─ {@link
- * effectiveBackground} reads what a mail DECLARES; this decides what to PAINT it on, and the two are kept apart
- * deliberately — the declared value still drives {@link mailIsLight} and the dark-viewing seam untouched, so the
- * inversion tests keep asserting the real colour. A letter that declares a faint grey/off-white page is not asking
- * the reader to keep that grey; it is the sender's template, and painting the frame's paper grey puts a dull sheet
- * behind a white letter. So a paper that is BOTH light (above the inversion threshold) AND effectively colourless
- * (chroma within {@link NEUTRAL_CHROMA}) becomes `null` — the app's own white, the same default a mail that declares
- * no background at all is drawn on.
- */
-
-/**
- * Two papers keep their ground: a DELIBERATE colour (chroma past the band — a tinted card, a brand ground) and a DARK
- * canvas (a sender who drew a dark page). Only the near-white-grey middle is dropped. `null` in, `null` out: a mail
- * that declared nothing is unchanged.
- */
-export function clampedPaper(bg: Rgb | null): Rgb | null {
-  if (bg === null) return null;
-  if (!mailIsLight(bg)) return bg;
-  const chroma = Math.max(bg.r, bg.g, bg.b) - Math.min(bg.r, bg.g, bg.b);
-  return chroma <= NEUTRAL_CHROMA ? null : bg;
-}
 
 /**
  * A colour this file computed, as CSS. Alpha is dropped deliberately — this is only ever used
@@ -3233,6 +2875,8 @@ export interface SanitizeOptions {
   history?: boolean;
   /** The message's subject, read with {@link history}: a forward's prefix keeps the forwarded message open. */
   subject?: string | null;
+  /** The frame the letter is drawn in: the sender's conditions are decided for its width ({@link LETTER_FRAME_DEFAULT_PX} unnamed). */
+  frame?: LetterFrame;
   /**
    * The page asks before a marked link opens, in a tab of its own (`link-ask.ts`): such a link
    * loses its `href` and keeps its address in `data-ohmail-ask` until the frame is armed. `false`
@@ -3257,7 +2901,7 @@ export interface SanitizedMail {
   sheets: string[];
   /**
    * IS THIS MAIL WORTH INVERTING? The one input to dark viewing, decided from the document
-   * — see {@link effectiveBackground}. `true` for mail that is effectively light (including
+   * — see `letterPaperOf`. `true` for mail that is effectively light (including
    * the common case of a mail that declares no background at all); `false` for mail a sender
    * already drew dark, which the filter must leave alone or it turns white.
    *
@@ -3302,8 +2946,15 @@ export interface SanitizedMail {
    * nothing in the render path reads it.
    */
   background: Rgb | null;
-  /** The ink the frame sets unstyled text in ({@link letterInk}); `null` keeps the frame's own. */
+  /** The paper the frame is painted with; `null` keeps the frame's own light sheet. */
+  paper?: Rgb | null;
+  /** The ink the frame sets unstyled text in; `null` keeps the frame's own. */
   ink?: Rgb | null;
+  /** The frame width the sheets were resolved at, and the widths they compared against (`letterBand`). */
+  frameWidth?: number;
+  breaks?: readonly LetterBreak[];
+  /** The folded document's own reading of its page ({@link fold}), or `null`. */
+  foldPaper?: LetterPaper | null;
   /**
    * The Content-IDs of every `cid:` image this document references and could NOT resolve —
    * distinct, in document order, still rendered as blanked boxes. The component reports them
@@ -3766,9 +3417,18 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
    * promise — see the comment on the `sanitize` call below, which is where that property
    * actually lives.
    */
-  let styleText = "";
+  const frameWidth = opts.frame?.width ?? LETTER_FRAME_DEFAULT_PX;
+  const media = letterMediaAt({ width: frameWidth });
+  // Each sheet's text before its conditions were decided: the layout classifiers read it, so a width never moves a letter between them.
+  const unresolved = new Map<string, string[]>();
   for (const el of parsed.querySelectorAll("style")) {
-    const text = el.textContent ?? "";
+    const raw = el.textContent ?? "";
+    // Decided for this frame first: no sender condition reaches DOMPurify or the frame, and a picture in a block that does not apply is never counted.
+    const text = media.sheet(raw, { media: el.getAttribute("media"), type: el.getAttribute("type") });
+    if (text === null) {
+      el.remove();
+      continue;
+    }
     const urls: string[] = [];
     const live = neutraliseCss(text, (u) => {
       const via = cssUrl(u);
@@ -3782,9 +3442,9 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       same.push({ live, urls });
       liveSheets.set(el.textContent, same);
     }
-    // Accumulated for {@link effectiveBackground} only, and it is the NEUTRALISED text — the
-    // sheet the frame is going to get — so the paper this reads is the paper the reader sees.
-    styleText += `${el.textContent}\n`;
+    const before = unresolved.get(el.textContent) ?? [];
+    before.push(neutraliseCss(raw, () => null));
+    unresolved.set(el.textContent, before);
   }
 
   /**
@@ -3835,7 +3495,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
 
   // `IS_EMPTY_INPUT` returns null under `RETURN_DOM`, which is a message with no html left.
   if (!sanitized) {
-    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, asks, fold: null };
+    return { html: "", blocked, sheets, light: true, reflow: false, prose: false, rich: null, background: null, cids, links, asks, fold: null, frameWidth, breaks: media.breaks };
   }
 
   // ── THE POST-PASS. Over the document the frame will have, not the one we handed over. ──
@@ -3873,10 +3533,11 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // Read AFTER the post-pass, from the final document, for the same reason the post-pass runs
   // there: what the reader is shown is what this must be an answer about. Both are READS — the
   // post-pass above is the last thing that writes, and it writes attributes only, which is the
-  // rule this whole function is arranged around.
-  const background = effectiveBackground(parsed.body, sanitized, styleText);
-  // The body's own ink, read from the parse, when it reads on the body's own page (see letterInk).
-  const ink = letterInk(pageBackground(parsed.body, styleText), declaredInk(parsed.body));
+  // rule this whole function is arranged around. The body element is gone from the document, so
+  // its own attributes are read from the parse.
+  const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
+  const own: LetterBody = { bgcolor: parsed.body.getAttribute("bgcolor"), text: parsed.body.getAttribute("text"), style: parsed.body.getAttribute("style") };
+  const paper = letterPaperOf({ sheets: sanitizedSheets, body: own, root: sanitized as unknown as QuotedDomNode, tree: quotedDomTree });
   // The divergence `prose` reserved room for: `reflow` still answers
   // `isRigidLayout` alone (a fixed canvas must be scaled); `prose` answers
   // "did the sender lay something out?" — rigid OR designed keeps its
@@ -3887,9 +3548,9 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // element per entry, rule-wise through {@link sheetsDeclare}: a joined
   // view manufactured declarations across sheet EOFs, and a flat regex
   // read comment text as canvas evidence.
-  const sanitizedSheets = [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? "");
-  const rigid = isRigidLayout(sanitized, sanitizedSheets);
-  const designed = rigid || isDesignedLayout(sanitized, sanitizedSheets);
+  const classSheets = sanitizedSheets.map((t) => unresolved.get(t)?.shift() ?? t);
+  const rigid = isRigidLayout(sanitized, classSheets);
+  const designed = rigid || isDesignedLayout(sanitized, classSheets);
   const whole = sanitized.innerHTML;
   // THE WALK RUNS ON THE SAME ELEMENT the line above serialized — the sanitized, post-passed
   // document — and only for a mail the frame will not render. What it emits is data (text runs,
@@ -3901,16 +3562,26 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
       prose: rich !== null, blocked, cids, links, asks, met, walk: (holder) => buildRichNodesOf(holder, ownImages), subject: opts.subject,
     })
     : null;
+  // The folded document is its own: the cut left only what it draws in `sanitized`.
+  const foldPaper = folded?.fold
+    ? letterPaperOf({
+      sheets: [...sanitized.querySelectorAll("style")].map((s) => s.textContent ?? ""), body: own, root: sanitized as unknown as QuotedDomNode, tree: quotedDomTree,
+    })
+    : null;
   return {
     html: whole,
     blocked,
     sheets,
-    light: mailIsLight(background),
+    light: paper.light,
     reflow: !rigid,
     prose: !designed,
     rich,
-    background,
-    ink,
+    background: paper.ground,
+    paper: paper.paper,
+    ink: paper.ink,
+    frameWidth,
+    breaks: media.breaks,
+    foldPaper,
     cids,
     links,
     asks,
@@ -4069,7 +3740,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
    specificity and LATER in the document, so it used to win outright. Chrome, not theory. */
 :root,:root>body{height:auto !important}
 /* THE PAPER. --ohmail-paper is the mail's OWN declared background when it has one (see
-   effectiveBackground, and buildMailDocument, which is what sets the variable); #fff is the
+   letterPaperOf, and buildMailDocument, which is what sets the variable); #fff is the
    default every renderer has always used for mail that declares nothing.
    It matters most for a mail this viewer declines to invert. A sender's dark design usually
    lives on an inner wrapper table, not on a body element the sanitizer keeps — so the frame's
@@ -4380,6 +4051,15 @@ export const MIN_FIT_SCALE = 0.6;
  * {@link MID_FIT_SCALE}, and only a column that wide keeps {@link MIN_FIT_SCALE}.
  */
 export const REFLOW_BELOW_PX = 480;
+
+/** The frame's width before this tab measured one: the `.msg` column's content box (640 − 2 × 34). */
+export const LETTER_FRAME_DEFAULT_PX = 572;
+
+/** The last frame width this tab measured: the next letter is resolved at it before its own is read. */
+let lastLetterWidth: number | null = null;
+
+/** A width step this small that crosses back to the band the letter just left is a scrollbar coming or going. */
+const SCROLLBAR_STEP_PX = 24;
 export const WIDE_COLUMN_PX = 700;
 export const MID_FIT_SCALE = 0.75;
 
@@ -4785,6 +4465,16 @@ export function MessageBody({
   const mounted = useHydrated();
 
   /**
+   * THE FRAME'S OWN WIDTH, which the sender's width conditions are decided at (`letterMediaAt`): the shell's
+   * (`.mb` has no padding, and the sheet and the frame are all of it), read before paint and on every resize.
+   * The letter is resolved again only when the width crosses one of its own thresholds (`letterBand`), so a
+   * letter with none is never rebuilt, and a crossing a scrollbar caused by the last one is not taken back.
+   */
+  const [mediaWidth, setMediaWidth] = useState(() => lastLetterWidth ?? LETTER_FRAME_DEFAULT_PX);
+  const bands = useRef<{ breaks: readonly LetterBreak[]; at: number } | null>(null);
+  const widthGuard = useRef<{ width: number | null; left: number | null }>({ width: null, left: null });
+
+  /**
    * THE POLICY AND THE REWRITE ARE THE SAME DECISION, SO THEY READ ONE VALUE: {@link proxyImgSource} answers "can
    * this file state, truthfully, where a consented image comes from?" — and a `null` there is not a detail of the
    * CSP. It is the answer to whether the proxy may be used AT ALL. A document whose `<img src>` was rewritten through
@@ -4829,12 +4519,13 @@ export function MessageBody({
     const cache = engine && messageId ? mailDocCacheFor<ReturnType<typeof sanitizeView>>(engine) : null;
     const inputs: MailDocInputs = {
       messageId: messageId ?? "", html, proxied: proxy !== null, imgSource, cidImages, resolvedRemoteImages,
-      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage,
+      loadPixels: loadTrackingPixels, hasText, darkWanted, forward: isForwardSubject(subject), askInPage, frameWidth: mediaWidth,
     };
     const kept = cache?.read(inputs);
     if (kept) return kept.value;
     const made = sanitizeView(html);
-    cache?.write(inputs, made, made && made.state === "ok" ? made.doc.length : html.length);
+    cache?.write(inputs, made, made && made.state === "ok" ? made.doc.length : html.length,
+      made && made.state === "ok" ? { width: made.frameWidth, breaks: made.breaks } : undefined);
     return made;
   // The pass itself, unchanged — what the cache keeps.
   function sanitizeView(html: string) {
@@ -4847,12 +4538,16 @@ export function MessageBody({
     try {
       made = sanitizeMailHtml(html, {
         imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true, subject, askInPage,
+        frame: { width: mediaWidth },
       });
     } catch {
       // Hostile mail never takes the view down: this one letter is shown as its text, with the reason.
+      console.warn("ohmail: letter_unreadable, shown as text", { chars: html.length, step: "sanitize" });
       return { state: "unsupported" as const, historyAt: "unread" as QuotedVerdict };
     }
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, ink, cids, links, asks, fold, historyAt = "unread" } = made;
+    const {
+      html: clean, blocked, sheets, oversize, light, reflow, prose, rich, paper, ink, cids, links, asks, fold, foldPaper = null, historyAt = "unread",
+    } = made;
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const, historyAt: "unread" as QuotedVerdict };
@@ -4868,15 +4563,19 @@ export function MessageBody({
       reflow,
       // The mail's own paper, so a message this viewer declines to invert does not sit on a
       // white sheet it never asked for — but a near-neutral light ground (the grey a template
-      // drops behind a white letter) is clamped back to the app's white, see clampedPaper.
+      // drops behind a white letter) is the app's white (`paintedPaper`).
       // Ignored whenever the filter is on — see FRAME_CSS.
-      paper: clampedPaper(background),
-      // The body's own ink when it reads on its own page; else the frame's (see letterInk).
+      paper: paper ?? null,
+      // The body's own ink on a dark page it reads on, or ohmail's light ink on a dark page that names
+      // none and where no element paints a background (`letterPaperOf`); else the frame's.
       ink: ink ?? null,
     };
     const doc = buildMailDocument(clean, docOpts);
-    // The same document with its quoted history cut out: the frame's folded state.
-    const foldDoc = fold ? buildMailDocument(fold.html, docOpts) : null;
+    // The same document with its quoted history cut out: the frame's folded state, read as its own letter.
+    const foldLight = foldPaper?.light ?? light;
+    const foldDoc = fold
+      ? buildMailDocument(fold.html, { ...docOpts, dark: darkWanted && foldLight, paper: foldPaper?.paper ?? null, ink: foldPaper?.ink ?? null })
+      : null;
     // Counted over `doc`, the string the frame parses, never over `clean`. Past one frame a letter
     // keeps its own path (the walk, else the text part) and loses only the flip to its layout; a
     // designed mail, or a letter with no text part, renders as text.
@@ -4886,11 +4585,15 @@ export function MessageBody({
       state: "ok" as const,
       /**
        * IS THERE ANYTHING TO ADAPT? Mail the sender already drew dark is left alone — see
-       * {@link effectiveBackground}. It travels with the sanitized result rather than being
+       * `letterPaperOf`. It travels with the sanitized result rather than being
        * recomputed by the component, because it is a reading of THIS document and the
-       * component would otherwise have to re-parse the html to ask.
+       * component would otherwise have to re-parse the html to ask. The folded document has its own.
        */
       light,
+      foldLight,
+      /** The width this document was resolved at, and the widths that would resolve it differently. */
+      frameWidth: made.frameWidth ?? mediaWidth,
+      breaks: made.breaks ?? [],
       /**
        * IS THIS A LETTER? Decided in the same pass as `light` and `reflow` and carried the same
        * way — see {@link isRigidLayout}. The RENDER branch that reads it is at the bottom of this
@@ -4936,19 +4639,7 @@ export function MessageBody({
     // for the same reason `proxy` is — it is half of the document the frame gets — and it is
     // memoized on `imageProxy`, so it moves only when the proxy itself does.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage]);
-
-  /**
-   * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
-   *
-   * `adaptable` — this mail is light, so inverting it means something. False for a mail drawn
-   * dark by its sender, and false before there is a document to have read.
-   * `dark` — the filter is actually on. The live `toggleAttribute` and the surround both read
-   * THIS, so a mail the transform declines to touch never gets a dark-styled frame around a
-   * light body.
-   */
-  const adaptable = mail?.state === "ok" ? mail.light : false;
-  const dark = darkWanted && adaptable;
+  }, [html, proxy, imgSource, mounted, cidImages, resolvedRemoteImages, loadTrackingPixels, hasText, engine, messageId, subject, askInPage, mediaWidth]);
 
   /**
    * FLIP THE DARK TRANSFORM ON THE LIVE DOCUMENT — never by rebuilding the srcdoc. The transform is gated on
@@ -5149,6 +4840,50 @@ export function MessageBody({
   const sheetId = useId();
   const frameFold = mail?.state === "ok" && !framelessView && !(mail.prose && hasText) && mail.fold !== null ? mail.fold : null;
   const frameFolded = frameFold !== null && !historyOpen;
+  /**
+   * THE THREE-TERM ANSWER, IN ONE PLACE SO NOTHING DISAGREES WITH ANYTHING ELSE.
+   *
+   * `adaptable` — this mail is light, so inverting it means something. False for a mail drawn
+   * dark by its sender, and false before there is a document to have read.
+   * `dark` — the filter is actually on. The live `toggleAttribute` and the surround both read
+   * THIS, so a mail the transform declines to touch never gets a dark-styled frame around a
+   * light body.
+   */
+  // The document on screen decides: a folded reply is read without the history it does not draw.
+  const adaptable = mail?.state === "ok" ? (frameFolded ? mail.foldLight : mail.light) : false;
+  const dark = darkWanted && adaptable;
+  bands.current = mail?.state === "ok" ? { breaks: mail.breaks, at: mail.frameWidth } : null;
+  // The shell is drawn only with a document (the first client render is the server's text).
+  const shellShown = mail?.state === "ok";
+  useLayoutEffect(() => {
+    const shell = shellRef.current;
+    if (!shell) return;
+    const take = (): void => {
+      const w = shell.clientWidth;
+      if (!(w > 0)) return;
+      lastLetterWidth = w;
+      const guard = widthGuard.current;
+      const first = guard.width === null;
+      const step = first ? Number.POSITIVE_INFINITY : Math.abs(w - guard.width!);
+      guard.width = w;
+      const b = bands.current;
+      if (b === null) return;
+      const now = letterBand(w, b.breaks), was = letterBand(b.at, b.breaks);
+      if (now === was) {
+        guard.left = null;
+        return;
+      }
+      // The pane's scrollbar answering the last crossing: it would only flip the letter back.
+      if (step <= SCROLLBAR_STEP_PX && guard.left === now) return;
+      guard.left = first ? null : was;
+      setMediaWidth(w);
+    };
+    take();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(take);
+    ro.observe(shell);
+    return () => ro.disconnect();
+  }, [shellShown]);
   const shownDoc = mail?.state === "ok" ? (frameFolded ? mail.foldDoc! : mail.doc) : null;
   const shownKey = mail?.state === "ok" ? (frameFolded ? mail.foldKey : mail.frameKey) : null;
   /** What the frame on screen was built from: the cut document's lists while folded. */

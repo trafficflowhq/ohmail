@@ -28,7 +28,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const noToast = (): void => {};
 
-function engineOver(store: MirrorStore, net: { offline: boolean }): OhmailEngine {
+function engineOver(store: MirrorStore, net: { offline: boolean }, copy: Record<string, string> = {}): OhmailEngine {
   return new OhmailEngine({
     store,
     now: () => NOW,
@@ -41,23 +41,24 @@ function engineOver(store: MirrorStore, net: { offline: boolean }): OhmailEngine
       mutate: async (m: EngineMutation) => {
         if (m.kind !== "mail_send") return { changes: [], seq: null };
         if (net.offline) throw new MutationRejectedError("network failure", { code: "network", retryable: true });
-        return { changes: [], seq: null, entityId: "d1", providerMessageId: "<d1@x>" };
+        return { changes: [], seq: null, entityId: "d1", providerMessageId: "<d1@x>", ...copy };
       },
     } as never,
   });
 }
 
 /** One send lane, and the shell's outcome door modelled: the intent that arrives is recorded. */
-async function surface(engine: OhmailEngine, released: SendAndDonePlan[]) {
+async function surface(engine: OhmailEngine, released: SendAndDonePlan[], copies: unknown[] = []) {
   const { useMailSend } = await import("../app/shell/mail-send.js");
   let api!: { send: (m: Record<string, unknown>, opts?: { andDone?: SendAndDonePlan }) => void; phase: () => string };
   const Probe = (): null => {
     const mail = useMailSend(
       engine as never, noToast as never, (() => {}) as never,
-      ((_key: string, _m: unknown, accepted: boolean, _phase: unknown, detail?: { andDone?: SendAndDonePlan }) => {
+      ((_key: string, _m: unknown, accepted: boolean, _phase: unknown, detail?: { andDone?: SendAndDonePlan; copy?: unknown }) => {
         const intent = detail?.andDone;
         if (intent === undefined || !accepted) return false;
         released.push(intent);
+        copies.push(detail?.copy);
         return true;
       }) as never,
     );
@@ -128,6 +129,24 @@ describe("a Send + Done confirmed after a reload", () => {
     await drain();
     expect(released2.length, "the send was confirmed on the next open and its source was not filed").toBe(1);
     expect(released2[0], "the intent handed back is not the one pressed").toEqual(PLAN);
+  });
+
+  it("1b — a replayed Send + Done whose Sent copy is missing hands the note to the release", async () => {
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const first = engineOver(store, { offline: true });
+    const s1 = await surface(first, []);
+    await act(async () => { await first.start(); });
+    await act(async () => { s1.send(message, { andDone: PLAN }); });
+    await drain();
+    await killTab();
+
+    const second = engineOver(store, { offline: false }, { sentCopy: "missing", sentCopyReason: "full" });
+    const copies: unknown[] = [];
+    await surface(second, [], copies);
+    await act(async () => { await second.start(); });
+    await drain();
+    expect(copies, "the release was told nothing of the missing copy").toEqual([{ state: "missing", reason: "full" }]);
   });
 
   it("CONTROL: a plain Send confirmed on the next open files nothing", async () => {

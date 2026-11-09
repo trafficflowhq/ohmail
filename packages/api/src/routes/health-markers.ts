@@ -901,6 +901,10 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // mail 0182_mailboxes_legacy_news_clean — when a full read found no pre-0.22 News spelling. LOUD:
   // the mailbox reads select the row whole. Deploy order migration → API → worker.
   ["mailboxes", "legacy_news_clean_at"],
+  // mail 0183_outbound_sent_copies_staged_parts — a Cloud copy kept without its uploaded files, until when
+  // and when next (`files_until`, `files_next_attempt_at`, the same migration's twins). LOUD: the send door
+  // writes all three and the late pass reads them on every claim. Deploy order migration → API → worker.
+  ["outbound_sent_copies", "staged_parts"],
 ] as const;
 
 /**
@@ -1340,7 +1344,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0182_mailboxes_legacy_news_clean";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0183_outbound_sent_copies_staged_parts";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

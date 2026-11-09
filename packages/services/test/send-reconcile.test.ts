@@ -13,7 +13,8 @@ import {
   SEND_RECONCILE_SCAN_FACTOR, SEND_STALE_AFTER_MS,
   SEND_UNVERIFIED_RECHECK_MS, SEND_UNVERIFIED_MIRROR_MS, SEND_UNVERIFIED_PROBE_AT_MS, SEND_UNVERIFIED_PROBE_WINDOW_MS,
   inUnverifiedProbeWindow,
-  SEND_COPY_OWED_CALL_CEILING_MS, SEND_COPY_OWED_DIAL_DEADLINE_MS,
+  SEND_COPY_OWED_CALL_CEILING_MS, SEND_COPY_OWED_DIAL_DEADLINE_MS, SEND_COPY_OWED_FILES_CALL_CEILING_MS,
+  SEND_COPY_OWED_FILES_FETCH_CEILING_MS, SEND_COPY_OWED_FILES_END_MS,
 } from "../src/index.js";
 
 /**
@@ -406,6 +407,17 @@ describe("runSendReconcilePass — the claim", () => {
       + SEND_COPY_OWED_CALL_CEILING_MS
       + SEND_RECONCILE_CLOSE_CEILING_MS;
     expect(worst, "the derived worst case must fit the 60-second invocation").toBeLessThan(60_000);
+  });
+
+  it("the copies with files fit the invocation: every step ends by their end, then a close; one begun fits its download, a dial and its filing", async () => {
+    const t = SEND_RECONCILE_NET_TIMEOUTS;
+    expect(SEND_COPY_OWED_FILES_END_MS + SEND_RECONCILE_CLOSE_CEILING_MS, "the end and a close must fit the 60-second invocation")
+      .toBeLessThan(60_000);
+    expect(
+      SEND_COPY_OWED_FILES_FETCH_CEILING_MS + t.connectionMs + t.greetingMs + t.socketMs + SEND_COPY_OWED_FILES_CALL_CEILING_MS,
+      "a copy begun at the pass's start must have its least filing time after the worst download and dial",
+    ).toBeLessThanOrEqual(SEND_COPY_OWED_FILES_END_MS);
+    expect(SEND_COPY_OWED_FILES_CALL_CEILING_MS, "a letter with files gets longer than one without").toBeGreaterThan(SEND_COPY_OWED_CALL_CEILING_MS);
   });
 
   it("names the residual it does NOT bound, so nobody reads the sum above as a guarantee", async () => {

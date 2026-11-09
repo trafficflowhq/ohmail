@@ -82,6 +82,40 @@ export const SENDING_LONG_MS = 4_000;
 
 /** How long the sidebar's foot says "Sent" for a send it finished, before it settles away. */
 export const SENT_LINE_MS = 2_000;
+/** A toast that also says where the Sent copy stands: two sentences to read. */
+export const SENT_COPY_TOAST_MS = 8_000;
+
+/** A delivered send whose Sent copy the person is told about: missing, or still owed for a reason the server gave. */
+export interface SentCopyNote {
+  state: "missing" | "pending";
+  reason?: NonNullable<MutationResult["sentCopyReason"]>;
+  /** A copy kept without its files: tried until then (ISO-8601). */
+  until?: string;
+}
+
+/** The note a delivered send's answer carries; `null` says nothing more than "Sent" (filed, or still being filed). */
+export function sentCopyNoteOf(res: Pick<MutationResult, "sentCopy" | "sentCopyReason" | "sentCopyUntil">): SentCopyNote | null {
+  const reason = res.sentCopyReason !== undefined ? { reason: res.sentCopyReason } : {};
+  if (res.sentCopy === "missing") return { state: "missing", ...reason };
+  if (res.sentCopy !== "pending" || (res.sentCopyReason === undefined && res.sentCopyUntil === undefined)) return null;
+  return { state: "pending", ...reason, ...(res.sentCopyUntil !== undefined ? { until: res.sentCopyUntil } : {}) };
+}
+
+const MISSING_KEYS = { too_big: "missingTooBig", full: "missingFull", refused: "missingRefused", unreachable: "missingUnreachable" } as const;
+const WAITING_KEYS = { too_big: "missingTooBig", full: "waitingFull", refused: "waitingRefused", unreachable: "waitingUnreachable" } as const;
+const UNTIL_KEYS = {
+  too_big: "missingTooBig", full: "waitingFullUntil", refused: "waitingRefusedUntil", unreachable: "waitingUnreachableUntil",
+} as const;
+
+/** The note's sentence: its `sentCopy.*` message key, and the time it names, read where the reader is. */
+export function sentCopySay(note: SentCopyNote, now = new Date()): { key: string; values: { time: string } } {
+  const values = { time: note.until !== undefined ? scheduleLabel(note.until, now) : "" };
+  if (note.state === "pending" && note.until !== undefined) {
+    return { key: `sentCopy.${note.reason === undefined ? "waitingUntil" : UNTIL_KEYS[note.reason]}`, values };
+  }
+  if (note.reason === undefined) return { key: "sentCopy.missing", values };
+  return { key: `sentCopy.${(note.state === "missing" ? MISSING_KEYS : WAITING_KEYS)[note.reason]}`, values };
+}
 
 /**
  * ONE SEND THE SIDEBAR'S FOOT SHOWS (`SendingLine`): a lane no mounted, visible editor shows.
@@ -105,6 +139,8 @@ export interface SendLineItem {
   m?: MailSend;
   /** For `sending`: when the phase began. */
   since?: number;
+  /** For `sent`: its Sent copy's note, which stands until dismissed. */
+  copy?: SentCopyNote;
 }
 
 export interface SendState {
@@ -271,6 +307,8 @@ export interface OutcomeDetail {
   shown?: boolean;
   /** Said by the sidebar's foot line (`SendingLine`) rather than by a toast. */
   line?: boolean;
+  /** On a confirmation: its Sent copy's note, for a release's sentence to carry. */
+  copy?: SentCopyNote;
 }
 
 /** The row a send refused for good was sent from, handed to the surface that may take it. */
@@ -1685,9 +1723,9 @@ export function useMailSend(
    * then the toast once left) — today's behaviour on the unhealthy path.
    */
   const handedOff = useRef(new Set<string>());
-  /** Lanes the line says "Sent" for, until {@link SENT_LINE_MS} has passed. */
+  /** Lanes the line says "Sent" for, until {@link SENT_LINE_MS} has passed; one with a copy note until dismissed. */
   const sentLine = useRef(new Map<string, {
-    m: MailSend | undefined; timer: ReturnType<typeof setTimeout>; held?: ComposeHeld;
+    m: MailSend | undefined; timer: ReturnType<typeof setTimeout> | null; held?: ComposeHeld; copy?: SentCopyNote;
   }>());
   /**
    * Endings the line stands on until opened or dismissed, by item id: the compose lane can hold two,
@@ -1735,21 +1773,21 @@ export function useMailSend(
       bumpLine();
     };
   }, [bumpLine]);
-  /** Say "Sent" on the line for a lane it shows, then let it settle away. */
-  const sayLineSent = useCallback((lane: string, m: MailSend | undefined, held?: ComposeHeld): void => {
+  /** Say "Sent" on the line for a lane it shows, then let it settle away; with a copy note it stands until dismissed. */
+  const sayLineSent = useCallback((lane: string, m: MailSend | undefined, held?: ComposeHeld, copy?: SentCopyNote | null): void => {
     const was = sentLine.current.get(lane);
-    if (was) clearTimeout(was.timer);
-    const timer = setTimeout(() => {
+    if (was?.timer) clearTimeout(was.timer);
+    const timer = copy ? null : setTimeout(() => {
       if (sentLine.current.get(lane)?.timer === timer) sentLine.current.delete(lane);
       bumpLine();
     }, SENT_LINE_MS);
-    sentLine.current.set(lane, { m, timer, ...(held ? { held } : {}) });
+    sentLine.current.set(lane, { m, timer, ...(held ? { held } : {}), ...(copy ? { copy } : {}) });
     // A restored send names no press: it ends no compose message's ending but its own lane's.
     if (lane !== COMPOSE_SEND_KEY || held !== undefined) endLaneOn(lane, held);
     bumpLine();
   }, [bumpLine, endLaneOn]);
   useEffect(() => () => {
-    for (const s of sentLine.current.values()) clearTimeout(s.timer);
+    for (const s of sentLine.current.values()) if (s.timer) clearTimeout(s.timer);
   }, []);
 
   /** The lane states as last rendered, for the line's reads between renders. */
@@ -1799,7 +1837,7 @@ export function useMailSend(
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
-    (key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false, answeredEarlier = false) => {
+    (key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false, answeredEarlier = false, copy: SentCopyNote | null = null) => {
       /* THE IDENTITY THE PRESS RECORDED — see {@link sentFor}. The fallback is the mutation's own
          row and no session, which is the most this can know about a settlement no press on this
          mount produced; an unnameable one admits, which is the rule everywhere else here. */
@@ -1820,7 +1858,14 @@ export function useMailSend(
          the mirror NOW. `true` is a release made — it clears the bookings and reads the row, and
          its sentence replaces "Reply sent.". A plain Send releases no
          pin and no booking: only Answer Later is discharged below. */
-      const released = outcomeRef.current?.(key, m, true, undefined, andDone ? { andDone } : undefined) === true;
+      /* NO EDITOR SHOWS THIS LANE AND A FOOT LINE IS SEEN: the line finishes it, "Sent", and no
+         toast says it twice. Send + Done keeps its Undo toast and gets no "Sent". */
+      const onLine = handedOff.current.has(key) && !m.sendAt && lineSeenNow() && !shown;
+      // A copy note the foot line will stand on is not said again by the release's toast.
+      const copyOnLine = copy !== null && onLine && !earlierWent && !answeredEarlier;
+      const released = outcomeRef.current?.(
+        key, m, true, undefined, andDone ? { andDone, ...(copy && !copyOnLine ? { copy } : {}) } : undefined,
+      ) === true;
       if (m.inReplyTo !== null) {
         // ── the reply IS the evidence the message was answered ─────────────────────────
         //
@@ -1847,9 +1892,6 @@ export function useMailSend(
        * `scheduled` rides the state for the same reason the toast branches on `m.sendAt`:
        * nothing was sent, an appointment was made, and the button may not say "Sent" over it.
        */
-      /* NO EDITOR SHOWS THIS LANE AND A FOOT LINE IS SEEN: the line finishes it, "Sent", and no
-         toast says it twice. Send + Done keeps its Undo toast and gets no "Sent". */
-      const onLine = handedOff.current.has(key) && !m.sendAt && lineSeenNow() && !shown;
       if (handedOff.current.has(key) && !shown) {
         /* LET GO AT THE PRESS AND SHOWN BY NO EDITOR: there is no button to say "Sent" on, so
            nothing waits for a beat. Settled now, while the surface is still the one this
@@ -1880,9 +1922,12 @@ export function useMailSend(
       // machine exists to prevent. The sentence carries the time, read where the reader is.
       /* SEND + DONE TAKES THE SENTENCE: one press, one toast, rather than "Reply sent." replaced a
          beat later by "Sent · marked done". */
-      if (released) return;
+      if (released) {
+        if (copyOnLine) sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined, copy);
+        return;
+      }
       if (onLine && !earlierWent && !answeredEarlier) {
-        sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined);
+        sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined, copy);
         return;
       }
       /* A re-press that joined a send already delivered: the earlier words went, the newer did not. */
@@ -1896,15 +1941,16 @@ export function useMailSend(
         toast(t("compose.toastAlreadySent"));
         return;
       }
-      toast(
-        key === COMPOSE_SEND_KEY
-          ? (m.sendAt
-            ? t("compose.toastScheduled", { when: scheduleLabel(m.sendAt, new Date()) })
-            : t("compose.toastSent"))
-          : key.startsWith("fwd:")
-            ? t("reply.toastForwarded")
-            : t("reply.toastSent"),
-      );
+      const said = key === COMPOSE_SEND_KEY
+        ? (m.sendAt
+          ? t("compose.toastScheduled", { when: scheduleLabel(m.sendAt, new Date()) })
+          : t("compose.toastSent"))
+        : key.startsWith("fwd:")
+          ? t("reply.toastForwarded")
+          : t("reply.toastSent");
+      const why = copy ? sentCopySay(copy) : null;
+      if (why) toast(`${said} ${t(why.key, why.values)}`, { duration: SENT_COPY_TOAST_MS });
+      else toast(said);
     },
     [engine, setPhase, toast, t, beat, shownNow, lineSeenNow, sayLineSent],
   );
@@ -2081,7 +2127,7 @@ export function useMailSend(
         // A `firstSend` under the key this lane's press minted is that press's own delivery, answered late.
         const p = pressKey.current.get(key);
         const earlier = res.firstSend !== undefined && !(p?.minted === true && p.key === res.key);
-        settle(key, m, res.andDone, earlier && res.earlierWordsKept === true, earlier);
+        settle(key, m, res.andDone, earlier && res.earlierWordsKept === true, earlier, sentCopyNoteOf(res));
       } else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
@@ -2221,11 +2267,10 @@ export function useMailSend(
     if (res.status === "confirmed") {
       /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
          whichever surface is on screen, because the release is about the source, not the composer. */
-      if (res.andDone) {
-        outcomeRef.current?.(
-          record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone },
-        );
-      }
+      const copy = sentCopyNoteOf(res);
+      const released = res.andDone !== undefined && outcomeRef.current?.(
+        record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone, ...(copy ? { copy } : {}) },
+      ) === true;
       /**
        * THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is told, with the row
        * the send was delivered from, so it can end the way a live confirmation ends it. AND THE RECORD IS LEFT
@@ -2266,7 +2311,10 @@ export function useMailSend(
        */
       /* A restored send that went finishes on the foot line, where it said "Sending…" — also when the
          composer holds another message, which is not this one's to finish. */
-      if (!res.andDone && lineSeenNow() && !shownHolding(record.lane, recordHeld)) sayLineSent(record.lane, undefined, recordHeld);
+      // A Send + Done that released nothing still owes its copy note.
+      if ((!res.andDone || (!released && copy !== null)) && lineSeenNow() && !shownHolding(record.lane, recordHeld)) {
+        sayLineSent(record.lane, undefined, recordHeld, copy);
+      }
       if (!speaksForScreen) {
         console.warn(
           "ohmail: send_settled_unbound — a send settled for a compose this surface no longer "
@@ -2715,7 +2763,7 @@ export function useMailSend(
       handedOff.current.delete(key);
       endLaneOn(key, pressedHeld.current.get(key));
       const s = sentLine.current.get(key);
-      if (s) { clearTimeout(s.timer); sentLine.current.delete(key); }
+      if (s) { if (s.timer) clearTimeout(s.timer); sentLine.current.delete(key); }
       setPhase(key, { phase: "sending", since: Date.now() });
       const handOff = opts?.handOff;
       // ACKNOWLEDGE FIRST, WORK SECOND — see {@link afterPaint}. The lock and the durable claim
@@ -2851,7 +2899,10 @@ export function useMailSend(
     }
     for (const [key, s] of sentLine.current) {
       if (shownHolding(key, s.held)) continue;
-      add({ id: `sent:${key}`, key, state: "sent", to: firstRecipient(engine, s.m), subject: pressSubject(engine, s.m) });
+      add({
+        id: `sent:${key}`, key, state: "sent", to: firstRecipient(engine, s.m), subject: pressSubject(engine, s.m),
+        ...(s.copy ? { copy: s.copy } : {}),
+      });
     }
     // A send restored from the last session (or another window's): the outbox carries it.
     if (typeof engine.read === "function") {
@@ -2890,6 +2941,12 @@ export function useMailSend(
   }, []);
   const dismissLine = useCallback((id: string): void => {
     if (endedLine.current.delete(id)) bumpLine();
+    const sent = id.startsWith("sent:") ? sentLine.current.get(id.slice(5)) : undefined;
+    if (sent) {
+      if (sent.timer) clearTimeout(sent.timer);
+      sentLine.current.delete(id.slice(5));
+      bumpLine();
+    }
   }, [bumpLine]);
   /** See {@link MailSendApi.pressHere}: in a sent beat, the confirmation's own verdict while the mark holds. */
   const pressHere = useCallback((lane: string): boolean => {

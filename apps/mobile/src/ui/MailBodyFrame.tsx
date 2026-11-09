@@ -10,7 +10,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Linking, useWindowDimensions, View } from "react-native";
+import { Linking, useWindowDimensions, View, type LayoutChangeEvent } from "react-native";
 import { router } from "expo-router";
 import { WebView } from "react-native-webview";
 import { Copy } from "../copy";
@@ -21,7 +21,9 @@ import { buildPhoneMailDocument } from "../mail/mail-document";
 import {
   armFrameTimer,
   FRAME_UNANSWERED_MS,
+  frameAwaits,
   frameFinal,
+  frameFit,
   frameHeightFor,
   frameLayout,
   nextFrameHeight,
@@ -34,8 +36,7 @@ import {
 } from "../mail/frame-height";
 import { fetchRemoteImages, imagesSeenBy, pictureBudget, type PictureBudget } from "../mail/remote-images";
 import { frameNavDecision, openConfirmedLink } from "../mail/frame-nav";
-import { sanitizeMailHtmlPhone, type PhoneSanitizedMail, type PhoneSanitizeOptions } from "../mail/sanitize";
-import { letterInk } from "../mail/paper";
+import { letterBand, sanitizeMailHtmlPhone, type LetterBreak, type PhoneSanitizedMail, type PhoneSanitizeOptions } from "../mail/sanitize";
 import {
   frameReadingOf,
   frameShows,
@@ -55,7 +56,10 @@ import { BodyPages } from "./BodyPages";
 import { HistoryFold } from "./HistoryFold";
 
 /** What a pass that threw leaves: nothing drawn, and the letter read as text. */
-const UNREADABLE: PhoneSanitizedMail = { html: "", blocked: [], sheets: [], cids: [], links: [], light: true, paper: null, ink: null, history: null };
+const UNREADABLE: PhoneSanitizedMail = { html: "", blocked: [], sheets: [], cids: [], links: [], light: true, paper: null, ink: null, frameWidth: 0, breaks: [], history: null };
+
+/** The last width a letter's frame was laid out at: the next letter starts its reading there. */
+let lastFrameWidth: number | null = null;
 
 /** One sanitizer pass; a throw on hostile html is this letter's alone, never the reader's. */
 function sanitizeGuarded(html: string, opts: PhoneSanitizeOptions): PhoneSanitizedMail {
@@ -121,23 +125,39 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // only by a seed-size reading at that width, and a frame no reading answers reads as text.
   const { width: windowWidth } = useWindowDimensions();
   const html = m.html ?? "";
+  // THE FRAME'S OWN WIDTH (its box's layout, CSS px under `width=device-width`): the height is measured
+  // at it, and the sender's width conditions are decided for it, again only when it crosses one of them
+  // (fold, unfold, rotation, a pane resize).
+  const [layoutWidth, setLayoutWidth] = useState(() => lastFrameWidth ?? windowWidth);
+  const [mediaWidth, setMediaWidth] = useState(() => lastFrameWidth ?? windowWidth);
+  const frame = useMemo(() => ({ width: mediaWidth }), [mediaWidth]);
+  const bands = useRef<{ breaks: readonly LetterBreak[]; at: number }>({ breaks: [], at: mediaWidth });
+  const onFrameLayout = (e: LayoutChangeEvent) => {
+    const w = e.nativeEvent.layout.width;
+    if (!(w > 0)) return;
+    lastFrameWidth = w;
+    setLayoutWidth(w);
+    const { breaks, at } = bands.current;
+    if (letterBand(w, breaks) !== letterBand(at, breaks)) setMediaWidth(w);
+  };
   // THE QUOTED HISTORY FOLDS OUT OF THE DOCUMENT (the shared detector, `sanitize.ts`'s `fold`): folded,
   // every document below is the cut one, and the frame's height, its remembered height and its drawn
-  // document are keyed on the fold state, so a folded state never draws the whole document.
-  const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject }), [html, m.subject]);
+  // document are keyed on the fold state, so a folded state never draws the whole document. A folded
+  // pass that throws draws the whole document, with no fold row.
+  const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame }), [html, m.subject, frame]);
   const history = folded.history ?? null;
   const folding = history !== null && !historyOpen;
   const frameId = folding ? `${m.id}#folded` : m.id;
-  const sized = frameHeightFor(frameHeight, frameId, windowWidth, rememberedFrameHeight(frameId));
+  const sized = frameHeightFor(frameHeight, frameId, layoutWidth, rememberedFrameHeight(frameId));
   const update = (f: (s: FrameHeight) => FrameHeight) =>
-    setFrameHeight((prev) => f(frameHeightFor(prev, frameId, windowWidth, rememberedFrameHeight(frameId))));
+    setFrameHeight((prev) => f(frameHeightFor(prev, frameId, layoutWidth, rememberedFrameHeight(frameId))));
   useEffect(() => {
     if (frameHeight !== null) rememberFrameHeight(frameHeight);
   }, [frameHeight]);
   const settleKey = sized.measured === null ? null : `${sized.key}@${sized.width}:${sized.measured}`;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => armFrameTimer(settleDelayMs(sized, Date.now()), () => update(settleFrameHeight)), [settleKey]);
-  const awaiting = loadedFor === frameId && !sized.answered && sized.text === null ? `${sized.key}@${sized.width}` : null;
+  const awaiting = loadedFor === frameId ? frameAwaits(sized) : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => armFrameTimer(awaiting === null ? null : FRAME_UNANSWERED_MS, () => update(unansweredFrameHeight)), [awaiting]);
 
@@ -149,13 +169,15 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // class, `src/mail/frame-ceiling.ts`) is refused without being built, and the sanitize below never
   // writes it.
   const ceiling = useMemo(() => phoneFrameCeiling(), []);
-  const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, {})), [folding, folded, html]);
+  const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, { frame })), [folding, folded, html, frame]);
+  bands.current = { breaks: bare.breaks, at: mediaWidth };
   // THE LETTER'S SHEET IS LIGHT IN BOTH SCHEMES (the web's `.mb-sheet`): a dark scheme inverts a letter
   // whose own paper reads light, and the reader may flip it back to its own colours.
-  // The ink is the body's own when it reads on the paper painted, otherwise the light sheet's.
+  // The ink is the body's own on a dark page it reads on, or ohmail's light ink on a dark page that names
+  // none and where no element paints a background (`letterPaperOf`); otherwise the light sheet's.
   const sheetInk = paletteOf("light", t.face);
   const paper = bare.paper ?? sheetInk.panel;
-  const ink = letterInk(paper, bare.ink, sheetInk.ink);
+  const ink = bare.ink ?? sheetInk.ink;
   const adaptable = t.scheme === "dark" && bare.light;
   const inverted = adaptable && originalFor !== m.id;
   const sheetBg = inverted ? letterInDark.canvas : paper;
@@ -164,32 +186,38 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     [paper, ink, sheetInk, inverted],
   );
   const pictures = useMemo(
-    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject }),
-    [m.inlineImages, resolvedRemote, folding, m.subject],
+    () => ({ inlineImages: m.inlineImages, resolvedRemote, fold: folding, subject: m.subject, frame }),
+    [m.inlineImages, resolvedRemote, folding, m.subject, frame],
   );
+  // A letter wider than the frame is drawn zoomed to it; every document below is the fitted one.
+  const fit = frameFit(sized);
+  const drawnTheme = useMemo(() => (fit === 1 ? theme : { ...theme, fit }), [theme, fit]);
   const pictured = (m.inlineImages?.size ?? 0) > 0 || (resolvedRemote?.size ?? 0) > 0;
   const drawnChars = useMemo(() => {
     if (!pictured || bare === UNREADABLE) return null;
     try {
-      return drawnLength(html, pictures, bare, theme);
+      return drawnLength(html, pictures, bare, drawnTheme);
     } catch {
       return Number.NaN;
     }
-  }, [pictured, html, pictures, bare, theme]);
+  }, [pictured, html, pictures, bare, drawnTheme]);
   const tooLong = drawnChars !== null && drawnChars > ceiling;
   const lengthThrew = Number.isNaN(drawnChars);
-  const sanitized = useMemo(
+  const withPictures = useMemo(
     () => (lengthThrew ? UNREADABLE : pictured && !tooLong && bare !== UNREADABLE ? sanitizeGuarded(html, pictures) : bare),
     [lengthThrew, pictured, tooLong, html, pictures, bare],
   );
-  // A pass that threw (a hostile letter's worst case) shows this letter as text with its own notice.
-  const unreadable = folded === UNREADABLE || sanitized === UNREADABLE;
+  // A pictured pass that threw draws the document without its pictures, and says so; only a whole pass
+  // that threw (a hostile letter's worst case) shows this letter as text with its own notice.
+  const picturesThrew = bare !== UNREADABLE && withPictures === UNREADABLE;
+  const sanitized = picturesThrew ? bare : withPictures;
+  const unreadable = bare === UNREADABLE;
 
   // THE DOCUMENT THE WEBVIEW IS HANDED IS THE ONE COUNTED (`src/mail/frame-tree.ts`): `current`, in
   // this consent state, counted a step per macrotask before it is drawn. While a new state is counted
   // (a picture arrived, Show images), the frame keeps drawing the last document of this same html whose
   // own count fitted, and keeps it, saying why, when the new state is refused.
-  const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, unreadable, sanitized.html, theme]);
+  const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, drawnTheme)), [tooLong, unreadable, sanitized.html, drawnTheme]);
   const plan = useMemo(
     () => (unreadable ? null : current === null ? planFrameLength(drawnChars ?? 0, ceiling) : planFrameCount(current, sanitized.oversize === true, ceiling)),
     [unreadable, current, drawnChars, sanitized.oversize, ceiling],
@@ -202,8 +230,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   // html with no picture is counted, and once it fits it is the kept document (the images sentence).
   const needBare = pictured && kept === null && reading !== null && !reading.fits;
   const barePlan = useMemo(
-    () => (needBare ? planFrameCount(buildPhoneMailDocument(bare.html, theme), bare.oversize === true, ceiling) : null),
-    [needBare, bare, theme, ceiling],
+    () => (needBare ? planFrameCount(buildPhoneMailDocument(bare.html, drawnTheme), bare.oversize === true, ceiling) : null),
+    [needBare, bare, drawnTheme, ceiling],
   );
   const bareReading = useFrameCount(barePlan, frameId, html, setDrawn);
 
@@ -272,7 +300,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
     return (
       <View>
         <Txt variant="caption" tone="ink3" style={{ marginBottom: 10 }}>
-          {unreadable ? Copy.mailUnreadable : Copy.mailOversize}
+          {unreadable ? Copy.mailUnreadable : sized.text === null || sized.text === "ceiling" ? Copy.mailOversize : Copy.mailLayoutUndrawn}
         </Txt>
         <HistoryFold foldKey={m.id} html={unreadable ? null : html} subject={m.subject}>
           <BodyPages variant="readerBody" style={{ maxWidth: t.layout.proseMax }} text={m.body} />
@@ -284,7 +312,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const fetchedPixels = remote?.id === m.id ? remote.pixels.size : 0;
   const said = blockedNotice(sanitized.blocked, sanitized.sheets, imagesWanted, imagesSeenBy(route), fetchedPixels);
   // A refused state with an earlier document still drawn: the pictures are what did not fit, and it says so.
-  const lead = shows.show === "frame" && shows.withheld
+  const lead = shows.show === "frame" && (shows.withheld || picturesThrew)
     ? Copy.mailImagesTooLarge
     : refusedFor === m.id && !imagesWanted ? Copy.mailImagesRefused : null;
   const notice = [lead, said].filter((x) => x !== null).join(" ") || null;
@@ -342,7 +370,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
           t.scheme === "dark" ? { borderWidth: 1, borderColor: t.c.hairSoft } : null,
         ]}
       >
-        <View style={{ borderRadius: t.radius.card, overflow: "hidden" }}>
+        <View testID="mail-frame-box" onLayout={onFrameLayout} style={{ borderRadius: t.radius.card, overflow: "hidden" }}>
           {doc !== null ? (
             <WebView
               // ONE document, rebuilt when the maps move; never a URL. `key` on the id keeps a
@@ -366,7 +394,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
                 const reported = e.nativeEvent.contentSize.height;
                 const view = e.nativeEvent.layoutMeasurement.height;
                 const at = Date.now();
-                update((s) => nextFrameHeight(s, reported, view, at));
+                const widths = { doc: e.nativeEvent.contentSize.width, frame: e.nativeEvent.layoutMeasurement.width };
+                update((s) => nextFrameHeight(s, reported, view, at, widths));
               }}
               onLoadEnd={() => setLoadedFor(frameId)}
               style={{ height, backgroundColor: sheetBg }}

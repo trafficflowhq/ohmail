@@ -1001,6 +1001,36 @@ export {
   type QuotedTree,
   type QuotedVerdict,
 } from "./quoted-history.js";
+// How light a letter is, at the width it is drawn: one gate for every reader. See `letter-paper.ts`.
+export {
+  BACKGROUND_VALUE_MAX,
+  BG_SCAN_LIMIT,
+  LETTER_BLOCK_DEPTH,
+  LETTER_BREAKS_MAX,
+  LETTER_MEDIA_HEIGHT_PX,
+  LETTER_PRELUDE_MAX,
+  LIGHT_LUMINANCE,
+  NEUTRAL_CHROMA,
+  READABLE_CONTRAST,
+  backgroundTokens,
+  contrastRatio,
+  cssHex,
+  letterBand,
+  letterMediaAt,
+  letterPaperOf,
+  mailIsLight,
+  paintedPaper,
+  parseCssColor,
+  relativeLuminance,
+  type LetterBody,
+  type LetterBreak,
+  type LetterFrame,
+  type LetterMedia,
+  type LetterPaper,
+  type LetterPaperInput,
+  type Meter,
+  type Rgb,
+} from "./letter-paper.js";
 
 // Which side failed for a file that could not be fetched — the one table both readers render from.
 export { attachmentFaultClass, type AttachmentFaultClass } from "./attachment-fault.js";
