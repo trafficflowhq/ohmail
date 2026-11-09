@@ -177,7 +177,7 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
  * retried on a host that outlives it (`sendCopyOutlivesAnswer`).
  */
 describe("POST /drafts/:id/send — `sentCopy`", () => {
-  function filingAdapter(copy: "files" | "hangs" | "refused") {
+  function filingAdapter(copy: "files" | "hangs" | "refused" | "too_big") {
     const filed: string[] = [];
     const factory: OpenSendAdapter = async () => ({
       async send(msg: OutboundMessage, opts?: { copy?: string; beforeRelease?: () => Promise<void> }) {
@@ -187,6 +187,7 @@ describe("POST /drafts/:id/send — `sentCopy`", () => {
       async fileSentCopy(_raw: Buffer, id: string) {
         if (copy === "hangs") await new Promise(() => undefined);
         if (copy === "refused") throw new Error("NO [OVERQUOTA] mailbox full");
+        if (copy === "too_big") throw Object.assign(new Error("Command failed"), { responseStatus: "NO", serverResponseCode: "LIMIT" });
         filed.push(id);
         return null;
       },
@@ -243,6 +244,24 @@ describe("POST /drafts/:id/send — `sentCopy`", () => {
     }), deps);
     expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "missing" });
     expect(await db.select().from(outboundSentCopies)).toEqual([]);
+  });
+
+  it("a copy the server refused for its size says why: `sentCopyReason: too_big`", async () => {
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: filingAdapter("too_big").factory });
+    deps.services = { ...deps.services!, sendKeepOwedCopy: OWED_COPY_CLOUD };
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+    const res = await H(req("POST", `/drafts/${draftId}/send`, {
+      bearer: s.token, headers: { "idempotency-key": "owed-3" },
+      body: JSON.stringify({ attachments: [{ filename: "a.csv", contentType: "text/csv", contentBase64: Buffer.from("a\n1\n").toString("base64") }] }),
+    }), deps);
+    expect(await res.json()).toEqual(expect.objectContaining({ status: "sent", sentCopy: "missing", sentCopyReason: "too_big" }));
+    const plain = await makeDeps(FIXED_NOW, {}, { sendAdapter: filingAdapter("files").factory });
+    const p = await seedSession(plain.db, { now: FIXED_NOW });
+    const filed = await H(req("POST", `/drafts/${await seedDraft(plain.db, p.accountId, await seedMailbox(plain.db, { accountId: p.accountId }))}/send`, {
+      bearer: p.token, headers: { "idempotency-key": "owed-4" },
+    }), plain.deps);
+    expect((await filed.json()).sentCopyReason, "a filed copy carries no reason").toBeUndefined();
   });
 });
 

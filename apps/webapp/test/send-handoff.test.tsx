@@ -5,6 +5,7 @@ import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { SENT_LINE_MS } from "../app/shell/mail-send";
 import {
   act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
@@ -81,6 +82,7 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
   it("1 — the composer leaves before the answer; the foot says Sending to Mila…, then Sent, then nothing; no toast", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
     await composerWith(s);
+    s.sentCopy.sentCopy = "filed";
     const release = gate(s);
     await press(composeSend(s.el)!, "Send");
     await waitFor(() => s.el.querySelector(".view-compose") == null, "the composer gone before the answer");
@@ -89,6 +91,40 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await act(async () => { release(); });
     await waitFor(() => footLine().includes(en.sendingLine.sent), "the foot line Sent");
     expect(toasts(), "a toast said the send twice").not.toContain(en.compose.toastSent);
+    await waitFor(() => footLine() === "", "the foot line settles away", 200);
+  }, 40_000);
+
+  it("1c — delivered with no copy in Sent: the foot keeps Sent to Mila with why, past the line's time, until Dismiss", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
+    await composerWith(s);
+    Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => footLine().includes(en.sentCopy.missingTooBig), "the foot says the copy is missing");
+    expect(footLine()).toContain("Sent to Mila");
+    await act(async () => { await new Promise((r) => setTimeout(r, SENT_LINE_MS + 300)); });
+    expect(footLine(), "it settled away before the person read it").toContain(en.sentCopy.missingTooBig);
+    expect(toasts()).not.toContain(en.sentCopy.missingTooBig);
+    const dismiss = [...document.querySelectorAll<HTMLButtonElement>(".rail-sync.sending-line .sl-act")]
+      .find((b) => b.textContent === en.sendingLine.dismiss);
+    await act(async () => { dismiss!.click(); });
+    await waitFor(() => footLine() === "", "Dismiss ends it");
+  }, 40_000);
+
+  it("1d — a copy still owed for a reason the server gave says so", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
+    await composerWith(s);
+    Object.assign(s.sentCopy, { sentCopy: "pending", sentCopyReason: "full" });
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "the foot says the mailbox is full");
+  }, 40_000);
+
+  it("1e — a copy still being filed, for no reason the server gave, says Sent and settles away", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
+    await composerWith(s);
+    s.sentCopy.sentCopy = "pending";
+    await press(composeSend(s.el)!, "Send");
+    await waitFor(() => footLine().includes("Sent to Mila"), "Sent");
+    expect(footLine()).not.toMatch(/Sent folder/);
     await waitFor(() => footLine() === "", "the foot line settles away", 200);
   }, 40_000);
 
@@ -117,6 +153,16 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await waitFor(() => footLine().includes(en.sendingLine.sent), "Sent");
     expect(sends(s)).toHaveLength(1);
     expect(toasts()).not.toContain(en.reply.toastSent);
+  }, 40_000);
+
+  it("2c — Send + Done with no copy in Sent: the toast says marked done with its Undo, the foot says why", async () => {
+    const s = await mountShell("#/ohbox", [message("m1", { unread: true })], [], { handOff: true });
+    Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
+    await replyOpen(s, "See you on Thursday");
+    await press(s.el.querySelector(".reply-actions .reply-send-done"), "Send + Done");
+    await waitFor(() => toasts().includes(en.reply.toastSentAndDone), "Sent · marked done");
+    await waitFor(() => footLine().includes(en.sentCopy.missingTooBig), "the foot says the copy is missing");
+    expect(toasts()).toContain(en.ohbox.undo);
   }, 40_000);
 
   it("3 — a refusal after the hand-off stands in the foot with Open, no toast, and Open brings the words back", async () => {
@@ -277,6 +323,25 @@ describe("under 1024px the Reader sheet covers the foot's pill: the toast says i
     await sheetReply(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => toasts().includes(en.reply.toastSent), "Reply sent. over the sheet");
+  }, 40_000);
+
+  it("6c — a delivery whose Sent copy is missing says why in the same toast", async () => {
+    stubDom({ narrow: true });
+    const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
+    Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "full" });
+    await sheetReply(s, "See you on Thursday");
+    await act(async () => { replySend(s.el)!.click(); });
+    await waitFor(() => toasts().includes(`${en.reply.toastSent} ${en.sentCopy.missingFull}`), "the toast says the copy is missing");
+  }, 40_000);
+
+  it("6d — Send + Done whose Sent copy is missing says both in one toast, with the Undo", async () => {
+    stubDom({ narrow: true });
+    const s = await mountShell("#/ohbox", [message("m1", { unread: true })], [], { handOff: true });
+    Object.assign(s.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
+    await sheetReply(s, "See you on Thursday");
+    await press(s.el.querySelector(".reply-actions .reply-send-done"), "Send + Done");
+    await waitFor(() => toasts().includes(`${en.reply.toastSentAndDone} ${en.sentCopy.missingTooBig}`), "one toast says both");
+    expect(toasts()).toContain(en.ohbox.undo);
   }, 40_000);
 });
 

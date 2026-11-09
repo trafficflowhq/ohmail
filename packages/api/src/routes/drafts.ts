@@ -456,6 +456,7 @@ export const draftsRoutes: Route[] = [
               status: "sent", providerMessageId: result.providerMessageId,
               ...(result.firstSend ? { firstSend: result.firstSend } : {}),
               ...(result.sentCopy ? { sentCopy: result.sentCopy } : {}),
+              ...(result.sentCopyReason ? { sentCopyReason: result.sentCopyReason } : {}),
             },
             { status: 200, seq: result.seq ?? undefined },
           );

@@ -327,7 +327,7 @@ export {
   SEND_ATTACHMENT_MAX_TOTAL_BYTES, SEND_ATTACHMENT_FIELD_MAX_CHARS,
   SEND_MAX_ATTACHMENT_PARTS, SEND_MAX_RECIPIENTS, dedupeStagedIds,
   SEND_MIME_ENVELOPE_BYTES, SEND_STAGED_OBJECT_MAX_BYTES, SEND_UNMEASURED_MESSAGE_BYTES, attachmentBudgetFor,
-  effectiveAttachmentCap, sendSurfaceFor, mailServerRefusalOf,
+  effectiveAttachmentCap, sendSurfaceFor, mailServerRefusalOf, sentCopyRefusalOf, type SentCopyReason,
   type SendDeps, type SendResult, type SendAttachment, type SendInput, type MailServerRefusalKind,
   type StagedAttachmentSource, type ResolveStaleBy, type ResolveStaleOutcome,
   SEND_WITHDRAWN_SENTENCE, SEND_HELD_SENTENCE, SEND_AGAIN_HELD_SENTENCE, type SendWithdrawOutcome, type SendWithdrawResult,

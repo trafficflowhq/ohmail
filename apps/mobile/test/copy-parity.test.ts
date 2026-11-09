@@ -570,6 +570,9 @@ describe("the phone's two copy decks", () => {
     pairConfirmWhat: ["local", "desktop-host", "selfhost", "managed", "a-later-flavor"],
     /* a suggested recipient with no name, and one with */
     composeSuggestion: ["", "Persephone Lind"],
+    /* why a delivered letter's Sent copy is missing or still owed: every reason, and none */
+    sentCopyMissing: ["too_big", "full", "refused", "unreachable", ""],
+    sentCopyWaiting: ["full", "refused", "unreachable"],
   };
 
   /** Deck functions whose body asks something about one of their own string parameters. */

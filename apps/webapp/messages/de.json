@@ -3749,6 +3749,16 @@
     "open": "\u00d6ffnen",
     "dismiss": "Ausblenden"
   },
+  "sentCopy": {
+    "missing": "Die Kopie für deinen Gesendet-Ordner konnte nicht gespeichert werden. Die Nachricht ist versendet; du musst nichts erneut senden.",
+    "missingTooBig": "Dein Mailserver behält keine so große Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; du musst nichts erneut senden.",
+    "missingFull": "Dein Postfach auf dem Mailserver ist voll, deshalb liegt keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; schaffe dort Platz.",
+    "missingRefused": "Dein Mailserver hat die Kopie für deinen Gesendet-Ordner abgelehnt, deshalb liegt dort keine. Die Nachricht ist versendet; du musst nichts erneut senden.",
+    "missingUnreachable": "Dein Mailserver war nicht erreichbar, deshalb liegt keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; du musst nichts erneut senden.",
+    "waitingFull": "Dein Postfach auf dem Mailserver ist voll, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; schaffe dort Platz, dann versucht ohmail es erneut.",
+    "waitingRefused": "Dein Mailserver hat die Kopie für deinen Gesendet-Ordner vorerst abgelehnt. Die Nachricht ist versendet; ohmail versucht es später erneut.",
+    "waitingUnreachable": "Dein Mailserver war nicht erreichbar, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; ohmail versucht es später erneut."
+  },
   "screening": {
     "scopeShared": "{domain} ist ein geteilter Anbieter. Entscheide hier pro Adresse.",
     "action": "Einordnen",

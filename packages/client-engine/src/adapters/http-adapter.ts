@@ -360,9 +360,12 @@ interface SendWire {
   /** See {@link MutationOutcome.firstSend} — shape-checked here, never trusted by its presence. */
   firstSend?: { status?: unknown; at?: unknown };
   sentCopy?: unknown;
+  sentCopyReason?: unknown;
 }
 
 const SENT_COPY_STATES: ReadonlySet<string> = new Set(["filed", "pending", "missing"]);
+/** The reasons a server names for a copy not filed; any other value is dropped. */
+const SENT_COPY_REASONS: ReadonlySet<string> = new Set(["too_big", "full", "refused", "unreachable"]);
 
 /**
  * A 2xx whose body will not parse is ambiguity, not a refusal: the server
@@ -2980,10 +2983,13 @@ export class HttpAdapter implements EngineAdapter {
         : null;
       const sentCopy = typeof wire.sentCopy === "string" && SENT_COPY_STATES.has(wire.sentCopy)
         ? wire.sentCopy as NonNullable<MutationOutcome["sentCopy"]> : null;
+      const sentCopyReason = sentCopy !== null && sentCopy !== "filed" && typeof wire.sentCopyReason === "string"
+        && SENT_COPY_REASONS.has(wire.sentCopyReason) ? wire.sentCopyReason as NonNullable<MutationOutcome["sentCopyReason"]> : null;
       return {
         changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
         ...(firstSend ? { firstSend } : {}),
         ...(sentCopy ? { sentCopy } : {}),
+        ...(sentCopyReason ? { sentCopyReason } : {}),
         ...(earlierWordsKept ? { earlierWordsKept: true } : {}),
       };
     }

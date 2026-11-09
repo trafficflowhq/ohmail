@@ -92,6 +92,11 @@ export interface MutationOutcome {
    */
   sentCopy?: "filed" | "pending" | "missing";
   /**
+   * Why a `pending` or `missing` copy is not filed, when the server's answer said: the server would
+   * not keep one this large, the mailbox is full, the server refused it, or could not be reached.
+   */
+  sentCopyReason?: "too_big" | "full" | "refused" | "unreachable";
+  /**
    * The decision was accepted for somebody else to carry out — who, by
    * name. Only `screener_decide` carries it, and only where the mailbox is
    * organized by another install: the server records the decision, answers

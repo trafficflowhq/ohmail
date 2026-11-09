@@ -97,6 +97,8 @@ import {
   sendLockOwed,
   sendPendingInDurableOutbox,
   sendPendingInOutbox,
+  sentCopyKey,
+  sentCopyNoteOf,
   standingSendKey,
   standingSendRow,
   useMailSend,
@@ -1532,6 +1534,7 @@ export function useShellCompose({
     if (!accepted && (phase === "failed" || phase === "idle") && key !== COMPOSE_SEND_KEY) replyAutosave.notSent(key);
     const intent = detail?.andDone;
     if (intent === undefined || !accepted) return false;
+    const copy = detail?.copy;
     /* The release read NOW, from the Ohbox as presented — and the row's own Done door
        dispatches it, so a refused step is said in the same words. Nothing to release
        answers `false`, and the send's ordinary sentence is said instead. */
@@ -1539,7 +1542,9 @@ export function useShellCompose({
       presented,
       intent,
       dispatch: (mu) => mutateAndReport(mu, null),
-      say: (undo) => toastWithUndo(t("reply.toastSentAndDone"), undo),
+      say: (undo) => toastWithUndo(
+        copy ? `${t("reply.toastSentAndDone")} ${t(sentCopyKey(copy))}` : t("reply.toastSentAndDone"), undo,
+      ),
     });
   });
 
@@ -1547,7 +1552,8 @@ export function useShellCompose({
   const releaseConfirmed = useStableCallback((res: MutationResult) => {
     if (res.status !== "confirmed" || res.andDone === undefined) return;
     // The key is the send's own: a confirmed release reads no lane, only the intent.
-    onSendOutcome(res.key, { kind: "mail_send" } as unknown as MailSendMutation, true, undefined, { andDone: res.andDone });
+    const copy = sentCopyNoteOf(res);
+    onSendOutcome(res.key, { kind: "mail_send" } as unknown as MailSendMutation, true, undefined, { andDone: res.andDone, ...(copy ? { copy } : {}) });
   });
 
   /** The composer's binding epoch, late-bound like {@link settleComposeRef}: the sent beat's mark. */

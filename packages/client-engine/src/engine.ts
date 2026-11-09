@@ -220,6 +220,8 @@ export interface MutationResult {
   earlierWordsKept?: true;
   /** Where a delivered send's Sent copy stands — see {@link MutationOutcome.sentCopy}. */
   sentCopy?: "filed" | "pending" | "missing";
+  /** Why it is not filed — see {@link MutationOutcome.sentCopyReason}. */
+  sentCopyReason?: "too_big" | "full" | "refused" | "unreachable";
   /**
    * WHO THE SERVER RECORDED THIS FOR — present on `awaiting_organizer` and nowhere else. The
    * mutation reached the wire and the wire took it; what has NOT happened is the act. The
@@ -9364,6 +9366,7 @@ export class OhmailEngine {
         ...(outcome.firstSend ? { firstSend: outcome.firstSend } : {}),
         ...(outcome.earlierWordsKept === true ? { earlierWordsKept: true as const } : {}),
         ...(outcome.sentCopy ? { sentCopy: outcome.sentCopy } : {}),
+        ...(outcome.sentCopyReason ? { sentCopyReason: outcome.sentCopyReason } : {}),
         ...(intent !== undefined ? { andDone: intent } : {}),
       };
     } catch (err) {
@@ -9615,6 +9618,8 @@ export class OhmailEngine {
     // The words that went are not the ones in `m`, and this engine does not hold them: nothing is
     // painted, and the real Sent row arrives on the drain.
     if (outcome.earlierWordsKept === true) return false;
+    // No copy is in Sent and none will be: a painted row would vanish at its expiry.
+    if (outcome.sentCopy === "missing") return false;
     const header = outcome.providerMessageId;
     if (!header) return false;
     // One copy per message: a re-press under the key confirms the same delivery again.

@@ -263,9 +263,9 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
     }
   };
   /** The copy's own refusal: one of its attempts, then its own wait (or, the last, given up). */
-  const charge = async (row: DueRow, err: unknown): Promise<void> => {
+  const charge = async (row: DueRow, err: unknown, bytes: number | undefined): Promise<void> => {
     try {
-      if (await sends.chargeOwedCopy(contextOf(row), row, err, { log }) === "gaveUp") out.gaveUp += 1;
+      if (await sends.chargeOwedCopy(contextOf(row), { ...row, ...(bytes !== undefined ? { bytes } : {}) }, err, { log }) === "gaveUp") out.gaveUp += 1;
       else out.failed += 1;
       leased.delete(row.sendId);
     } catch (fault) {
@@ -331,7 +331,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       if (res.step === "dropped" || res.step === "skipped") continue;
       if (res.step === "unreachable") { out.deferred += 1; return false; }
       forgetIfSpent(failed.mailboxId);
-      if (copyRefusedForItself(res.err)) { await charge(other, res.err); continue; }
+      if (copyRefusedForItself(res.err)) { await charge(other, res.err, res.bytes); continue; }
       if (mailServerUnreachable(res.err)) { forget(failed.mailboxId); again = other; continue; }
       out.failed += 1;
       return false;
@@ -351,7 +351,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       }
       forgetIfSpent(row.mailboxId);
       if (copyRefusedForItself(res.err) || proven.has(row.mailboxId) || await probe(row)) {
-        await charge(row, res.err);
+        await charge(row, res.err, res.bytes);
         continue;
       }
       out.failed += 1;

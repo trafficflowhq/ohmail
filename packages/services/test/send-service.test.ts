@@ -6,13 +6,13 @@ import { and, eq, sql } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, drafts, outboundSends, outboundSentCopies, messages, threads } from "@trafficflow/db";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
-import { SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
+import { createLogger, SendNotSubmitted, SentCopyAppendFailed, UNMETERED_STORAGE_CAP, type SendOptions, type StorageCap } from "@trafficflow/core";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
 import {
   SendService, SEND_COPY_OWED_MAX_ATTEMPTS, SEND_COPY_OWED_WAITS_MS, SEND_STALE_AFTER_MS, SEND_UPLOAD_DROPPED_SENTENCE,
   OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_OWED_DEFER_MS, SEND_COPY_OWED_HOLD_MS, SEND_COPY_OWED_SETTLE_MS,
-  runOwedSentCopyPass,
+  runOwedSentCopyPass, sentCopyRefusalOf,
 } from "../src/index.js";
 import type { ServiceContext } from "../src/index.js";
 import { SENT_COPY_MAILBOX_WAITS_MS, SENT_COPY_TURN_MAX, SENT_COPY_TURN_UNIT } from "../src/sent-copy-pass.js";
@@ -461,6 +461,8 @@ function slowSmtp(o: {
   copyDiesOnFirst?: boolean; dropMidUpload?: boolean; lostReply?: boolean; reopenUnreachable?: boolean; bodyBytes?: number;
   /** The first connection's APPEND never answers: before it lands, or after. */
   appendHangs?: "before" | "after";
+  /** Every APPEND is answered with this refusal. */
+  appendRefuses?: () => Error;
 } = {}) {
   const sentFolder: string[] = [];
   const state = { dials: 0, released: 0, delivered: 0, looks: [] as boolean[], probes: 0, raws: [] as Buffer[], filed: [] as Buffer[], forceCloses: 0 };
@@ -491,6 +493,7 @@ function slowSmtp(o: {
         if (!live) throw dead();
         state.looks.push(look?.look === true);
         if (look?.look === true && sentFolder.includes(id)) return null;
+        if (o.appendRefuses) throw o.appendRefuses();
         if (n === 1 && o.appendHangs === "before") return new Promise<never>(() => undefined);
         sentFolder.push(id);
         state.filed.push(raw);
@@ -889,6 +892,86 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
     expect(await owedRows(o.db)).toEqual([]);
     const plain = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD });
     expect({ sentCopy: plain.res.sentCopy, rows: (await owedRows(plain.db)).length }).toEqual({ sentCopy: "pending", rows: 1 });
+  });
+
+  /** A refused APPEND as imapflow 1.7.8 raises Dovecot's answer: no `code`, the server's words in `responseText`. */
+  const imapNo = (code: string): Error => Object.assign(new Error("Command failed"), {
+    responseStatus: "NO", serverResponseCode: code, responseText: "Mail size is larger than the maximum size allowed by server configuration",
+  });
+  /** Cloud's door over a server whose every APPEND is refused with `code`; `files`: the letter carries a photo. */
+  const refusedCopy = async (code: string | (() => Error), files: boolean, log?: ReturnType<typeof createLogger>) => {
+    const photo = { filename: "photo.jpg", contentType: "image/jpeg", content: Buffer.alloc(1024, 7) };
+    const o = await owedSend(
+      { keepOwedCopy: OWED_COPY_CLOUD, copyTiming: { graceMs: 2_000, deadlineMs: 2_000, waitsMs: [0, 10, 10] }, ...(log ? { log } : {}) }, 0,
+      { copyDiesOnFirst: false, reopenUnreachable: false, appendRefuses: typeof code === "string" ? () => imapNo(code) : code },
+      files ? { attachments: [photo] } : {},
+    );
+    return { ...o, appends: o.smtp.state.looks.length, rows: (await owedRows(o.db)).length };
+  };
+
+  it("Cloud: a letter with files its server refuses for size (LIMIT) is `missing`, `too_big`, after one APPEND", async () => {
+    const o = await refusedCopy("LIMIT", true);
+    expect({ status: o.res.status, sentCopy: o.res.sentCopy, reason: o.res.sentCopyReason, appends: o.appends, rows: o.rows })
+      .toEqual({ status: "sent", sentCopy: "missing", reason: "too_big", appends: 1, rows: 0 });
+    const full = await refusedCopy("OVERQUOTA", true);
+    expect({ sentCopy: full.res.sentCopy, reason: full.res.sentCopyReason, appends: full.appends })
+      .toEqual({ sentCopy: "missing", reason: "full", appends: 1 });
+  });
+
+  it("Cloud without files: a full mailbox keeps the row, a too-big copy drops it, LIMIT is a retried refusal", async () => {
+    const full = await refusedCopy("OVERQUOTA", false);
+    expect({ sentCopy: full.res.sentCopy, reason: full.res.sentCopyReason, appends: full.appends, rows: full.rows })
+      .toEqual({ sentCopy: "pending", reason: "full", appends: 1, rows: 1 });
+    const big = await refusedCopy("TOOBIG", false);
+    expect({ sentCopy: big.res.sentCopy, reason: big.res.sentCopyReason, appends: big.appends, rows: big.rows })
+      .toEqual({ sentCopy: "missing", reason: "too_big", appends: 1, rows: 0 });
+    const limit = await refusedCopy("LIMIT", false);
+    expect({ sentCopy: limit.res.sentCopy, reason: limit.res.sentCopyReason, appends: limit.appends, rows: limit.rows })
+      .toEqual({ sentCopy: "pending", reason: "refused", appends: 4, rows: 1 });
+  });
+
+  it("an unavailable server and a dead connection are still tried again", async () => {
+    const busy = await refusedCopy("UNAVAILABLE", true);
+    expect({ sentCopy: busy.res.sentCopy, reason: busy.res.sentCopyReason, appends: busy.appends })
+      .toEqual({ sentCopy: "missing", reason: "unreachable", appends: 4 });
+    const dead = await refusedCopy(() => Object.assign(new Error("Connection not available"), { code: "NoConnection" }), true);
+    expect({ sentCopy: dead.res.sentCopy, reason: dead.res.sentCopyReason, appends: dead.appends })
+      .toEqual({ sentCopy: "missing", reason: "unreachable", appends: 4 });
+  });
+
+  it("the missing copy's line names the server's answer by its code and the copy's size, never its words", async () => {
+    const lines: string[] = [];
+    const log = createLogger({ service: "send", sink: (l) => { lines.push(l); } });
+    const o = await refusedCopy("LIMIT", true, log);
+    const missing = lines.map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.event === "send_sent_copy_missing");
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toMatchObject({ kind: "too_big", state: "NO", detail: "LIMIT", attempts: 1, errorClass: "Error", errorCode: null });
+    expect(missing[0]!.bytes).toBe(o.smtp.state.raws[0]!.length);
+    expect(missing[0]!.droppedFields).toBeUndefined();
+    expect(lines.join("\n")).not.toMatch(/maximum size|Command failed/);
+    lines.length = 0;
+    await refusedCopy(() => Object.assign(imapNo("LIMIT"), { serverResponseCode: "LIMIT mila@lichtgrat.example" }), true, log);
+    const forged = lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((l) => l.event === "send_sent_copy_missing");
+    expect(forged).toMatchObject({ kind: "refused", state: "NO" });
+    expect(forged!.detail, "a code outside the known set is not logged").toBeUndefined();
+    expect(lines.join("\n")).not.toContain("mila@");
+  });
+
+  it.each([
+    [{ responseStatus: "NO", serverResponseCode: "TOOBIG" }, false, "too_big"],
+    [{ serverResponseCode: "APPENDLIMIT" }, false, "too_big"],
+    [{ responseStatus: "NO", serverResponseCode: "LIMIT" }, true, "too_big"],
+    [{ responseStatus: "NO", serverResponseCode: "LIMIT" }, false, "refused"],
+    [{ responseStatus: "NO", serverResponseCode: "OVERQUOTA" }, false, "full"],
+    [{ responseStatus: "BAD" }, true, "refused"],
+    [{ responseStatus: "NO", serverResponseCode: "INUSE" }, true, "unreachable"],
+    [{ code: "ECONNREFUSED" }, true, "unreachable"],
+    [{ code: "EIMAPBOUND", bound: "size" }, true, "unreachable"],
+    [{ code: "ERR_TLS_CERT_ALTNAME_INVALID" }, true, "refused"],
+    [{ authenticationFailed: true }, true, "refused"],
+    [{ code: "ENOENT" }, true, null],
+  ] as const)("sentCopyRefusalOf(%j, files %s) is %s", (shape, files, reason) => {
+    expect(sentCopyRefusalOf(Object.assign(new Error("x"), shape), files)).toBe(reason);
   });
 
   it("the server's pass drops past the hold or on a disabled mailbox, and dials no `error`, stamped, parked or unsent row", async () => {

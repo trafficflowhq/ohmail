@@ -850,7 +850,7 @@ describe("the held sheet: Send again and Close", () => {
       status: "sent", providerMessageId: "pm-d-1", sentCopy: "missing",
     }));
     expect((await live.actions.sendReply("m1", "Thanks", false)).outcome).toBe("sent");
-    expect(live.toasts).toEqual([Copy.sentCopyMissing(Copy.replySent)]);
+    expect(live.toasts).toEqual([Copy.sentCopyMissing("", Copy.replySent)]);
     live.store.close();
     fake.server.close();
     const filed = await scene((f) => f.answerNext("POST", "/drafts/d-1/send", 200, {
@@ -860,5 +860,28 @@ describe("the held sheet: Send again and Close", () => {
     expect(filed.live.toasts, "a filed copy adds nothing").toEqual([Copy.replySent]);
     filed.live.store.close();
     filed.fake.server.close();
+    const big = await scene((f) => f.answerNext("POST", "/drafts/d-1/send", 200, {
+      status: "sent", providerMessageId: "pm-d-1", sentCopy: "missing", sentCopyReason: "too_big",
+    }));
+    expect((await big.live.actions.sendReply("m1", "Thanks", false)).outcome).toBe("sent");
+    expect(big.live.toasts).toEqual([Copy.sentCopyMissing("too_big", Copy.replySent)]);
+    expect(big.live.toasts[0], "it says why, and that nothing is to be sent again").toMatch(/would not keep a copy this large.*nothing to send again/);
+    big.live.store.close();
+    big.fake.server.close();
+    const full = await scene((f) => f.answerNext("POST", "/drafts/d-1/send", 200, {
+      status: "sent", providerMessageId: "pm-d-1", sentCopy: "pending", sentCopyReason: "full",
+    }));
+    expect((await full.live.actions.sendReply("m1", "Thanks", false)).outcome).toBe("sent");
+    expect(full.live.toasts).toEqual([Copy.sentCopyWaiting("full", Copy.replySent)]);
+    expect(full.live.toasts[0]).toMatch(/is full.*tries again/);
+    full.live.store.close();
+    full.fake.server.close();
+    const owed = await scene((f) => f.answerNext("POST", "/drafts/d-1/send", 200, {
+      status: "sent", providerMessageId: "pm-d-1", sentCopy: "pending",
+    }));
+    expect((await owed.live.actions.sendReply("m1", "Thanks", false)).outcome).toBe("sent");
+    expect(owed.live.toasts, "a copy still being filed for no given reason adds nothing").toEqual([Copy.replySent]);
+    owed.live.store.close();
+    owed.fake.server.close();
   });
 });
