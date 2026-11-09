@@ -1051,7 +1051,7 @@ const TABLE = {
   receiptsEmptyHint: "Orders, invoices and tickets you file here arrive as they sync.",
   /** The Receipts day heading for the current day (the shared selector capitalises it). */
   today: "today",
-  streamSeenHint: "an item turns read once it rests on screen; a quick scroll past leaves it unread",
+  streamSeenHint: "An item turns read once it rests on screen; a quick scroll past leaves it unread.",
 
   /* ------------------------------------------------------------- protected */
 

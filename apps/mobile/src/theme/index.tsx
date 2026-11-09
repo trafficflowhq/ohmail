@@ -11,7 +11,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { AccessibilityInfo, Text, useColorScheme, type LayoutChangeEvent, type ViewStyle } from "react-native";
 import { DEFAULT_FACE, teachOf, type FaceName } from "./face";
-import { lift, liftUp, type LiftLevel } from "./lift";
+import { lift, liftIsRing, liftUp, type LiftLevel } from "./lift";
 import { ohmarchyEasing, ohmarchyRadius } from "./ohmarchy";
 import { paletteOf, type Palette, type SchemeName } from "./palette";
 import { type as typePresets } from "./type";
@@ -71,6 +71,8 @@ export interface Theme {
   lift: (level: LiftLevel) => ViewStyle;
   /** The same ladder, falling upward — the bottom decision bar's occlusion. */
   liftUp: (level: LiftLevel) => ViewStyle;
+  /** The face lifts by flat rings (its `l1` is a ring): a control lifted by it draws no ring of its own. */
+  ringed: boolean;
   /**
    * True when the OS asks for reduced motion. Blanc's policy is verbatim from
    * the prototype: transitions collapse to *instant*, never merely slower.
@@ -155,6 +157,7 @@ export function ThemeProvider({
       hit: HIT,
       lift: (level: LiftLevel) => lift(scheme, level, face),
       liftUp: (level: LiftLevel) => liftUp(scheme, level, face),
+      ringed: liftIsRing(scheme, "l1", face),
       reduceMotion,
       // The face's easing, paper's durations — `motion.duration` is deliberately not faced.
       ms: (d) => (reduceMotion ? 0 : motion.duration[d]),

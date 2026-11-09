@@ -11,7 +11,7 @@ const shims = vi.hoisted(() => {
   const colour = new Proxy({}, { get: () => "#000000" });
   const number = new Proxy({}, { get: () => 8 });
   const style = new Proxy({}, { get: () => ({}) });
-  return { theme: { c: colour, radius: number, type: style, lift: () => null }, states: [] as unknown[] };
+  return { theme: { c: colour, radius: number, type: style, lift: (_l: string): unknown => null } as Record<string, unknown>, states: [] as unknown[] };
 });
 vi.mock("react", async (importOriginal) => {
   const real = await importOriginal<typeof import("react")>();
@@ -82,6 +82,17 @@ describe("each face lays the segments out by its own rule", () => {
     const rings = tapsOf(273, { l0: 63, c0: 22, l1: 107, c1: 9, l2: 42, c2: 9 }).map((e) =>
       walk(e.props.children).filter((c) => flat(c.props.style).borderWidth === 1).length);
     expect(rings).toEqual([1, 0, 0]);
+  });
+  it("a face whose lift is a ring (ohmarchy light): the selected segment keeps its lift and draws no second ring", () => {
+    const lifted: unknown[] = [];
+    Object.assign(shims.theme, { scheme: "light", ringed: true, lift: (l: string) => { lifted.push(l); return { lift: l }; } });
+    try {
+      const taps = tapsOf(273, { l0: 63, c0: 22, l1: 107, c1: 9, l2: 42, c2: 9 });
+      const rings = taps.map((e) => walk(e.props.children).filter((c) => flat(c.props.style).borderWidth === 1).length);
+      expect({ rings, lift: flat(taps[0]!.props.style).lift }).toEqual({ rings: [0, 0, 0], lift: "l1" });
+    } finally {
+      Object.assign(shims.theme, { scheme: undefined, ringed: undefined, lift: () => null });
+    }
   });
   it("a face change mounts the segments afresh: a removed `flex` stays on a native view (measured on Android)", () => {
     const measured = { l0: 48, c0: 21, l1: 84, c1: 7, l2: 37, c2: 7 };

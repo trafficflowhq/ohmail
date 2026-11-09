@@ -340,15 +340,18 @@ function ProfileRow({ profile, active, onForgetFailed }: {
             <Txt key={line} variant="hint" tone="ink2">{line}</Txt>
           ))}
           {/* The safe answer first, and after a kept store it opens the mailbox again; the forget only on
-              this second, explicit press, which answers a named settings risk. */}
-          <View style={{ flexDirection: "row", gap: 8 }}>
+              this second, explicit press, which answers a named settings risk. The row wraps and a
+              button longer than the row wraps its words: the composer footer's rule. */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 8, rowGap: 8 }}>
             <Button
               label={Copy.serversStopHereKeep}
+              style={{ flexShrink: 1, maxWidth: "100%" }}
               onPress={() => { setAsking(null); if (asking.kept) void conn.switchTo(profile.id); }}
             />
             <Button
               label={stopAndRemoveVerb(asking)}
               variant="quiet"
+              style={{ flexShrink: 1, maxWidth: "100%" }}
               onPress={() => { setAsking(null); void forget(asking.settings !== null); }}
             />
           </View>

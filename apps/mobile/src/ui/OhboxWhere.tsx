@@ -16,7 +16,8 @@ import { Tap, Txt } from "./base";
 /** The relative "Checked" time moves by the minute. */
 const TICK_MS = 60_000;
 
-export function OhboxWhere({ filed }: { filed: FiledSince | null }) {
+/** `inline`: it rides the list head's one line (compact height), after the meta and a separator. */
+export function OhboxWhere({ filed, inline = false }: { filed: FiledSince | null; inline?: boolean }) {
   const w = useWorld();
   const network = useNetworkNow();
   const [, setTick] = useState(0);
@@ -54,7 +55,8 @@ export function OhboxWhere({ filed }: { filed: FiledSince | null }) {
   if (said.checked === null && said.piles.length === 0) return null;
   const checked = said.checked === null ? null : Copy.whereChecked(checkedAgoSaid(said.checked, nowMs));
   return (
-    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", marginTop: 4 }}>
+    <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", marginTop: inline ? 0 : 4 }}>
+      {inline ? <Txt variant="meta" tone="ink3">{" · "}</Txt> : null}
       {checked !== null ? <Txt variant="meta" tone="ink3">{checked}</Txt> : null}
       {said.piles.length > 0 ? (
         <Txt variant="meta" tone="ink3">
