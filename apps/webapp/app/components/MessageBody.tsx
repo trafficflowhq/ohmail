@@ -1805,7 +1805,7 @@ function declaredBackground(el: Element): Rgb | null {
   if (!style) return null;
   const decl = /(?:^|;)\s*background(?:-color)?\s*:\s*([^;!]+)/i.exec(style);
   if (!decl) return null;
-  for (const token of decl[1]!.trim().split(/\s+/)) {
+  for (const token of colourTokens(decl[1]!)) {
     const c = opaque(parseCssColor(token));
     if (c) return c;
   }
@@ -1815,6 +1815,126 @@ function declaredBackground(el: Element): Rgb | null {
 /** A `html{…}` / `body{…}` rule's background colour in a stylesheet's text, or `null`. */
 const SHEET_PAGE_BG =
   /(?:^|[};])\s*(?:html|body)\s*(?:,\s*(?:html|body)\s*)*\{[^{}]*?background(?:-color)?\s*:\s*([^;!}]+)/i;
+
+/** How much of a background value is read: mail is untrusted, and a colour sits in its first tokens. */
+const COLOUR_VALUE_CAP = 4096;
+
+/**
+ * A background value's tokens, a function's arguments kept together: `rgb(18, 18, 18) url(x)` is two. One pass over
+ * the first {@link COLOUR_VALUE_CAP} characters, split on whitespace outside parentheses; `work` counts the visits.
+ */
+export function colourTokens(value: string, work: { visited: number } = { visited: 0 }): string[] {
+  const tokens: string[] = [];
+  const end = Math.min(value.length, COLOUR_VALUE_CAP);
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < end; i++) {
+    work.visited++;
+    const ch = value[i]!;
+    if (depth === 0 && /\s/.test(ch)) {
+      if (start >= 0) tokens.push(value.slice(start, i));
+      start = -1;
+      continue;
+    }
+    if (start < 0) start = i;
+    if (ch === "(") depth++;
+    else if (ch === ")" && depth > 0) depth--;
+  }
+  if (start >= 0) tokens.push(value.slice(start, end));
+  return tokens;
+}
+
+/**
+ * A condition the page reading does not take: print or speech, a reader preference such as the colour scheme, or a
+ * size (width, height, aspect ratio, orientation), which holds at some widths only and is left to the browser.
+ */
+const UNPAINTED_MEDIA = /\bprefers-|width|height|aspect-ratio|orientation|(?<!\bnot\s+)\b(?:print|speech)\b/i;
+
+/**
+ * The rules that paint the letter on screen at every width. A block for print, a preference
+ * (`prefers-color-scheme: dark`) or a size (`max-width:600px`), `@container`, `@import` and blocks that hold no page
+ * rule (`@font-face`, `@keyframes`) are dropped; `@media screen`/`all`, `@supports` and `@layer` are unwrapped so a
+ * page rule inside them still counts.
+ *
+ * Mail is untrusted: ONE pass over the first {@link SCREEN_RULES_CHARS} characters, no recursion. Blocks unwrapped
+ * nest at most {@link SCREEN_BLOCK_DEPTH} deep (a deeper one is dropped), a prelude past {@link SCREEN_PRELUDE_CHARS}
+ * is dropped; `work` counts the characters visited.
+ */
+export function screenRules(css: string, work: { visited: number } = { visited: 0 }): string {
+  const end = Math.min(css.length, SCREEN_RULES_CHARS);
+  let out = "";
+  let open = 0; // unwrapped at-rule blocks enclosing the cursor
+  let rule = 0; // brace depth inside a style rule at the current block's level
+  let skip = 0; // brace depth inside a dropped block; 0 when outside one
+  for (let i = 0; i < end; i++) {
+    work.visited++;
+    const ch = css[i]!;
+    if (skip > 0) {
+      if (ch === "{") skip++;
+      else if (ch === "}" && --skip === 0) out += ";";
+      continue;
+    }
+    if (ch === "@" && rule === 0) {
+      // The prelude runs to the block's `{`, or a `;` or `}` that ends the statement.
+      let j = i + 1;
+      while (j < end && css[j] !== "{" && css[j] !== ";" && css[j] !== "}") { work.visited++; j++; }
+      out += ";";
+      if (css[j] === "{" && j < end) {
+        const prelude = css.slice(i, j);
+        const unwrap = open < SCREEN_BLOCK_DEPTH && prelude.length <= SCREEN_PRELUDE_CHARS
+          && (/^@(?:supports|layer)\b/i.test(prelude) || (/^@media\b/i.test(prelude) && !UNPAINTED_MEDIA.test(prelude)));
+        if (unwrap) open++;
+        else skip = 1;
+        i = j;
+      } else {
+        // A `}` closes the enclosing block: read it next.
+        i = css[j] === "}" ? j - 1 : j;
+      }
+      continue;
+    }
+    if (ch === "{") rule++;
+    else if (ch === "}") {
+      if (rule > 0) rule--;
+      else if (open > 0) { open--; out += ";"; continue; }
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/** How much of a letter's sheets {@link screenRules} reads, how deep it unwraps, and the longest prelude it reads. */
+const SCREEN_RULES_CHARS = 512 * 1024;
+const SCREEN_BLOCK_DEPTH = 32;
+const SCREEN_PRELUDE_CHARS = 1024;
+
+/** The body's own ink (`text` or an inline `color`); the sanitizer keeps only the body's children. */
+export function declaredInk(el: Element | null): Rgb | null {
+  if (!el) return null;
+  const solid = (c: Rgb | null): Rgb | null => (c && c.a >= 0.5 ? c : null);
+  const attr = el.getAttribute("text");
+  const fromAttr = attr ? solid(parseCssColor(attr)) : null;
+  if (fromAttr) return fromAttr;
+  const decl = /(?:^|;)\s*color\s*:\s*([^;!]+)/i.exec(el.getAttribute("style") ?? "");
+  return decl ? solid(parseCssColor(decl[1]!)) : null;
+}
+
+/** WCAG 2.x contrast ratio of two colours. */
+export function contrastRatio(a: Rgb, b: Rgb): number {
+  const x = relativeLuminance(a), y = relativeLuminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+/**
+ * The ink a letter's unstyled text is set in: the body's `own` when the letter's own `page` ({@link pageBackground})
+ * is dark, so it is painted as sent, and the ink reads on it at WCAG AA; else `null`, the frame's #1b1b1b. A light page
+ * is painted on the app's white or inverted, where a light ink would vanish. Nothing is guessed: a dark page that names
+ * no ink is drawn as every renderer draws it.
+ */
+export function letterInk(page: Rgb | null, own: Rgb | null): Rgb | null {
+  if (!own || page === null || mailIsLight(page)) return null;
+  const painted = clampedPaper(page) ?? page;
+  return contrastRatio(own, painted) >= 4.5 ? own : null;
+}
 
 /**
  * The tags a PAGE is painted with. A background on an `<a>` or a `<span>` is a highlight on a
@@ -1855,17 +1975,8 @@ export function effectiveBackground(
   sanitized: Element | null,
   styleText: string,
 ): Rgb | null {
-  if (parsedBody) {
-    const own = declaredBackground(parsedBody);
-    if (own) return own;
-  }
-  const sheet = SHEET_PAGE_BG.exec(styleText);
-  if (sheet) {
-    for (const token of sheet[1]!.trim().split(/\s+/)) {
-      const c = parseCssColor(token);
-      if (c && c.a >= 0.5) return c;
-    }
-  }
+  const page = pageBackground(parsedBody, styleText);
+  if (page) return page;
   if (sanitized) {
     let seen = 0;
     for (const el of sanitized.querySelectorAll("*")) {
@@ -1876,6 +1987,23 @@ export function effectiveBackground(
     }
   }
   return null;
+}
+
+/**
+ * The page as the frame paints it: a screen `html`/`body` rule's background ({@link screenRules}), which the frame
+ * keeps, else the body's own, which the sanitizer drops with the body and only {@link clampedPaper} repaints; `null`
+ * when neither names a solid colour.
+ */
+export function pageBackground(parsedBody: Element | null, styleText: string): Rgb | null {
+  const sheet = SHEET_PAGE_BG.exec(screenRules(styleText));
+  if (sheet) {
+    for (const token of colourTokens(sheet[1]!)) {
+      const c = parseCssColor(token);
+      if (c && c.a >= 0.5) return c;
+    }
+    return null;
+  }
+  return parsedBody ? declaredBackground(parsedBody) : null;
 }
 
 /**
@@ -3174,6 +3302,8 @@ export interface SanitizedMail {
    * nothing in the render path reads it.
    */
   background: Rgb | null;
+  /** The ink the frame sets unstyled text in ({@link letterInk}); `null` keeps the frame's own. */
+  ink?: Rgb | null;
   /**
    * The Content-IDs of every `cid:` image this document references and could NOT resolve —
    * distinct, in document order, still rendered as blanked boxes. The component reports them
@@ -3745,6 +3875,8 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
   // post-pass above is the last thing that writes, and it writes attributes only, which is the
   // rule this whole function is arranged around.
   const background = effectiveBackground(parsed.body, sanitized, styleText);
+  // The body's own ink, read from the parse, when it reads on the body's own page (see letterInk).
+  const ink = letterInk(pageBackground(parsed.body, styleText), declaredInk(parsed.body));
   // The divergence `prose` reserved room for: `reflow` still answers
   // `isRigidLayout` alone (a fixed canvas must be scaled); `prose` answers
   // "did the sender lay something out?" — rigid OR designed keeps its
@@ -3778,6 +3910,7 @@ export function sanitizeMailHtml(html: string, opts: SanitizeOptions = {}): Sani
     prose: !designed,
     rich,
     background,
+    ink,
     cids,
     links,
     asks,
@@ -3944,7 +4077,7 @@ html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
    The inverted path overrides this below with #e4e4e4, which is chosen to invert to the app's
    own dark panel; specificity is what keeps the two apart, so the paper applies exactly when
    the filter does not. */
-body{margin:0;padding:16px;background:var(--ohmail-paper,#fff);color:#1b1b1b;
+body{margin:0;padding:16px;background:var(--ohmail-paper,#fff);color:var(--ohmail-ink,#1b1b1b);
   font:15px/1.62 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   overflow-wrap:break-word}
 img{border:0}
@@ -4151,12 +4284,14 @@ export function buildMailDocument(
    * the point: a caller holding a boolean knows that images are on and NOT where they may come
    * from, so the only policy it could ask for was `'self'` — every url on this origin.
    */
-  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null } = {},
+  opts: { imgSource?: string | null; dark?: boolean; reflow?: boolean; paper?: Rgb | null; ink?: Rgb | null } = {},
 ): string {
   // The paper rides on the ROOT ELEMENT and is independent of `dark`, so the light and dark
   // builds of the same message still differ by the attribute alone — which is the equality
   // `test/message-body.test.ts` pins and the reason the live flip can be a `toggleAttribute`.
-  const paper = opts.paper ? ` style="--ohmail-paper:${cssColor(opts.paper)}"` : "";
+  const vars = [opts.paper ? `--ohmail-paper:${cssColor(opts.paper)}` : "", opts.ink ? `--ohmail-ink:${cssColor(opts.ink)}` : ""]
+    .filter((v) => v !== "").join(";");
+  const paper = vars ? ` style="${vars}"` : "";
   /**
    * REFLOW IS THE SAME MECHANISM AS DARK: one attribute, a block of dormant rules. It defaults
    * OFF here rather than on, so a caller that does not classify gets exactly the document this
@@ -4708,10 +4843,16 @@ export function MessageBody({
     if (html.length > MAX_HTML_CHARS || !treeWithin(html, { elements: MAX_PARSE_ELEMENTS }).fits) {
       return { state: "oversize" as const, historyAt: unrenderedHtmlVerdict(html, subject) };
     }
-    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, cids, links, asks, fold, historyAt = "unread" } =
-      sanitizeMailHtml(html, {
+    let made: SanitizedMail;
+    try {
+      made = sanitizeMailHtml(html, {
         imageProxy: proxy, cidImages, resolvedRemoteImages, loadPixels: loadTrackingPixels, history: true, subject, askInPage,
       });
+    } catch {
+      // Hostile mail never takes the view down: this one letter is shown as its text, with the reason.
+      return { state: "unsupported" as const, historyAt: "unread" as QuotedVerdict };
+    }
+    const { html: clean, blocked, sheets, oversize, light, reflow, prose, rich, background, ink, cids, links, asks, fold, historyAt = "unread" } = made;
     // A message too large to neutralise renders as TEXT, with a reason. Never as a blank
     // frame, and never by taking however long the neutralising would have taken.
     if (oversize) return { state: "oversize" as const, historyAt: "unread" as QuotedVerdict };
@@ -4730,6 +4871,8 @@ export function MessageBody({
       // drops behind a white letter) is clamped back to the app's white, see clampedPaper.
       // Ignored whenever the filter is on — see FRAME_CSS.
       paper: clampedPaper(background),
+      // The body's own ink when it reads on its own page; else the frame's (see letterInk).
+      ink: ink ?? null,
     };
     const doc = buildMailDocument(clean, docOpts);
     // The same document with its quoted history cut out: the frame's folded state.
@@ -5369,7 +5512,7 @@ export function MessageBody({
         /* `data-dark` themes the sheet the frame sits on — the chrome this file owns — to match
            the transform inside the frame, so a short mail's surround does not read as a light
            hole in a dark panel. It follows the per-message override, not just the theme. */
-        <div className="mb-sheet" id={sheetId} data-dark={surfaceDark ? "1" : undefined}>
+        <div className="mb-sheet" id={sheetId} data-dark={surfaceDark ? "1" : undefined} data-inverted={dark ? "1" : undefined}>
           <iframe
             /**
              * A DIFFERENT DOCUMENT IS A DIFFERENT ELEMENT — see {@link frameIdentity}. Re-using
