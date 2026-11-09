@@ -11,14 +11,20 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("react-native", async () => ({
   ...(await import("./_rendered-dom")).rnDom,
   KeyboardAvoidingView: () => null,
-  Modal: () => null,
+  /* A shown sheet's dialog, as the window manager is asked to draw it. */
+  Modal: (p: { statusBarTranslucent?: boolean; navigationBarTranslucent?: boolean }) =>
+    h("div", { "data-modal": "", "data-status-bar": String(p.statusBarTranslucent === true), "data-nav-bar": String(p.navigationBarTranslucent === true) }),
   useWindowDimensions: () => ({ width: 360, height: 780, scale: 3, fontScale: 1 }),
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
-vi.mock("../src/theme", () => ({ useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }) }) }));
+vi.mock("../src/theme", () => ({
+  useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), liftUp: () => ({}), reduceMotion: true }),
+}));
 vi.mock("../src/ui/keyboard-lift", () => ({ useKeyboardLift: () => 0 }));
 vi.mock("../src/ui/reader-cover", () => ({ useReaderCover: () => undefined }));
-vi.mock("../src/ui/posture", () => ({ usePosture: () => null, separatingVerticalHinge: () => null }));
+vi.mock("../src/ui/posture", () => ({
+  usePosture: () => ({ panes: 1, fold: null, hinge: null }), separatingVerticalHinge: () => null, creaseAcross: () => null,
+}));
 vi.mock("../src/ui/scaffold/plan", () => ({ detailPaneRect: () => null, scaffoldPlan: () => null }));
 vi.mock("../src/ui/sheet-bounds", () => ({ sheetPanelBounds: () => ({}), sheetRoom: () => ({}) }));
 vi.mock("../src/ui/Icon", () => ({ Icon: (p: { name: string }) => h("i", { "data-icon": p.name }) }));
@@ -33,7 +39,7 @@ vi.mock("../src/ui/base", () => ({
 }));
 
 const { mount } = await import("./_rendered-dom");
-const { SheetRow } = await import("../src/ui/Sheet");
+const { Sheet, SheetRow } = await import("../src/ui/Sheet");
 
 /** The row's parts in order: the check is `✓`, another icon `[name]`, a name its text. */
 const parts = (el: HTMLElement) => [...el.querySelectorAll("[data-icon], [data-txt]")].map((n) => {
@@ -69,6 +75,16 @@ describe("a row that can be on", () => {
     const { el, unmount } = mount(h(SheetRow, { label: "Archive", icon: "archive" as never, onPress: () => undefined }));
     const row = el.querySelector("[data-role]");
     expect([row?.getAttribute("data-role"), row?.getAttribute("data-checked")]).toEqual(["button", null]);
+    unmount();
+  });
+});
+
+/* Android: a transparent dialog without both flags stops at the status bar, which stayed undimmed over the scrim. */
+describe("a shown sheet dims the whole window", () => {
+  it("its dialog draws under the status bar and the navigation bar", () => {
+    const { el, unmount } = mount(h(Sheet, { open: true, onClose: () => undefined, label: "More", children: null }));
+    const modal = el.querySelector("[data-modal]");
+    expect([modal?.getAttribute("data-status-bar"), modal?.getAttribute("data-nav-bar")]).toEqual(["true", "true"]);
     unmount();
   });
 });

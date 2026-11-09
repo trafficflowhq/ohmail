@@ -464,6 +464,8 @@ export function FoldersGroup({
             {many ? (
               <TextInput
                 maxFontSizeMultiplier={t.textCap}
+                disableFullscreenUI
+                keyboardAppearance={t.scheme}
                 value={filter[mb.id] ?? ""}
                 onChangeText={(text) => setFilter((v) => ({ ...v, [mb.id]: text }))}
                 placeholder={Copy.folderFilter}
@@ -604,6 +606,8 @@ export function FoldersGroup({
           </Txt>
           <TextInput
             maxFontSizeMultiplier={t.textCap}
+            disableFullscreenUI
+            keyboardAppearance={t.scheme}
             value={open.value}
             onChangeText={(text) => {
               setProblem(null);

@@ -67,6 +67,8 @@ export function RecipientInput({
         <TextInput
           ref={field}
           maxFontSizeMultiplier={t.textCap}
+          disableFullscreenUI
+          keyboardAppearance={t.scheme}
           value={value}
           onChangeText={(next) => { setOpen(true); onChangeText(next); }}
           onFocus={() => { setOpen(true); onFocus?.(); }}

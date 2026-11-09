@@ -100,6 +100,8 @@ export function Field({
           autoCapitalize="none"
           {...input}
           maxFontSizeMultiplier={t.textCap}
+          disableFullscreenUI
+          keyboardAppearance={t.scheme}
           secureTextEntry={masked}
           accessibilityLabel={label}
           /* A prose field grows: it starts at about five lines, aligns to the top rather than
