@@ -24,20 +24,20 @@ import { gateFor } from "../src/state/gate";
 import type { ServerProfile } from "../src/state/servers";
 import { useTheme } from "../src/theme";
 import { Button, Panel, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Doors } from "../src/ui/Doors";
 import { useLocale } from "../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 
-export default function ServersScreen() {
+export default function ServersScreen({ inPane = false }: { inPane?: boolean }) {
   return (
     <SurfaceBoundary surface="servers">
-      <ServersBody />
+      <ServersBody inPane={inPane} />
     </SurfaceBoundary>
   );
 }
 
-function ServersBody() {
+function ServersBody({ inPane }: { inPane: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
@@ -89,9 +89,9 @@ function ServersBody() {
 
   return (
     <Screen>
-      <Stack.Screen options={{ gestureEnabled: !held }} />
+      {inPane ? null : <Stack.Screen options={{ gestureEnabled: !held }} />}
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar back={ownBack ? () => void leave() : undefined} />
+      {inPane ? <PaneTop /> : <DetailBar back={ownBack ? () => void leave() : undefined} />}
       <Scroller bounded avoidKeyboard>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 14 }}>
           <Txt variant="h1">{Copy.serversTitle}</Txt>
@@ -340,15 +340,18 @@ function ProfileRow({ profile, active, onForgetFailed }: {
             <Txt key={line} variant="hint" tone="ink2">{line}</Txt>
           ))}
           {/* The safe answer first, and after a kept store it opens the mailbox again; the forget only on
-              this second, explicit press, which answers a named settings risk. */}
-          <View style={{ flexDirection: "row", gap: 8 }}>
+              this second, explicit press, which answers a named settings risk. The row wraps and a
+              button longer than the row wraps its words: the composer footer's rule. */}
+          <View style={{ flexDirection: "row", flexWrap: "wrap", columnGap: 8, rowGap: 8 }}>
             <Button
               label={Copy.serversStopHereKeep}
+              style={{ flexShrink: 1, maxWidth: "100%" }}
               onPress={() => { setAsking(null); if (asking.kept) void conn.switchTo(profile.id); }}
             />
             <Button
               label={stopAndRemoveVerb(asking)}
               variant="quiet"
+              style={{ flexShrink: 1, maxWidth: "100%" }}
               onPress={() => { setAsking(null); void forget(asking.settings !== null); }}
             />
           </View>

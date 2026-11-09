@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { authored } from "../src/theme/palette";
 import { srgb255, type Oklch } from "../src/theme/oklch";
+import { liftIsRing, ringOnLift } from "../src/theme/lift";
 import { segmentPaint } from "../src/ui/segment-face";
 
 /** sRGB 8-bit → OKLab L, Björn Ottosson's forward matrix. */
@@ -51,12 +52,39 @@ describe("light: a lifted float with a hair ring", () => {
   });
   it("the control paints what segmentPaint says", () => {
     const seg = withoutComments(readFileSync(fileURLToPath(new URL("../src/ui/Segmented.tsx", import.meta.url)), "utf8"));
-    expect(seg).toContain("const paint = segmentPaint(t.scheme);");
+    expect(seg).toContain("const paint = segmentPaint(t.scheme, t.ringed);");
     expect(seg).toContain("backgroundColor: t.c[paint.track],");
     expect(seg).toContain('backgroundColor: on ? t.c[paint.selected] : "transparent",');
     expect(seg).toContain('on ? t.lift("l1") : null,');
     // The ring is an overlay over the padding, not a border inside the basis.
     expect(seg).toContain("{on && paint.ring ? (");
     expect(seg).toContain("borderRadius: t.radius.pill, borderWidth: 1, borderColor: t.c.hair }}");
+  });
+});
+
+/* Ohmarchy lifts by flat rings: l1 is a 2 px ring, so the hair ring over it drew a 3 px frame, heavier than the
+   panel's own ring. A face whose lift is a ring keeps the lift alone; paper's blurred lift keeps the hair ring. */
+describe("a face that lifts by rings wears one ring", () => {
+  it("ohmarchy's l1 is a ring in both schemes, paper's is not", () => {
+    expect(["light", "dark"].map((s) => liftIsRing(s as "light" | "dark", "l1", "ohmarchy"))).toEqual([true, true]);
+    expect(["light", "dark"].map((s) => liftIsRing(s as "light" | "dark", "l1", "paper"))).toEqual([false, false]);
+  });
+  it("light over a ringed face: no hair ring on the selected segment", () => {
+    expect(segmentPaint("light", true)).toEqual({ track: "tint2", selected: "float", ring: false });
+    expect(segmentPaint("light", false).ring).toBe(true);
+    expect(segmentPaint("dark", true)).toEqual(segmentPaint("dark", false));
+  });
+  const ai = { offsetX: 0, offsetY: 0, blurRadius: 0, spreadDistance: 1.5, color: "#000000" };
+  const layers = (scheme: "light" | "dark", face: "paper" | "ohmarchy") => {
+    const l0 = { boxShadow: [{ offsetX: 0, offsetY: 0, blurRadius: 0, spreadDistance: 1, color: "#111111" }, { offsetX: 0, offsetY: 1, blurRadius: 2, spreadDistance: 0, color: "#222222" }] };
+    return { l0, out: ringOnLift(l0, ai, liftIsRing(scheme, "l0", face)).boxShadow };
+  };
+  it("the AI capsule's ring is added to paper's lift, the accent ring on top", () => {
+    const { l0, out } = layers("light", "paper");
+    expect(out).toEqual([ai, ...l0.boxShadow]);
+  });
+  it("on a ringed face the AI ring takes the l0 ring's place instead of framing it twice", () => {
+    expect(layers("light", "ohmarchy").out).toEqual([ai]);
+    expect(layers("dark", "ohmarchy").out).toEqual([ai]);
   });
 });

@@ -19,7 +19,7 @@ import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useTheme } from "../../src/theme";
 import { useFilesStamp, useMessageBody, useWorld, type WorldMail } from "../../src/state/world";
-import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, Waterline, useListInsets } from "../../src/ui/base";
+import { Badge, Empty, Panel, Screen, Tail, TapRow, Txt, ViewHead, Waterline, useListInsets } from "../../src/ui/base";
 import { BodyPages } from "../../src/ui/BodyPages";
 import { mailboxStatusOf, withheldNote } from "../../src/ui/body-note";
 import { TopBar } from "../../src/ui/chrome";
@@ -28,7 +28,7 @@ import { MailList, type ListPlace, type RowFrame } from "../../src/ui/MailList";
 import { AttachmentTiles, MessageReader } from "../../src/ui/MessageReader";
 import { EventCards } from "../../src/ui/EventCard";
 import { FadeOut } from "../../src/ui/FadeOut";
-import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
+import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { StreamCardVerbs } from "../../src/ui/StreamCardVerbs";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -133,15 +133,15 @@ function ReadsBody() {
         scrollEventThrottle={64}
         refresh={pull}
         head={
-          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}>
-            <View style={VIEW_HEAD_ROW}>
-              <Txt variant="h1">{Copy.reads}</Txt>
-              <Txt variant="meta" tone="ink3" tabular>
-                {metaWhen(surface, meta) ?? " "}
-              </Txt>
-              {/* The web's ReadsView press, both halves: flip the stream's unread AND commit the
-                  waterline above the newest issue — a fresh-only stream ("2 new", nothing
-                  unread) still gets its clearing control. */}
+          <ViewHead
+            style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 4 }}
+            title={Copy.reads}
+            meta={metaWhen(surface, meta) ?? " "}
+            metaBeside
+            /* The web's ReadsView press, both halves: flip the stream's unread AND commit the
+               waterline above the newest issue — a fresh-only stream ("2 new", nothing
+               unread) still gets its clearing control. */
+            right={
               <MarkAllRead
                 unreadCount={unreadIds.length}
                 freshCount={newCount}
@@ -152,15 +152,17 @@ function ReadsBody() {
                   )
                 }
               />
-            </View>
-            <Txt variant="caption" tone="ink3" style={{ marginTop: 4 }}>
+            }
+          >
+            {/* Its own sentence under the meta, never a run-on of it. */}
+            <Txt variant="hint" tone="ink3" style={{ marginTop: 4 }}>
               {Copy.streamSeenHint}
             </Txt>
             {/* Letters here from senders nobody let in, and the press — the web's note. */}
             <View style={{ marginTop: 12 }}>
               <PileNote pile="news" />
             </View>
-          </View>
+          </ViewHead>
         }
         empty={
           surface === "skeleton" ? (

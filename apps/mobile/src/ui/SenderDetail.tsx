@@ -8,11 +8,12 @@
  * it and marks every held message seen first — filing as read moves no unread count.
  * Decisions and releases go through `engine.mutate`, optimistic and watched.
  */
-import { useEffect, useState } from "react";
-import { ScrollView, View } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { ScrollView, View, useWindowDimensions, type LayoutChangeEvent } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Copy } from "../copy";
 import { useTheme } from "../theme";
+import { ringOnLift } from "../theme/lift";
 import {
   DESTINATIONS,
   destDone,
@@ -35,7 +36,7 @@ import { AttachmentTiles } from "./MessageReader";
 import { EventCards } from "./EventCard";
 import { Segmented } from "./Segmented";
 import { usePosture } from "./posture";
-import { DECISION_ROW_GAP, DECISION_ROW_PAD, decisionPanelShape, SENDER_TITLE_LINES, scopeFitsRow, senderTitleVariant } from "./sender-fit";
+import { DECISION_ROW_GAP, DECISION_ROW_PAD, decisionPanelShape, SENDER_TITLE_LINES, scopeEndsRow, senderTitleVariant, suggestedRowOffset } from "./sender-fit";
 import { useLocale } from "../i18n/LocaleProvider";
 
 export function SenderDetail({
@@ -321,7 +322,7 @@ export function SenderDetail({
 
 /* ---------------------------------------------------------- decision bar */
 
-function DecisionBar({
+export function DecisionBar({
   scope,
   domainOffered,
   nobody,
@@ -352,7 +353,7 @@ function DecisionBar({
 }) {
   const t = useTheme();
   const insets = useSafeAreaInsets();
-  const shape = decisionPanelShape(usePosture().heightClass);
+  const shape = decisionPanelShape(usePosture().heightClass, useWindowDimensions().height);
   /* Widths only (the row, the capsules, the control), never the control's own position, so where
      it stands cannot feed back into the decision. */
   const [fit, setFit] = useState({ row: 0, capsules: 0, scope: 0 });
@@ -360,11 +361,31 @@ function DecisionBar({
     const v = Math.round(width);
     setFit((f) => (f[k] === v ? f : { ...f, [k]: v }));
   };
-  const scopeInRow = shape.scopeInRow && scopeFitsRow(fit.row, fit.capsules, fit.scope);
+  const scopeInRow = scopeEndsRow(shape, scope, fit.row, fit.capsules, fit.scope);
+  /* The row opens with the suggestion whole on screen: once, on its first measured layout. */
+  const rowRef = useRef<ScrollView>(null);
+  const opened = useRef(false);
+  const [aiBox, setAiBox] = useState<{ x: number; width: number } | null>(null);
+  useEffect(() => {
+    if (opened.current || suggested === null || aiBox === null || !(fit.row > 0)) return;
+    opened.current = true;
+    const x = suggestedRowOffset(fit.row, aiBox.x, aiBox.width);
+    if (x > 0) rowRef.current?.scrollTo({ x, animated: false });
+  }, [suggested, aiBox, fit.row]);
+  /* The scrolling row runs edge to edge; the lines under it keep the scope control's inset. */
+  const lineInset = shape.row === "scroll" ? DECISION_ROW_PAD : 0;
   const capsules = DESTINATIONS.map((dest) => (
     <DecisionCapsule
       key={dest}
       dest={dest}
+      onLayout={
+        dest === suggested && shape.row === "scroll"
+          ? (e) => {
+              const { x, width } = e.nativeEvent.layout;
+              if (width > 0) setAiBox((b) => (b !== null && b.x === x && b.width === width ? b : { x, width }));
+            }
+          : undefined
+      }
       ai={dest === suggested}
       quiet={dest === "screened" || dest === "spam"}
       hint={nobody ? Copy.screeningNoteNobody : ruleLine}
@@ -399,7 +420,7 @@ function DecisionBar({
           borderTopLeftRadius: t.radius.panel,
           borderTopRightRadius: t.radius.panel,
           paddingHorizontal: shape.row === "scroll" ? 0 : 14,
-          paddingTop: 14,
+          paddingTop: shape.padTop,
           paddingBottom: 12 + insets.bottom,
         },
         // The occlusion edge, flipped. `shadow.barEdge` is authored as
@@ -412,6 +433,8 @@ function DecisionBar({
     >
       {shape.row === "scroll" ? (
         <ScrollView
+          ref={rowRef}
+          testID="decide-row"
           horizontal
           showsHorizontalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
@@ -434,22 +457,22 @@ function DecisionBar({
 
       {/* With nothing organizing, the sheet line above already says what stands in its place. */}
       {shape.explainer && !nobody ? (
-        <Txt variant="hint" tone="ink3" style={{ marginTop: 10 }}>
+        <Txt variant="hint" tone="ink3" style={{ marginTop: 10, paddingHorizontal: lineInset }}>
           {ruleLine}
         </Txt>
       ) : null}
       {also !== null ? (
-        <Txt variant="hint" tone="ink2" style={{ marginTop: 8 }} testID="decide-domain-also">
+        <Txt variant="hint" tone="ink2" style={{ marginTop: 8, paddingHorizontal: lineInset }} testID="decide-domain-also">
           {also}
         </Txt>
       ) : null}
       {unsub !== null ? (
-        <Txt variant="hint" tone="ink2" style={{ marginTop: 8 }} testID="decide-unsub">
+        <Txt variant="hint" tone="ink2" style={{ marginTop: 8, paddingHorizontal: lineInset }} testID="decide-unsub">
           {unsub}
         </Txt>
       ) : null}
       {listClaim !== null ? (
-        <Txt variant="hint" tone="ink2" style={{ marginTop: 8 }} testID="decide-list-claim">
+        <Txt variant="hint" tone="ink2" style={{ marginTop: 8, paddingHorizontal: lineInset }} testID="decide-list-claim">
           {listClaim}
         </Txt>
       ) : null}
@@ -469,6 +492,7 @@ function DecisionCapsule({
   hint,
   onFile,
   onFileRead,
+  onLayout,
 }: {
   dest: Destination;
   ai: boolean;
@@ -477,11 +501,15 @@ function DecisionCapsule({
   hint: string;
   onFile: () => void;
   onFileRead: () => void;
+  /** Its place in the capsules' row, read for the suggestion only. */
+  onLayout?: (e: LayoutChangeEvent) => void;
 }) {
   const t = useTheme();
   const [pressed, setPressed] = useState<"none" | "main" | "read">("none");
   return (
     <View
+      testID={`decide-capsule-${dest}`}
+      onLayout={onLayout}
       style={[
         {
           flexDirection: "row",
@@ -490,11 +518,11 @@ function DecisionCapsule({
           overflow: "hidden",
           minHeight: 44,
         },
-        t.lift("l0"),
         // `.dbtn.ai{box-shadow: 0 0 0 1.5px var(--accent-hair), var(--lift-0)}`
         // — the ring is added to the lift, not swapped for it, so the AI's
-        // suggestion is marked out without being lifted off the row.
-        ai ? { boxShadow: [{ offsetX: 0, offsetY: 0, blurRadius: 0, spreadDistance: 1.5, color: t.c.accentHair }] } : null,
+        // suggestion is marked out without being lifted off the row; on a
+        // face whose lift is a ring it takes that ring's place.
+        ai ? ringOnLift(t.lift("l0"), { offsetX: 0, offsetY: 0, blurRadius: 0, spreadDistance: 1.5, color: t.c.accentHair }, t.ringed) : t.lift("l0"),
       ]}
     >
       <Tap

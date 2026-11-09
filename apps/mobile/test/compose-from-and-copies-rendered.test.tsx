@@ -12,7 +12,8 @@ vi.mock("react-native", async () => {
   const React = await import("react");
   return {
     ...rnDom,
-    Modal: (p: { children?: ReactNode }) => React.createElement("div", { "data-modal": "" }, p.children),
+    Modal: (p: { children?: ReactNode; statusBarTranslucent?: boolean; navigationBarTranslucent?: boolean }) =>
+      React.createElement("div", { "data-modal": "", "data-under-bars": String(p.statusBarTranslucent === true && p.navigationBarTranslucent === true) }, p.children),
     KeyboardAvoidingView: rnDom.View,
     Keyboard: { dismiss: () => undefined, addListener: () => ({ remove: () => undefined }) },
     AppState: { addEventListener: () => ({ remove: () => undefined }), currentState: "active" },
@@ -21,17 +22,19 @@ vi.mock("react-native", async () => {
       drawn.sources.push(p.source);
       return React.createElement("img", { "data-uri": p.source?.uri, "data-resize": p.resizeMethod, onError: p.onError });
     },
-    TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; onChangeText?: (v: string) => void; onFocus?: () => void; onBlur?: () => void }>(
+    TextInput: forwardRef<HTMLInputElement, { value: string; accessibilityLabel?: string; disableFullscreenUI?: boolean; keyboardAppearance?: string; onChangeText?: (v: string) => void; onFocus?: () => void; onBlur?: () => void }>(
       (p, ref) => React.createElement("input", {
-        ref, value: p.value, "data-label": p.accessibilityLabel, onFocus: p.onFocus, onBlur: p.onBlur,
+        ref, value: p.value, "data-label": p.accessibilityLabel, "data-in-place": String(p.disableFullscreenUI === true), "data-keyboard": p.keyboardAppearance, onFocus: p.onFocus, onBlur: p.onBlur,
         onChange: (e: { target: { value: string } }) => p.onChangeText?.(e.target.value),
       }),
     ),
   };
 });
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
+const look = vi.hoisted(() => ({ scheme: "light" as "light" | "dark" }));
 vi.mock("../src/theme", () => ({
   useTheme: () => ({
+    scheme: look.scheme,
     c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }), type: new Proxy({}, { get: () => ({}) }),
     liftUp: () => ({}), textCap: 2, hit: 48, reduceMotion: true,
   }),
@@ -175,6 +178,31 @@ describe("Cc and Bcc on a new mail", () => {
     c.type(Copy.composeBodyPlaceholder, "Hello");
     await c.send();
     expect(c.sendNew).not.toHaveBeenCalled();
+  });
+});
+
+/* Phone landscape: Android's full-screen IME editor hid the head, the attach row and Send while typing. */
+describe("the composer stays on screen while typing", () => {
+  it("every field keeps the sheet (no full-screen editor), and the dialog dims under both system bars", () => {
+    const c = open = composer();
+    c.press(`button[data-button="${Copy.composeAddCopies}"]`);
+    const inputs = [...c.el.querySelectorAll("input")];
+    expect(inputs.length, "To, Cc, Bcc, Subject, the body").toBeGreaterThanOrEqual(5);
+    expect(inputs.filter((i) => i.getAttribute("data-in-place") !== "true").map((i) => i.getAttribute("data-label"))).toEqual([]);
+    expect(c.q("[data-modal]")!.getAttribute("data-under-bars")).toBe("true");
+  });
+
+  it("every field opens the iOS keyboard in the app's scheme, Dark on a light system included", () => {
+    look.scheme = "dark";
+    try {
+      const c = open = composer();
+      c.press(`button[data-button="${Copy.composeAddCopies}"]`);
+      const inputs = [...c.el.querySelectorAll("input")];
+      expect(inputs.length).toBeGreaterThanOrEqual(5);
+      expect(inputs.filter((i) => i.getAttribute("data-keyboard") !== "dark").map((i) => i.getAttribute("data-label"))).toEqual([]);
+    } finally {
+      look.scheme = "light";
+    }
   });
 });
 

@@ -28,9 +28,10 @@ vi.mock("react-native", () => ({
   Platform: { get OS() { return shims.os; } },
 }));
 vi.mock("react-native-safe-area-context", () => ({ useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }) }));
-vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
+vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}), useAppWindow: () => ({ width: 0, height: 0 }) }));
 vi.mock("../src/ui/bottom-chrome", () => ({ useBottomChromeExtent: () => 0 }));
 vi.mock("../src/ui/nav-drawn", () => ({ useNavDrawn: () => true }));
+vi.mock("../src/ui/pane-chrome", () => ({ useInPane: () => false, useListFoot: () => 0 }));
 vi.mock("../src/ui/list-insets", () => ({ listInsets: () => ({}) }));
 vi.mock("../src/ui/scaffold/plan", async (importOriginal) => ({
   ...(await importOriginal<object>()), scaffoldPlan: () => ({}), listNavClearance: () => 0,

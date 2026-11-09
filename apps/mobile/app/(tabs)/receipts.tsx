@@ -19,11 +19,11 @@ import { GroupedSweepLedger } from "../../src/state/sweep";
 import { useWorld, type WorldMail } from "../../src/state/world";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MessageReader } from "../../src/ui/MessageReader";
-import { Empty, Screen, Tail, Txt, Waterline, useListInsets } from "../../src/ui/base";
+import { Empty, Screen, Tail, ViewHead, Waterline, useListInsets } from "../../src/ui/base";
 import { TopBar } from "../../src/ui/chrome";
 import { MailList, type ListGroup, type RowFrame } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
-import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
+import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
@@ -151,10 +151,12 @@ function ReceiptsBody() {
         scrollEventThrottle={64}
         refresh={pull}
         head={
-          <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}>
-            <View style={VIEW_HEAD_ROW}>
-              <Txt variant="h1">{Copy.receipts}</Txt>
-              {/* Reads' press: flip the stream's unread and commit its line above the newest receipt. */}
+          <ViewHead
+            style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 14 }}
+            title={Copy.receipts}
+            meta={metaWhen(surface, meta) ?? " "}
+            /* Reads' press: flip the stream's unread and commit its line above the newest receipt. */
+            right={
               <MarkAllRead
                 unreadCount={unreadIds.length}
                 freshCount={newCount}
@@ -162,15 +164,13 @@ function ReceiptsBody() {
                   actions.markAllSeen(unreadIds, rows[0] ? { place: "receipts", upToId: rows[0].id } : undefined)
                 }
               />
-            </View>
-            <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-              {metaWhen(surface, meta) ?? " "}
-            </Txt>
+            }
+          >
             {/* Letters here from senders nobody let in, and the press — the web's note. */}
             <View style={{ marginTop: 12 }}>
               <PileNote pile="receipts" />
             </View>
-          </View>
+          </ViewHead>
         }
         empty={
           surface === "skeleton" ? (

@@ -173,8 +173,8 @@ describe("More never folds off the rail", () => {
 
 describe("a full-window reader's bar starts past the rail", () => {
   it("beside the rail it clears the rail's column; in the pair's pane and under a dock it spans its width", () => {
-    const railed = { nav: "rail", navSide: "left", gutter: 8 } as unknown as Parameters<typeof readerBarClearance>[0];
-    const docked = { nav: "dock", navSide: "left", gutter: 8 } as unknown as Parameters<typeof readerBarClearance>[0];
+    const railed = { nav: "rail", navSide: "left", gutter: 8, railEdge: 0 } as unknown as Parameters<typeof readerBarClearance>[0];
+    const docked = { nav: "dock", navSide: "left", gutter: 8, railEdge: 0 } as unknown as Parameters<typeof readerBarClearance>[0];
     expect(readerBarClearance(railed, false)).toEqual({ left: RAIL_W + 8, right: 0 });
     expect(readerBarClearance(railed, false).left, "Reply inside the rail's column").toBeGreaterThanOrEqual(62 + 8);
     expect(readerBarClearance(railed, true)).toEqual({ left: 0, right: 0 });
@@ -183,7 +183,7 @@ describe("a full-window reader's bar starts past the rail", () => {
 });
 
 describe("a full-window reader beside the rail starts past it, header and body included", () => {
-  const plan = (panes: number, nav = "rail") => ({ nav, navSide: "left", gutter: 8, panes } as unknown as Parameters<typeof screenRailClearance>[0]);
+  const plan = (panes: number, nav = "rail") => ({ nav, navSide: "left", gutter: 8, railEdge: 0, panes } as unknown as Parameters<typeof screenRailClearance>[0]);
   it("a screen pays the rail's column on a one-pane rail, and a full-window one on a two-pane rail too", () => {
     expect(screenRailClearance(plan(1), false)).toEqual({ left: RAIL_W + 8, right: 0 });
     expect(screenRailClearance(plan(2), true), "the full-window reader's text sits in the rail's column").toEqual({ left: RAIL_W + 8, right: 0 });

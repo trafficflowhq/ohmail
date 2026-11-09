@@ -9,7 +9,7 @@
 import { createElement as h, type ReactNode } from "react";
 import { act } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mount } from "./_rendered-dom";
+import { mount, styleOf } from "./_rendered-dom";
 import { EN } from "../src/copy.en";
 import { refuse } from "../src/refusal";
 import type { ForgetAttempt } from "../src/net/connection";
@@ -31,7 +31,8 @@ vi.mock("../src/theme", () => ({ useTheme: () => ({ c: { accent: "#000", ink2: "
 vi.mock("../src/ui/base", () => {
   const div = (p: { children?: ReactNode }) => h("div", null, p.children);
   return {
-    Button: (p: { label: string; onPress?: () => void }) => h("button", { "data-button": p.label, onClick: p.onPress }, p.label),
+    Button: (p: { label: string; onPress?: () => void; style?: object }) =>
+      h("button", { "data-button": p.label, "data-style": JSON.stringify(p.style ?? {}), onClick: p.onPress }, p.label),
     Txt: (p: { children?: ReactNode }) => h("span", null, p.children),
     Panel: div, Screen: div, Scroller: div, Section: div, Tap: div, TapRow: div,
   };
@@ -119,6 +120,28 @@ describe("a removal whose hand-back could not save the settings", () => {
     await press(view.el, EN.serversStopHere);
     await press(view.el, EN.serversStopHereAnyway);
     expect(asked.forgets).toEqual([{ anyway: true }]);
+    view.unmount();
+  });
+
+  /* At 360 dp "Remove and delete drafts" ran past the panel ("Entfernen und Entwürfe löschen" at 411): the row
+     now wraps as the composer's footer does, and a button longer than the row shrinks to it and wraps its words. */
+  it("the confirm's two buttons wrap onto a second row and never run past it", async () => {
+    engineSays("none");
+    connection(2, []);
+    const view = mount(h(ServersScreen));
+    await settle();
+    await press(view.el, EN.serversStopHere);
+    const pair = [EN.serversStopHereKeep, EN.serversStopHereDelete].map((l) => view.el.querySelector(`[data-button="${l}"]`)!);
+    const row = styleOf(pair[0]!.parentElement);
+    expect({
+      row: { flexDirection: row.flexDirection, flexWrap: row.flexWrap, columnGap: row.columnGap, rowGap: row.rowGap },
+      buttons: pair.map((b) => ({ flexShrink: styleOf(b).flexShrink, maxWidth: styleOf(b).maxWidth })),
+      same: pair[0]!.parentElement === pair[1]!.parentElement,
+    }).toEqual({
+      row: { flexDirection: "row", flexWrap: "wrap", columnGap: 8, rowGap: 8 },
+      buttons: [{ flexShrink: 1, maxWidth: "100%" }, { flexShrink: 1, maxWidth: "100%" }],
+      same: true,
+    });
     view.unmount();
   });
 

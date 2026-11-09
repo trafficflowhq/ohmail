@@ -79,7 +79,9 @@ import {
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
 import { type AppLocale } from "../src/i18n/locale";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
+import { YieldToMore } from "../src/ui/more-move";
+import { useMorePick } from "../src/ui/more-pane";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
 import { AutoActPanel, readsOnly } from "../src/ui/AutoActPanel";
@@ -109,11 +111,13 @@ import { FilingsBlocks } from "../src/ui/FilingsBlock";
 import { filingsWaiting } from "../src/ui/filing-lines";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
-export default function SettingsScreen() {
+export default function SettingsScreen({ inPane = false }: { inPane?: boolean }) {
   return (
     <SurfaceBoundary surface="settings">
       <Gated>
-        <SettingsBody />
+        <YieldToMore paneKey={inPane ? null : "settings"}>
+          <SettingsBody inPane={inPane} />
+        </YieldToMore>
       </Gated>
     </SurfaceBoundary>
   );
@@ -160,7 +164,7 @@ function LanguagePanel() {
   );
 }
 
-function SettingsBody() {
+function SettingsBody({ inPane }: { inPane: boolean }) {
   /* Subscribed: this is the screen the switch is made ON, so it is the screen that must redraw
      under the finger rather than on the next navigation. */
   useLocale();
@@ -194,11 +198,13 @@ function SettingsBody() {
   /* What the mirror's open measured about this device's backup — the About block's last line
      comes from it, so the claim and the reading cannot drift apart. */
   const backupSays = useSyncExternalStore(subscribeBackupExclusion, backupExclusion, backupExclusion);
+  /* In More's pane the away responder opens in the same pane. */
+  const pick = useMorePick();
 
   return (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back (one title). */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <Scroller bounded avoidKeyboard>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.settings}</Txt>
@@ -382,7 +388,7 @@ function SettingsBody() {
             label={Copy.awayRow}
             sub={Copy.awayRowSub}
             chevron
-            onPress={() => router.push("/away")}
+            onPress={() => (pick ? pick("away") : router.push("/away"))}
           />
         </Panel>
 
@@ -933,7 +939,7 @@ function ThisPhonePanel() {
           exactly as it was — which is why the sheet stays open with the server's own words in it
           rather than closing on a send that changed nothing. */}
       {resupplying ? (
-        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain} cancel="own">
+        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain} cancel="own" avoidKeyboard>
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
             {signInAgainSaid(here?.address ?? "").lead}
           </Txt>
@@ -988,7 +994,7 @@ function ThisPhonePanel() {
           and the password the door tries them with before it keeps anything. A refusal keeps the
           sheet open with the sentence on the field it is about. */}
       {servers !== null ? (
-        <Sheet open onClose={() => setServers(null)} label={Copy.serverSettings} cancel="own">
+        <Sheet open onClose={() => setServers(null)} label={Copy.serverSettings} cancel="own" avoidKeyboard>
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
             {Copy.serverSettingsLead}
           </Txt>

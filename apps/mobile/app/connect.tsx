@@ -198,6 +198,8 @@ function Field({
       >
         <TextInput
           maxFontSizeMultiplier={t.textCap}
+          disableFullscreenUI
+          keyboardAppearance={t.scheme}
           value={value}
           onChangeText={onChange}
           autoCorrect={false}

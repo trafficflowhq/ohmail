@@ -324,6 +324,11 @@ export interface BackgroundOrganizing {
    * renders as "Handed back", and false everywhere a claim is held.
    */
   handedBack(): boolean;
+  /**
+   * Handed back, and the app is back in front of the person: the resume is taking it again. Every
+   * surface reads `Starting` here, not "Another computer can take this mailbox now".
+   */
+  takingBack(): boolean;
   /** Whether the background service is up, for the Settings row that says so. */
   backgrounded(): boolean;
   /** Drop the stop listener. The service, if up, is left alone — stopping it is a person's act. */
@@ -353,8 +358,11 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
    */
   let announcedRestricted = false;
   let announcedNotificationsOff = false;
-  /** True from a completed hand-back until a resume has been asked for. */
+  /** True from a completed hand-back until a resume serves every mailbox. */
   let handedBack = false;
+  /** From an `active` edge until its resume answers; a later edge ends it. */
+  let returning = false;
+  let edges = 0;
   /**
    * IS THE APP BEHIND THE PERSON — the phase itself, written only by {@link AppPhase} edges and
    * read by {@link reclaimCheck}. `inactive` never reaches it, for that arm's own reason. Not a
@@ -1114,6 +1122,12 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     phaseChanged: (next: AppPhase): Promise<void> => {
       /* THE LATCH IN THE CALLER'S TICK, before the queue — see {@link latchBehindQueue}. */
       const latched = next === "background" && latchBehindQueue();
+      if (next !== "inactive") {
+        edges += 1;
+        returning = next === "active";
+        if (returning && handedBack) moved();
+      }
+      const edge = edges;
       return serial(async () => {
         if (disposed) return;
         /* `inactive` IS NOT A BACKGROUND. See {@link AppPhase}: it is the app switcher and the
@@ -1125,13 +1139,22 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
           return;
         }
         inBackground = false;
-        await toForeground();
+        try {
+          await toForeground();
+        } finally {
+          if (edge === edges && returning) {
+            returning = false;
+            moved();
+          }
+        }
       });
     },
     handedBack: () => handedBack,
+    takingBack: () => returning && handedBack,
     backgrounded: () => organizerRuns(),
     dispose() {
       disposed = true;
+      returning = false;
       disarmWatch();
       disarmReclaim();
       unsubscribe();

@@ -29,7 +29,7 @@ import { useBottomChromeExtent } from "./bottom-chrome";
 import { KeyboardRoom } from "./keyboard-room";
 import { useAppWindow, usePosture } from "./posture";
 import { listNavClearance, scaffoldPlan, screenFillsWindow, screenHingeClearance, screenRailClearance, screenSideInsets } from "./scaffold/plan";
-import { useInPane } from "./pane-chrome";
+import { useInPane, useListFoot } from "./pane-chrome";
 import { useNavDrawn } from "./nav-drawn";
 import { cardSides, topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
@@ -86,12 +86,21 @@ export function useCardSides(gap: number): { marginLeft: number; marginRight: nu
 /**
  * {@link listInsets} over the live bottom inset — the ONE rule for a list's side gutter and its
  * clearance under the flying nav, read by `Scroller` and `MailList` alike. A second spelling of
- * either padding is what `test/list-insets-shared.test.ts` refuses.
+ * either padding is what `test/list-insets-shared.test.ts` refuses. `measure` (the mail lists):
+ * a one-pane list past compact width keeps the reading measure; a phone held sideways keeps its rows.
  */
-export function useListInsets(): ListInsets {
+export function useListInsets(measure = false): ListInsets {
   const t = useTheme();
-  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  return listInsets(t.space, useSafeAreaInsets().bottom, listNavClearance(plan, t.space.tabClearance, useNavDrawn()), useBottomChromeExtent());
+  const posture = usePosture();
+  const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
+  const nav = listNavClearance(plan, t.space.tabClearance, useNavDrawn());
+  const safe = useSafeAreaInsets();
+  const win = useAppWindow().width;
+  const inPane = useInPane();
+  const foot = useListFoot();
+  const room = measure && !inPane && plan.panes === 1 && posture.heightClass !== "compact"
+    ? win - safe.left - safe.right - nav.left - nav.right : 0;
+  return listInsets(t.space, foot > 0 ? foot : safe.bottom, nav, useBottomChromeExtent(), room);
 }
 
 /* ---------------------------------------------------------------- surfaces */
@@ -264,30 +273,56 @@ export function Scroller({
 
 /* ------------------------------------------------------------------ chrome */
 
-/** `.vhead` — the view's name and its one factual number. */
+/**
+ * `.vhead` — a list's head: its name, its one factual number (`meta`), the freshness line (`inline`),
+ * a trailing control (`right`) and lines under it (`children`). AT COMPACT HEIGHT (a phone held
+ * sideways, the Pro Max's two panes at 440 pt) it is one line: the meta and the freshness ride the
+ * title's baseline, so the list keeps its rows. Taller, they stand under the title. The title's row
+ * wraps there (AX5); on the one line the meta shrinks and wraps beside the title instead.
+ */
 export function ViewHead({
   title,
   meta,
+  metaBeside = false,
+  inline,
   right,
+  style,
+  children,
 }: {
   title: string;
   meta?: string;
+  /** The meta rides the title's row on every window (News), not only at compact height. */
+  metaBeside?: boolean;
+  /** Told whether it rides the title's line. */
+  inline?: (oneLine: boolean) => ReactNode;
   right?: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  children?: ReactNode;
 }) {
-  const t = useTheme();
+  const oneLine = usePosture().heightClass === "compact";
+  const beside = oneLine || metaBeside;
+  const metaLine = meta === undefined ? null : (
+    <Txt variant="meta" tone="ink3" tabular style={beside ? undefined : { marginTop: 4 }}>
+      {meta}
+    </Txt>
+  );
   return (
-    <View style={{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 10 }}>
+    <View style={[{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 }, style]}>
+      <View style={{ flexDirection: "row", alignItems: oneLine ? "baseline" : "center", flexWrap: oneLine ? "nowrap" : "wrap", columnGap: 10 }}>
         <Txt variant="h1" style={{ flexShrink: 1 }}>
           {title}
         </Txt>
+        {oneLine ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", flexGrow: 1, flexShrink: 1 }}>
+            {metaLine}
+            {inline?.(true)}
+          </View>
+        ) : beside ? metaLine : null}
         {right}
       </View>
-      {meta ? (
-        <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-          {meta}
-        </Txt>
-      ) : null}
+      {beside ? null : metaLine}
+      {oneLine ? null : inline?.(false)}
+      {children}
     </View>
   );
 }

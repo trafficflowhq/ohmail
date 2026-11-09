@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { derivePosture, type FoldFeature } from "../src/ui/posture/derive";
-import { RAIL_W, listNavClearance, scaffoldPlan, screenHingeClearance, screenRailClearance } from "../src/ui/scaffold/plan";
+import { listNavClearance, railSpan, scaffoldPlan, screenHingeClearance, screenRailClearance } from "../src/ui/scaffold/plan";
 import { TOAST_SIDE, toastFrame, toastSpan } from "../src/ui/bottom-chrome";
 import { IPAD_WINDOW_CONTROLS_PT, topInsetWithControls } from "../src/ui/window-controls";
 import { TEXT_CAP_FLOOR, textCapOf, textEpochOf, textKeyOf } from "../src/theme/text-scale";
@@ -27,8 +27,8 @@ describe("R5-05: a screen with no navigation drawn pays no rail", () => {
   it("the connect flow (nothing drawn) is centred; a mailbox's screens clear the rail", () => {
     expect(plan.nav).toBe("rail");
     expect(screenRailClearance(plan, true, false, false)).toEqual({ left: 0, right: 0 });
-    expect(screenRailClearance(plan, true, false, true).left, "the positive control").toBe(RAIL_W + plan.gutter);
-    expect(screenRailClearance(plan, true).left, "unsaid, the navigation is drawn").toBe(RAIL_W + plan.gutter);
+    expect(screenRailClearance(plan, true, false, true).left, "the positive control").toBe(railSpan(plan) + plan.gutter);
+    expect(screenRailClearance(plan, true).left, "unsaid, the navigation is drawn").toBe(railSpan(plan) + plan.gutter);
   });
 
   it("a list in the connect flow clears neither the rail nor the dock", () => {
@@ -54,13 +54,10 @@ describe("R5-06: the list heads wrap Mark all read instead of running it off the
     expect(m).toMatch(/marginLeft: "auto",\s*flexShrink: 1,\s*maxWidth: "100%"/);
   });
 
-  for (const route of ["app/(tabs)/index.tsx", "app/(tabs)/reads.tsx"]) {
-    it(`${route}: the head is the wrapping row, with no spacer that would hold the control on the title's line`, () => {
-      const s = code(route);
-      const head = s.slice(s.indexOf("<View style={VIEW_HEAD_ROW}>"));
-      expect(head.length, "the head renders the shared row").toBeLessThan(s.length);
-      const row = head.slice(0, head.indexOf("<MarkAllRead"));
-      expect(row).not.toContain("flex: 1");
+  /* The head's row is `ViewHead`'s (wrapping on a tall window, rendered in list-head-one-line-at-compact-height). */
+  for (const route of ["app/(tabs)/index.tsx", "app/(tabs)/reads.tsx", "app/(tabs)/receipts.tsx"]) {
+    it(`${route}: the head is ViewHead, Mark all read its trailing control`, () => {
+      expect(code(route)).toMatch(/<ViewHead\s[\s\S]*?right=\{\s*<MarkAllRead/);
     });
   }
 });

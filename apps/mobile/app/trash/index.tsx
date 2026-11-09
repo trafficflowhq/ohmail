@@ -15,7 +15,7 @@ import { type WorldTrashRow } from "../../src/state/live";
 import { holdTrashRows, subscribeTrashLanded, subscribeTrashRestored, trashLanded, trashRestored } from "../../src/state/trash-hold";
 import { useWorld } from "../../src/state/world";
 import { Empty, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
-import { DetailBar } from "../../src/ui/chrome";
+import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { Gated } from "../../src/ui/Gated";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
@@ -26,22 +26,23 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
-export default function TrashScreen() {
+export default function TrashScreen({ inPane = false }: { inPane?: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="trash">
       <Gated>
-        <TrashBody />
+        <TrashBody inPane={inPane} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function TrashBody() {
+function TrashBody({ inPane }: { inPane: boolean }) {
   const w = useWorld();
-  const { open, openRow, close } = useListDetail((mid) => `/trash/${mid}`);
+  /* In More's pane a row opens the Trash pair. */
+  const { open, openRow, close } = useListDetail((mid) => `/trash/${mid}`, inPane ? (mid) => `/trash?open=${encodeURIComponent(mid)}` : undefined);
   const [items, setItems] = useState<WorldTrashRow[]>([]);
   const [loading, setLoading] = useState(false);
   /** `null` renders no failure; the empty string renders the surface's own sentence — the
@@ -131,7 +132,7 @@ function TrashBody() {
   if (!w.trash.available) {
     return (
       <Screen>
-        <DetailBar title={Copy.trashTitle} />
+        {inPane ? <PaneTop /> : <DetailBar title={Copy.trashTitle} />}
         <Scroller>
           <Empty title={Copy.trashUnavailable} hint={Copy.trashFoot} />
         </Scroller>
@@ -149,7 +150,7 @@ function TrashBody() {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <MailList
         groups={failed ? [] : [{ key: "trash", rows: items }]}
         rowKey={(r) => r.mail.id}
@@ -199,6 +200,7 @@ function TrashBody() {
     </Screen>
   );
 
+  if (inPane) return list;
   return (
     <ListDetail
       open={open}

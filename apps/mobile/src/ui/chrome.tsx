@@ -22,9 +22,10 @@ import { FadeOut } from "./FadeOut";
 import { Icon } from "./Icon";
 import { usePaneChrome } from "./pane-chrome";
 import { useAppWindow, usePosture } from "./posture";
-import { scaffoldPlan, screenHingeClearance } from "./scaffold/plan";
+import { scaffoldPlan, screenHingeClearance, screenRailClearance } from "./scaffold/plan";
 import { Tap, Txt, useTopPad } from "./base";
-import { toastBottom, toastSpan, useBottomChromeExtent } from "./bottom-chrome";
+import { toastBottom, toastPaneRect, toastSpan, useBottomChromeExtent, useToastPane } from "./bottom-chrome";
+import { useNavDrawn } from "./nav-drawn";
 import { doorbellFaces, doorbellMax } from "./doorbell-stack";
 import { GlassPill } from "./glass";
 import { UnsavedChanges } from "./UnsavedChanges";
@@ -420,10 +421,16 @@ function ToastPill({ entry, newest, dismiss, onScreen, lift, onHeight, onPressin
      18 Pro the reader's two-row verb bar is taller, and the pill covered Later and Park
      (`bottom-chrome.ts` holds the measurement). The bars report; this reads. */
   const chrome = useBottomChromeExtent();
-  /* AND ON THE READING SIDE OF A BOOK FOLD: the side every full-window screen keeps to. */
+  /* AND ON THE READING SIDE OF A BOOK FOLD: the side every full-window screen keeps to. On two
+     panes, in the pane the pair in front reports; beside a rail, clear of its column. */
   const posture = usePosture();
+  const win = useAppWindow();
+  const plan = scaffoldPlan(posture, platformName);
   const span = toastSpan(
-    screenHingeClearance(posture, scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android"), true, false, useAppWindow().width),
+    screenHingeClearance(posture, scaffoldPlan(posture, platformName), true, false, win.width),
+    toastPaneRect(posture, plan, { w: win.width, h: win.height }, insets, useToastPane()),
+    win.width,
+    screenRailClearance(plan, true, false, useNavDrawn()),
   );
   const anim = useRef(new Animated.Value(0)).current;
   const y = useMemo(() => {

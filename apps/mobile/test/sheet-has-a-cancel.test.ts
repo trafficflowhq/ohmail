@@ -60,9 +60,14 @@ function isDismissRow(el: ts.JsxSelfClosingElement | ts.JsxOpeningElement): bool
  * at a nested `<Sheet>` so an inner sheet's row cannot answer for the outer one — there is none
  * today, which is exactly why the guard is written now rather than after one appears.
  */
-function sheetsIn(file: string, text: string): { line: number; own: string | null; dismissRows: number }[] {
+/** The text fields a sheet can hold: the platform's and the app's two wrappers of it. */
+const TEXT_FIELDS = new Set(["TextInput", "Field", "RecipientInput"]);
+
+interface SheetFacts { line: number; own: string | null; dismissRows: number; fields: number; avoidKeyboard: boolean }
+
+function sheetsIn(file: string, text: string): SheetFacts[] {
   const src = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-  const out: { line: number; own: string | null; dismissRows: number }[] = [];
+  const out: SheetFacts[] = [];
   const openingOf = (n: ts.Node) =>
     ts.isJsxElement(n) ? n.openingElement : ts.isJsxSelfClosingElement(n) ? n : null;
 
@@ -70,20 +75,25 @@ function sheetsIn(file: string, text: string): { line: number; own: string | nul
     const open = openingOf(n);
     if (open && open.tagName.getText() === "Sheet") {
       let own: string | null = null;
+      // `avoidKeyboard` bare or `={true}`; `={false}` or any other value does not lift the panel.
+      const avoidKeyboard = open.attributes.properties.some((a) => ts.isJsxAttribute(a) && a.name.getText() === "avoidKeyboard"
+        && (a.initializer === undefined || (ts.isJsxExpression(a.initializer) && a.initializer.expression?.kind === ts.SyntaxKind.TrueKeyword)));
       for (const a of open.attributes.properties) {
         if (!ts.isJsxAttribute(a) || a.name.getText() !== "cancel") continue;
         const init = a.initializer;
         own = init && ts.isStringLiteral(init) ? init.text : "«not a string literal»";
       }
       let rows = 0;
+      let fields = 0;
       const inner = (c: ts.Node): void => {
         const co = openingOf(c);
         if (co && c !== n && co.tagName.getText() === "Sheet") return;
         if (co && isDismissRow(co)) rows += 1;
+        if (co && TEXT_FIELDS.has(co.tagName.getText())) fields += 1;
         ts.forEachChild(c, inner);
       };
       ts.forEachChild(n, inner);
-      out.push({ line: src.getLineAndCharacterOfPosition(open.getStart()).line + 1, own, dismissRows: rows });
+      out.push({ line: src.getLineAndCharacterOfPosition(open.getStart()).line + 1, own, dismissRows: rows, fields, avoidKeyboard });
     }
     ts.forEachChild(n, visit);
   };
@@ -98,6 +108,11 @@ function census(files: { rel: string; text: string }[]): { findings: Finding[]; 
   for (const { rel, text } of files) {
     for (const s of sheetsIn(rel, text)) {
       sheets += 1;
+      /* The Tag sheet held its field and no avoidKeyboard: on the iPhone and the iPad the keyboard rose
+         over the whole panel, field, rows, Create and Cancel. */
+      if (s.fields > 0 && !s.avoidKeyboard) {
+        findings.push({ file: rel, line: s.line, code: "FIELD-UNDER-KEYBOARD", detail: "holds a text field and does not pass avoidKeyboard — the keyboard covers the panel" });
+      }
       if (s.own !== null && s.own !== "own") {
         findings.push({ file: rel, line: s.line, code: "BAD-CANCEL-VALUE", detail: `cancel=${s.own}; the only value is "own"` });
       } else if (s.own === "own" && s.dismissRows === 0) {
@@ -172,7 +187,12 @@ describe("every sheet in the app", () => {
     expect(files.length).toBeGreaterThan(50);
   });
 
-  it("carries no double cancel and no unearned cancel=\"own\"", () => {
+  it("a sheet that holds a text field: the census reads at least the folder name and the Tag sheet", () => {
+    const withFields = files.flatMap(({ rel, text }) => sheetsIn(rel, text).filter((x) => x.fields > 0).map(() => rel));
+    expect(withFields).toEqual(expect.arrayContaining(["src/ui/FoldersGroup.tsx", "src/ui/MessageActions.tsx"]));
+  });
+
+  it("carries no double cancel, no unearned cancel=\"own\" and no text field under the keyboard", () => {
     const { findings } = census(files);
     expect(findings.map((f) => `${f.file}:${f.line} ${f.code} — ${f.detail}`)).toEqual([]);
   });
@@ -240,6 +260,27 @@ describe("the census, watched failing", () => {
     const { findings } = census(fixture(`
       const X = () => <Sheet open onClose={close} label={Copy.search} cancel="none" />;`));
     expect(findings.map((f) => f.code)).toEqual(["BAD-CANCEL-VALUE"]);
+  });
+
+  it("refuses a sheet with a text field that does not lift over the keyboard", () => {
+    const { findings } = census(fixture(`
+      const X = () => (
+        <Sheet open onClose={close} label={Copy.actionTag}>
+          <View>{ready ? <TextInput value={q} onChangeText={setQ} /> : null}</View>
+        </Sheet>
+      );
+      const Y = () => <Sheet open onClose={close} label={Copy.actionTag} avoidKeyboard={false}><Field label="" /></Sheet>;`));
+    expect(findings.map((f) => f.code)).toEqual(["FIELD-UNDER-KEYBOARD", "FIELD-UNDER-KEYBOARD"]);
+  });
+
+  it("ADMITS a sheet with a text field that passes avoidKeyboard", () => {
+    const { findings } = census(fixture(`
+      const X = () => (
+        <Sheet open onClose={close} label={Copy.actionTag} avoidKeyboard>
+          <TextInput value={q} onChangeText={setQ} />
+        </Sheet>
+      );`));
+    expect(findings).toEqual([]);
   });
 
   it("ADMITS the ordinary sheet — a rule that refused everything would pass the arms above", () => {

@@ -46,8 +46,9 @@ import {
   type BarVerbLite,
 } from "../src/ui/glass/fold";
 import { derivePosture, POSTURE_PRESETS, type PlatformName, type PostureInput } from "../src/ui/posture/derive";
-import { paneSplit, scaffoldPlan } from "../src/ui/scaffold/plan";
-import { readerVerbMode, readerVerbPlacement, type ReaderVerbFacts } from "../src/ui/reader-verbs";
+import { pairPadding, paneSplit, scaffoldPlan } from "../src/ui/scaffold/plan";
+import { compactFit, pillWidth, solidWidth } from "../src/ui/action-bar-layout";
+import { readerPaneWidth, readerVerbMode, readerVerbPlacement, type ReaderVerbFacts } from "../src/ui/reader-verbs";
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (rel: string) => readFileSync(join(APP, rel), "utf8");
@@ -156,15 +157,23 @@ function mobileList(room: number | null, verbs: BarVerbLite[], W: Record<string,
 }
 
 /* ── the postures: pane width from the real geometry pipeline ─────────────────────────────── */
-function paneWidth(input: PostureInput): number {
+function paneOf(input: PostureInput): number {
   const p = derivePosture(input);
   const plan = scaffoldPlan(p, input.platform);
-  expect(readerVerbMode(plan), "this posture no longer takes the bar").toBe("bar");
   const split = paneSplit(p, plan, input.width, input.height);
   expect(split).not.toBeNull();
-  // list-detail.tsx: padding = gutter each side (nav "bars" has no rail), list pane = first,
-  // the seam = gap, the reading pane takes the rest — the strip the bar's mount spans.
-  return input.width - 2 * plan.gutter - split!.first - split!.gap;
+  // list-detail.tsx: the pair's padding (gutters, and the rail's column where there is one), list
+  // pane = first, the seam = gap, the reading pane takes the rest — the strip the bar's mount spans.
+  const pad = pairPadding(plan);
+  const room = input.width - pad.left - pad.right - split!.first - split!.gap;
+  expect(readerPaneWidth(p, plan, { w: input.width, h: input.height }, { left: 0, right: 0 }, true)).toBe(room);
+  return room;
+}
+function paneWidth(input: PostureInput): number {
+  const room = paneOf(input);
+  const plan = scaffoldPlan(derivePosture(input), input.platform);
+  expect(readerVerbMode(plan, room), "this posture no longer takes the bar").toBe("bar");
+  return room;
 }
 const preset = (name: string, platform: PlatformName): PostureInput => {
   const p = POSTURE_PRESETS[name]!;
@@ -187,9 +196,7 @@ describe("the bar's standing verbs equal the desktop's at the pane's width", () 
   const cases: [string, () => PostureInput][] = [
     ["iPad Pro 13 expanded, portrait (1032×1376)", () => IPAD13.portrait],
     ["iPad Pro 13 expanded, landscape (1376×1032)", () => IPAD13.landscape],
-    ["iPad medium width, portrait (preset ipad-portrait)", () => preset("ipad-portrait", "ios")],
     ["iPad landscape (preset ipad)", () => preset("ipad", "ios")],
-    ["Duo unfolded portrait (preset duo-unfolded-portrait)", () => preset("duo-unfolded-portrait", "ios")],
   ];
   for (const [name, input] of cases) {
     it(name, () => {
@@ -204,7 +211,8 @@ describe("the bar's standing verbs equal the desktop's at the pane's width", () 
     expect(phoneFloor()).toEqual(["forward"]);
     const verbs = liteVerbs();
     const W = widthsTable();
-    const room = paneWidth(preset("duo-unfolded-portrait", "ios"));
+    // The Duo's inner-portrait pane: the reader takes the compact bar there now, the law still holds.
+    const room = paneOf(preset("duo-unfolded-portrait", "ios"));
     expect(desktopList(room, verbs, W), `pane ${room}dp`).toEqual(["forward"]);
     expect(mobileList(room, verbs, W), `pane ${room}dp`).toEqual(["forward"]);
   });
@@ -298,6 +306,42 @@ describe("the component wires that model (no RN renderer in this workspace — t
     expect(mount).toContain("left: barRail.left");
     expect(mount).toContain("right: barRail.right");
     expect(actions).toContain("const barRail = readerBarClearance(plan, inPane);");
+  });
+});
+
+describe("a reading pane under 560 dp takes the compact bar, not the desktop's", () => {
+  /* The en fixture at the compact bar's own boxes: Reply solid, Forward plain or its 44-dp icon. */
+  const compactWidths = () => ({
+    __reply: solidWidth(label("actionReply").length * CHAR_DP),
+    forward: solidWidth(label("actionForward").length * CHAR_DP),
+    "forward.icon": 44,
+    later: pillWidth(label("actionLater").length * CHAR_DP),
+    aside: pillWidth(label("actionSetAside").length * CHAR_DP),
+    resurface: pillWidth(label("actionResurface").length * CHAR_DP),
+  });
+  const compactAt = (input: PostureInput) => {
+    const room = paneOf(input);
+    const plan = scaffoldPlan(derivePosture(input), input.platform);
+    expect(readerVerbMode(plan, room), `pane ${room}dp`).toBe("compact");
+    const placement = readerVerbPlacement("compact", FACTS);
+    expect(placement.behindMore, "Reply all stood where the horizons folded").toContain("replyAll");
+    const row = placement.standing.filter((v) => v !== "reply");
+    return compactFit({ verbs: row, widths: compactWidths(), room, lead: "forward" });
+  };
+
+  it("the Fold flat and book panes stand Reply · Forward · Later", () => {
+    for (const name of ["fold-inner", "fold-book"]) {
+      expect(compactAt(preset(name, "android")), name).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: false });
+    }
+  });
+  it("the iPad portrait pane stands Reply · Forward · Later · Park", () => {
+    expect(compactAt(preset("ipad-portrait", "ios"))).toEqual({ standing: ["forward", "later", "aside"], overflow: ["resurface"], leadIcon: false });
+  });
+  it("the Duo's inner-portrait pane stands Reply · Forward's icon · Later", () => {
+    expect(compactAt(preset("duo-unfolded-portrait", "ios"))).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: true });
+  });
+  it("the iPad landscape pane keeps the ActionBar", () => {
+    expect(paneWidth(preset("ipad", "ios"))).toBe(732);
   });
 });
 

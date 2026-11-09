@@ -371,6 +371,8 @@ function AddressField({
             badly-shaped address spells the full form. */}
         <TextInput
           maxFontSizeMultiplier={t.textCap}
+          disableFullscreenUI
+          keyboardAppearance={t.scheme}
           value={value}
           onChangeText={onChange}
           editable={!locked}

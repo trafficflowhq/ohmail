@@ -58,6 +58,7 @@ vi.mock("../src/ui/useNotifyPermission", () => ({ useNotifyPermission: () => ({ 
 vi.mock("../src/i18n/LocaleProvider", () => ({ useLocale: () => "en", useLocaleControls: () => null }));
 vi.mock("../src/ui/chrome", () => ({ DetailBar: () => null }));
 vi.mock("../src/ui/Gated", () => ({ Gated: (p: { children?: ReactNode }) => p.children }));
+vi.mock("../src/ui/more-move", () => ({ YieldToMore: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/ErrorBoundary", () => ({ SurfaceBoundary: (p: { children?: ReactNode }) => p.children }));
 vi.mock("../src/ui/Segmented", () => ({ Segmented: () => null }));
 vi.mock("../src/ui/AutoActPanel", () => ({ AutoActPanel: () => null, readsOnly: () => false }));

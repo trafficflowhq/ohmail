@@ -6,11 +6,12 @@
  * numbers rather than a grid of tiles. The rows themselves are
  * `src/ui/MoreNav.tsx`, shared with the big-screen drawer so the two lists
  * cannot drift. A feature that is not live yet gets a plain sentence, never a
- * control that goes nowhere.
+ * control that goes nowhere. On two panes it is a pair like the mail lists: the rows beside the
+ * destination one opened (the `open` param, a `pane-routes` key), never a window-wide list.
  */
 import { useSyncExternalStore } from "react";
 import { View } from "react-native";
-import { router } from "expo-router";
+import { router, useNavigation } from "expo-router";
 import { Copy } from "../../src/copy";
 import { useWorld, type World } from "../../src/state/world";
 import { foldedNow, subscribeFolded } from "../../src/ui/nav-fold";
@@ -20,6 +21,20 @@ import { TopBar } from "../../src/ui/chrome";
 import { MoreNav, Nav } from "../../src/ui/MoreNav";
 import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
+import { ListDetail, useListDetail } from "../../src/ui/list-detail";
+import { askBeforePaneLeave, MorePickContext } from "../../src/ui/more-pane";
+import { morePathOf } from "../../src/ui/pane-routes";
+import AwayScreen from "../away";
+import DraftsScreen from "../drafts/index";
+import FolderScreen from "../folder/[id]";
+import HistoryScreen from "../history";
+import ScheduledScreen from "../scheduled";
+import SearchScreen from "../search";
+import ServersScreen from "../servers";
+import SettingsScreen from "../settings";
+import TagScreen from "../tag/[id]";
+import TrashScreen from "../trash/index";
+import TriageScreen from "../triage";
 
 export default function MoreScreen() {
   return (
@@ -35,8 +50,15 @@ function MoreBody() {
   useLocale();
   const w = useWorld();
   const folded = useSyncExternalStore(subscribeFolded, foldedNow);
+  const { open: param, close, twoPane } = useListDetail(toRoute);
+  const open = param !== null && morePathOf(param) !== null ? param : null;
+  const navigation = useNavigation<{ setParams(p: { open: string }): void }>();
+  /* A pick is a param change, so an unsaved edit in the pane is asked about here (`more-pane`). */
+  const pick = (key: string) => {
+    if (key !== open) askBeforePaneLeave(() => navigation.setParams({ open: key }));
+  };
 
-  return (
+  const list = (
     <Screen>
       <TopBar />
       <Scroller avoidKeyboard>
@@ -74,11 +96,46 @@ function MoreBody() {
             return <Nav key={id} label={d.label()} count={d.count(w)} onPress={() => router.navigate(d.path)} />;
           })}
           {folded.length > 0 ? <Rule inset={20} /> : null}
-          <MoreNav />
+          <MoreNav selected={twoPane ? open : null} onPick={twoPane ? pick : undefined} />
         </Panel>
       </Scroller>
     </Screen>
   );
+
+  return (
+    <MorePickContext.Provider value={twoPane ? pick : null}>
+      <ListDetail
+        open={open}
+        onClose={() => askBeforePaneLeave(close)}
+        toRoute={toRoute}
+        list={list}
+        renderDetail={(key) => <MoreDestination paneKey={key} />}
+      />
+    </MorePickContext.Provider>
+  );
+}
+
+const toRoute = (key: string) => morePathOf(key) ?? "/more";
+
+/** The destination a key names, drawn for More's pane: no bar of its own, its params given. */
+function MoreDestination({ paneKey }: { paneKey: string }) {
+  const at = paneKey.indexOf(":");
+  const head = at < 0 ? paneKey : paneKey.slice(0, at);
+  const arg = at < 0 ? undefined : paneKey.slice(at + 1);
+  switch (head) {
+    case "settings": return <SettingsScreen inPane />;
+    case "history": return <HistoryScreen inPane />;
+    case "search": return <SearchScreen inPane />;
+    case "triage": return <TriageScreen inPane pile={arg} />;
+    case "drafts": return <DraftsScreen inPane />;
+    case "trash": return <TrashScreen inPane />;
+    case "away": return <AwayScreen inPane />;
+    case "servers": return <ServersScreen inPane />;
+    case "scheduled": return <ScheduledScreen inPane />;
+    case "tag": return <TagScreen inPane id={arg} />;
+    case "folder": return <FolderScreen inPane id={arg} />;
+    default: return null;
+  }
 }
 
 /** The destinations the dock and the rail can fold, with the counts their buttons carry. */

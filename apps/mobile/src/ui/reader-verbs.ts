@@ -2,13 +2,15 @@
  * Which reader verbs stand where, per posture: every verb stays available, visible and
  * functional on every device × posture, as arithmetic the census walks
  * (`test/reader-verbs-census.test.ts` refuses a missing verb by name). Three presentations,
- * decided by `scaffoldPlan`: the compact bottom bar; the desktop ActionBar pinned at the
- * reading pane's foot (`plan.actionBar`); the right-edge rail on the unfolded-landscape Duo
- * (`plan.railCarriesReaderVerbs`): back · reply · reply all · forward, Done · Park · Junk, ⋯.
- * Junk has no row verb on the ActionBar — the desktop's own design; it stays behind Move —
- * and the rail is the one surface carrying it directly. Pure and dependency-free on purpose.
+ * decided by `scaffoldPlan` and the reading pane's width: the compact bottom bar; the desktop
+ * ActionBar pinned at the reading pane's foot (`plan.actionBar`, on a pane of `BAR_MIN_PANE`
+ * and more); the right-edge rail on the unfolded-landscape Duo (`plan.railCarriesReaderVerbs`):
+ * back · reply · reply all · forward, Done · Park · Junk, ⋯. Junk has no row verb on the
+ * ActionBar — the desktop's own design; it stays behind Move — and the rail is the one surface
+ * carrying it directly. Pure on purpose.
  */
-import type { ScaffoldPlan } from "./scaffold/plan";
+import { detailPaneRect, screenHingeClearance, screenRailClearance, type ScaffoldPlan } from "./scaffold/plan";
+import type { Posture } from "./posture/derive";
 
 /** The webapp reading pane's verb set — parity is derived in `test/action-parity.test.ts`. */
 export type ReaderVerbId =
@@ -45,13 +47,42 @@ export interface ReaderVerbFacts {
 
 export type ReaderVerbMode = "compact" | "bar" | "rail";
 
-/** Which presentation a posture takes — the plan already encodes the placement rules. */
+/**
+ * The narrowest reading pane the desktop ActionBar takes. Its row is the desktop's (Reply all,
+ * Forward, then the horizons), so on a narrower pane the horizons folded while Reply all and the
+ * read switch stood; the compact bar was designed for that width.
+ */
+export const BAR_MIN_PANE = 560;
+
+/** Which presentation a posture takes: the plan's placement rules, and the bar only on a pane wide enough. */
 export function readerVerbMode(
   plan: Pick<ScaffoldPlan, "actionBar" | "railCarriesReaderVerbs">,
+  paneWidth: number,
 ): ReaderVerbMode {
   if (plan.railCarriesReaderVerbs) return "rail";
-  if (plan.actionBar) return "bar";
+  if (plan.actionBar && paneWidth >= BAR_MIN_PANE) return "bar";
   return "compact";
+}
+
+/**
+ * The reader's width in dp: the pair's reading pane (`detailPaneRect`, the split the pair
+ * renders) when it is one, else the window less what its `Screen` pads on each side: the side
+ * inset and the rail's column, or a book fold's far side (`screenHingeClearance`).
+ */
+export function readerPaneWidth(
+  p: Posture,
+  plan: ScaffoldPlan,
+  win: { w: number; h: number },
+  insets: { left: number; right: number },
+  inPane: boolean,
+): number {
+  const pane = inPane ? detailPaneRect(p, plan, win, insets) : null;
+  if (pane !== null) return pane.w;
+  const rail = screenRailClearance(plan, true, inPane);
+  const hinge = screenHingeClearance(p, plan, true, inPane, win.w);
+  const left = Math.max(insets.left + rail.left, hinge.left);
+  const right = Math.max(insets.right + rail.right, hinge.right);
+  return Math.max(0, win.w - left - right);
 }
 
 const admits = (f: ReaderVerbFacts, id: ReaderVerbId): boolean =>

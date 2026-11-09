@@ -102,6 +102,7 @@ const SAME_IN_BOTH: Record<string, string> = {
   helpDAccount: "the ohmail account is an Account in German (help.dAccount; test/german-says-mail.test.ts)",
   languageSystem: "the same word, and the same segment as the control above it",
   pictureQualityOriginal: "Original is Original, as the web's German has it (settings.imageQualityLevel.original)",
+  mailDarkOriginal: "Original is Original, as the web's German has it (mailBody.darkOriginal)",
   /* A hostname is a hostname. `example.com` is reserved for documentation (RFC 2606), so this
      ghost text can never name anybody's real server, in either language. */
   doorSelfAddressPlaceholder: "a reserved documentation hostname, not a word",
@@ -122,6 +123,11 @@ const SAME_IN_BOTH: Record<string, string> = {
  * exists, never a new claim that two surfaces ought to match.
  */
 const SAME_AS_WEBAPP: Record<string, string> = {
+  /* A dark reader's per-message flip — the web body's own pair and their titles. */
+  mailDarkOriginal: "mailBody.darkOriginal",
+  mailDarkAdapt: "mailBody.darkAdapt",
+  mailDarkOriginalTitle: "mailBody.darkOriginalTitle",
+  mailDarkAdaptTitle: "mailBody.darkAdaptTitle",
   /* The quoted-history toggle — the web body's own pair. */
   bodyHistoryShow: "bodyText.show",
   bodyHistoryHide: "bodyText.hide",

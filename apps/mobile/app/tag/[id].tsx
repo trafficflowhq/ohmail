@@ -13,7 +13,7 @@ import { useWorld } from "../../src/state/world";
 import { tagHueOf } from "../../src/theme/palette";
 import { useTheme } from "../../src/theme";
 import { Empty, Screen, Scroller, TagDot, Txt } from "../../src/ui/base";
-import { DetailBar } from "../../src/ui/chrome";
+import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
 import { MessageReader } from "../../src/ui/MessageReader";
@@ -24,30 +24,39 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
-export default function TagScreen() {
+export default function TagScreen({ inPane = false, id }: {
+  inPane?: boolean;
+  /** In More's pane, the tag its row named (the route reads its own param). */
+  id?: string;
+}) {
   useLocale();
   return (
     <SurfaceBoundary surface="tag">
       <Gated>
-        <TagBody />
+        <TagBody inPane={inPane} paneId={id} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function TagBody() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+function TagBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
+  const param = useLocalSearchParams<{ id: string }>().id;
+  const id = inPane ? paneId : param;
   const w = useWorld();
   const t = useTheme();
   const pull = usePullToSync();
-  const { open, openRow, close } = useListDetail((mid) => `/message/${mid}`);
+  /* In More's pane a row opens this tag's own pair. */
+  const { open, openRow, close } = useListDetail(
+    (mid) => `/message/${mid}`,
+    inPane ? (mid) => `/tag/${encodeURIComponent(id ?? "")}?open=${encodeURIComponent(mid)}` : undefined,
+  );
   const tag = w.tags.find((x) => x.id === id);
 
   // Deleted elsewhere, or a URL naming a tag this account does not have.
   if (!tag) {
     return (
       <Screen>
-        <DetailBar />
+        {inPane ? <PaneTop /> : <DetailBar />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.tagGone}
@@ -63,7 +72,7 @@ function TagBody() {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <MailList
         groups={[{ key: "tagged", rows }]}
         rowKey={(m) => m.id}
@@ -96,6 +105,7 @@ function TagBody() {
     </Screen>
   );
 
+  if (inPane) return list;
   return (
     <ListDetail
       open={open}

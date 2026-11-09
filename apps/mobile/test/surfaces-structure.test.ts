@@ -43,7 +43,7 @@ describe("every mail list mounts the list-detail pair", () => {
 describe("the reader's three faces are the one verb model", () => {
   const actions = read("../src/ui/MessageActions.tsx");
   it("the mode comes from the plan, the placement from reader-verbs", () => {
-    expect(actions).toContain("readerVerbMode(plan)");
+    expect(actions).toContain("readerVerbMode(plan, readerPaneWidth(");
     expect(actions).toContain("readerVerbPlacement(mode, facts)");
   });
   it("the bar face is the GlassActionBar with the read switch and Delete behind ⋯", () => {
@@ -90,7 +90,8 @@ describe("one rail, one nav — the yields", () => {
 describe("the drawer, the pane search and the empty pane", () => {
   const ld = read("../src/ui/list-detail.tsx");
   it("the drawer holds the account line, the destinations and everything More carries", () => {
-    expect(ld).toContain("<MoreNav onNavigate={onNavigate} />");
+    expect(ld).toContain("<MoreNav onNavigate={onNavigate} foot={false} />");
+    expect(ld).toContain("<MoreNavFoot onNavigate={onNavigate} />");
     for (const dest of ["Copy.ohbox", "Copy.screener", "Copy.reads", "Copy.receipts"] as const) {
       expect(ld).toContain(dest);
     }

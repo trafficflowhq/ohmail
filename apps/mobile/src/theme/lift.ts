@@ -153,6 +153,21 @@ export function liftUp(scheme: SchemeName, level: LiftLevel, face: FaceName = DE
   return { boxShadow: faceLayers(scheme, level, face, -1) };
 }
 
+/** True when the face draws `level` as flat rings only (ohmarchy): a second ring over it frames the surface twice. */
+export function liftIsRing(scheme: SchemeName, level: LiftLevel, face: FaceName = DEFAULT_FACE): boolean {
+  const layers = faceLayers(scheme, level, face, 1);
+  return layers.length > 0 && layers.every((l) => l.blurRadius === 0 && l.spreadDistance > 0);
+}
+
+/**
+ * An accent ring on a lifted surface, on top of the lift's layers; where the lift is itself a ring it takes
+ * that ring's place. One `boxShadow` either way: a second style object's `boxShadow` replaces the first.
+ */
+export function ringOnLift(lifted: ViewStyle, ring: FaceShadowLayer, ringed: boolean): ViewStyle {
+  const under = Array.isArray(lifted.boxShadow) ? (lifted.boxShadow as FaceShadowLayer[]) : [];
+  return { boxShadow: ringed ? [ring] : [ring, ...under] };
+}
+
 function shadowLayers(scheme: SchemeName, level: LiftLevel, ySign: 1 | -1): FaceShadowLayer[] {
   return ladders[scheme][level].map((layer) => ({
     offsetX: layer.x,

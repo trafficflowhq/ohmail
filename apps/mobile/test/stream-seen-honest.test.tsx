@@ -63,8 +63,8 @@ vi.mock("../src/ui/base", async () => {
   // The card's tap and the answer verbs are pressable, so a test can open a card and answer it.
   const tap = (p: any) => React.createElement("div", { "data-tap": "", onClick: p.onPress, ref: (el: any) => { if (el) el.__props = p; } }, p.children);
   const button = (p: any) => React.createElement("div", { "data-button": p.label, onClick: p.onPress });
-  return { Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: tap, Button: button,
-    Txt: () => null, Section: () => null, panelSurface: () => ({}), pullRefreshControl: () => undefined,
+  return { ViewHead: (p: any) => React.createElement("div", null, p.right, p.children), Badge: () => null, Empty: () => null, Tail: () => null, Waterline: () => null, Panel: box, Screen: box, TapRow: tap, Button: button,
+    Txt: (p: any) => { st.txts.push(p); return null; }, Section: () => null, panelSurface: () => ({}), pullRefreshControl: () => undefined,
     useListInsets: () => ({ paddingLeft: 0, paddingRight: 0, paddingBottom: 0 }) };
 });
 vi.mock("../src/theme", () => ({ useTheme: () => ({ c: new Proxy({}, { get: () => "#000" }), radius: new Proxy({}, { get: () => 8 }) }) }));
@@ -90,6 +90,8 @@ const st = vi.hoisted(() => {
     kept: {} as Record<string, unknown>,
     /* The note on News and Receipts: the store's answer per pile (an Error is a refused read), each ask and each press. */
     piles: {} as Record<string, unknown>, pileAsks: [] as string[], pilePresses: [] as string[],
+    /* Every line the screens drew, with its role and tone. */
+    txts: [] as any[],
   };
   // One object for the app's life, as the world's actions are: a new one per render re-runs the focus effect.
   s.actions = {
@@ -487,6 +489,16 @@ describe("phone News and Receipts read only what rests on screen", () => {
       expect(deck.readsTail(3)).toContain(says[locale][0]);
       expect(deck.readsTail(3)).toContain(says[locale][1]);
     }
+  });
+
+  /* The head's rule ran on from the meta ("Nothing new since you were here" / "an item turns read…"): it is
+     its own sentence, capitalised and closed, on its own line in the hint role. */
+  it("News: the rest rule stands under the meta as its own sentence, English and German", () => {
+    for (const locale of ["en", "de"] as const) expect(DECKS[locale].streamSeenHint).toMatch(/^\p{Lu}[^]*\.$/u);
+    st.txts = [];
+    open(letters("NH", 3));
+    const line = st.txts.find((p) => p.children === Copy.streamSeenHint);
+    expect({ variant: line?.variant, tone: line?.tone, marginTop: line?.style?.marginTop }).toEqual({ variant: "hint", tone: "ink3", marginTop: 4 });
   });
 });
 

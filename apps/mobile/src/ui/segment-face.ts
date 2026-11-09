@@ -25,7 +25,8 @@ export function segmentFace(width: number, content: readonly number[]): SegmentF
  * ring over the `tint2` track — the fill alone read 1.13:1 against the track. Dark: a `float` pill
  * over a translucent light track cannot stand out (ΔL from -4 to +0.6 on the canvas, panel and
  * float grounds), so the track is `tint` and the selected segment a `hair` wash over it, lighter
- * than the track by ΔL ≥ 6 on every ground (`test/segment-contrast.test.ts` computes it).
+ * than the track by ΔL ≥ 6 on every ground (`test/segment-contrast.test.ts` computes it). On a face
+ * whose l1 is itself a ring (`ringed`, ohmarchy) the lift is the ring: a hair ring over it drew 3 px.
  */
 export interface SegmentPaint {
   track: "tint" | "tint2";
@@ -33,8 +34,8 @@ export interface SegmentPaint {
   ring: boolean;
 }
 
-export function segmentPaint(scheme: "light" | "dark"): SegmentPaint {
+export function segmentPaint(scheme: "light" | "dark", ringed = false): SegmentPaint {
   return scheme === "dark"
     ? { track: "tint", selected: "hair", ring: false }
-    : { track: "tint2", selected: "float", ring: true };
+    : { track: "tint2", selected: "float", ring: !ringed };
 }

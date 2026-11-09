@@ -68,6 +68,7 @@ export function FoldersGroup({
   folders,
   unread,
   onOpen,
+  selectedId = null,
   verbs,
   soleMailboxId,
   junkSaid = null,
@@ -77,6 +78,8 @@ export function FoldersGroup({
   /** Per-folder unread, keyed `mailboxId|name` — the world's one map, no second number. */
   unread: ReadonlyMap<string, number>;
   onOpen: (folderId: string) => void;
+  /** The folder open beside More's rows (two panes). */
+  selectedId?: string | null;
   /** Absent ⇒ the read-only foundation group, byte-for-byte (no menus, no create). */
   verbs?: FolderVerbs;
   /**
@@ -276,6 +279,8 @@ export function FoldersGroup({
           )}
           <TapRow
             onPress={() => onOpen(f.id)}
+            selected={f.id === selectedId}
+            accessibilityState={{ selected: f.id === selectedId }}
             accessibilityRole="link"
             accessibilityLabel={count > 0 ? Copy.ariaLabelCount(f.name, count) : f.name}
             style={{
@@ -464,6 +469,8 @@ export function FoldersGroup({
             {many ? (
               <TextInput
                 maxFontSizeMultiplier={t.textCap}
+                disableFullscreenUI
+                keyboardAppearance={t.scheme}
                 value={filter[mb.id] ?? ""}
                 onChangeText={(text) => setFilter((v) => ({ ...v, [mb.id]: text }))}
                 placeholder={Copy.folderFilter}
@@ -604,6 +611,8 @@ export function FoldersGroup({
           </Txt>
           <TextInput
             maxFontSizeMultiplier={t.textCap}
+            disableFullscreenUI
+            keyboardAppearance={t.scheme}
             value={open.value}
             onChangeText={(text) => {
               setProblem(null);

@@ -703,7 +703,7 @@ export const DE: Deck = {
   receiptsEmptyTitle: "Noch keine Belege.",
   receiptsEmptyHint: "Bestellungen, Rechnungen und Tickets, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
   today: "heute",
-  streamSeenHint: "ein Beitrag gilt als gelesen, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen",
+  streamSeenHint: "Ein Beitrag gilt als gelesen, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen.",
 
   /* ------------------------------------------------------------- protected */
 
@@ -1340,11 +1340,16 @@ export const DE: Deck = {
   mailShowImages: "Bilder anzeigen",
   mailShowAsText: "Als Text anzeigen",
   mailShowOriginal: "Original anzeigen",
+  mailDarkOriginal: "Original",
+  mailDarkAdapt: "An Dunkel anpassen",
+  mailDarkOriginalTitle: "Diese Nachricht in ihren Originalfarben anzeigen",
+  mailDarkAdaptTitle: "Diese Nachricht an das dunkle Erscheinungsbild anpassen",
   bodyShowMore: (percent: number) => `Mehr anzeigen (${percent} % angezeigt)`,
   bodyHistoryShow: "Verlauf anzeigen",
   bodyHistoryHide: "Verlauf ausblenden",
   mailOversize:
     "Der HTML-Teil dieser Nachricht ist zu groß, um ihn sicher darzustellen. Die Textfassung wird gezeigt.",
+  mailUnreadable: "Der HTML-Teil dieser Nachricht ließ sich nicht lesen. Die Textfassung wird gezeigt.",
   mailPicture: "Bild",
   mailOpenLinkTitle: "Diesen Link öffnen?",
   mailOpenLinkOpen: "Öffnen",

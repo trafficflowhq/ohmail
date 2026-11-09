@@ -23,12 +23,12 @@ import {
   firstSyncReadingSaid, ohboxVisitStep, type FiledSince, type OhboxVisitEvent, type OhboxVisitState,
 } from "../../src/state/live";
 import { OhboxWhere } from "../../src/ui/OhboxWhere";
-import { Button, Empty, Panel, Screen, Tail, Txt } from "../../src/ui/base";
+import { Button, Empty, Panel, Screen, Tail, Txt, ViewHead } from "../../src/ui/base";
 import { Doorbell, StateKnock, TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList, type ListGroup } from "../../src/ui/MailList";
 import { MailRow } from "../../src/ui/MailRow";
-import { MarkAllRead, VIEW_HEAD_ROW } from "../../src/ui/MarkAllRead";
+import { MarkAllRead } from "../../src/ui/MarkAllRead";
 import { MessageReader } from "../../src/ui/MessageReader";
 import { OrganizerStrip, useStandaloneClaim } from "../../src/ui/OrganizerStrip";
 import { knockSlotOf, noneOrganizedWhy, notOrganizingSay } from "../../src/ui/not-organizing";
@@ -266,19 +266,16 @@ function ViewHeadOhbox({
   filed: FiledSince | null;
 }) {
   return (
-    <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
-      <View style={VIEW_HEAD_ROW}>
-        <Txt variant="h1">{Copy.ohbox}</Txt>
-        {/* Renders nothing over a cleared list — the component's own rule. */}
-        <MarkAllRead unreadCount={unread} onPress={onMarkAll} />
-      </View>
-      {/* Silenced over a skeleton (`metaWhen`): "0 unread of 0" about an unread mirror
-          would be an invented count. The line keeps its slot so nothing shifts. */}
-      <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-        {meta ?? " "}
-      </Txt>
-      {/* When mail was last checked and where it went — `OhboxWhere`. */}
-      <OhboxWhere filed={filed} />
-    </View>
+    <ViewHead
+      style={{ paddingTop: 8, paddingBottom: 14 }}
+      title={Copy.ohbox}
+      /* Silenced over a skeleton (`metaWhen`): "0 unread of 0" about an unread mirror
+         would be an invented count. The line keeps its slot so nothing shifts. */
+      meta={meta ?? " "}
+      /* When mail was last checked and where it went — `OhboxWhere`. */
+      inline={(oneLine) => <OhboxWhere filed={filed} inline={oneLine} />}
+      /* Renders nothing over a cleared list — the component's own rule. */
+      right={<MarkAllRead unreadCount={unread} onPress={onMarkAll} />}
+    />
   );
 }

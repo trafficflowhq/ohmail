@@ -96,7 +96,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   it("the WebView mounts only a counted document, a same-height View standing in until there is one", () => {
     const at = FRAME.indexOf("{doc !== null ? (");
     const web = FRAME.indexOf("<WebView", at);
-    const stand = FRAME.indexOf("<View style={{ height, backgroundColor: t.c.canvas }} />", web);
+    const stand = FRAME.indexOf("<View style={{ height, backgroundColor: sheetBg }} />", web);
     expect(at).toBeGreaterThan(-1);
     expect(web).toBeGreaterThan(at);
     expect(stand).toBeGreaterThan(web);
@@ -113,8 +113,8 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   });
 
   it("the counted document is the one handed to the WebView, and a drawn one only ever came from a fitted count", () => {
-    expect(FRAME).toContain("const current = useMemo(() => (tooLong ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, sanitized.html, theme]);");
-    expect(FRAME).toMatch(/current === null \? planFrameLength\(drawnChars \?\? 0, ceiling\) : planFrameCount\(current, sanitized\.oversize === true, ceiling\)/);
+    expect(FRAME).toContain("const current = useMemo(() => (tooLong || unreadable ? null : buildPhoneMailDocument(sanitized.html, theme)), [tooLong, unreadable, sanitized.html, theme]);");
+    expect(FRAME).toMatch(/unreadable \? null : current === null \? planFrameLength\(drawnChars \?\? 0, ceiling\) : planFrameCount\(current, sanitized\.oversize === true, ceiling\)/);
     expect(FRAME).toContain("const kept = drawn !== null && drawn.id === frameId && drawn.html === html ? drawn.doc : null;");
     expect(FRAME).toContain('const shows = frameShows(reading, current, kept, sanitized.oversize === true, barePlan === null ? "none" : bareReading);');
     expect(FRAME).toContain('const doc = shows.show === "frame" ? shows.doc : null;');
@@ -123,13 +123,14 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   });
 
   it("the pictures are written only into a document whose length was read inside the ceiling first", () => {
-    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeMailHtmlPhone(html, {})), [folding, folded, html]);");
-    expect(FRAME).toMatch(/pictured \? drawnLength\(html, pictures, bare, theme\) : null/);
+    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, {})), [folding, folded, html]);");
+    expect(FRAME).toMatch(/if \(!pictured \|\| bare === UNREADABLE\) return null;\s*try \{\s*return drawnLength\(html, pictures, bare, theme\);/);
     expect(FRAME).toContain("const tooLong = drawnChars !== null && drawnChars > ceiling;");
-    expect(FRAME).toContain("(pictured && !tooLong ? sanitizeMailHtmlPhone(html, pictures) : bare)");
-    // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`).
-    expect(FRAME).toContain("const folded = useMemo(() => sanitizeMailHtmlPhone(html, { fold: true, subject: m.subject }), [html, m.subject]);");
-    expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(3);
+    expect(FRAME).toContain("(lengthThrew ? UNREADABLE : pictured && !tooLong && bare !== UNREADABLE ? sanitizeGuarded(html, pictures) : bare)");
+    // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`), each guarded.
+    expect(FRAME).toContain("const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject }), [html, m.subject]);");
+    expect(code(FRAME).split("sanitizeGuarded(").length - 1).toBe(4);
+    expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(1);
     expect(code(FRAME).split("drawnLength(").length - 1).toBe(1);
   });
 
@@ -145,7 +146,8 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
 
   it("a refused reading renders the text part with the oversize sentence, unless a fitted document is kept", () => {
     // …and a document too tall to draw as one page (`src/mail/frame-height.ts`) takes the same path.
-    expect(FRAME).toContain('if (shows.show === "text" || sized.text !== null) {');
+    expect(FRAME).toContain('const asText = unreadable || shows.show === "text" || sized.text !== null;');
+    expect(FRAME).toContain("if (asText) {");
     expect(FRAME).toMatch(/const lead = shows\.show === "frame" && shows\.withheld\s*\? Copy\.mailImagesTooLarge/);
   });
 

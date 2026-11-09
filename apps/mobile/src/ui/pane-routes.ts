@@ -27,3 +27,43 @@ export function paneRouteFor(
 export function standsInOhboxMail(m: Pick<WorldMail, "place" | "historyPlace" | "gateHeld" | "folderLeaf">): boolean {
   return m.gateHeld !== true && m.folderLeaf === undefined && m.historyPlace === undefined && m.place === "ohbox";
 }
+
+/**
+ * MORE ON TWO PANES is a pair too: its rows beside the destination one opened, the selection the
+ * More route's `open` param, keyed `settings`, `history`, `search`, `triage[:<pile>]`, `drafts`,
+ * `trash`, `away`, `servers`, `scheduled`, `tag:<id>` or `folder:<id>`. {@link morePaneKeyOf}
+ * names a route as its key (null: no pane shows it), {@link morePathOf} is the pushed route a key
+ * goes back to when the pane goes, and {@link morePaneRouteFor} is the inverse move of
+ * {@link paneRouteFor}: a destination shown full-screen on two panes lands in More's pane.
+ */
+export type MoreHref = string | { pathname: string; params?: Record<string, string | undefined> };
+
+const MORE_PLAIN = new Set(["settings", "history", "search", "drafts", "trash", "away", "servers", "scheduled"]);
+
+export function morePaneKeyOf(to: MoreHref): string | null {
+  const [path, query] = typeof to === "string" ? to.split("?", 2) as [string, string | undefined] : [to.pathname, undefined];
+  const pile = typeof to === "string" ? new URLSearchParams(query ?? "").get("pile") : to.params?.pile;
+  const [, head, rest, extra] = path.split("/");
+  if (head === undefined || extra !== undefined) return null;
+  if (rest === undefined) {
+    if (head === "triage") return pile ? `triage:${pile}` : "triage";
+    return MORE_PLAIN.has(head) ? head : null;
+  }
+  if ((head === "tag" || head === "folder") && rest !== "") return `${head}:${decodeURIComponent(rest)}`;
+  return null;
+}
+
+export function morePathOf(key: string): string | null {
+  const at = key.indexOf(":");
+  const head = at < 0 ? key : key.slice(0, at);
+  const arg = at < 0 ? null : key.slice(at + 1);
+  if (arg === null) return MORE_PLAIN.has(head) || head === "triage" ? `/${head}` : null;
+  if (arg === "") return null;
+  if (head === "triage") return `/triage?pile=${encodeURIComponent(arg)}`;
+  if (head === "tag" || head === "folder") return `/${head}/${encodeURIComponent(arg)}`;
+  return null;
+}
+
+export function morePaneRouteFor(key: string): { pathname: string; params: { open: string } } {
+  return { pathname: "/more", params: { open: key } };
+}

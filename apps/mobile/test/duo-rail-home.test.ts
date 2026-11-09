@@ -21,6 +21,8 @@ import {
   OUTER_CLUSTER_H,
   RAIL_W,
   isTabRoute,
+  listNavClearance,
+  pairPadding,
   paneSplit,
   railHome,
   scaffoldPlan,
@@ -89,11 +91,11 @@ describe("the closed Duo's rail lives in the reserved strip, below the status cl
 describe("the ONE rail carries the reader's verbs on the closed face too", () => {
   it("duo-closed: rail right, one pane, railCarriesReaderVerbs", () => {
     expect(plan("duo-closed")).toMatchObject({ nav: "rail", navSide: "right", panes: 1, railCarriesReaderVerbs: true });
-    expect(readerVerbMode(plan("duo-closed"))).toBe("rail");
+    expect(readerVerbMode(plan("duo-closed"), 466)).toBe("rail");
   });
   it("the phone keeps the compact bar; the iPad keeps the ActionBar", () => {
-    expect(readerVerbMode(plan("phone"))).toBe("compact");
-    expect(readerVerbMode(plan("ipad"))).toBe("bar");
+    expect(readerVerbMode(plan("phone"), 390)).toBe("compact");
+    expect(readerVerbMode(plan("ipad"), 732)).toBe("bar");
   });
 });
 
@@ -180,5 +182,32 @@ describe("the status bar frame is a cluster only when it is a side column", () =
     expect(statusClusterOf({ x: 0, y: 0, width: 0, height: 0 }, 466)).toBeNull();
     expect(statusClusterOf({ x: 382, y: 0, width: 84, height: 20 }, 466)).toBeNull();
     expect(statusClusterOf(null, 466)).toBeNull();
+  });
+});
+
+/* Android's rail stood flush against the screen edge; it stands off it, and what the rail costs moves with it. */
+describe("Android's rail stands off the window edge", () => {
+  const androidAt = (width: number, height: number) =>
+    scaffoldPlan(derivePosture({ platform: "android", width, height, folds: null, hasFold: true }), "android");
+  const NO_INSETS = { top: 24, right: 0, bottom: 16, left: 0 };
+  it("two panes at 841: the column starts 8 dp in; the pair's padding clears its far edge by the gutter", () => {
+    const p = androidAt(841, 701);
+    const home = railHome(p, NO_INSETS, { w: 841, h: 701 }, null);
+    expect(home).toMatchObject({ x: 8, width: RAIL_W, inStrip: false });
+    expect(pairPadding(p).left).toBe(home.x + home.width + p.gutter);
+    expect(paneSplit(derivePosture({ platform: "android", width: 841, height: 701, folds: null, hasFold: true }), p, 841, 701)?.first)
+      .toBe(Math.round((841 - 2 * p.gutter - (RAIL_W + 8) - p.gutter) * 0.46)); // a foldable's 46 %, past the rail's span
+  });
+  it("one pane at 673 and a landscape phone: a list starts the gutter past the rail's far edge", () => {
+    for (const [w, h] of [[673, 841], [844, 390]] as const) {
+      const p = androidAt(w, h);
+      const home = railHome(p, NO_INSETS, { w, h }, null);
+      expect(home.x, `${w}`).toBe(8);
+      expect(listNavClearance(p, 0).left, `${w}`).toBe(home.x + home.width + p.gutter);
+    }
+  });
+  it("the control: the iPhone's rails keep the edge the prototype drew", () => {
+    expect(railHome(plan("phone-landscape"), { top: 0, right: 44, bottom: 21, left: 44 }, { w: 844, h: 390 }, null).x).toBe(44);
+    expect(listNavClearance(plan("phone-landscape"), 0).left).toBe(RAIL_W + plan("phone-landscape").gutter);
   });
 });
