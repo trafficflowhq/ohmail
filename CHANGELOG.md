@@ -21,6 +21,44 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.2] — 2026-11-09
+
+### On ohmail Cloud, a sent message with uploaded files gets its Sent copy later too
+
+When the copy of a message you sent with attached files could not be saved in your Sent folder right away
+(your mail server was busy, unreachable or full), ohmail Cloud now tries again for as long as your uploaded
+files are kept, at most a day. It keeps only the message without its files, takes the files from your
+uploads again and saves the exact message that was sent, never one without its files. The web, desktop and
+phone apps say until when it tries. Messages with files attached directly, with forwarded files, or sent
+later still say only that the copy is missing.
+
+### A sent message whose Sent copy could not be saved now says so, and why
+
+When your mail server delivers a message but will not keep its copy in your Sent folder, ohmail now tells
+you on the web, on the desktop and on the phone: the message went out, why the copy is missing (the server
+would not keep one that large, your mailbox there is full, the server refused it, or could not be reached),
+and what to do. On the web and the desktop the sentence stays in the sidebar until you dismiss it, instead
+of a "Sent" that settled away after two seconds; no row in Sent is shown for a copy that is not there.
+Send + Done says it too, beside "Sent · marked done" and its Undo.
+
+On ohmail Cloud and your own server, a copy refused for its size or a full mailbox is no longer uploaded
+three times in a row before it is given up, and the server's log names the refusal by its IMAP response
+code and the copy's size, never its words.
+
+### Letters are read at the width they are drawn
+
+On web, desktop and phone, a letter that changes its page for narrow or wide screens is now judged at the reader's own width. A page made light for phones no longer gets white text on white, and a page made dark for phones is no longer inverted in a dark theme. A letter that sets a dark page only on small screens and names no text colour is now readable: when nothing in it has a background of its own, its words are set in a light ink. The letter is laid out again when the reading pane crosses one of its widths: resizing, rotating, folding or unfolding. A stylesheet meant for print no longer applies on screen.
+
+### Phone: newsletters wider than the screen are drawn scaled to it, not shown as text
+
+On the phone, a newsletter built on a fixed 520-600 px table inside a full-width one (the layout most
+bulk mail uses) was shown as its plain-text version with a note that it was too large to render, even
+for a few kilobytes of mail. Such a letter is now laid out at its own width and scaled down to the
+screen, as other phone mail apps draw it. A letter that would have to shrink past legibility (one very
+long line or unbreakable cell), or whose own styles keep it wider than the screen, is shown as text, and
+a letter that cannot be drawn says why: too large only when it is, otherwise that its layout could not
+be drawn on this screen.
+
 ## [1.0.1] — 2026-11-09
 
 ### Phone: one ring on a selected segment, the server confirm fits, a calmer News head
@@ -17324,7 +17362,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.2
 [1.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.1
 [1.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.0
 [0.30.50]: https://github.com/trafficflowhq/ohmail/releases/tag/v0.30.50

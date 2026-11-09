@@ -1,3 +1,0 @@
-### Letters are read at the width they are drawn
-
-On web, desktop and phone, a letter that changes its page for narrow or wide screens is now judged at the reader's own width. A page made light for phones no longer gets white text on white, and a page made dark for phones is no longer inverted in a dark theme. A letter that sets a dark page only on small screens and names no text colour is now readable: when nothing in it has a background of its own, its words are set in a light ink. The letter is laid out again when the reading pane crosses one of its widths: resizing, rotating, folding or unfolding. A stylesheet meant for print no longer applies on screen.
