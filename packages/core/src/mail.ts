@@ -97,6 +97,7 @@ export * from "./draft-prompt.js";
 export * from "./workflow-shapes.js";
 export * from "./send.js";
 export * from "./send-connections.js";
+export * from "./sent-copy-parts.js";
 // `Re: ` exactly once — the reply subject, promoted out of the client engine because the away
 // responder is REPLY-ONLY and composes from `packages/services`, which may not import the browser
 // engine. A leaf with its own source subpath (`@trafficflow/core/reply-subject`) for the graphs

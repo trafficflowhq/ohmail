@@ -3,6 +3,8 @@ import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { drafts, outboundSends, outboundSendFingerprints, outboundSentCopies } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
 import type { OpenSendAdapter, OutboundMessage } from "@trafficflow/core";
+import { outboundToMail } from "@trafficflow/core/adapters/imap";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import {
   SEND_STALE_AFTER_MS, sendContentFingerprint, OWED_COPY_CLOUD, OWED_COPY_SELF_HOST, SEND_COPY_DEADLINE_MS, SEND_COPY_OWED_SETTLE_MS,
 } from "@trafficflow/services";
@@ -177,7 +179,7 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
  * retried on a host that outlives it (`sendCopyOutlivesAnswer`).
  */
 describe("POST /drafts/:id/send — `sentCopy`", () => {
-  function filingAdapter(copy: "files" | "hangs" | "refused") {
+  function filingAdapter(copy: "files" | "hangs" | "refused" | "too_big") {
     const filed: string[] = [];
     const factory: OpenSendAdapter = async () => ({
       async send(msg: OutboundMessage, opts?: { copy?: string; beforeRelease?: () => Promise<void> }) {
@@ -187,6 +189,7 @@ describe("POST /drafts/:id/send — `sentCopy`", () => {
       async fileSentCopy(_raw: Buffer, id: string) {
         if (copy === "hangs") await new Promise(() => undefined);
         if (copy === "refused") throw new Error("NO [OVERQUOTA] mailbox full");
+        if (copy === "too_big") throw Object.assign(new Error("Command failed"), { responseStatus: "NO", serverResponseCode: "LIMIT" });
         filed.push(id);
         return null;
       },
@@ -244,6 +247,61 @@ describe("POST /drafts/:id/send — `sentCopy`", () => {
     expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "missing" });
     expect(await db.select().from(outboundSentCopies)).toEqual([]);
   });
+
+  it("a copy the server refused for its size says why: `sentCopyReason: too_big`", async () => {
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: filingAdapter("too_big").factory });
+    deps.services = { ...deps.services!, sendKeepOwedCopy: OWED_COPY_CLOUD };
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+    const res = await H(req("POST", `/drafts/${draftId}/send`, {
+      bearer: s.token, headers: { "idempotency-key": "owed-3" },
+      body: JSON.stringify({ attachments: [{ filename: "a.csv", contentType: "text/csv", contentBase64: Buffer.from("a\n1\n").toString("base64") }] }),
+    }), deps);
+    expect(await res.json()).toEqual(expect.objectContaining({ status: "sent", sentCopy: "missing", sentCopyReason: "too_big" }));
+    const plain = await makeDeps(FIXED_NOW, {}, { sendAdapter: filingAdapter("files").factory });
+    const p = await seedSession(plain.db, { now: FIXED_NOW });
+    const filed = await H(req("POST", `/drafts/${await seedDraft(plain.db, p.accountId, await seedMailbox(plain.db, { accountId: p.accountId }))}/send`, {
+      bearer: p.token, headers: { "idempotency-key": "owed-4" },
+    }), plain.deps);
+    expect((await filed.json()).sentCopyReason, "a filed copy carries no reason").toBeUndefined();
+  });
+
+  it("a Cloud letter whose file is an upload and whose copy cannot land yet says until when it is tried", async () => {
+    const until = new Date(FIXED_NOW.getTime() + 20 * 60 * 60 * 1000);
+    const photo = Buffer.alloc(40_000, 9);
+    const factory: OpenSendAdapter = async () => ({
+      async send(msg: OutboundMessage, opts?: { copy?: string; beforeRelease?: () => Promise<void> }) {
+        await opts?.beforeRelease?.();
+        const mail = outboundToMail(msg, msg.messageId!, FIXED_NOW);
+        const raw = await new Promise<Buffer>((resolve, reject) => new MailComposer({ ...mail, disableFileAccess: true, disableUrlAccess: true })
+          .compile().build((err: Error | null, m: Buffer) => (err ? reject(err) : resolve(m))));
+        return { providerMessageId: msg.messageId!, unfiledCopy: raw };
+      },
+      async fileSentCopy() { throw Object.assign(new Error("Command failed"), { responseStatus: "NO", serverResponseCode: "UNAVAILABLE" }); },
+      async messageInSent() { return false; },
+      async close() { /* no-op */ },
+    });
+    const { db, deps } = await makeDeps(FIXED_NOW, {}, { sendAdapter: factory });
+    deps.services = {
+      ...deps.services!, sendKeepOwedCopy: OWED_COPY_CLOUD,
+      attachmentStaging: (() => ({
+        source: {
+          declare: async (_a: string, ids: readonly string[]) => ids.map((id) => ({
+            id, sizeBytes: photo.length, expiresAt: until, filename: "photo.jpg", contentType: "image/jpeg",
+          })),
+          fetch: async (_a: string, ids: readonly string[]) => ids.map(() => ({ filename: "photo.jpg", contentType: "image/jpeg", content: photo })),
+        },
+      })) as never,
+    };
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const draftId = await seedDraft(db, s.accountId, await seedMailbox(db, { accountId: s.accountId }));
+    const res = await H(req("POST", `/drafts/${draftId}/send`, {
+      bearer: s.token, headers: { "idempotency-key": "owed-5" }, body: JSON.stringify({ stagedAttachmentIds: ["7c0d3c55-0000-4000-8000-000000000001"] }),
+    }), deps);
+    expect(await res.json()).toMatchObject({ status: "sent", sentCopy: "pending", sentCopyReason: "unreachable", sentCopyUntil: until.toISOString() });
+    const [row] = await db.select().from(outboundSentCopies);
+    expect(row!.filesUntil?.getTime()).toBe(until.getTime());
+  }, 30_000);
 });
 
 /**

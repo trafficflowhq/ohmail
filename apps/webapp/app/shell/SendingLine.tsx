@@ -18,7 +18,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
-import { COMPOSE_SEND_KEY, SENDING_LONG_MS, type MailSendApi, type SendLineItem } from "./mail-send";
+import { COMPOSE_SEND_KEY, SENDING_LONG_MS, sentCopySay, type MailSendApi, type SendLineItem } from "./mail-send";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { footLineSeen } from "./narrow";
 
@@ -31,7 +31,8 @@ export interface LineRow { kind: SendLineItem["state"]; items: SendLineItem[] }
  * THE LINE'S ROWS: every kind present, in this order — a not-sent ending, queued, sending, sent —
  * each counted when it holds several. #185's rule stands within the endings: only refusals that left
  * their row are counted "weren't sent"; an unverified send (it may have gone), a duplicate or a
- * refusal with no row says its own line, the latest one, on a row above the count.
+ * refusal with no row says its own line, the latest one, on a row above the count. A sent letter
+ * whose Sent copy has a note stands on its own row.
  */
 export function lineRows(items: readonly SendLineItem[]): LineRow[] {
   const rows: LineRow[] = [];
@@ -43,6 +44,12 @@ export function lineRows(items: readonly SendLineItem[]): LineRow[] {
       const own = of.filter((i) => !kept(i));
       if (own.length > 0) rows.push({ kind, items: [own[own.length - 1]!] });
       if (of.some(kept)) rows.push({ kind, items: of.filter(kept) });
+      continue;
+    }
+    if (kind === "sent") {
+      for (const i of of.filter((x) => x.copy !== undefined)) rows.push({ kind, items: [i] });
+      const plain = of.filter((x) => x.copy === undefined);
+      if (plain.length > 0) rows.push({ kind, items: plain });
       continue;
     }
     rows.push({ kind, items: of });
@@ -64,6 +71,7 @@ export function SendingLine({ api, variant, onOpen, onOpenMany }: {
   const t = useTranslations("sendingLine");
   const tc = useTranslations("compose");
   const tr = useTranslations("reply");
+  const ta = useTranslations();
   useEffect(() => api.mountLine(() => footLineSeen(variant)), [api, variant]);
   useSyncExternalStore(api.subscribeLine, api.lineVersion, api.lineVersion);
   const rows = lineRows(api.line());
@@ -125,11 +133,16 @@ export function SendingLine({ api, variant, onOpen, onOpenMany }: {
       title = one === null || one.to === null ? t("sent")
         : one.subject !== null ? t("sentToAbout", { name: one.to, subject: one.subject })
           : t("sentTo", { name: one.to });
+      if (one?.copy) {
+        const why = sentCopySay(one.copy);
+        detail = ta(why.key, why.values);
+        dismiss = () => api.dismissLine(one.id);
+      }
     }
     return { row, title, detail, open, dismiss };
   });
 
-  const tone = rows.some((r) => r.kind === "ended") ? "warn" : "busy";
+  const tone = rows.some((r) => r.kind === "ended" || r.items.some((i) => i.copy?.state === "missing")) ? "warn" : "busy";
   const mark = (kind: LineRow["kind"]) => (kind === "sending"
     ? <Spinner className="mbx-spin" />
     : <span className="glyph" aria-hidden="true">{kind === "ended" ? "⚠" : "✉"}</span>);

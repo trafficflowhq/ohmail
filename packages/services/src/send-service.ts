@@ -1,13 +1,13 @@
 import { and, asc, desc, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
-  attachments, CERT_CODES, contacts, drafts, mailboxes, messageBodies, messages, outboundSends,
+  attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
   outboundSendFingerprints, outboundSentCopies, readAccountErasedAt, recordChange, SERVER_UNAVAILABLE_RESPONSE_CODES,
   threads, type LedgerTx, type Tx, upgradeContactsToPerson,
 } from "@trafficflow/db";
 import {
-  createLogger, HTML_TRUNCATION_MARKER, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime, prepareHtmlForStorage, recordSentMessage,
-  SendNotSubmitted, SentCopyAppendFailed,
+  createLogger, cutFileParts, HTML_TRUNCATION_MARKER, htmlWords, isMessageGone, mintMessageId, normalizeMessageId, normalizeMime,
+  prepareHtmlForStorage, recordSentMessage, SendNotSubmitted, SentCopyAppendFailed, spliceFileParts, type SentCopyFilePart,
   type AppendedSent, type EmailAddress, type Logger, type NativeLocator, type OutboundAddress, type OutboundMessage,
   type OpenSendAdapter, type RepoPort, type RoutingPort, type SendAdapter, type StorageCap,
 } from "@trafficflow/core/mail";
@@ -271,9 +271,46 @@ export const SEND_COPY_OWED_PIECE_CHARS = 4 * 1024 * 1024;
  * may be suspended once it answers, so the request's own IMAP work ends at its deadline and the
  * row is first due {@link SEND_COPY_OWED_SETTLE_MS} after it.
  */
-export interface OwedCopyPolicy { readonly files: boolean; readonly endsWithAnswer: boolean }
-export const OWED_COPY_SELF_HOST: OwedCopyPolicy = { files: true, endsWithAnswer: false };
-export const OWED_COPY_CLOUD: OwedCopyPolicy = { files: false, endsWithAnswer: true };
+export interface OwedCopyPolicy {
+  readonly files: boolean; readonly endsWithAnswer: boolean;
+  /** A letter whose files are all uploads is kept without them, until the uploads expire ({@link StagedCopyParts}). */
+  readonly stagedFiles: boolean;
+}
+export const OWED_COPY_SELF_HOST: OwedCopyPolicy = { files: true, endsWithAnswer: false, stagedFiles: false };
+export const OWED_COPY_CLOUD: OwedCopyPolicy = { files: false, endsWithAnswer: true, stagedFiles: true };
+
+/**
+ * AN OWED COPY KEPT WITHOUT ITS FILES (mail 0183 `staged_parts`): the copy with each upload's body cut
+ * out (`skeleton`, base64), the delivered copy's sha256 and, per upload, where its body was cut. The late
+ * pass splices the uploads back and files the copy only when it is the delivered one; the row goes at
+ * `files_until`, the uploads' earliest expiry. Its `raw_b64` is empty and it is never due by its
+ * `next_attempt_at` ({@link SEND_COPY_OWED_STAGED_NOT_DUE}): a build that reads none of mail 0183's
+ * columns never takes it, and had it one, would find no letter in it.
+ */
+export interface StagedCopyParts { v: 1; sha256: string; skeleton: string; parts: Array<{ ticket: string } & SentCopyFilePart> }
+
+/**
+ * A COPY KEPT WITHOUT ITS FILES IS NEVER DUE BY `next_attempt_at`: it holds this, and its own
+ * `files_next_attempt_at` says when it is tried. A build before mail 0183 reads only the first, so it
+ * never takes the row, and deletes it once {@link SEND_COPY_OWED_HOLD_MS} has passed.
+ */
+export const SEND_COPY_OWED_STAGED_NOT_DUE = new Date(Date.UTC(9999, 11, 31));
+
+/** `staged_parts` read back, or null when it is not one this build wrote. */
+function stagedPartsOf(text: string): StagedCopyParts | null {
+  try {
+    const v = JSON.parse(text) as Partial<StagedCopyParts>;
+    const whole = (n: unknown): boolean => Number.isSafeInteger(n) && (n as number) >= 0;
+    if (v.v !== 1 || typeof v.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(v.sha256) || !Array.isArray(v.parts)) return null;
+    if (typeof v.skeleton !== "string" || v.skeleton.length === 0) return null;
+    return v.parts.every((p) => typeof p?.ticket === "string" && whole(p.at) && whole(p.len)) ? v as StagedCopyParts : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The uploads a staged copy is spliced from, for {@link SendService.fileOwedCopy}. */
+type OwedFiles = { files: Uint8Array[] } | { gone: "files_expired" | "files_changed" } | { later: true };
 /** After the request's deadline, before a server's late pass may take its copy. */
 export const SEND_COPY_OWED_SETTLE_MS = 60_000;
 /** How long a server keeps an owed copy it cannot file; past it the row is deleted and logged. */
@@ -292,7 +329,7 @@ export interface OwedCopiesResult { filed: number; dropped: number; failed: numb
  */
 export type OwedCopyFiling =
   | { readonly step: "filed" } | { readonly step: "dropped" } | { readonly step: "skipped" }
-  | { readonly step: "refused"; readonly err: unknown } | { readonly step: "unreachable"; readonly err: unknown };
+  | { readonly step: "refused"; readonly err: unknown; readonly bytes?: number } | { readonly step: "unreachable"; readonly err: unknown };
 
 /**
  * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases — the split is the point. `declare` is
@@ -978,6 +1015,10 @@ export interface SendResult {
    * or `missing` (delivered, and no copy could be written). Present on a `sent` this request delivered.
    */
   sentCopy?: "filed" | "pending" | "missing";
+  /** Why a `pending` or `missing` copy is not filed, when the mail server's answer said. */
+  sentCopyReason?: SentCopyReason;
+  /** A `pending` copy kept without its uploaded files: tried until then (ISO-8601, UTC), the uploads' expiry. */
+  sentCopyUntil?: string;
 }
 
 /**
@@ -1177,6 +1218,58 @@ export function mailServerRefusalOf(err: unknown): MailServerRefusalKind | null 
   if (e.responseStatus === "NO" || e.responseStatus === "BAD") return "busy";
   return null;
 }
+
+/**
+ * WHY A DELIVERED SEND'S SENT COPY IS NOT IN SENT, as the person is told it: the server would not
+ * keep a copy this large, the mailbox is full, the server refused it otherwise, or could not be
+ * reached. `null` from {@link sentCopyRefusalOf} is a fault of ours.
+ */
+export type SentCopyReason = "too_big" | "full" | "refused" | "unreachable";
+
+/** RFC 7889's `TOOBIG`, and imapflow's own `APPENDLIMIT` check before it sends. */
+const COPY_TOO_BIG_CODES: ReadonlySet<string> = new Set(["TOOBIG", "APPENDLIMIT"]);
+/** The server's "not now" after the sign-in (RFC 5530). */
+const COPY_NOT_NOW_CODES: ReadonlySet<string> = new Set(["UNAVAILABLE", "INUSE"]);
+
+/**
+ * The reason a Sent copy's filing failed, by structure only, never the server's text. `LIMIT` is a
+ * size limit on a letter with files (Dovecot's answer to an APPEND over its size), otherwise some
+ * other limit. {@link mailServerRefusalOf} reads every answered NO as busy; this reads its code.
+ */
+export function sentCopyRefusalOf(err: unknown, carriesFiles: boolean): SentCopyReason | null {
+  if (typeof err === "object" && err !== null && !(err instanceof ServiceError)) {
+    const e = err as { serverResponseCode?: unknown; responseStatus?: unknown; authenticationFailed?: unknown };
+    const said = typeof e.serverResponseCode === "string" ? e.serverResponseCode.toUpperCase() : "";
+    if (COPY_TOO_BIG_CODES.has(said)) return "too_big";
+    if ((e.responseStatus === "NO" || e.responseStatus === "BAD") && e.authenticationFailed !== true) {
+      if (said === "LIMIT") return carriesFiles ? "too_big" : "refused";
+      if (said === "OVERQUOTA") return "full";
+      return COPY_NOT_NOW_CODES.has(said) ? "unreachable" : "refused";
+    }
+  }
+  const kind = mailServerRefusalOf(err);
+  if (kind === "unreachable" || kind === "timeout" || kind === "busy") return "unreachable";
+  if (kind === "not_secured" || kind === "login_refused") return "refused";
+  return (err as { code?: unknown } | null)?.code === "EIMAPBOUND" ? "unreachable" : null;
+}
+
+/**
+ * The log fields of a failed Sent copy: its reason (`ours` for ours), the server's NO or BAD, its
+ * response code only when it is a known token, and the copy's size. Never the server's words.
+ */
+function copyFailureFields(err: unknown, carriesFiles: boolean, bytes: number | null): Record<string, string | number> {
+  const e = (typeof err === "object" && err !== null ? err : {}) as { responseStatus?: unknown; serverResponseCode?: unknown };
+  const code = typeof e.serverResponseCode === "string" ? e.serverResponseCode.toUpperCase() : null;
+  return {
+    kind: sentCopyRefusalOf(err, carriesFiles) ?? "ours",
+    ...(e.responseStatus === "NO" || e.responseStatus === "BAD" ? { state: e.responseStatus } : {}),
+    ...(code !== null && (code === "APPENDLIMIT" || isSafeMailboxErrorDetail(code)) ? { detail: code } : {}),
+    ...(bytes !== null ? { bytes } : {}),
+  };
+}
+
+/** Where a delivered send's Sent copy stands, why it is not filed when the server said, and until when it is tried. */
+export interface SentCopyAnswer { state: "filed" | "pending" | "missing"; reason?: SentCopyReason; until?: Date }
 
 /** A connection the mail server would not secure, or a sign-in it refused: 424, never offered again. */
 export class MailServerRefused extends ServiceError {
@@ -1469,6 +1562,8 @@ type Reservation =
       claimed: boolean;
       /** A Send again of the held attempt reserved at `heldAt`: Sent is checked first, and it never fails. */
       again?: { heldAt: Date };
+      /** The uploads this letter carries, in the order they go on it, and the earliest one's expiry. */
+      staged?: { ids: readonly string[]; until: Date };
     }
   | { kind: "existing"; row: typeof outboundSends.$inferSelect; mailboxId: string };
 
@@ -1869,7 +1964,9 @@ export class SendService {
        */
       // Stops a copy that ends with the answer (`OwedCopyPolicy.endsWithAnswer`) once it is given.
       const copyStop = new AbortController();
-      const submitting = (async (): Promise<{ result: SendResult; copy?: Promise<"filed" | "pending" | "missing"> }> => {
+      // Set by the copy once it is owed without its files: the answer names its end even when the deadline answers first.
+      const keptUntil: { at?: Date } = {};
+      const submitting = (async (): Promise<{ result: SendResult; copy?: Promise<SentCopyAnswer> }> => {
         let handedOff = false;
         try {
           let providerMessageId: string;
@@ -1893,11 +1990,18 @@ export class SendService {
               // `sent` and say the copy is missing, never `unverified` (a probe would miss what
               // was never appended and send the person to look for their own mail).
               phases.submitMs = Date.now() - tSubmit;
+              const carries = (msg.attachments?.length ?? 0) > 0;
               (deps.log ?? defaultLog).warn("send_sent_copy_append_failed", {
-                draftId, accountId: ctx.accountId, sendId, err: err.cause,
+                draftId, accountId: ctx.accountId, sendId, err: err.cause, ...copyFailureFields(err.cause, carries, null),
               });
               const seq = await this.finalizeSent(ctx, sendId, err.providerMessageId, draftId, mailboxId);
-              return { result: { status: "sent", providerMessageId: err.providerMessageId, draftId, seq, sentCopy: "missing" } };
+              const reason = sentCopyRefusalOf(err.cause, carries);
+              return {
+                result: {
+                  status: "sent", providerMessageId: err.providerMessageId, draftId, seq, sentCopy: "missing",
+                  ...(reason !== null ? { sentCopyReason: reason } : {}),
+                },
+              };
             }
             if (err instanceof SendNotSubmitted) {
               // NEVER OFFERED, or never released: no token, the socket never connected, the session
@@ -1953,7 +2057,17 @@ export class SendService {
           if (unfiled !== undefined) {
             handedOff = true;
             const carriesFiles = (msg.attachments?.length ?? 0) > 0;
-            return { result, copy: this.fileCopy(ctx, deps, adapter, mailboxId, unfiled, providerMessageId, draftId, sendId, carriesFiles, copyStop.signal) };
+            // Only a letter whose every file is an upload: no inline file, no forwarded part.
+            const staged = reservation.staged;
+            const uploads = staged !== undefined && (input.attachments?.length ?? 0) === 0
+              && (reservation.forward?.parts.length ?? 0) === 0 && msg.attachments?.length === staged.ids.length
+              ? { ...staged, contents: msg.attachments.map((a) => a.content) } : null;
+            return {
+              result,
+              copy: this.fileCopy(
+                ctx, deps, adapter, mailboxId, unfiled, providerMessageId, draftId, sendId, carriesFiles, copyStop.signal, uploads, keptUntil,
+              ),
+            };
           }
 
           // ── 4. RECORD-AT-SEND (a SEPARATE short tx, best-effort) ────────────────
@@ -1996,10 +2110,14 @@ export class SendService {
         // goes on without the answer.
         const timing = this.copyTiming(deps);
         const tProject = Date.now();
-        result.sentCopy = await Promise.race([
-          copy, delay(deps.copyOutlivesAnswer === true ? timing.graceMs : timing.deadlineMs).then(() => "pending" as const),
+        const answer = await Promise.race([
+          copy, delay(deps.copyOutlivesAnswer === true ? timing.graceMs : timing.deadlineMs)
+            .then((): SentCopyAnswer => ({ state: "pending", ...(keptUntil.at !== undefined ? { until: keptUntil.at } : {}) })),
         ]);
-        if (result.sentCopy === "pending") copyStop.abort();
+        result.sentCopy = answer.state;
+        if (answer.reason !== undefined) result.sentCopyReason = answer.reason;
+        if (answer.until !== undefined && answer.state === "pending") result.sentCopyUntil = answer.until.toISOString();
+        if (answer.state === "pending") copyStop.abort();
         phases.projectMs = Date.now() - tProject;
       }
       this.logPhases(deps, ctx, draftId, result.status, phases, started);
@@ -2020,13 +2138,15 @@ export class SendService {
    * host that outlives the answer keeps retrying in memory. With `keepOwedCopy` the bytes are
    * recorded first, and a copy the ladder gives up on is `pending` for a late pass. A policy that
    * ends with the answer abandons an APPEND still running at the deadline, and its row is first due
-   * {@link SEND_COPY_OWED_SETTLE_MS} later, so the late pass never files beside it.
-   * Never rejects: the message has left.
+   * {@link SEND_COPY_OWED_SETTLE_MS} later, so the late pass never files beside it. A copy the server
+   * refuses for its size or a full mailbox ({@link sentCopyRefusalOf}) is not tried again here, and one
+   * too big is never owed. Never rejects: the message has left.
    */
   private async fileCopy(
     ctx: ServiceContext, deps: SendDeps, lease: SendAdapter, mailboxId: string,
     raw: Buffer, messageId: string, draftId: string, sendId: string, carriesFiles: boolean, stop: AbortSignal,
-  ): Promise<"filed" | "pending" | "missing"> {
+    uploads: { ids: readonly string[]; until: Date; contents: readonly Uint8Array[] } | null = null, keptUntil: { at?: Date } = {},
+  ): Promise<SentCopyAnswer> {
     this.filingCopies.add(sendId);
     try {
       const timing = this.copyTiming(deps);
@@ -2035,15 +2155,30 @@ export class SendService {
       const ends = typeof policy === "object" && policy.endsWithAnswer;
       // Ending with the answer, the deadline runs from before the row is written: its due time is measured from it.
       const answeredBy = ends ? Date.now() + timing.deadlineMs : null;
-      const keep = policy === true || (typeof policy === "object" && (policy.files || !carriesFiles));
+      const whole = policy === true || (typeof policy === "object" && (policy.files || !carriesFiles));
       const dueAt = ends ? new Date(ctx.now().getTime() + timing.deadlineMs + SEND_COPY_OWED_SETTLE_MS) : ctx.now();
+      // Without its files: only while the uploads outlive the row's first try.
+      const trimmed = !whole && typeof policy === "object" && policy.stagedFiles && uploads !== null
+        && uploads.until.getTime() > dueAt.getTime() + SEND_COPY_OWED_SETTLE_MS ? cutFileParts(raw, uploads.contents) : null;
+      const staged: StagedCopyParts | null = trimmed === null || uploads === null ? null : {
+        v: 1, sha256: createHash("sha256").update(raw).digest("hex"), skeleton: trimmed.skeleton.toString("base64"),
+        parts: trimmed.parts.map((p, i) => ({ ticket: uploads.ids[i]!, ...p })),
+      };
       // After the finalize committed and outside it: the window between the accept and the finalize stays as it was.
-      const owed = keep && await this.recordOwedCopy(ctx, log, sendId, mailboxId, raw, draftId, dueAt);
+      const owed = (whole || staged !== null) && await this.recordOwedCopy(
+        ctx, log, sendId, mailboxId, staged !== null ? null : raw, draftId, dueAt,
+        staged !== null && uploads !== null ? { parts: staged, until: uploads.until } : null,
+      );
+      const filesUntil = owed && staged !== null ? uploads?.until : undefined;
+      if (filesUntil !== undefined) keptUntil.at = filesUntil;
       const until = answeredBy ?? (deps.copyOutlivesAnswer === true ? null : Date.now() + timing.deadlineMs);
       const cut = owed && ends ? until : null;
-      const owedAnswer = (attempts: number, err: unknown): "pending" => {
-        log.warn("send_sent_copy_owed", { draftId, accountId: ctx.accountId, sendId, attempts, err });
-        return "pending";
+      const owedAnswer = (attempts: number, err: unknown): SentCopyAnswer => {
+        log.warn("send_sent_copy_owed", {
+          draftId, accountId: ctx.accountId, sendId, attempts, err, ...copyFailureFields(err, carriesFiles, raw.length),
+        });
+        const reason = sentCopyRefusalOf(err, carriesFiles);
+        return { state: "pending", ...(reason !== null ? { reason } : {}), ...(filesUntil !== undefined ? { until: filesUntil } : {}) };
       };
       let current: SendAdapter | null = lease;
       let abandoned: SendAdapter | null = null;
@@ -2071,7 +2206,7 @@ export class SendService {
                 .then(() => (policy === true ? this.reclaimOwedSpace(ctx) : undefined), () => { /* the late pass looks first and finds it */ });
             }
             if (attempt > 0) log.info("send_sent_copy_filed_on_retry", { draftId, accountId: ctx.accountId, attempt });
-            return "filed";
+            return { state: "filed" };
           } catch (err) {
             lastErr = err;
             const failed: SendAdapter = current ?? lease;
@@ -2086,12 +2221,21 @@ export class SendService {
         current = null;
         const wait = timing.waitsMs[attempt];
         const kind = mailServerRefusalOf(lastErr);
-        const retryable = kind === "unreachable" || kind === "timeout" || kind === "busy"
-          || (lastErr as { code?: unknown } | null)?.code === "EIMAPBOUND";
+        const reason = sentCopyRefusalOf(lastErr, carriesFiles);
+        // Its size or a full mailbox: asking again within seconds is three uploads of a refused letter.
+        const settled = reason === "too_big" || reason === "full";
+        const retryable = !settled && (kind === "unreachable" || kind === "timeout" || kind === "busy"
+          || (lastErr as { code?: unknown } | null)?.code === "EIMAPBOUND");
         if (!retryable || wait === undefined || (until !== null && Date.now() + wait >= until)) {
-          if (owed) return owedAnswer(attempt + 1, lastErr);
-          log.warn("send_sent_copy_missing", { draftId, accountId: ctx.accountId, attempts: attempt + 1, err: lastErr });
-          return "missing";
+          if (owed && reason !== "too_big") return owedAnswer(attempt + 1, lastErr);
+          if (owed) {
+            await this.dropOwedCopy(ctx, sendId)
+              .then(() => (policy === true ? this.reclaimOwedSpace(ctx) : undefined), () => { /* the late pass finds it refused */ });
+          }
+          log.warn("send_sent_copy_missing", {
+            draftId, accountId: ctx.accountId, attempts: attempt + 1, err: lastErr, ...copyFailureFields(lastErr, carriesFiles, raw.length),
+          });
+          return reason === null ? { state: "missing" } : { state: "missing", reason };
         }
         attempt += 1;
         if (wait > 0) await delay(wait);
@@ -2110,16 +2254,24 @@ export class SendService {
     }
   }
 
-  /** Record a delivered send's copy as owed; false (logged) when the store refused, and the copy is owed in memory only. */
+  /**
+   * Record a delivered send's copy as owed; false (logged) when the store refused, and the copy is owed in
+   * memory only. A copy kept without its files (`raw` null) is one row: its skeleton rides in `staged`.
+   */
   private async recordOwedCopy(
-    ctx: ServiceContext, log: Logger, sendId: string, mailboxId: string, raw: Buffer, draftId: string, dueAt: Date,
+    ctx: ServiceContext, log: Logger, sendId: string, mailboxId: string, raw: Buffer | null, draftId: string, dueAt: Date,
+    staged: { parts: StagedCopyParts; until: Date } | null = null,
   ): Promise<boolean> {
-    const b64 = raw.toString("base64");
+    const b64 = raw === null ? "" : raw.toString("base64");
     const piece = SEND_COPY_OWED_PIECE_CHARS;
     try {
       await withAccountTx(ctx, async (tx) => {
         const row = (seq: number) => ({
-          sendId, seq, accountId: ctx.accountId, mailboxId, rawB64: b64.slice(seq * piece, (seq + 1) * piece), nextAttemptAt: dueAt,
+          sendId, seq, accountId: ctx.accountId, mailboxId, rawB64: b64.slice(seq * piece, (seq + 1) * piece),
+          ...(staged === null ? { nextAttemptAt: dueAt } : {
+            nextAttemptAt: SEND_COPY_OWED_STAGED_NOT_DUE, stagedParts: JSON.stringify(staged.parts), filesUntil: staged.until,
+            filesNextAttemptAt: dueAt,
+          }),
         });
         // scoped-by: row() takes account_id from ctx.accountId; the (send_id, account_id) key to outbound_sends pins it
         const made = await tx.insert(outboundSentCopies).values(row(0)).onConflictDoNothing()
@@ -2194,7 +2346,7 @@ export class SendService {
    * attempt; a failed filing waits out {@link SEND_COPY_OWED_WAITS_MS} and ends the call.
    */
   async fileOwedCopies(
-    ctx: ServiceContext, mailboxId: string, deps: Pick<SendDeps, "openSendAdapter" | "resolveStorageCap" | "log">,
+    ctx: ServiceContext, mailboxId: string, deps: Pick<SendDeps, "openSendAdapter" | "resolveStorageCap" | "log" | "stagedAttachments">,
   ): Promise<OwedCopiesResult> {
     const log = deps.log ?? defaultLog;
     const out: OwedCopiesResult = { filed: 0, dropped: 0, failed: 0 };
@@ -2219,7 +2371,7 @@ export class SendService {
         else if (filing.step === "dropped") out.dropped += 1;
         else if (filing.step === "unreachable") return out;
         else if (filing.step === "refused") {
-          if (await this.chargeOwedCopy(ctx, row, filing.err, deps) === "gaveUp") freed = true;
+          if (await this.chargeOwedCopy(ctx, { ...row, ...(filing.bytes !== undefined ? { bytes: filing.bytes } : {}) }, filing.err, deps) === "gaveUp") freed = true;
           out.failed += 1;
           return out;
         }
@@ -2236,11 +2388,14 @@ export class SendService {
    * `sent` under this account (otherwise the row is dropped, with no dial), looking in Sent first,
    * and the row deleted only once the copy is there. `connect` is asked only when a copy is to be
    * filed. A refusal is returned uncharged ({@link chargeOwedCopy}). A copy this process is still
-   * filing is `skipped`. Never submits mail; reclaims no space.
+   * filing is `skipped`. A copy kept without its files ({@link StagedCopyParts}) is filed only with
+   * them, spliced back from the uploads before any dial and only when it is the delivered copy; past
+   * its uploads it is dropped, and with no uploads to read now it is `skipped`. A row with no bytes
+   * and no files is dropped, never filed empty. Never submits mail; reclaims no space.
    */
   async fileOwedCopy(
     ctx: ServiceContext, row: { sendId: string; mailboxId: string; attempts: number },
-    connect: () => Promise<SendAdapter>, deps: Pick<SendDeps, "resolveStorageCap" | "log">,
+    connect: () => Promise<SendAdapter>, deps: Pick<SendDeps, "resolveStorageCap" | "log" | "stagedAttachments">,
   ): Promise<OwedCopyFiling> {
     const log = deps.log ?? defaultLog;
     const db = asTx(ctx);
@@ -2256,6 +2411,33 @@ export class SendService {
         log.warn("send_sent_copy_owed_dropped", { accountId: ctx.accountId, sendId: row.sendId, status: send?.status ?? null });
         return { step: "dropped" };
       }
+      const [head] = await db.select({ stagedParts: outboundSentCopies.stagedParts, filesUntil: outboundSentCopies.filesUntil })
+        .from(outboundSentCopies)
+        .where(and(
+          eq(outboundSentCopies.sendId, row.sendId), eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.seq, 0),
+        )).limit(1);
+      if (!head) return { step: "skipped" };
+      let raw: Buffer | null = null;
+      let gone: "files_expired" | "files_changed" | "no_bytes" | null = null;
+      if (head.stagedParts !== null) {
+        const parts = stagedPartsOf(head.stagedParts);
+        const got: OwedFiles = parts === null ? { gone: "files_changed" } : await this.owedFiles(ctx, parts, head.filesUntil, deps.stagedAttachments);
+        if ("later" in got) return { step: "skipped" };
+        if ("files" in got && parts !== null) {
+          raw = spliceFileParts(Buffer.from(parts.skeleton, "base64"), parts.parts, got.files);
+          if (raw === null || createHash("sha256").update(raw).digest("hex") !== parts.sha256) gone = "files_changed";
+        } else gone = "gone" in got ? got.gone : "files_changed";
+      } else {
+        raw = await this.readOwedCopy(ctx, row.sendId);
+        if (raw === null) return { step: "skipped" };
+        // No bytes and no files to splice them into: never an empty message in Sent.
+        if (raw.length === 0) gone = "no_bytes";
+      }
+      if (gone !== null || raw === null) {
+        await this.dropOwedCopy(ctx, row.sendId);
+        log.warn("send_sent_copy_missing", { accountId: ctx.accountId, sendId: row.sendId, reason: gone ?? "files_changed" });
+        return { step: "dropped" };
+      }
       let adapter: SendAdapter;
       try {
         adapter = await connect();
@@ -2263,8 +2445,6 @@ export class SendService {
         log.warn("send_sent_copy_owed_unreachable", { accountId: ctx.accountId, mailboxId: row.mailboxId, err });
         return { step: "unreachable", err };
       }
-      const raw = await this.readOwedCopy(ctx, row.sendId);
-      if (raw === null) return { step: "skipped" };
       try {
         if (typeof adapter.fileSentCopy !== "function") throw new Error("this connection cannot file a Sent copy");
         const at = await adapter.fileSentCopy(raw, send.providerMessageId, { look: true });
@@ -2273,35 +2453,64 @@ export class SendService {
         log.info("send_sent_copy_filed_late", { accountId: ctx.accountId, sendId: row.sendId, attempts: ownAttempts(row.attempts) });
         return { step: "filed" };
       } catch (err) {
-        return { step: "refused", err };
+        return { step: "refused", err, bytes: raw.length };
       }
     } finally {
       this.filingCopies.delete(row.sendId);
     }
   }
 
+  /** The uploads a copy kept without its files is spliced from, read under the row's own account. */
+  private async owedFiles(
+    ctx: ServiceContext, parts: StagedCopyParts, until: Date | null, source: StagedAttachmentSource | undefined,
+  ): Promise<OwedFiles> {
+    if (until === null || until.getTime() <= ctx.now().getTime()) return { gone: "files_expired" };
+    if (source === undefined) return { later: true };
+    const ids = parts.parts.map((p) => p.ticket);
+    try {
+      const facts = await source.declare(ctx.accountId, ids);
+      const now = ctx.now().getTime();
+      if (ids.some((id) => !facts.some((f) => f.id === id && f.expiresAt.getTime() > now))) return { gone: "files_expired" };
+      return { files: (await source.fetch(ctx.accountId, ids, ctx.now())).map((a) => a.content) };
+    } catch (err) {
+      // Gone or not the file it was; anything else (storage unreachable, a ceiling) is tried again later.
+      if (err instanceof ServiceError && err.code === "not_found") return { gone: "files_expired" };
+      if (err instanceof ServiceError && (err.code === "conflict" || err.code === "payload_too_large")) return { gone: "files_changed" };
+      return { later: true };
+    }
+  }
+
   /**
    * A REFUSAL THAT WAS THE COPY'S OWN: one of its {@link SEND_COPY_OWED_MAX_ATTEMPTS}, then its own
    * wait ({@link SEND_COPY_OWED_WAITS_MS}); the last one gives the copy up. Its mailbox's run of
-   * refusals ({@link SEND_COPY_OWED_MAILBOX_UNIT}) is left as it is.
+   * refusals ({@link SEND_COPY_OWED_MAILBOX_UNIT}) is left as it is. A copy kept without its files
+   * (`staged`) refused for its size is given up at once, as its request gives it up, and its wait ends
+   * by its `lastTry` while that is more than the first wait away.
    */
   async chargeOwedCopy(
-    ctx: ServiceContext, row: { sendId: string; attempts: number }, err: unknown, deps: Pick<SendDeps, "log">,
+    ctx: ServiceContext, row: { sendId: string; attempts: number; bytes?: number }, err: unknown, deps: Pick<SendDeps, "log">,
+    o: { staged?: { lastTry: Date } } = {},
   ): Promise<"failed" | "gaveUp"> {
     const log = deps.log ?? defaultLog;
     const attempts = ownAttempts(row.attempts) + 1;
-    if (attempts >= SEND_COPY_OWED_MAX_ATTEMPTS) {
+    const staged = o.staged;
+    // A whole owed row on Cloud carries no files; LIMIT stays ambiguous there.
+    const said = copyFailureFields(err, staged !== undefined, row.bytes ?? null);
+    if (attempts >= SEND_COPY_OWED_MAX_ATTEMPTS || (staged !== undefined && sentCopyRefusalOf(err, true) === "too_big")) {
       await this.dropOwedCopy(ctx, row.sendId);
-      log.warn("send_sent_copy_missing", { accountId: ctx.accountId, sendId: row.sendId, attempts, err });
+      log.warn("send_sent_copy_missing", { accountId: ctx.accountId, sendId: row.sendId, attempts, err, ...said });
       return "gaveUp";
     }
+    const t = ctx.now().getTime();
     const wait = SEND_COPY_OWED_WAITS_MS[Math.min(attempts, SEND_COPY_OWED_WAITS_MS.length) - 1]!;
+    const last = staged?.lastTry.getTime();
+    const next = new Date(last !== undefined && last > t + SEND_COPY_OWED_WAITS_MS[0]! ? Math.min(t + wait, last) : t + wait);
     await asTx(ctx).update(outboundSentCopies)
-      .set({ attempts: sql`${outboundSentCopies.attempts} + 1`, nextAttemptAt: new Date(ctx.now().getTime() + wait) })
+      .set({ attempts: sql`${outboundSentCopies.attempts} + 1`, ...(staged !== undefined ? { filesNextAttemptAt: next } : { nextAttemptAt: next }) })
       .where(and(
         eq(outboundSentCopies.sendId, row.sendId), eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.seq, 0),
       ));
-    log.warn("send_sent_copy_owed_failed", { accountId: ctx.accountId, sendId: row.sendId, attempts, err });
+    log.warn("send_sent_copy_owed_failed", { accountId: ctx.accountId, sendId: row.sendId, attempts, err, ...said });
     return "failed";
   }
 
@@ -2600,6 +2809,7 @@ export class SendService {
      * cannot fire a spurious 413 off a partial sum and mask the real answer.
      */
     let stagedFault: ServiceError | null = null;
+    let stagedUntil: Date | null = null;
     if (stagedIds.length > 0) {
       if (!deps.stagedAttachments) {
         // A host with no staging capability was handed staged references. Refuse — sending the
@@ -2637,6 +2847,7 @@ export class SendService {
         // above the claim — but a half-filled list left lying around is the kind of thing a later
         // reader moves a line past.
         if (stagedFault) { stagedTotal = 0; stagedManifest.length = 0; }
+        else stagedUntil = new Date(Math.min(...facts.map((f) => f.expiresAt.getTime())));
       }
     }
     const attachTotal = inlineTotal + stagedTotal;
@@ -3005,6 +3216,7 @@ export class SendService {
         return {
           kind: "new", sendId, mintedMessageId, mailboxId: d.mailboxId, msg,
           seq: Number(seq), ...(forward ? { forward } : {}), attempt, reservedAt, claimed,
+          ...(stagedUntil !== null ? { staged: { ids: stagedIds, until: stagedUntil } } : {}),
         };
       };
       if (held) {

@@ -2357,7 +2357,11 @@ export const outboundSendFingerprints = pgTable("outbound_send_fingerprints", {
 // needs its mailbox. The composite key `(send_id, account_id)` is created by the migration; no key on
 // `mailbox_id`, for the fingerprints' reason (a KEY SHARE lock on the mailbox row per insert). The
 // server doors write rows too (`OwedCopyPolicy`: self-host every letter, Cloud only letters without
-// files), filed by `runOwedSentCopyPass`.
+// files), filed by `runOwedSentCopyPass`. Mail 0183: a Cloud letter whose files are all uploads is kept
+// without them (`staged_parts`, its only piece: the copy with each upload's body cut out, the whole copy's
+// sha256 and where each body was cut; `raw_b64` empty), spliced back from the uploads by the pass, tried at
+// `files_next_attempt_at` (its `next_attempt_at` is 9999-12-31: a build before 0183 never takes it), and
+// dropped at `files_until`, the uploads' earliest expiry.
 export const outboundSentCopies = pgTable("outbound_sent_copies", {
   sendId: uuid("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
   seq: integer("seq").notNull().default(0),
@@ -2367,6 +2371,9 @@ export const outboundSentCopies = pgTable("outbound_sent_copies", {
   attempts: integer("attempts").notNull().default(0),
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  stagedParts: text("staged_parts"),
+  filesUntil: timestamp("files_until", { withTimezone: true }),
+  filesNextAttemptAt: timestamp("files_next_attempt_at", { withTimezone: true }),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.sendId, t.seq] }) }));
 
 // Mail 0178 — THE RULES A PERSON REMOVED, one row per rule key (`rule-removals.ts#ruleRemovalKey`), so

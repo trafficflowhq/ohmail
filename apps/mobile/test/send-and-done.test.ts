@@ -21,7 +21,7 @@ import { describe, expect, it } from "vitest";
 import { sayArg } from "../src/refusal";
 import { resurfacedThreads, type EngineMessage, type EntityReader, type MutationResult, type SendAndDonePlan } from "@ohmail/client-engine";
 import { bootEngine, type MobileEngineDeps } from "../src/engine/boot";
-import { flushQueued, liveActions, type LiveWorldActions } from "../src/state/live";
+import { flushQueued, liveActions, setTimeLabel, type LiveWorldActions } from "../src/state/live";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { Copy } from "../src/copy";
 import { dto, listen, mailServer } from "./helpers/mail-server";
@@ -33,6 +33,8 @@ const uuid = (() => {
   return () => `00000000-0000-4000-8000-${String(++n).padStart(12, "0")}`;
 })();
 const deps: MobileEngineDeps = { openExecutor: world.open, deleteDatabase: world.drop, uuid };
+/** Until when a copy kept without its files is tried: far enough ahead that its label never turns over mid-case. */
+const UNTIL = "2031-03-01T08:00:00.000Z";
 
 async function scene(extra: (fake: ReturnType<typeof mailServer>) => void = () => undefined, triage?: string) {
   const fake = mailServer();
@@ -177,6 +179,28 @@ describe("the release runs only after the engine accepted the send", () => {
     live.fake.server.close();
   });
 
+  it("an accepted send whose Sent copy is missing says marked done and why, with its Undo", async () => {
+    const live = await scene((fake) => fake.answerNext("POST", "/drafts/", 200, {
+      status: "sent", providerMessageId: "pm-1", sentCopy: "missing", sentCopyReason: "too_big",
+    }));
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false, null, null, [], true)).outcome).toBe("sent");
+    expect(live.toasts).toEqual([Copy.sentCopyMissing("too_big", Copy.toastSentAndDone)]);
+    expect(live.undos, "the copy's sentence lost the Undo").toHaveLength(1);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("an accepted send whose copy is kept without its files says marked done and until when, with its Undo", async () => {
+    const live = await scene((fake) => fake.answerNext("POST", "/drafts/", 200, {
+      status: "sent", providerMessageId: "pm-1", sentCopy: "pending", sentCopyReason: "unreachable", sentCopyUntil: UNTIL,
+    }));
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false, null, null, [], true)).outcome).toBe("sent");
+    expect(live.toasts).toEqual([Copy.sentCopyWaitingUntil("unreachable", Copy.toastSentAndDone, setTimeLabel(UNTIL, new Date(), "UTC"))]);
+    expect(live.undos, "the copy's sentence lost the Undo").toHaveLength(1);
+    live.store.close();
+    live.fake.server.close();
+  });
+
   /**
    * CONTROL. MUTATION WATCHED: drop the `andDone ? doneHalf(messageId) : undefined` argument
    * from either send arm and the plain press below starts filing the source.
@@ -285,6 +309,28 @@ describe("the release rides the send's own row, whichever road confirms it", () 
     await flushQueued(live.engine, live.actions.releaseConfirmed);
     expect(wireMarks(live.fake)).toBe(1);
     expect(live.fake.deliveries(), "the reconnect road did not deliver exactly once").toHaveLength(1);
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("a Send + Done the reconnect flush confirms with no Sent copy carries the copy's sentence", async () => {
+    const live = await scene();
+    failSends(live.fake, 2);
+    live.fake.answerNext("POST", "/drafts/", 200, { status: "sent", providerMessageId: "pm-1", sentCopy: "pending", sentCopyReason: "full" });
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false, null, null, [], true)).outcome).toBe("queued");
+    const [o] = [...(await flushQueued(live.engine, live.actions.releaseConfirmed)).values()];
+    expect(o?.done && sayArg(o.done.say)).toBe(Copy.sentCopyWaiting("full", Copy.toastSentAndDone));
+    live.store.close();
+    live.fake.server.close();
+  });
+
+  it("a Send + Done the reconnect flush confirms with its copy kept without its files says until when", async () => {
+    const live = await scene();
+    failSends(live.fake, 2);
+    live.fake.answerNext("POST", "/drafts/", 200, { status: "sent", providerMessageId: "pm-1", sentCopy: "pending", sentCopyUntil: UNTIL });
+    expect((await live.actions.sendReply("m-1", "Donnerstag passt.", false, null, null, [], true)).outcome).toBe("queued");
+    const [o] = [...(await flushQueued(live.engine, live.actions.releaseConfirmed)).values()];
+    expect(o?.done && sayArg(o.done.say)).toBe(Copy.sentCopyWaitingUntil("", Copy.toastSentAndDone, setTimeLabel(UNTIL, new Date(), "UTC")));
     live.store.close();
     live.fake.server.close();
   });

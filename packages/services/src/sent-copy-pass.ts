@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, gt, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gt, isNotNull, isNull, lt, lte, notInArray, or, sql } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import { mailboxes, outboundSentCopies } from "@trafficflow/db";
 import { createLogger, type Logger, type OpenSendAdapter, type SendAdapter } from "@trafficflow/core/mail";
@@ -8,6 +8,7 @@ import { SEND_RECONCILE_BATCH, SEND_RECONCILE_CLOSE_CEILING_MS } from "./send-re
 import {
   fileOnly, mailServerUnreachable, ownAttempts, sendService, SEND_COPY_OWED_CLAIM_MS, SEND_COPY_OWED_DEFER_MS,
   SEND_COPY_OWED_HOLD_MS, SEND_COPY_OWED_MAILBOX_UNIT, type OwedCopyFiling, type SendDeps, type SendService,
+  type StagedAttachmentSource,
 } from "./send-service.js";
 
 /**
@@ -31,6 +32,12 @@ import {
  * first, so one whose refusal could not be told never stands in front of the others again. Every
  * copy, whatever its refusals, is deleted {@link SEND_COPY_OWED_HOLD_MS} after it was recorded, or at
  * the next pass when one is filing it then.
+ *
+ * A COPY KEPT WITHOUT ITS FILES (mail 0183) is filed after the others, on its own login and clock
+ * ({@link SEND_COPY_OWED_FILES_END_MS}). Each of its failures is its own (an attempt and its own wait,
+ * the last try an hour before its uploads go), never its mailbox's ladder, and it never tells whose a
+ * refusal was. One whose uploads or login could not be had now takes its turn, and the next pass
+ * begins with another. It is deleted when its uploads go.
  */
 
 /** Due rows one pass takes; at most {@link SEND_RECONCILE_BATCH} logins serve them. */
@@ -70,6 +77,20 @@ export function copyRefusedForItself(err: unknown): boolean {
 export const SEND_COPY_OWED_CALL_CEILING_MS = 15_000;
 
 /**
+ * COPIES KEPT WITHOUT THEIR FILES ({@link OwedSentCopyPassDeps.stagedAttachments}) are filed after the
+ * copies without files, on their own logins and their own clock, never on the copies' dial deadline: with
+ * a budget every step of theirs (the uploads' download, under its own first bound too, the dial, the look
+ * and APPEND) ends by {@link SEND_COPY_OWED_FILES_END_MS} from the pass's start, and one is begun only
+ * while the second bound or more is left. Quick reads and dials leave the APPEND more than the request's
+ * own deadline. The suite derives the end and a close inside the platform's 60 s.
+ */
+export const SEND_COPY_OWED_FILES_FETCH_CEILING_MS = 8_000;
+export const SEND_COPY_OWED_FILES_CALL_CEILING_MS = 18_000;
+export const SEND_COPY_OWED_FILES_END_MS = 52_000;
+/** Copies with files one pass takes at most, one login each, one after the other. */
+export const SENT_COPY_FILES_PER_PASS = 3;
+
+/**
  * The same bound on a host nothing ends (self-host): a whole letter with files on a slow uplink,
  * still bounded so a trickling server cannot park the send clock behind it.
  */
@@ -91,11 +112,15 @@ export interface OwedSentCopyPassDeps {
   accountEligible?: (accountId: string, db: Db) => Promise<boolean>;
   /** The invocation's platform ceiling; absent on a host nothing ends. */
   budgetMs?: number;
+  /** Where a copy kept without its files reads its uploads; absent, such a copy waits. */
+  stagedAttachments?: StagedAttachmentSource;
   log?: Logger;
   now?: () => Date;
   /** Test seams. */
   sends?: SendService;
   batch?: number;
+  /** The copies with files' end from the pass's start, and the least time left to begin one. */
+  filesClock?: { endMs: number; leastMs: number };
 }
 
 export interface OwedSentCopyPassResult {
@@ -150,7 +175,11 @@ function abandon(a: SendAdapter): void {
   } catch { /* going away regardless */ }
 }
 
-interface DueRow { sendId: string; accountId: string; mailboxId: string; attempts: number; createdAt: Date; eligible: boolean }
+interface DueRow {
+  sendId: string; accountId: string; mailboxId: string; attempts: number; createdAt: Date; eligible: boolean;
+  /** Kept without its files until then (mail 0183); null for a whole copy. */
+  filesUntil: Date | null;
+}
 
 /** The better copy to tell a refusal by: the fewest refusals of its own, then the newest. */
 function triesFirst(a: DueRow, b: DueRow): number {
@@ -263,9 +292,11 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
     }
   };
   /** The copy's own refusal: one of its attempts, then its own wait (or, the last, given up). */
-  const charge = async (row: DueRow, err: unknown): Promise<void> => {
+  const charge = async (
+    row: DueRow, err: unknown, bytes: number | undefined, o: Parameters<SendService["chargeOwedCopy"]>[4] = {},
+  ): Promise<void> => {
     try {
-      if (await sends.chargeOwedCopy(contextOf(row), row, err, { log }) === "gaveUp") out.gaveUp += 1;
+      if (await sends.chargeOwedCopy(contextOf(row), { ...row, ...(bytes !== undefined ? { bytes } : {}) }, err, { log }, o) === "gaveUp") out.gaveUp += 1;
       else out.failed += 1;
       leased.delete(row.sendId);
     } catch (fault) {
@@ -331,7 +362,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       if (res.step === "dropped" || res.step === "skipped") continue;
       if (res.step === "unreachable") { out.deferred += 1; return false; }
       forgetIfSpent(failed.mailboxId);
-      if (copyRefusedForItself(res.err)) { await charge(other, res.err); continue; }
+      if (copyRefusedForItself(res.err)) { await charge(other, res.err, res.bytes); continue; }
       if (mailServerUnreachable(res.err)) { forget(failed.mailboxId); again = other; continue; }
       out.failed += 1;
       return false;
@@ -351,7 +382,7 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
       }
       forgetIfSpent(row.mailboxId);
       if (copyRefusedForItself(res.err) || proven.has(row.mailboxId) || await probe(row)) {
-        await charge(row, res.err);
+        await charge(row, res.err, res.bytes);
         continue;
       }
       out.failed += 1;
@@ -368,6 +399,94 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
     }));
   }
 
+  // ── THE COPIES KEPT WITHOUT THEIR FILES: after the others, on their own logins and clock ──
+  const filesEnd = startedAt + (deps.filesClock?.endMs ?? SEND_COPY_OWED_FILES_END_MS);
+  const filesLeast = deps.filesClock?.leastMs ?? SEND_COPY_OWED_FILES_CALL_CEILING_MS;
+  /** What a copy with files' next step may take: the lane's time left, or each step's own bound on a host nothing ends. */
+  const filesLeft = (): number => (deps.budgetMs === undefined ? SEND_COPY_OWED_HOST_CALL_CEILING_MS : filesEnd - now().getTime());
+  /**
+   * One copy with files, every step bounded by the lane's time left. Filed, dropped, refused, past a
+   * bound, or its dial failed, the lane goes on (true): each failure is the copy's own, with its last
+   * try an hour before its uploads go. Its uploads or a login not to be had now: its turn is taken,
+   * and the lane stops for this pass.
+   */
+  const fileWithFiles = async (row: DueRow, filesUntil: Date): Promise<boolean> => {
+    let real: SendAdapter | null = null;
+    let admissionRefused = false;
+    let spent = false;
+    const within = <T>(what: string, work: Promise<T>, most = Infinity): Promise<T> =>
+      bounded(what, work, Math.max(0, Math.min(most, filesLeft())));
+    const watched = <T>(what: string, work: Promise<T>): Promise<T> => within(what, work).catch((err: unknown) => {
+      if (err instanceof SentCopyCeilingExceeded) spent = true;
+      throw err;
+    });
+    const source = deps.stagedAttachments;
+    const uploads: StagedAttachmentSource | undefined = source === undefined ? undefined : {
+      declare: (accountId, ids) => source.declare(accountId, ids),
+      fetch: (accountId, ids, at) => within("uploads", source.fetch(accountId, ids, at), SEND_COPY_OWED_FILES_FETCH_CEILING_MS),
+    };
+    const connect = async (): Promise<SendAdapter> => {
+      const dialing = deps.openSendAdapter(row.mailboxId);
+      try {
+        real = await within("dial", dialing);
+      } catch (err) {
+        admissionRefused = err instanceof TransientDialRefusal;
+        // A login that comes after its bound is let go when it comes.
+        if (err instanceof SentCopyCeilingExceeded) void dialing.then(abandon, () => undefined);
+        throw err;
+      }
+      const r: SendAdapter = real;
+      return fileOnly({
+        send: r.send.bind(r),
+        messageInSent: (id) => watched("look", r.messageInSent(id)),
+        ...(r.fileSentCopy
+          ? { fileSentCopy: (raw: Buffer, id: string, o?: { look?: boolean }) => watched("filing", r.fileSentCopy!(raw, id, o)) }
+          : {}),
+        close: async () => { /* closed once, below */ },
+      });
+    };
+    try {
+      const filing = await sends.fileOwedCopy(contextOf(row), row, connect, {
+        resolveStorageCap: deps.resolveStorageCap, log, ...(uploads !== undefined ? { stagedAttachments: uploads } : {}),
+      });
+      if (filing.step === "filed") {
+        out.filed += 1;
+        await startLadderOver(db, row).catch((err: unknown) => {
+          log.error("send_sent_copy_pass_hold_failed", { accountId: row.accountId, mailboxId: row.mailboxId, err });
+        });
+        return true;
+      }
+      if (filing.step === "dropped") { out.dropped += 1; return true; }
+      if (filing.step === "skipped" || (filing.step === "unreachable" && admissionRefused)) {
+        out.deferred += 1;
+        await takeTurn(db, row).catch((err: unknown) => {
+          log.error("send_sent_copy_pass_turn_failed", { accountId: row.accountId, sendId: row.sendId, err });
+        });
+        return false;
+      }
+      await charge(row, filing.err, filing.step === "refused" ? filing.bytes : undefined, {
+        staged: { lastTry: new Date(filesUntil.getTime() - SEND_COPY_OWED_LAST_TRY_MS) },
+      });
+      return true;
+    } catch (err) {
+      out.deferred += 1;
+      log.error("send_sent_copy_pass_row_failed", { accountId: row.accountId, sendId: row.sendId, err });
+      return false;
+    } finally {
+      const r = real as SendAdapter | null;
+      if (r !== null) {
+        if (spent) abandon(r);
+        else await bounded("close", r.close(), SEND_RECONCILE_CLOSE_CEILING_MS).catch(() => abandon(r));
+      }
+    }
+  };
+  for (let taken = 0; taken < SENT_COPY_FILES_PER_PASS && filesLeft() >= filesLeast; taken += 1) {
+    const row = await claimFilesCopy(db, now(), deps.accountEligible, sends, out);
+    if (row === null || row.filesUntil === null) break;
+    out.claimed += 1;
+    if (!await fileWithFiles(row, row.filesUntil)) break;
+  }
+
   // scoped-by: a count over every account for the scheduler's health row; no row's content leaves
   const [left] = await db.select({ n: count() }).from(outboundSentCopies).where(eq(outboundSentCopies.seq, 0));
   out.remaining = Number(left?.n ?? 0);
@@ -377,11 +496,13 @@ export async function runOwedSentCopyPass(db: Db, deps: OwedSentCopyPassDeps): P
 const UNIT = sql.raw(String(SEND_COPY_OWED_MAILBOX_UNIT));
 const RUN_SPAN = sql.raw(String(RUNS));
 const TURN = sql.raw(String(SENT_COPY_TURN_UNIT));
+/** An owed copy's mailbox row, under its own account. */
+const onItsMailbox = and(eq(mailboxes.id, outboundSentCopies.mailboxId), eq(mailboxes.accountId, outboundSentCopies.accountId));
 /** `attempts` without its run of refusals: the copy's own attempts and its turn. */
 const NO_RUN = sql`${outboundSentCopies.attempts} - ${UNIT} * ((${outboundSentCopies.attempts} / ${UNIT}) % ${RUN_SPAN})`;
 
 /**
- * A MAILBOX WAITS AS ONE: every owed copy of it, the refused ones too, is next due at one moment,
+ * A MAILBOX WAITS AS ONE: every owed copy of it kept whole, the refused ones too, is next due at one moment,
  * the step of its ladder ({@link SENT_COPY_MAILBOX_WAITS_MS}) its oldest copy's run of refusals has
  * reached, and never past the soonest copy's last try ({@link SEND_COPY_OWED_LAST_TRY_MS}). The run
  * grows by one on every copy; no copy's own attempts or turn change. A copy is only ever moved later
@@ -389,11 +510,13 @@ const NO_RUN = sql`${outboundSentCopies.attempts} - ${UNIT} * ((${outboundSentCo
  * `mine`, released to it. Null when the mailbox owes nothing.
  */
 async function waitOnLadder(db: Db, row: DueRow, at: Date, mine: readonly string[]): Promise<{ run: number; until: Date } | null> {
-  // Piece 0 of every owed copy of the mailbox carries `attempts` and `next_attempt_at`.
+  // Piece 0 of every owed copy of the mailbox carries `attempts` and `next_attempt_at`; one kept
+  // without its files keeps its own clock, never this ladder's.
   const owed = await db.select({ attempts: outboundSentCopies.attempts, createdAt: outboundSentCopies.createdAt })
     .from(outboundSentCopies)
     .where(and(
       eq(outboundSentCopies.accountId, row.accountId), eq(outboundSentCopies.mailboxId, row.mailboxId), eq(outboundSentCopies.seq, 0),
+      isNull(outboundSentCopies.filesUntil),
     ))
     .orderBy(asc(outboundSentCopies.createdAt));
   if (owed.length === 0) return null;
@@ -408,6 +531,7 @@ async function waitOnLadder(db: Db, row: DueRow, at: Date, mine: readonly string
       .set({ attempts: sql`${NO_RUN} + ${UNIT} * ${run}` })
       .where(and(
         eq(outboundSentCopies.accountId, row.accountId), eq(outboundSentCopies.mailboxId, row.mailboxId), eq(outboundSentCopies.seq, 0),
+        isNull(outboundSentCopies.filesUntil),
       ));
     await tx.update(outboundSentCopies)
       .set({ nextAttemptAt: until })
@@ -485,12 +609,13 @@ async function claimToTell(
   return bridgeTx(db).transaction(async (tx) => {
     const found = await d.skipLocked(tx.select({
       sendId: outboundSentCopies.sendId, accountId: outboundSentCopies.accountId, mailboxId: outboundSentCopies.mailboxId,
-      attempts: outboundSentCopies.attempts, createdAt: outboundSentCopies.createdAt,
+      attempts: outboundSentCopies.attempts, createdAt: outboundSentCopies.createdAt, filesUntil: outboundSentCopies.filesUntil,
     })
       .from(outboundSentCopies)
       .where(and(
         eq(outboundSentCopies.accountId, failed.accountId), eq(outboundSentCopies.mailboxId, failed.mailboxId),
         eq(outboundSentCopies.seq, 0), lte(outboundSentCopies.nextAttemptAt, at), notInArray(outboundSentCopies.sendId, [...tried]),
+        isNull(outboundSentCopies.filesUntil),
       ))
       .orderBy(asc(sql`${outboundSentCopies.attempts} % ${UNIT}`), desc(outboundSentCopies.createdAt))
       .limit(4), { of: outboundSentCopies });
@@ -510,8 +635,9 @@ async function claimToTell(
 /**
  * Take this pass's rows in one short transaction. The drop window deletes, without a dial, a row
  * past {@link SEND_COPY_OWED_HOLD_MS}, due or not, unless it is due within a lease from now (another
- * pass may be filing it: the next pass deletes it), and a due row on a `disabled` or missing
- * mailbox. The dial window takes due rows on a `connected`, unstamped mailbox, the longest due first,
+ * pass may be filing it: the next pass deletes it), a row kept without its files past its uploads on
+ * the same terms by its own clock, and a due row on a `disabled` or missing
+ * mailbox. The dial window takes due rows kept whole on a `connected`, unstamped mailbox, the longest due first,
  * of those due together the least recently tried ({@link takeTurn}), then the oldest, `FOR UPDATE OF
  * outbound_sent_copies SKIP LOCKED`, and leases them: {@link SEND_COPY_OWED_CLAIM_MS} while they are
  * filed, {@link SEND_COPY_OWED_DEFER_MS} for an account that may not dial. A mailbox in `error` is
@@ -525,21 +651,25 @@ async function claimOwed(
   return bridgeTx(db).transaction(async (tx) => {
     const holdFrom = new Date(at.getTime() - SEND_COPY_OWED_HOLD_MS);
     const leaseEnd = new Date(at.getTime() + SEND_COPY_OWED_CLAIM_MS);
-    const onItsMailbox = and(
-      eq(mailboxes.id, outboundSentCopies.mailboxId), eq(mailboxes.accountId, outboundSentCopies.accountId),
-    );
     const doomed = await d.skipLocked(tx.select({
       sendId: outboundSentCopies.sendId, accountId: outboundSentCopies.accountId, mailboxId: outboundSentCopies.mailboxId,
-      createdAt: outboundSentCopies.createdAt, status: mailboxes.status, present: mailboxes.id,
+      createdAt: outboundSentCopies.createdAt, status: mailboxes.status, present: mailboxes.id, filesUntil: outboundSentCopies.filesUntil,
     })
       .from(outboundSentCopies)
       .leftJoin(mailboxes, onItsMailbox)
       .where(and(
         eq(outboundSentCopies.seq, 0),
-        // Past the hold whenever its mailbox's ladder would next try it (the bound is the hold), but never under a live lease.
         or(and(
+          // Past the hold, whenever its mailbox's ladder would next try it, but never under a live lease.
           lt(outboundSentCopies.createdAt, holdFrom),
           or(lte(outboundSentCopies.nextAttemptAt, at), gt(outboundSentCopies.nextAttemptAt, leaseEnd)),
+        ), and(
+          // Kept without its files, past its uploads, but never under its own live lease.
+          isNotNull(outboundSentCopies.filesUntil), lte(outboundSentCopies.filesUntil, at),
+          or(
+            isNull(outboundSentCopies.filesNextAttemptAt), lte(outboundSentCopies.filesNextAttemptAt, at),
+            gt(outboundSentCopies.filesNextAttemptAt, leaseEnd),
+          ),
         ), and(
           lte(outboundSentCopies.nextAttemptAt, at), or(eq(mailboxes.status, "disabled"), isNull(mailboxes.id)),
         )),
@@ -549,7 +679,9 @@ async function claimOwed(
     for (const r of doomed) {
       await tx.delete(outboundSentCopies)
         .where(and(eq(outboundSentCopies.sendId, r.sendId), eq(outboundSentCopies.accountId, r.accountId)));
-      const reason = r.present === null ? "mailbox_gone" : r.status === "disabled" ? "mailbox_disabled" : "held_too_long";
+      const reason = r.present === null ? "mailbox_gone" : r.status === "disabled" ? "mailbox_disabled"
+        : r.createdAt.getTime() >= holdFrom.getTime() && r.filesUntil !== null && r.filesUntil.getTime() <= at.getTime() ? "files_expired"
+          : "held_too_long";
       log.warn("send_sent_copy_missing", { accountId: r.accountId, sendId: r.sendId, mailboxId: r.mailboxId, reason });
       out.dropped += 1;
     }
@@ -557,11 +689,12 @@ async function claimOwed(
     const due = await d.skipLocked(tx.select({
       sendId: outboundSentCopies.sendId, accountId: outboundSentCopies.accountId,
       mailboxId: outboundSentCopies.mailboxId, attempts: outboundSentCopies.attempts, createdAt: outboundSentCopies.createdAt,
+      filesUntil: outboundSentCopies.filesUntil,
     })
       .from(outboundSentCopies)
       .innerJoin(mailboxes, onItsMailbox)
       .where(and(
-        eq(outboundSentCopies.seq, 0), lte(outboundSentCopies.nextAttemptAt, at),
+        eq(outboundSentCopies.seq, 0), lte(outboundSentCopies.nextAttemptAt, at), isNull(outboundSentCopies.filesUntil),
         eq(mailboxes.status, "connected"), isNull(mailboxes.erasedAt),
       ))
       .orderBy(
@@ -588,5 +721,49 @@ async function claimOwed(
       rows.push({ ...r, eligible });
     }
     return rows;
+  });
+}
+
+/**
+ * THE NEXT COPY KEPT WITHOUT ITS FILES, in one short transaction: due on a `connected`, unstamped
+ * mailbox while its uploads last, the longest due first, of those due together the least recently tried
+ * ({@link takeTurn}), then the oldest, `FOR UPDATE OF outbound_sent_copies SKIP LOCKED`. One whose
+ * account may not dial is leased {@link SEND_COPY_OWED_DEFER_MS} and passed over; the one taken is
+ * leased {@link SEND_COPY_OWED_CLAIM_MS}; the others are left as they are, due before it next time.
+ */
+async function claimFilesCopy(
+  db: Db, at: Date, accountEligible: OwedSentCopyPassDeps["accountEligible"], sends: SendService, out: OwedSentCopyPassResult,
+): Promise<DueRow | null> {
+  const d = dialect(db);
+  return bridgeTx(db).transaction(async (tx) => {
+    const due = await d.skipLocked(tx.select({
+      sendId: outboundSentCopies.sendId, accountId: outboundSentCopies.accountId,
+      mailboxId: outboundSentCopies.mailboxId, attempts: outboundSentCopies.attempts, createdAt: outboundSentCopies.createdAt,
+      filesUntil: outboundSentCopies.filesUntil,
+    })
+      .from(outboundSentCopies)
+      .innerJoin(mailboxes, onItsMailbox)
+      .where(and(
+        eq(outboundSentCopies.seq, 0), lte(outboundSentCopies.filesNextAttemptAt, at),
+        isNotNull(outboundSentCopies.filesUntil), gt(outboundSentCopies.filesUntil, at),
+        eq(mailboxes.status, "connected"), isNull(mailboxes.erasedAt),
+      ))
+      .orderBy(
+        asc(outboundSentCopies.filesNextAttemptAt), asc(sql`${outboundSentCopies.attempts} / ${TURN}`), asc(outboundSentCopies.createdAt),
+      )
+      .limit(SENT_COPY_PASS_WINDOW), { of: outboundSentCopies });
+    for (const r of due) {
+      if (sends.filingCopy(r.sendId)) continue;
+      const eligible = accountEligible ? await accountEligible(r.accountId, bridgeDb(tx)) : true;
+      await tx.update(outboundSentCopies)
+        .set({ filesNextAttemptAt: new Date(at.getTime() + (eligible ? SEND_COPY_OWED_CLAIM_MS : SEND_COPY_OWED_DEFER_MS)) })
+        .where(and(
+          eq(outboundSentCopies.sendId, r.sendId), eq(outboundSentCopies.accountId, r.accountId), eq(outboundSentCopies.seq, 0),
+        ));
+      if (eligible) return { ...r, eligible };
+      out.claimed += 1;
+      out.deferred += 1;
+    }
+    return null;
   });
 }

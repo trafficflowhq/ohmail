@@ -5,7 +5,7 @@ import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, 
 import { localRoutes } from "@trafficflow/api/local";
 import { drafts, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
-import { runOwedSentCopyPass } from "@trafficflow/services";
+import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE } from "@trafficflow/services";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -271,6 +271,27 @@ describe("`GET /internal/sends/sent-copies/run` — the late Sent-copy pass's do
     // Admitted, then `makeSendAdapter` finds no credentials.
     const res = await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps);
     expect({ status: res.status, taken, given }).toEqual({ status: 200, taken: 1, given: 1 });
+  });
+
+  it("a copy kept without its files reads its uploads through the host's staging, under its own account", async () => {
+    const { db, deps } = await armed();
+    const w = await owedCopy(deps, db);
+    const sha = "0".repeat(64);
+    // As Cloud's door keeps it: due by its own clock, never by `next_attempt_at`.
+    await db.update(outboundSentCopies).set({
+      stagedParts: JSON.stringify({ v: 1, sha256: sha, skeleton: Buffer.from("Subject: hi\r\n\r\n").toString("base64"), parts: [{ ticket: "t-gone", at: 3, len: 4 }] }),
+      filesUntil: new Date(deps.now().getTime() + 60 * MIN), filesNextAttemptAt: deps.now(), nextAttemptAt: SEND_COPY_OWED_STAGED_NOT_DUE, rawB64: "",
+    }).where(eq(outboundSentCopies.sendId, w.sendId));
+    const asked: string[] = [];
+    deps.services!.sendAdapter = async () => { throw new Error("nothing is dialled for a copy whose uploads are gone"); };
+    deps.services!.attachmentStaging = (() => ({
+      source: {
+        declare: async (accountId: string) => { asked.push(accountId); return []; },
+        fetch: async () => { throw new Error("never fetched"); },
+      },
+    })) as never;
+    const body = await (await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps)).json() as Record<string, number>;
+    expect({ dropped: body.dropped, filed: body.filed, remaining: body.remaining, asked }).toEqual({ dropped: 1, filed: 0, remaining: 0, asked: [w.accountId] });
   });
 
   it("an injected transport is asked to file the copy and never to send", async () => {

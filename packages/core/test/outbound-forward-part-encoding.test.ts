@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 import DataStream from "nodemailer/lib/smtp-connection/data-stream.js";
+import { createHash, randomBytes } from "node:crypto";
 import { outboundToMail } from "../src/adapters/imap.js";
 import type { OutboundMessage } from "../src/adapters/imap-types.js";
+import { cutFileParts, spliceFileParts } from "../src/sent-copy-parts.js";
 
 /**
  * A FORWARDED message/* PART LEAVES BASE64. From nodemailer 7 a message/* attachment goes out 8bit,
@@ -79,5 +81,45 @@ describe("a forwarded message/rfc822 part", () => {
       ["message/rfc822", "base64"], ["Message/RFC822", "base64"], ["message/global", "base64"], ["message/delivery-status", "base64"],
       ["text/plain", "nodemailer's own"], ["application/octet-stream", "nodemailer's own"], ["image/png", "nodemailer's own"],
     ]);
+  });
+});
+
+/**
+ * A SENT COPY KEPT WITHOUT ITS FILES: the staged files are cut out of the composed copy, and spliced
+ * back from their uploads byte for byte. Composed as `buildRaw` composes, from `outboundToMail`.
+ */
+describe("a Sent copy's file parts, cut and spliced", () => {
+  const big = randomBytes(2 * 1024 * 1024 + 5);
+  const small = randomBytes(76 * 3);
+  const files = [
+    { filename: "big.bin", contentType: "application/octet-stream", content: new Uint8Array(big) },
+    { filename: "same.bin", contentType: "application/octet-stream", content: new Uint8Array(small) },
+    { filename: "same-again.bin", contentType: "application/octet-stream", content: new Uint8Array(small) },
+    { filename: "notes.txt", contentType: "text/plain", content: new Uint8Array(Buffer.from("one\r\ntwo\r\n")) },
+    { filename: "fwd.eml", contentType: "message/rfc822", content: new Uint8Array(ORIGINAL) },
+  ];
+  const letter: OutboundMessage = { ...forward, html: "<p>see below</p>", attachments: files };
+  const sha = (b: Buffer): string => createHash("sha256").update(b).digest("hex");
+
+  it("cuts every file out, and splices the exact copy back", async () => {
+    const raw = await sentCopy(letter);
+    const cut = cutFileParts(raw, files.map((f) => f.content));
+    expect(cut, "a staged file was not found in the copy").not.toBeNull();
+    expect(cut!.parts).toHaveLength(files.length);
+    expect(cut!.skeleton.length, "the skeleton carries the letter, not its files").toBeLessThan(4_096);
+    expect(cut!.skeleton.includes(Buffer.from(big.subarray(0, 57).toString("base64"))), "the big file is still in it").toBe(false);
+    expect(cut!.skeleton.includes(Buffer.from(small.subarray(0, 57).toString("base64")))).toBe(false);
+    const back = spliceFileParts(cut!.skeleton, cut!.parts, files.map((f) => f.content));
+    expect(back !== null && back.equals(raw), "the spliced copy is not the delivered one").toBe(true);
+    expect(sha(back!)).toBe(sha(raw));
+  });
+
+  it("is null when a file is not in the copy, or a spliced file is not the one cut", async () => {
+    const raw = await sentCopy(letter);
+    expect(cutFileParts(raw, [new Uint8Array(randomBytes(300))])).toBeNull();
+    const cut = cutFileParts(raw, files.map((f) => f.content))!;
+    const changed = files.map((f, i) => (i === 0 ? new Uint8Array(randomBytes(10)) : f.content));
+    expect(spliceFileParts(cut.skeleton, cut.parts, changed), "a file of another length").toBeNull();
+    expect(spliceFileParts(cut.skeleton, cut.parts, files.slice(1).map((f) => f.content)), "a file missing").toBeNull();
   });
 });
