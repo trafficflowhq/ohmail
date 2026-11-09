@@ -176,7 +176,7 @@ describe("one policy per route group, with and without the website's measurement
       .flatMap((r) => r.headers.filter((h) => h.key === "Content-Security-Policy").map((h) => h.value));
   }
   const GROUPS = {
-    marketing: ["/", "/de", "/privacy", "/imprint", "/subprocessors"],
+    marketing: ["/", "/de", "/privacy", "/imprint", "/subprocessors", "/support", "/delete-account"],
     product: ["/mailbox", "/resume", "/login", "/join", "/setup", "/link-desktop", "/approve", "/subscribed"],
     other: ["/no-such-page", "/api/session", "/_next/static/x.js", "/version"],
   };

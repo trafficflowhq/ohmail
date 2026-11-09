@@ -59,7 +59,7 @@ export const REFRESH_SCOPED_PATHS = Object.freeze([REFRESH_PATH, SIGN_OUT_PATH])
  *                            gate runs on `/` and nowhere else, so a signed-in reader who
  *                            opens `/de` gets the German page, exactly as `/privacy` stays
  *                            `/privacy` for them.
- *     /privacy /imprint /subprocessors
+ *     /privacy /imprint /subprocessors /support /delete-account
  *
  *   PRODUCT (route group `(product)`, root layout #2, app.css)
  *     /mailbox               INTERNAL. The rewrite target for a signed-in `/`; middleware
@@ -119,6 +119,9 @@ export const OWN_ROUTES = Object.freeze(/** @type {OwnRoute[]} */ ([
   { path: "/privacy", edge: true, marketing: true, zone: true },
   { path: "/imprint", edge: true, marketing: true, zone: true },
   { path: "/subprocessors", edge: true, marketing: true, zone: true },
+  // The app stores' support and account-deletion addresses; only the zone answers them.
+  { path: "/support", edge: true, marketing: true, zone: true },
+  { path: "/delete-account", edge: true, marketing: true, zone: true },
   // `/de` is the GERMAN landing — the same composition `/` renders, under a second marketing
   // root layout that pins the German `lang` attribute (`app/(marketing-de)`). A path rather than
   // a negotiated body on `/`: one URL with two bodies needs `Vary: Accept-Language` to be
