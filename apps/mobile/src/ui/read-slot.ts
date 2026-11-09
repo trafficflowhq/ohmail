@@ -10,3 +10,8 @@ import type { WorldMail } from "../state/live";
 export function conversationUnreadIds(m: Pick<WorldMail, "id" | "unread" | "earlier">): string[] {
   return [...(m.unread ? [m.id] : []), ...m.earlier.filter((h) => !h.seen && !h.resurfaced).map((h) => h.id)];
 }
+
+/** The read slot reads Mark unread: not a resurfaced message (Done), nothing left to read. */
+export function readSlotMarksUnread(m: Pick<WorldMail, "id" | "unread" | "earlier" | "pile">): boolean {
+  return m.pile !== "resurfaced" && conversationUnreadIds(m).length === 0;
+}

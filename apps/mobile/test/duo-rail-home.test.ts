@@ -89,11 +89,11 @@ describe("the closed Duo's rail lives in the reserved strip, below the status cl
 describe("the ONE rail carries the reader's verbs on the closed face too", () => {
   it("duo-closed: rail right, one pane, railCarriesReaderVerbs", () => {
     expect(plan("duo-closed")).toMatchObject({ nav: "rail", navSide: "right", panes: 1, railCarriesReaderVerbs: true });
-    expect(readerVerbMode(plan("duo-closed"))).toBe("rail");
+    expect(readerVerbMode(plan("duo-closed"), 466)).toBe("rail");
   });
   it("the phone keeps the compact bar; the iPad keeps the ActionBar", () => {
-    expect(readerVerbMode(plan("phone"))).toBe("compact");
-    expect(readerVerbMode(plan("ipad"))).toBe("bar");
+    expect(readerVerbMode(plan("phone"), 390)).toBe("compact");
+    expect(readerVerbMode(plan("ipad"), 732)).toBe("bar");
   });
 });
 

@@ -74,7 +74,7 @@ export function compactFit(args: {
   verbs: readonly string[];
   widths: Readonly<Record<string, number>> | null;
   room: number | null;
-  /** The verb that stands beside Reply at every width (Forward): its word while it fits, else `${lead}.icon`. */
+  /** The verb beside Reply (Forward): its word, its `${lead}.icon`, or behind ⋯ (see below). */
   lead?: string;
 }): { standing: string[]; overflow: string[]; leadIcon: boolean } {
   const { widths, room, lead } = args;
@@ -83,18 +83,21 @@ export function compactFit(args: {
   if (widths === null || room === null || !(room > 0)) return { standing: [], overflow: [...args.verbs], leadIcon: false };
   const line = barLineWidth(room);
   const reply = widths["__reply"] ?? 0;
-  /* THE LEAD NEVER LEAVES THE ROW: its word when Reply + gap + word fits the line, else its icon. */
-  const word = lead === undefined ? 0 : (widths[lead] ?? 0);
-  const leadIcon = lead !== undefined && reply + BAR.gap + word > line;
-  const leadWidth = lead === undefined ? 0 : leadIcon ? (widths[`${lead}.icon`] ?? 44) : word;
-  const fit = fitOneLine(
-    verbs.map((id) => widths[id] ?? 0),
-    line,
-    reply + (lead === undefined ? 0 : BAR.gap + leadWidth),
-  );
-  return {
-    standing: [...(lead === undefined ? [] : [lead]), ...fit.standing.map((i) => verbs[i])],
-    overflow: fit.overflow.map((i) => verbs[i]),
+  const after = (fixed: number) => fitOneLine(verbs.map((id) => widths[id] ?? 0), line, fixed);
+  const named = (fit: BarFit, head: string[], folded: string[], leadIcon: boolean) => ({
+    standing: [...head, ...fit.standing.map((i) => verbs[i])],
+    overflow: [...folded, ...fit.overflow.map((i) => verbs[i])],
     leadIcon,
-  };
+  });
+  if (lead === undefined) return named(after(reply), [], [], false);
+  /* A HORIZON BEFORE FORWARD'S WORD: the word while a horizon still stands after it, the icon
+     while that leaves one, else Forward goes behind ⋯ for the first horizon. */
+  const word = reply + BAR.gap + (widths[lead] ?? 0);
+  const byWord = word <= line ? after(word) : null;
+  const byIcon = after(reply + BAR.gap + (widths[`${lead}.icon`] ?? 44));
+  if (byWord !== null && byWord.standing.length > 0) return named(byWord, [lead], [], false);
+  if (byIcon.standing.length > 0) return named(byIcon, [lead], [], true);
+  const bare = after(reply);
+  if (bare.standing.length > 0) return named(bare, [], [lead], false);
+  return byWord !== null ? named(byWord, [lead], [], false) : named(byIcon, [lead], [], true);
 }

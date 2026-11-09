@@ -14,7 +14,7 @@ import { JUNK_REFILL_BOUND_MS, type WorldAttachment, type WorldEarlier } from ".
 import { invitationNote, junkLeaving, mailboxStatusOf, withheldNote } from "./body-note";
 import { attachmentFaultNote, type AttachmentFault } from "./attachment-fault-note";
 import {
-  ActivityIndicator, Animated, AppState, Easing, Linking, Platform, ScrollView, StyleSheet, useWindowDimensions, View,
+  ActivityIndicator, Animated, AppState, Easing, Linking, ScrollView, StyleSheet, useWindowDimensions, View,
   type NativeScrollEvent, type NativeSyntheticEvent,
 } from "react-native";
 import { Copy } from "../copy";
@@ -31,18 +31,16 @@ import { HistoryFold, HistoryRow } from "./HistoryFold";
 import { EventCards } from "./EventCard";
 import { MailBodyFrame } from "./MailBodyFrame";
 import { FadeOut } from "./FadeOut";
-import { MessageActions } from "./MessageActions";
+import { MessageActions, useReaderVerbMode } from "./MessageActions";
 import { EmptiedLetter } from "./EmptiedLetter";
 import { AttachmentPreview, type PreviewFile } from "./AttachmentPreview";
-import { usePosture } from "./posture";
-import { readerVerbMode } from "./reader-verbs";
-import { scaffoldPlan } from "./scaffold/plan";
 import { hasPaneScroll, panePlaceOf, paneScrollOf, recordPanePlace, recordPaneScroll } from "./pane-memory";
 import { createOpenAnchor, placeAt, placeY, type OpenAnchor } from "./open-anchor";
 import {
   THREAD_READ_FADE_MS, THREAD_TOP_LINES, THREAD_UNREAD_BACK_MS, createPhoneThreadRead,
 } from "./reader-seen";
 import { standsInOhboxMail } from "./pane-routes";
+import { readSlotMarksUnread } from "./read-slot";
 import { onReaderCover, readerSees, setReaderWindowFocused } from "./reader-cover";
 import { createSentReveal, onReplySend } from "./sent-reveal";
 import { Sheet, SheetRow } from "./Sheet";
@@ -58,7 +56,6 @@ import {
   bindThreadJump, clearThreadPlace, publishThreadPlace, takeThreadPending, threadPending, threadPlace,
 } from "../state/thread-place";
 
-const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
 /** No squares: one array, so a reader without them never re-publishes the strip. */
 const NO_RAIL: RailItem[] = [];
 
@@ -87,7 +84,7 @@ export function MessageReader({
   useFilesStamp(m ? [m.id, ...m.earlier.map((h) => h.id)] : [id]);
   /* The rail carries Back where it carries the verbs (the closed Duo, the unfolded landscape):
      a detail bar above it would stand Back twice. */
-  const verbMode = readerVerbMode(scaffoldPlan(usePosture(), platformName));
+  const verbMode = useReaderVerbMode(inPane);
   const railBack = verbMode === "rail";
   const bare = inPane || railBack;
   /** "Show as text" — this reading's own choice, per message; a new open renders rich again. */
@@ -677,7 +674,9 @@ export function MessageReader({
               </Txt>
             )}
             <View style={{ flex: 1 }} />
+            {/* Mark unread has one home: where the bar's read slot offers it, the head has no ⋯. */}
             {inOhbox && markUnreadOffered({ read: !m.unread, own: m.ownMail === true })
+              && (verbMode === "rail" || !readSlotMarksUnread(m))
               ? <MoreDots onPress={() => setMenuFor(m.id)} /> : null}
             <Txt variant="caption" tone="ink3" tabular style={{ flexShrink: 0 }}>
               {m.time}

@@ -71,15 +71,17 @@ import { BAR, PILL, compactFit } from "./action-bar-layout";
 import { Button, Rule, Tap, Txt } from "./base";
 import { GlassActionBar, GlassPill, nextRoom, type BarVerbSpec } from "./glass";
 import type { RailAction } from "./glass/GlassRail";
-import { usePosture } from "./posture";
+import { useAppWindow, usePosture } from "./posture";
 import { readerBarClearance, scaffoldPlan } from "./scaffold/plan";
 import { publishReaderRail } from "./reader-rail";
 import {
+  readerPaneWidth,
   readerVerbMode,
   readerVerbPlacement,
   railReaderGroups,
   type ReaderVerbFacts,
   type ReaderVerbId,
+  type ReaderVerbMode,
 } from "./reader-verbs";
 import { Icon, type IconName } from "./Icon";
 import { scheduledNotHereSentence, sendLaterOffered } from "./standalone-form";
@@ -171,6 +173,15 @@ export function forwardAskSentence(ask: ForwardAsk): string {
   }
 }
 
+/** The reader's verb surface, by posture and by the width the reader stands in (`readerPaneWidth`). */
+export function useReaderVerbMode(inPane: boolean): ReaderVerbMode {
+  const posture = usePosture();
+  const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
+  const win = useAppWindow();
+  const insets = useSafeAreaInsets();
+  return readerVerbMode(plan, readerPaneWidth(posture, plan, { w: win.width, h: win.height }, insets, inPane));
+}
+
 export function MessageActions({
   m,
   onDeleted,
@@ -242,14 +253,14 @@ export function MessageActions({
 
   /**
    * WHICH PRESENTATION THIS POSTURE TAKES (`reader-verbs.ts`, the census-walked model): the
-   * phone's compact bar, the desktop ActionBar pinned at the reading pane's foot (owner rule
-   * 4 — iPad both orientations, the unfolded-portrait Duo, Android two-pane), or the
+   * phone's compact bar (also on a reading pane under 560 dp), the desktop ActionBar pinned at
+   * the reading pane's foot (owner rule 4 — iPad and Android two-pane, a wide pane), or the
    * right-edge rail on the unfolded-landscape Duo. Junk has no row verb on the ActionBar —
    * the desktop's own design; it stays behind Move — and only the rail carries it directly.
    */
   const posture = usePosture();
   const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
-  const mode = readerVerbMode(plan);
+  const mode = useReaderVerbMode(inPane);
   const barRail = readerBarClearance(plan, inPane);
   /* This bar stands at the foot, so it reports how far up it reaches and the toast clears it
      (`bottom-chrome.ts`); on the rail postures nothing stands here and the slot says so. */
@@ -286,7 +297,8 @@ export function MessageActions({
       on: m.pile === "bubbled_up",
       onPress: () => (m.pile === "bubbled_up" ? a.resurfaceToggle(m.id) : setOpen("resurface")) },
   ]).filter((v) => placement.standing.includes(v.id));
-  /* FORWARD STANDS BESIDE REPLY (the compact bar's lead): measured as its word and as its icon. */
+  /* FORWARD BESIDE REPLY (the compact bar's lead): measured as its word and as its icon; it folds
+     into ⋯ only where that lets a horizon stand (`compactFit`). */
   const forwardStands = mode === "compact" && placement.standing.includes("forward");
   const recordWidth = (id: string) => (e: LayoutChangeEvent) => {
     measuredWidths.current[id] = e.nativeEvent.layout.width;

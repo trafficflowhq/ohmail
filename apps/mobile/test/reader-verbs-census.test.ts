@@ -20,6 +20,8 @@ import { UNDO_CLASS } from "@ohmail/client-engine";
 import {
   admissibleVerbs,
   railReaderGroups,
+  BAR_MIN_PANE,
+  readerPaneWidth,
   readerVerbMode,
   readerVerbPlacement,
   VERB_UNDO_ARM,
@@ -39,6 +41,14 @@ const FACTS: Record<string, ReaderVerbFacts> = {
   "own mail": { canReplyAll: true, forwardOffered: true, junkOffered: true, screeningOffered: false },
 };
 
+/** The mode a reader takes on this preset: in the pair's reading pane, or full-window (a pushed route). */
+function modeAt(name: string, platform: PlatformName, inPane = true) {
+  const p = POSTURE_PRESETS[name]!;
+  const posture = postureOf(name, platform);
+  const plan = scaffoldPlan(posture, platform);
+  return readerVerbMode(plan, readerPaneWidth(posture, plan, { w: p.width, h: p.height }, { left: 0, right: 0 }, inPane));
+}
+
 function postureOf(name: string, platform: PlatformName) {
   const p = POSTURE_PRESETS[name]!;
   return derivePosture({
@@ -57,8 +67,7 @@ describe("every admissible verb is reachable on every posture preset", () => {
     const platforms: PlatformName[] = preset.platform ? [preset.platform] : ["ios", "android"];
     for (const platform of platforms) {
       it(`${name} (${platform})`, () => {
-        const plan = scaffoldPlan(postureOf(name, platform), platform);
-        const mode = readerVerbMode(plan);
+        const mode = modeAt(name, platform);
         for (const [label, facts] of Object.entries(FACTS)) {
           const placement = readerVerbPlacement(mode, facts);
           const reachable = [...placement.standing, ...placement.behindMore];
@@ -84,7 +93,7 @@ describe("the account's own mail is offered no Screening press (SENDER-SHEET-OFF
   it("on every posture preset, neither standing nor behind ⋯, and the rest of the set stays", () => {
     for (const [name, preset] of Object.entries(POSTURE_PRESETS)) {
       for (const platform of (preset.platform ? [preset.platform] : ["ios", "android"]) as PlatformName[]) {
-        const mode = readerVerbMode(scaffoldPlan(postureOf(name, platform), platform));
+        const mode = modeAt(name, platform);
         const own = readerVerbPlacement(mode, FACTS["own mail"]!);
         const reachable = [...own.standing, ...own.behindMore];
         expect(reachable, `${name}/${platform}`).not.toContain("screening");
@@ -97,24 +106,50 @@ describe("the account's own mail is offered no Screening press (SENDER-SHEET-OFF
 });
 
 describe("the mode per posture is the decided placement", () => {
-  const modeOf = (name: string, platform: PlatformName) =>
-    readerVerbMode(scaffoldPlan(postureOf(name, platform), platform));
+  const modeOf = (name: string, platform: PlatformName) => modeAt(name, platform);
 
   it("the unfolded-landscape Duo carries the verbs on the right-edge rail (flat and book)", () => {
     expect(modeOf("duo-unfolded", "ios")).toBe("rail");
     expect(modeOf("duo-book", "ios")).toBe("rail");
   });
-  it("the desktop ActionBar rides the iPad both orientations, the inner-portrait Duo and the Android panes", () => {
+  it("the desktop ActionBar rides a reading pane of 560 dp and more: the iPad landscape, the Android tablet", () => {
     for (const [name, platform] of [
       ["ipad", "ios"],
-      ["ipad-portrait", "ios"],
-      ["duo-unfolded-portrait", "ios"],
-      ["fold-inner", "android"],
       ["android-tablet", "android"],
-      ["sd2", "android"],
     ] as const) {
       expect(modeOf(name, platform), name).toBe("bar");
     }
+  });
+  it("a narrower reading pane takes the compact bar: iPad portrait, the Duo's inner portrait, the Fold flat and book, the SD2", () => {
+    for (const [name, platform] of [
+      ["ipad-portrait", "ios"],
+      ["duo-unfolded-portrait", "ios"],
+      ["fold-inner", "android"],
+      ["fold-book", "android"],
+      ["sd2", "android"],
+    ] as const) {
+      expect(modeOf(name, platform), name).toBe("compact");
+    }
+  });
+  it("a full-window reader on a two-pane posture measures the window, and keeps the bar", () => {
+    expect(modeAt("fold-inner", "android", false)).toBe("bar");
+    expect(modeAt("ipad-portrait", "ios", false)).toBe("bar");
+  });
+  it("a full-window reader in book posture measures its side of the crease, and takes the compact bar", () => {
+    expect(modeAt("fold-book", "android", false)).toBe("compact");
+    expect(modeAt("sd2", "android", false)).toBe("compact");
+  });
+  it("the boundary is the pane, not the posture", () => {
+    const plan = scaffoldPlan(postureOf("ipad", "ios"), "ios");
+    expect(readerVerbMode(plan, BAR_MIN_PANE)).toBe("bar");
+    expect(readerVerbMode(plan, BAR_MIN_PANE - 1)).toBe("compact");
+    const rail = scaffoldPlan(postureOf("duo-unfolded", "ios"), "ios");
+    expect(readerVerbMode(rail, 300), "the rail does not read the width").toBe("rail");
+  });
+  it("on a narrow pane the triage verbs stand and Reply all is one press away", () => {
+    const placement = readerVerbPlacement(modeOf("fold-inner", "android"), FACTS.everything!);
+    expect(placement.standing).toEqual(["reply", "forward", "later", "aside", "resurface"]);
+    expect(placement.behindMore).toContain("replyAll");
   });
   it("compact keeps the thumb bar — phones, the Flip, splits", () => {
     for (const [name, platform] of [
