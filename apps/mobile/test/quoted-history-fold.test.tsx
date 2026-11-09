@@ -232,4 +232,21 @@ describe("the html part: the frame's document is cut before it is drawn", () => 
     expect(whole.cids).toEqual(["logo@example.com"]);
     expect(whole.links).toEqual(["https://example.com/old"]);
   });
+
+  it("folded, the paper is read off the reply drawn: a sheet or wrapper in the quoted history is not its page", () => {
+    const REPLY = '<p style="color:#333">Thanks, see below.</p><div><div>On Thu, 22 Oct 2026 at 09:14, A wrote:</div><blockquote type="cite">';
+    const SHEET = `${REPLY}<style>body{background:#000000}</style><p style="color:#fff">Old dark letter</p></blockquote></div>`;
+    const WRAPPER = `${REPLY}<div style="background:#000000"><p style="color:#fff">Old dark letter</p></div></blockquote></div>`;
+    for (const html of [SHEET, WRAPPER]) {
+      const folded = sanitizeMailHtmlPhone(html, { fold: true });
+      expect(folded.history).not.toBeNull();
+      expect(folded.html).not.toContain("Old dark letter");
+      expect({ light: folded.light, paper: folded.paper, ink: folded.ink }).toEqual({ light: true, paper: null, ink: null });
+      // Opened, the whole letter is drawn, and read whole.
+      const open = sanitizeMailHtmlPhone(html);
+      expect(open.html).toContain("Old dark letter");
+      expect(open.light).toBe(false);
+    }
+    expect(sanitizeMailHtmlPhone(SHEET).paper).toBe("#000000");
+  });
 });

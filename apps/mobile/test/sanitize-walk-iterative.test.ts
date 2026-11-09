@@ -26,6 +26,7 @@ import {
   SAFE_HREF,
 } from "@ohmail/client-engine";
 import { Copy } from "../src/copy";
+import { letterPaperOf, schemeFreeSheet } from "../src/mail/paper";
 import type { PhoneBlockedAsset, PhoneSanitizedMail, PhoneSanitizeOptions } from "../src/mail/sanitize";
 import * as XSS from "../../webapp/test/fixtures/mutation-xss-payloads";
 import { HOSTILE_HTML, OWNER_BILLING_HTML } from "../../webapp/test/fixtures/owner-billing-email";
@@ -81,7 +82,7 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
   const cids: string[] = [];
   const links: string[] = [];
   if (html.length > MAIL_MAX_HTML_CHARS) {
-    return { html: "", blocked, sheets, cids, links, oversize: true };
+    return { html: "", blocked, sheets, cids, links, light: true, paper: null, ink: null, oversize: true };
   }
   const seen = new Set<string>();
   const record = (url: string, via: PhoneBlockedAsset["via"], pixel: boolean): void => {
@@ -118,8 +119,11 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
   };
   findHeadStyles(doc.children);
   const out: string[] = [];
+  const drawn: string[] = [];
   const emitStyle = (el: Element): void => {
-    const text = el.children.map((c) => (c instanceof Text ? c.data : "")).join("");
+    const text = schemeFreeSheet(el.children.map((c) => (c instanceof Text ? c.data : "")).join(""), el.attribs.media);
+    if (text === null) return;
+    drawn.push(text);
     const neutral = neutraliseCss(text, (url) => cssUrl(url), recordSheet);
     out.push("<style>", cssTextSafe(neutral), "</style>");
   };
@@ -236,7 +240,8 @@ function recursiveSanitize(html: string, opts: PhoneSanitizeOptions = {}): Phone
   };
   const body = findBody(doc.children);
   walk(body ? body.children : doc.children);
-  return { html: out.join(""), blocked, sheets, cids, links };
+  // The paper is read off the parse and the sheets drawn, not the walk under test.
+  return { html: out.join(""), blocked, sheets, cids, links, ...letterPaperOf(doc.children, drawn) };
 }
 
 // ── THE DIFFERENTIAL ────────────────────────────────────────────────────────────────────────────
