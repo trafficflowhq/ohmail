@@ -264,30 +264,56 @@ export function Scroller({
 
 /* ------------------------------------------------------------------ chrome */
 
-/** `.vhead` — the view's name and its one factual number. */
+/**
+ * `.vhead` — a list's head: its name, its one factual number (`meta`), the freshness line (`inline`),
+ * a trailing control (`right`) and lines under it (`children`). AT COMPACT HEIGHT (a phone held
+ * sideways, the Pro Max's two panes at 440 pt) it is one line: the meta and the freshness ride the
+ * title's baseline, so the list keeps its rows. Taller, they stand under the title. The title's row
+ * wraps there (AX5); on the one line the meta shrinks and wraps beside the title instead.
+ */
 export function ViewHead({
   title,
   meta,
+  metaBeside = false,
+  inline,
   right,
+  style,
+  children,
 }: {
   title: string;
   meta?: string;
+  /** The meta rides the title's row on every window (News), not only at compact height. */
+  metaBeside?: boolean;
+  /** Told whether it rides the title's line. */
+  inline?: (oneLine: boolean) => ReactNode;
   right?: ReactNode;
+  style?: StyleProp<ViewStyle>;
+  children?: ReactNode;
 }) {
-  const t = useTheme();
+  const oneLine = usePosture().heightClass === "compact";
+  const beside = oneLine || metaBeside;
+  const metaLine = meta === undefined ? null : (
+    <Txt variant="meta" tone="ink3" tabular style={beside ? undefined : { marginTop: 4 }}>
+      {meta}
+    </Txt>
+  );
   return (
-    <View style={{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 }}>
-      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 10 }}>
+    <View style={[{ paddingHorizontal: 10, paddingTop: 10, paddingBottom: 12 }, style]}>
+      <View style={{ flexDirection: "row", alignItems: oneLine ? "baseline" : "center", flexWrap: oneLine ? "nowrap" : "wrap", columnGap: 10 }}>
         <Txt variant="h1" style={{ flexShrink: 1 }}>
           {title}
         </Txt>
+        {oneLine ? (
+          <View style={{ flexDirection: "row", flexWrap: "wrap", alignItems: "baseline", flexGrow: 1, flexShrink: 1 }}>
+            {metaLine}
+            {inline?.(true)}
+          </View>
+        ) : beside ? metaLine : null}
         {right}
       </View>
-      {meta ? (
-        <Txt variant="meta" tone="ink3" tabular style={{ marginTop: 4 }}>
-          {meta}
-        </Txt>
-      ) : null}
+      {beside ? null : metaLine}
+      {oneLine ? null : inline?.(false)}
+      {children}
     </View>
   );
 }

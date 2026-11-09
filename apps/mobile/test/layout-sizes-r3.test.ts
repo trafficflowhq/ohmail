@@ -54,13 +54,10 @@ describe("R5-06: the list heads wrap Mark all read instead of running it off the
     expect(m).toMatch(/marginLeft: "auto",\s*flexShrink: 1,\s*maxWidth: "100%"/);
   });
 
-  for (const route of ["app/(tabs)/index.tsx", "app/(tabs)/reads.tsx"]) {
-    it(`${route}: the head is the wrapping row, with no spacer that would hold the control on the title's line`, () => {
-      const s = code(route);
-      const head = s.slice(s.indexOf("<View style={VIEW_HEAD_ROW}>"));
-      expect(head.length, "the head renders the shared row").toBeLessThan(s.length);
-      const row = head.slice(0, head.indexOf("<MarkAllRead"));
-      expect(row).not.toContain("flex: 1");
+  /* The head's row is `ViewHead`'s (wrapping on a tall window, rendered in list-head-one-line-at-compact-height). */
+  for (const route of ["app/(tabs)/index.tsx", "app/(tabs)/reads.tsx", "app/(tabs)/receipts.tsx"]) {
+    it(`${route}: the head is ViewHead, Mark all read its trailing control`, () => {
+      expect(code(route)).toMatch(/<ViewHead\s[\s\S]*?right=\{\s*<MarkAllRead/);
     });
   }
 });

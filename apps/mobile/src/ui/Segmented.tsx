@@ -48,7 +48,7 @@ export function Segmented<T extends string>({
   };
   const labelW = (i: number) => sizes[`l${i}`] ?? 0;
   const countW = (i: number) => (segments[i]!.count === undefined ? 0 : (sizes[`c${i}`] ?? 0) + 5);
-  const paint = segmentPaint(t.scheme);
+  const paint = segmentPaint(t.scheme, t.ringed);
   const face = fill ? segmentFace(width, segments.map((_, i) => labelW(i) + countW(i))) : "equal";
   const stacked = face === "stacked";
   return (

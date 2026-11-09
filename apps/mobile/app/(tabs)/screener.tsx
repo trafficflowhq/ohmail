@@ -18,7 +18,7 @@ import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { relayMarkFor, type RelayMark } from "../../src/state/relay";
 import { useEngineQueuesAsk, useWorld, type ScreenerRow, type WorldScreener } from "../../src/state/world";
-import { Badge, Button, Empty, Panel, Screen, Tail, TapRow, Txt } from "../../src/ui/base";
+import { Badge, Button, Empty, Panel, Screen, Tail, TapRow, Txt, ViewHead } from "../../src/ui/base";
 import { Icon } from "../../src/ui/Icon";
 import { TopBar } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
@@ -160,12 +160,7 @@ function ScreenerBody() {
         refresh={pull}
         head={
           <>
-            <View style={{ paddingHorizontal: 10, paddingTop: 8, paddingBottom: 14 }}>
-              <Txt variant="h1">{Copy.screener}</Txt>
-              <Txt variant="meta" tone="ink3" style={{ marginTop: 4 }}>
-                {metaWhen(surface, meta) ?? " "}
-              </Txt>
-            </View>
+            <ViewHead style={{ paddingTop: 8, paddingBottom: 14 }} title={Copy.screener} meta={metaWhen(surface, meta) ?? " "} />
 
             <Segmented
               style={{ marginHorizontal: 10, marginBottom: 14 }}

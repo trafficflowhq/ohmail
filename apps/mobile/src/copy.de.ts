@@ -703,7 +703,7 @@ export const DE: Deck = {
   receiptsEmptyTitle: "Noch keine Belege.",
   receiptsEmptyHint: "Bestellungen, Rechnungen und Tickets, die du hier ablegst, kommen an, sobald sie synchronisiert werden.",
   today: "heute",
-  streamSeenHint: "ein Beitrag gilt als gelesen, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen",
+  streamSeenHint: "Ein Beitrag gilt als gelesen, sobald er auf dem Bildschirm stehen bleibt; schnelles Vorbeiscrollen lässt ihn ungelesen.",
 
   /* ------------------------------------------------------------- protected */
 
