@@ -16,7 +16,7 @@ import { usePullToSync } from "../src/state/pull";
 import { useStoreHistory } from "../src/state/store-views";
 import { useWorld } from "../src/state/world";
 import { Empty, Screen, Tail, Tap, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { ListDetail, useListDetail } from "../src/ui/list-detail";
 import { MailList } from "../src/ui/MailList";
 import { MessageReader } from "../src/ui/MessageReader";
@@ -31,24 +31,25 @@ import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
 import { useTheme } from "../src/theme";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
-export default function HistoryScreen() {
+export default function HistoryScreen({ inPane = false }: { inPane?: boolean }) {
   useLocale();
   return (
     <SurfaceBoundary surface="history">
       <Gated>
-        <HistoryBody />
+        <HistoryBody inPane={inPane} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function HistoryBody() {
+function HistoryBody({ inPane }: { inPane: boolean }) {
   const t = useTheme();
   const w = useWorld();
   const network = useNetworkNow();
   const pull = usePullToSync();
   const h = useStoreHistory();
-  const { open, openRow, close } = useListDetail((id) => `/message/${id}`);
+  /* In More's pane a row opens History's own pair. */
+  const { open, openRow, close } = useListDetail((id) => `/message/${id}`, inPane ? (id) => `/history?open=${encodeURIComponent(id)}` : undefined);
   const [more, setMore] = useState(false);
   /* The year rail stands over the list's right edge: the list keeps its measured width clear, so
      the head's words and every row's date end before it (`history-rail.ts`). */
@@ -117,7 +118,7 @@ function HistoryBody() {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back (one title). */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <View style={{ flex: 1 }}>
         <View style={{ flex: 1, paddingRight: historyListGutter(rail ? railWidth : null) }}>
         <MailList
@@ -214,6 +215,7 @@ function HistoryBody() {
     </Screen>
   );
 
+  if (inPane) return list;
   return (
     <ListDetail
       open={open}

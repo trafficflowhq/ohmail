@@ -24,24 +24,28 @@ import {
   type AwayRefusal, type AwayRow,
 } from "../src/ui/away-form";
 import { Button, Panel, Rule, Screen, Scroller, Section, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { Field } from "../src/ui/Field";
 import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { SurfaceBoundary } from "../src/ui/ErrorBoundary";
+import { YieldToMore } from "../src/ui/more-move";
+import { useUnsavedHold } from "../src/ui/more-pane";
 
 /** How far ahead the end-date rows reach — a quarter, the resurface chooser's own horizon. */
 const END_DATE_DAYS = 90;
 
-export default function AwayScreen() {
+export default function AwayScreen({ inPane = false }: { inPane?: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="away">
       <Gated>
-        <AwayBody />
+        <YieldToMore paneKey={inPane ? null : "away"}>
+          <AwayBody inPane={inPane} />
+        </YieldToMore>
       </Gated>
     </SurfaceBoundary>
   );
@@ -50,7 +54,7 @@ export default function AwayScreen() {
 /** What the last save answered. Held as a KIND; the sentence is chosen at render. */
 type Said = null | "saved" | "asked" | "failed" | "unreachable" | "changed";
 
-function AwayBody() {
+function AwayBody({ inPane }: { inPane: boolean }) {
   const locale = useLocale();
   const conn = useConnection();
   const w = useWorld();
@@ -70,6 +74,8 @@ function AwayBody() {
   const navigation = useNavigation();
   /** A leave the stack held for an unsaved change: Discard dispatches it, Keep editing drops it. */
   const [leaving, setLeaving] = useState<null | { action: Parameters<typeof navigation.dispatch>[0] }>(null);
+  /** The same for a pick of another destination in More's pane, which is no stack leave. */
+  const [paneLeave, setPaneLeave] = useState<null | { go: () => void }>(null);
 
   /** Take a server row as the truth on screen — the values shown are always the stored ones. */
   const adopt = useCallback((row: AwayRow) => {
@@ -106,11 +112,19 @@ function AwayBody() {
      stack asks before this screen goes — Back, the swipe and the rail alike. */
   const unsaved = awayUnsaved(read, { enabled, body, endsAt });
   usePreventRemove(unsaved && !saving, ({ data }) => setLeaving({ action: data.action }));
+  useUnsavedHold(unsaved && !saving, (go) => setPaneLeave({ go }));
+  const keepEditing = () => {
+    setLeaving(null);
+    setPaneLeave(null);
+  };
   const discardAndLeave = () => {
     const held = leaving;
+    const pick = paneLeave;
     setLeaving(null);
+    setPaneLeave(null);
     if (read !== null) adopt(read);
     if (held !== null) navigation.dispatch(held.action);
+    pick?.go();
   };
 
   const save = async () => {
@@ -142,7 +156,7 @@ function AwayBody() {
   return (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <Scroller bounded avoidKeyboard>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.awayTitle}</Txt>
@@ -283,12 +297,12 @@ function AwayBody() {
       </Scroller>
 
       {/* LEAVING WITH AN UNSAVED CHANGE ASKS. Closing the sheet is Keep editing. */}
-      <Sheet open={leaving !== null} onClose={() => setLeaving(null)} label={Copy.awayLeaveAsk} cancel="own">
+      <Sheet open={leaving !== null || paneLeave !== null} onClose={keepEditing} label={Copy.awayLeaveAsk} cancel="own">
         <Txt variant="note" tone="ink" style={{ paddingHorizontal: 14, paddingBottom: 6 }}>
           {read !== null ? awayUnsavedLine(read) : Copy.awayLeaveAsk}
         </Txt>
         <SheetRow label={Copy.awayLeaveDiscard} onPress={discardAndLeave} />
-        <SheetRow label={Copy.awayLeaveKeep} onPress={() => setLeaving(null)} />
+        <SheetRow label={Copy.awayLeaveKeep} onPress={keepEditing} />
       </Sheet>
 
       <Sheet open={picking} onClose={() => setPicking(false)} label={Copy.awayUntilLabel}>

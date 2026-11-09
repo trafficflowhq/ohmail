@@ -276,7 +276,7 @@ describe("the History place is reachable, and gated like every other mail route"
        without the tabs layout ever focusing. Ungated it would paint the empty world's "Nothing
        has settled here yet" at an unpaired phone, with no way out. `app/triage.tsx`'s rule. */
     expect(route).toContain('import { Gated } from "../src/ui/Gated";');
-    expect(route).toMatch(/<Gated>\s*<HistoryBody \/>\s*<\/Gated>/);
+    expect(route).toMatch(/<Gated>\s*<HistoryBody inPane=\{inPane\} \/>\s*<\/Gated>/);
   });
 
   it("renders the browser's explainer above the list, and the rest behind the disclosure", () => {

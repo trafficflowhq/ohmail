@@ -16,7 +16,7 @@ import { usePullToSync } from "../../src/state/pull";
 import { listSurface, metaWhen } from "../../src/state/surface";
 import { useWorld } from "../../src/state/world";
 import { Empty, Screen, Scroller, Tail, Txt } from "../../src/ui/base";
-import { DetailBar } from "../../src/ui/chrome";
+import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { ListDetail, useListDetail } from "../../src/ui/list-detail";
 import { MailList } from "../../src/ui/MailList";
 import { MessageReader } from "../../src/ui/MessageReader";
@@ -27,26 +27,35 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs: a restored route must land on the connect flow, not an empty list. */
-export default function FolderScreen() {
+export default function FolderScreen({ inPane = false, id }: {
+  inPane?: boolean;
+  /** In More's pane, the folder its row named (the route reads its own param). */
+  id?: string;
+}) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="folder">
       <Gated>
-        <FolderBody />
+        <FolderBody inPane={inPane} paneId={id} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function FolderBody() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+function FolderBody({ inPane, paneId }: { inPane: boolean; paneId?: string }) {
+  const param = useLocalSearchParams<{ id: string }>().id;
+  const id = inPane ? paneId : param;
   const w = useWorld();
   const pull = usePullToSync();
   /* Two panes: a row SELECTS and the reader opens beside the list; one pane: it pushes, as
      ever. The selection is the route's `open` param — `src/ui/list-detail.tsx` is the rule. */
-  const { open, openRow, close } = useListDetail((mid) => `/message/${mid}`);
+  /* In More's pane a row opens this folder's own pair. */
+  const { open, openRow, close } = useListDetail(
+    (mid) => `/message/${mid}`,
+    inPane ? (mid) => `/folder/${encodeURIComponent(id ?? "")}?open=${encodeURIComponent(mid)}` : undefined,
+  );
   const folder = w.folders.byId(id ?? "");
 
   // The flag went off, the entity left the mirror, or the URL names a folder this account
@@ -54,7 +63,7 @@ function FolderBody() {
   if (!folder) {
     return (
       <Screen>
-        <DetailBar />
+        {inPane ? <PaneTop /> : <DetailBar />}
         <Scroller>
           <Txt variant="note" tone="ink3" style={{ padding: 20 }}>
             {Copy.folderGone}
@@ -74,7 +83,7 @@ function FolderBody() {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <MailList
         groups={[
           { key: "fresh", title: Copy.groupNew, rows: fresh },
@@ -118,6 +127,7 @@ function FolderBody() {
     </Screen>
   );
 
+  if (inPane) return list;
   return (
     <ListDetail
       open={open}

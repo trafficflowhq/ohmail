@@ -12,6 +12,7 @@ import { Copy } from "../copy";
 import { useWorld } from "../state/world";
 import { useTheme } from "../theme";
 import { Button, Panel, Rule, Section, Txt } from "./base";
+import { useUnsavedHold } from "./more-pane";
 import { signatureRows, type SignatureRow } from "./signature-rows";
 
 /** The sentence for a change sent to the organizing install, or null. */
@@ -34,6 +35,8 @@ export function SignaturesPanel() {
   const [pending, setPending] = useState<string | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [leaving, setLeaving] = useState<null | { action: Parameters<typeof navigation.dispatch>[0] }>(null);
+  /** The same for a pick of another destination in More's pane, which is no stack leave. */
+  const [paneLeave, setPaneLeave] = useState<null | { go: () => void }>(null);
   const rows = w.signatures === null || !w.mailboxes.known ? [] : signatureRows({
     mailboxes: w.mailboxes.all, signatures: w.signatures, signaturesHtml: w.signing.html,
     sources: w.signing.sources, changes: w.signing.changes,
@@ -41,6 +44,7 @@ export function SignaturesPanel() {
   const dirtyOf = (row: SignatureRow): boolean => drafts[row.id] !== undefined && drafts[row.id] !== row.text;
   const anyDirty = rows.some((r) => !r.readOnly && dirtyOf(r));
   usePreventRemove(anyDirty && pending === null, ({ data }) => setLeaving({ action: data.action }));
+  useUnsavedHold(anyDirty && pending === null, (go) => setPaneLeave({ go }));
   const write = w.signing.write;
   if (rows.length === 0 || write === null) return null;
 
@@ -98,16 +102,16 @@ export function SignaturesPanel() {
                   {travelled}
                 </Txt>
               ) : null}
-              {leaving !== null && dirty ? (
+              {(leaving !== null || paneLeave !== null) && dirty ? (
                 <View style={{ gap: 6 }} accessibilityRole="alert">
                   <Txt variant="caption" tone="ink2">{Copy.sigSettingsLeaveAsk}</Txt>
                   <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
                     <Button
                       label={Copy.sigSettingsRevert}
                       variant="solid"
-                      onPress={() => { const held = leaving; setDrafts({}); setLeaving(null); if (held !== null) navigation.dispatch(held.action); }}
+                      onPress={() => { const held = leaving; const pick = paneLeave; setDrafts({}); setLeaving(null); setPaneLeave(null); if (held !== null) navigation.dispatch(held.action); pick?.go(); }}
                     />
-                    <Button label={Copy.sigSettingsLeaveKeep} variant="quiet" onPress={() => setLeaving(null)} />
+                    <Button label={Copy.sigSettingsLeaveKeep} variant="quiet" onPress={() => { setLeaving(null); setPaneLeave(null); }} />
                   </View>
                 </View>
               ) : dirty ? (

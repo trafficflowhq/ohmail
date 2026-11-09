@@ -15,7 +15,8 @@ import { useTheme } from "../src/theme";
 import { useWorld } from "../src/state/world";
 import { pileParam, pileTitle } from "../src/state/model";
 import { Badge, Panel, Screen, Scroller, TapRow, Txt } from "../src/ui/base";
-import { DetailBar } from "../src/ui/chrome";
+import { DetailBar, PaneTop } from "../src/ui/chrome";
+import { YieldToMore } from "../src/ui/more-move";
 import { Gated } from "../src/ui/Gated";
 import { Icon, type IconName } from "../src/ui/Icon";
 import { SkeletonList } from "../src/ui/Skeleton";
@@ -29,20 +30,24 @@ const PILE_ICON: Record<string, IconName> = {
 };
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
-export default function TriageScreen() {
+export default function TriageScreen({ inPane = false, pile }: {
+  inPane?: boolean;
+  /** In More's pane, the pile its row named (the route reads its own param). */
+  pile?: string;
+}) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="triage">
       <Gated>
-        <TriageBody />
+        <TriageBody inPane={inPane} pile={pile} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function TriageBody() {
+function TriageBody({ inPane, pile }: { inPane: boolean; pile?: string }) {
   const t = useTheme();
   const w = useWorld();
   const pull = usePullToSync();
@@ -51,13 +56,15 @@ function TriageBody() {
   // and meta stay silent for the same reason (a "0" over a skeleton is an invented count).
   const settled = w.boot.settled;
   /* More's pile entries name their pile: that pile alone, under its own title. */
-  const only = pileParam(useLocalSearchParams<{ pile?: string }>().pile);
+  const param = useLocalSearchParams<{ pile?: string }>().pile;
+  const only = pileParam(inPane ? pile : param);
   const piles = only === null ? w.piles : w.piles.filter((p) => p.kind === only);
 
   return (
+    <YieldToMore paneKey={inPane ? null : only === null ? "triage" : `triage:${only}`}>
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{only === null ? Copy.triage : pileTitle(only)}</Txt>
@@ -172,5 +179,6 @@ function TriageBody() {
         ))}
       </Scroller>
     </Screen>
+    </YieldToMore>
   );
 }

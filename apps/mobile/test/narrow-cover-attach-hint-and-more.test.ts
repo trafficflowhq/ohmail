@@ -44,6 +44,6 @@ describe("More's folded destinations", () => {
     expect(panels.length, "More draws a second card").toBe(1);
     const card = more.slice(panels[0]!.index!, more.indexOf("</Panel>"));
     expect(card.indexOf("{folded.map(")).toBeGreaterThan(-1);
-    expect(card.indexOf("{folded.map(")).toBeLessThan(card.indexOf("<MoreNav />"));
+    expect(card.indexOf("{folded.map(")).toBeLessThan(card.indexOf("<MoreNav "));
   });
 });

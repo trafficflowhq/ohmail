@@ -12,7 +12,7 @@ import { usePullToSync } from "../../src/state/pull";
 import { listSurface } from "../../src/state/surface";
 import { useWorld, type WorldDraft } from "../../src/state/world";
 import { Empty, Panel, Rule, Screen, Scroller, TapRow, Tail, Txt } from "../../src/ui/base";
-import { DetailBar } from "../../src/ui/chrome";
+import { DetailBar, PaneTop } from "../../src/ui/chrome";
 import { DraftReader } from "../../src/ui/DraftReader";
 import { heldSentence } from "../../src/ui/draft-card";
 import { Gated } from "../../src/ui/Gated";
@@ -22,23 +22,24 @@ import { useLocale } from "../../src/i18n/LocaleProvider";
 import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 
 /** Gated like the tabs — a deep-linked route must not render the empty world. */
-export default function DraftsScreen() {
+export default function DraftsScreen({ inPane = false }: { inPane?: boolean }) {
   /* Subscribed to the language, so a switch in Settings redraws this screen instead of
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   return (
     <SurfaceBoundary surface="drafts">
       <Gated>
-        <DraftsBody />
+        <DraftsBody inPane={inPane} />
       </Gated>
     </SurfaceBoundary>
   );
 }
 
-function DraftsBody() {
+function DraftsBody({ inPane }: { inPane: boolean }) {
   const w = useWorld();
   const pull = usePullToSync();
-  const { open, openRow, close } = useListDetail((id) => `/drafts/${id}`);
+  /* In More's pane a row opens the Drafts pair. */
+  const { open, openRow, close } = useListDetail((id) => `/drafts/${id}`, inPane ? (id) => `/drafts?open=${encodeURIComponent(id)}` : undefined);
   const rows = w.drafts;
   /* Unknown ≠ empty (`state/surface.ts`): before this mirror has settled a drain, no rows means
      NOT KNOWN, and "Nothing half-written" would be a claim about the account made from an empty
@@ -48,7 +49,7 @@ function DraftsBody() {
   const list = (
     <Screen>
       {/* The page carries its own heading, so the bar carries only the way back. */}
-      <DetailBar />
+      {inPane ? <PaneTop /> : <DetailBar />}
       <Scroller bounded refresh={pull}>
         <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 16 }}>
           <Txt variant="h1">{Copy.draftsTitle}</Txt>
@@ -86,6 +87,7 @@ function DraftsBody() {
     </Screen>
   );
 
+  if (inPane) return list;
   return (
     <ListDetail
       open={open}

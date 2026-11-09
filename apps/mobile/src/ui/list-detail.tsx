@@ -39,7 +39,7 @@ const FOOT_FADE = 12;
  * The screen half of the pair: the `open` param as selection, and one press verb that
  * SELECTS beside a second pane and PUSHES without one — the same row, both postures.
  */
-export function useListDetail(toRoute: (id: string) => string): {
+export function useListDetail(toRoute: (id: string) => string, nested?: (id: string) => string): {
   open: string | null;
   openRow: (id: string) => void;
   close: () => void;
@@ -48,14 +48,17 @@ export function useListDetail(toRoute: (id: string) => string): {
   const posture = usePosture();
   const plan = scaffoldPlan(posture, platformName);
   const params = useLocalSearchParams<{ open?: string }>();
-  const open = typeof params.open === "string" && params.open !== "" ? params.open : null;
+  /* NESTED in More's pane: the params are More's, so this list holds no selection and a row opens
+     this screen's own pair (`nested`). */
+  const open = nested === undefined && typeof params.open === "string" && params.open !== "" ? params.open : null;
   const navigation = useNavigation<{ setParams(p: { open: string }): void }>();
   return {
     open,
     openRow: (id: string) => {
       beginMark("open", id); // ended by the reader's commit effect (MessageReader)
       endIdleVisit(id); // a press is a fresh open; only a posture remount resumes a visit
-      if (plan.panes === 2) router.setParams({ open: id });
+      if (nested !== undefined) router.push(nested(id));
+      else if (plan.panes === 2) router.setParams({ open: id });
       else router.push(toRoute(id));
     },
     /* This screen's own route: `router.setParams` writes the screen in front, so a delete committing in the
