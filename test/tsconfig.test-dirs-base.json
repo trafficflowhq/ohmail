@@ -76,6 +76,7 @@
       "@trafficflow/worker/known-set": ["../apps/worker/src/known-set.ts"],
       "@trafficflow/worker/dead-letter": ["../apps/worker/src/dead-letter.ts"],
       "@trafficflow/worker/screener-auto-act": ["../apps/worker/src/screener-auto-act.ts"],
+      "@trafficflow/worker/screener-impersonation": ["../apps/worker/src/screener-impersonation.ts"],
       "@trafficflow/worker/screener-correspondent-retro": ["../apps/worker/src/screener-correspondent-retro.ts"],
       "@trafficflow/worker/thread-join-heal": ["../apps/worker/src/thread-join-heal.ts"],
       "@trafficflow/worker/inbound-quiet": ["../apps/worker/src/inbound-quiet.ts"],

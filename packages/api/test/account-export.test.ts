@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { contacts, rules, tags, mailboxes, awayResponders } from "@trafficflow/db";
+import { accountSettings, contacts, rules, tags, mailboxes, awayResponders } from "@trafficflow/db";
 import type { AccessVerdict, EntitlementsPort } from "@trafficflow/db";
 import { serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { makeDeps, seedSession, req, FIXED_NOW } from "./helpers.js";
@@ -79,6 +79,15 @@ describe("GET /account/export", () => {
     expect(body.settings.screeningScope).toBeDefined();
     // Under every bound nothing is left out, and the export says so beside the document.
     expect(body.mailboxes[0].leftOut).toEqual({ screener: 0, rules: 0, notifyRules: 0, tagNames: 0 });
+  });
+
+  it("carries the impersonation filing as a choice: on by default, off once turned off", async () => {
+    const { db, deps, s } = await seeded();
+    const read = async () => (await (await H(req("GET", "/account/export", { bearer: s.token }), deps)).json()).settings;
+    expect((await read()).impersonationFiling).toBe(true);
+    await db.insert(accountSettings).values({ accountId: s.accountId, impersonationFilingOffAt: FIXED_NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { impersonationFilingOffAt: FIXED_NOW } });
+    expect((await read()).impersonationFiling).toBe(false);
   });
 
   it("NO key of the document matches a credential shape", async () => {

@@ -1,5 +1,7 @@
-import { and, desc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
-import { accountSettings, auditLog, contacts, folderState, messages, rules as rulesTbl } from "./schema-mail.js";
+import { and, desc, eq, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import {
+  accountSettings, auditLog, contacts, folderState, messageInstances, messages, rules as rulesTbl,
+} from "./schema-mail.js";
 import { recordChanges, type ChangeInput, type LedgerTx, type Tx } from "./change-log.js";
 import { lockAccountMailboxes } from "./mailbox-row-order.js";
 import { upgradeContactsToPerson } from "./contact-source.js";
@@ -359,7 +361,7 @@ export async function rerouteUnconfirmedHeld(
   tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date; only?: string },
 ): Promise<UnconfirmedRerouteResult> {
   const unconfirmed = unconfirmedSql(sql`${messages.authVerdict}`);
-  return fileWithoutRule(tx, input, "rerouteUnconfirmedHeld",
+  return actFiling(tx, input, "rerouteUnconfirmedHeld",
     input.only === undefined ? unconfirmed : and(unconfirmed, eq(messages.id, input.only))!);
 }
 
@@ -374,42 +376,144 @@ export async function rerouteUnconfirmedHeld(
 export async function rerouteAdvisedLetter(
   tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date; messageId: string },
 ): Promise<UnconfirmedRerouteResult> {
-  return fileWithoutRule(tx, input, "rerouteAdvisedLetter",
+  return actFiling(tx, input, "rerouteAdvisedLetter",
     and(eq(messages.id, input.messageId), automaticAiAdmits(messages))!);
 }
 
+/** The act's two doors: a bare sender rule decides the address, and no automatic path reads a `no_ai` letter. */
+async function actFiling(
+  tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date }, name: string, within: SQL,
+): Promise<UnconfirmedRerouteResult> {
+  const filed = await fileWithoutRule(tx, input, {
+    name, within, admits: automaticAiAdmits(messages),
+    decided: async (address) => (await findRulesByKey(tx, input.accountId, {
+      kind: "sender", match: ruleMatchKey(address), subjectContains: null, bodyContains: null,
+    })).length > 0,
+  });
+  return filed === "decided" ? { skipped: "ruled", rerouted: [], heldElsewhere: [], lastSeq: null } : filed;
+}
+
+/** One door that files held letters with no rule: its bag, what it may read, and who it leaves alone. */
+interface WithoutRuleDoor {
+  name: string;
+  /** The caller's bag over `messages` and `folder_state`. */
+  within: SQL;
+  /** What this automatic path may read: a code or a reset stays where the person sees it. */
+  admits: SQL;
+  /** The address is not this door's; asked under the rule-key lock, before anything is read. */
+  decided: (address: string) => Promise<boolean>;
+  /** Said on each audit row beside the move, so a surface can tell this door's filings apart. */
+  why?: "impersonation";
+}
+
 /**
- * The two doors' one body: the erased account, the rule-key lock before the bag's mailbox locks, a
- * ruled key skipped, the sender's held letters `within` admits (none put back, none an automatic path
- * may not read: a code or a reset stays where the person sees it) filed, and an automatic filing's
- * audit row with its inverse per letter. Deny destinations only.
+ * The doors' one body: the erased account, the rule-key lock before the bag's mailbox locks, a
+ * decided address skipped, the sender's held letters the door admits (none put back) filed, and an
+ * automatic filing's audit row with its inverse per letter. Deny destinations only.
  */
 async function fileWithoutRule(
-  tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date }, door: string, within: SQL,
-): Promise<UnconfirmedRerouteResult> {
+  tx: Tx, input: { accountId: string; address: string; appliedFolder: string; now: Date }, door: WithoutRuleDoor,
+): Promise<Omit<UnconfirmedRerouteResult, "skipped"> | "decided"> {
   const { accountId, appliedFolder, now } = input;
   if (!DECIDABLE_FOLDERS.has(appliedFolder) || admitsDestination(appliedFolder)) {
-    throw new Error(`${door} files only to a deny destination, not ${appliedFolder}`);
+    throw new Error(`${door.name} files only to a deny destination, not ${appliedFolder}`);
   }
   const address = input.address.toLowerCase();
   if (await readAccountErasedAt(tx, dialect(tx), accountId) != null) throw new AccountErasedError(accountId);
   await lockAccountRuleKeys(tx, accountId);
-  const ruled = await findRulesByKey(tx, accountId, {
-    kind: "sender", match: ruleMatchKey(address), subjectContains: null, bodyContains: null,
-  });
-  if (ruled.length > 0) return { skipped: "ruled", rerouted: [], heldElsewhere: [], lastSeq: null };
+  if (await door.decided(address)) return "decided";
   const held = await heldRowsForSender(tx, accountId, address, undefined, {
-    skipPutBack: true, within: and(within, automaticAiAdmits(messages))!,
+    skipPutBack: true, within: and(door.within, door.admits)!,
   });
   const { rerouted, heldElsewhere, lastSeq } = await rerouteHeldBag(tx, accountId, held, appliedFolder, now);
+  const why = door.why === undefined ? {} : { why: door.why };
   for (let i = 0; i < rerouted.length; i += DECISION_BATCH_MAX) {
     await tx.insert(auditLog).values(rerouted.slice(i, i + DECISION_BATCH_MAX).map((m) => ({
       accountId, action: auditAction("screener_auto_apply_move"),
-      payload: { mailboxId: m.mailboxId, messageId: m.messageId, from: SCREENER_FOLDER, to: appliedFolder },
+      payload: { mailboxId: m.mailboxId, messageId: m.messageId, from: SCREENER_FOLDER, to: appliedFolder, ...why },
       inverse: { messageId: m.messageId, from: appliedFolder, to: SCREENER_FOLDER },
     })));
   }
   return { rerouted, heldElsewhere, lastSeq };
+}
+
+/** Where the organizer's pass files a held letter that impersonates a company: Spam, never Screened. */
+export const IMPERSONATION_FILING_FOLDER = "ohmail/Quarantine";
+/** The most letters one call names: one statement's parameters stay well inside either store's bound. */
+export const IMPERSONATION_FILING_IDS_MAX = 500;
+
+/** What {@link fileImpersonationLetters} did. `tied`: the address has a rule, a contact or a put-back letter. */
+export interface ImpersonationFilingResult extends Omit<UnconfirmedRerouteResult, "skipped"> {
+  skipped?: "tied";
+}
+
+/**
+ * The senders among `senders` (lower-cased) with a letter back at the gate that the impersonation pass
+ * filed before: put back, moved to the Screener by hand, or returned by a reader's request. Such a
+ * letter is never filed again, and its sender is the person's to decide.
+ */
+export async function impersonationReturnedSenders(
+  tx: Tx, accountId: string, senders: readonly string[],
+): Promise<Set<string>> {
+  if (senders.length === 0) return new Set();
+  const named = sql`${auditLog.payload}->>'messageId'`;
+  const rows = await tx.selectDistinct({ address: sql<string>`lower(${messages.fromAddress})` }).from(auditLog)
+    .innerJoin(messages, and(eq(messages.id, dialect(tx).castUuid(named)), eq(messages.accountId, auditLog.accountId)))
+    .innerJoin(folderState, eq(folderState.messageId, messages.id))
+    .where(and(
+      eq(auditLog.accountId, accountId), eq(auditLog.action, auditAction("screener_auto_apply_move")),
+      sql`${auditLog.payload}->>'why' = 'impersonation'`, eq(folderState.desiredFolder, SCREENER_FOLDER),
+      inArray(sql`lower(${messages.fromAddress})`, [...senders]),
+    ));
+  return new Set(rows.map((r) => r.address));
+}
+
+/**
+ * THE ORGANIZER'S PASS FILES A HELD LETTER THAT IMPERSONATES A COMPANY (mail 0184's switch): only the
+ * named letters, each still held, still carrying the claim, with no code in it, a copy still on the
+ * server and none put back, to Spam. No rule, contact, learning signal or routing decision: a claim is
+ * a fact about the letter, and the address's later mail is the person's. The `no_ai` flag is not read:
+ * the decision was made without a model. Under the rule-key lock, an address with any rule on it or
+ * its domain, any contact, any letter the person put back, or a filing of this pass back at the gate
+ * is skipped whole, so the pass files a letter once. Each filing's audit row says
+ * `why: "impersonation"` and holds no mail content; Put back reads its inverse.
+ */
+export async function fileImpersonationLetters(
+  tx: Tx, input: { accountId: string; address: string; messageIds: readonly string[]; now: Date },
+): Promise<ImpersonationFilingResult> {
+  if (input.messageIds.length === 0) return { rerouted: [], heldElsewhere: [], lastSeq: null };
+  if (input.messageIds.length > IMPERSONATION_FILING_IDS_MAX) {
+    throw new Error(`fileImpersonationLetters names at most ${IMPERSONATION_FILING_IDS_MAX} letters`);
+  }
+  const { accountId } = input;
+  const filed = await fileWithoutRule(tx, { ...input, appliedFolder: IMPERSONATION_FILING_FOLDER }, {
+    name: "fileImpersonationLetters",
+    within: and(
+      inArray(messages.id, [...input.messageIds]),
+      eq(messages.senderCheck, "impersonation"),
+      sql`${messages.unconfirmedHold} is not true`,
+      sql`exists (select 1 from ${messageInstances} ci where ci.message_id = ${messages.id})`,
+    )!,
+    admits: isNull(messages.sensitivityCategory),
+    why: "impersonation",
+    decided: async (address) => {
+      const named = sql`${ruleMatchKeySql(rulesTbl.match)}`;
+      const [rule] = await tx.select({ id: rulesTbl.id }).from(rulesTbl).where(and(
+        eq(rulesTbl.accountId, accountId),
+        sql`((${rulesTbl.kind} = 'sender' and ${named} = ${address}) or (${rulesTbl.kind} = 'domain' and ${named} = ${domainOf(address)}))`,
+      )).limit(1);
+      if (rule !== undefined) return true;
+      const [contact] = await tx.select({ id: contacts.id }).from(contacts)
+        .where(and(eq(contacts.accountId, accountId), sql`lower(${contacts.address}) = ${address}`)).limit(1);
+      if (contact !== undefined) return true;
+      const [putBack] = await tx.select({ id: messages.id }).from(messages)
+        .innerJoin(folderState, eq(folderState.messageId, messages.id))
+        .where(and(eq(messages.accountId, accountId), senderIs(address), isNotNull(folderState.autoFilingUndoneAt)))
+        .limit(1);
+      return putBack !== undefined || (await impersonationReturnedSenders(tx, accountId, [address])).size > 0;
+    },
+  });
+  return filed === "decided" ? { skipped: "tied", rerouted: [], heldElsewhere: [], lastSeq: null } : filed;
 }
 
 /** One held message by id, scoped to the account. `null` when it is not currently held. */

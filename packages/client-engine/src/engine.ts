@@ -15,6 +15,7 @@ import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCal
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
   StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
+  AutoFiledUndoWire, AutoFiledWire,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -6776,6 +6777,27 @@ export class OhmailEngine {
    * asked when the sender sheet shows a finished rule with mail left elsewhere. Not mirrored. A door
    * that cannot answer, or fails, answers nothing: the sheet then names no reason, never a wrong one.
    */
+  /**
+   * WHAT OHMAIL FILED OUT OF THE SCREENER ON ITS OWN, still where it put it — asked, never mirrored.
+   * A door that cannot answer, or fails, answers `null`: the surface then says nothing.
+   */
+  async autoFiled(): Promise<AutoFiledWire | null> {
+    const ask = this.adapter.autoFiled;
+    if (!ask) return null;
+    try {
+      return await ask.call(this.adapter);
+    } catch {
+      return null;
+    }
+  }
+
+  /** PUT BACK: the named filings go back to the Screener for good. A refusal throws, for the surface to say. */
+  async putBackAutoFiled(ids: readonly string[]): Promise<AutoFiledUndoWire> {
+    const press = this.adapter.undoAutoFiled;
+    if (!press || ids.length === 0) return { putBack: [], requested: [] };
+    return press.call(this.adapter, ids);
+  }
+
   async whyStayed(ids: readonly string[]): Promise<Map<string, StayedWhy>> {
     const ask = this.adapter.whyStayed;
     if (!ask || ids.length === 0) return new Map();

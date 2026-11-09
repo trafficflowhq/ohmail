@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { accountSettings } from "@trafficflow/db";
+import { accountSettings, type Tx } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import {
   getScreeningPreference, setScreeningPreference, requestOhboxTidy, resolveOhboxPolicy,
@@ -57,7 +57,7 @@ describe("screening-preference reader/writer", () => {
 
   it("an account with no row reads as both-NULL and auto-apply OFF — never an error", async () => {
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, ...NO_ROW_CUTLINE,
+      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, impersonationFiling: true, ...NO_ROW_CUTLINE,
     });
   });
 
@@ -74,7 +74,7 @@ describe("screening-preference reader/writer", () => {
     const after = await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
     expect(after.ohboxPolicy).toBe("people_only");
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: "people_only", ohboxBar: null, screenerAutoApply: false, ...UNSET_CUTLINE,
+      ohboxPolicy: "people_only", ohboxBar: null, screenerAutoApply: false, impersonationFiling: true, ...UNSET_CUTLINE,
     });
     expect(resolveOhboxPolicy((await getScreeningPreference(ctx)).ohboxPolicy)).toBe("people_only");
   });
@@ -83,7 +83,7 @@ describe("screening-preference reader/writer", () => {
     await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
     await setScreeningPreference(ctx, { ohboxBar: "keep it relevant" });
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: "people_only", ohboxBar: "keep it relevant", screenerAutoApply: false,
+      ohboxPolicy: "people_only", ohboxBar: "keep it relevant", screenerAutoApply: false, impersonationFiling: true,
       ...UNSET_CUTLINE,
     });
   });
@@ -92,7 +92,7 @@ describe("screening-preference reader/writer", () => {
     await setScreeningPreference(ctx, { ohboxPolicy: "people_only", ohboxBar: "custom" });
     await setScreeningPreference(ctx, { ohboxPolicy: null, ohboxBar: null });
     expect(await getScreeningPreference(ctx)).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, ...UNSET_CUTLINE,
+      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, impersonationFiling: true, ...UNSET_CUTLINE,
     });
   });
 
@@ -110,7 +110,7 @@ describe("screening-preference reader/writer", () => {
     // The WRITER's result carries the same shape (`ScreeningPreferenceResult extends
     // ScreeningPreference`), so turning the flag on states the three cutline columns too.
     expect(on).toEqual({
-      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: true, ...UNSET_CUTLINE,
+      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: true, impersonationFiling: true, ...UNSET_CUTLINE,
     });
 
     // Set the posture WITHOUT naming auto-apply — the ON flag survives (one axis at a time).
@@ -121,6 +121,24 @@ describe("screening-preference reader/writer", () => {
     const off = await setScreeningPreference(ctx, { screenerAutoApply: false });
     expect(off.screenerAutoApply).toBe(false);
     expect(off.ohboxPolicy).toBe("people_only");
+  });
+
+  // ── FILING A HELD IMPERSONATION TO SPAM — default ON, turned off and on as a boolean (mail 0184) ──
+
+  it("impersonation filing defaults ON, turns off and on, stamps when it was turned off, and leaves the other axes", async () => {
+    expect((await getScreeningPreference(ctx)).impersonationFiling).toBe(true);
+    const off = await setScreeningPreference(ctx, { impersonationFiling: false });
+    expect(off).toEqual({
+      ohboxPolicy: null, ohboxBar: null, screenerAutoApply: false, impersonationFiling: false, ...UNSET_CUTLINE,
+    });
+    const [row] = await (ctx.db as unknown as Tx).select({ at: accountSettings.impersonationFilingOffAt }).from(accountSettings)
+      .where(eq(accountSettings.accountId, ctx.accountId));
+    expect(row?.at).toEqual(new Date("2026-08-06T00:00:00.000Z"));
+    await setScreeningPreference(ctx, { ohboxPolicy: "people_only" });
+    expect((await getScreeningPreference(ctx)).impersonationFiling, "another axis left it off").toBe(false);
+    expect((await setScreeningPreference(ctx, { impersonationFiling: true })).impersonationFiling).toBe(true);
+    await expect(setScreeningPreference(ctx, { impersonationFiling: "no" as never }))
+      .rejects.toMatchObject({ constructor: ServiceError, httpStatus: 400 });
   });
 
   it("refuses a non-boolean auto-apply with a 400 (strict, no coercion)", async () => {

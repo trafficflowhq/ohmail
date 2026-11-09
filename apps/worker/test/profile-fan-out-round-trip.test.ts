@@ -75,6 +75,16 @@ describe("a reader's screening edit reaches the organizer", () => {
     expect(stored?.ohboxPolicy).toBeNull();
   }, T);
 
+  it("the impersonation filing switch travels both ways: off stamps the organizer's row, on clears it", async () => {
+    const off = await screening({ impersonationFiling: false });
+    expect(off.rt.readerRow?.payload).toEqual({ screeningPreference: { impersonationFiling: false } });
+    expect(off.rt.readerRow?.state).toBe("applied");
+    expect(off.stored?.impersonationFilingOffAt, "the organizer's pass would still file").not.toBeNull();
+    const on = await screening({ impersonationFiling: true }, { impersonationFilingOffAt: new Date("2026-09-01T00:00:00.000Z") });
+    expect(on.rt.readerRow?.state).toBe("applied");
+    expect(on.stored?.impersonationFilingOffAt).toBeNull();
+  }, T);
+
   it("the two doors share one bar ceiling: at it travels, past it the reader refuses", async () => {
     expect(TRAVELLING_OHBOX_BAR_MAX_BYTES).toBe(OHBOX_BAR_MAX_BYTES);
     const at = await screening({ ohboxBar: "é".repeat(OHBOX_BAR_MAX_BYTES / 2) });

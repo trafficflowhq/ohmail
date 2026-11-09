@@ -12,6 +12,8 @@ export const TAIL_SECTION_PLAN = [
   { name: "sender_check_backfill", passes: ["sender_check_backfill"] },
   // Before the correspondent retro, which asks these rows before it releases a claim (mail 0150).
   { name: "list_address_backfill", passes: ["list_address_backfill"] },
+  // After the list addresses are read: a list's address is a tie that keeps its claims held.
+  { name: "screener_impersonation", passes: ["screener_impersonation"] },
   // After the act's legacy contacts are marked (sender_check_backfill): it reads their source.
   { name: "act_admission_retire", passes: ["act_admission_retire"] },
   { name: "rule_retro", passes: ["rule_retro"] },

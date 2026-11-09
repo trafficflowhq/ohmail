@@ -115,8 +115,9 @@ export {
   SCREENER_FOLDER, DECIDABLE_FOLDERS, DECISION_BATCH_MAX, admitsDestination, domainOf,
   heldRowById, heldRowsForSender, heldRowsForDomain, rerouteOwnHeldBag, rerouteUnconfirmedHeld, rerouteAdvisedLetter, heldRowMovesOnPress,
   applyScreenerDecision, validateRequestPayload, PassMayNotAdmitError, readListClaimsFiledAlone,
+  fileImpersonationLetters, impersonationReturnedSenders, IMPERSONATION_FILING_FOLDER, IMPERSONATION_FILING_IDS_MAX,
   type AppliedScreenerRow, type ApplyScreenerDecisionInput, type ApplyScreenerDecisionResult,
-  type HeldElsewhereMailbox, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
+  type HeldElsewhereMailbox, type ImpersonationFilingResult, type UnconfirmedRerouteResult, type ValidatedRequestPayload,
 } from "./screener-apply.js";
 
 // `organizer_requests` — the reader's own bookkeeping. See the module's own header for why it is

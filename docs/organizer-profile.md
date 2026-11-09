@@ -106,7 +106,8 @@ One RFC822 message in `ohmail/_meta`:
   },
   "tagNames": ["<tag name>", …],   // the names of this mailbox's tags
   "signature": "<string or null>",     // the sign-off on mail sent from this address
-  "signatureHtml": "<string>"          // optional — that sign-off's formatting, when it has any
+  "signatureHtml": "<string>",         // optional — that sign-off's formatting, when it has any
+  "impersonationFiling": false         // optional — present only while you turned off filing impersonations to Spam
 }
 ```
 
@@ -208,6 +209,15 @@ was written with, so writers omit it and readers treat absent, `null` and blank 
 answer, "this signature is plain text". It never appears without `signature` beside it — the plain
 text is what a recipient reading in plain text gets, and markup alone would describe a message that
 cannot be sent. The envelope's `v` does not move for this, on `signature`'s own argument.
+
+**`impersonationFiling`** — `false`, present only while you have turned off ohmail filing a held
+letter that impersonates a company to Spam on its own. Absent means unstated: filing is on by
+default, and a reader importing a document without the key leaves its own setting alone, so a
+document never turns the filing back on. Any value other than `false` reads as absent. An install
+that starts organizing and finds another install's document saying `false` turns its own filing off
+at once, without waiting for Import, and Not now leaves it off: the key can only turn filing off.
+Written only while off, so a document that never carried the key keeps its fingerprint; the
+envelope's `v` does not move for it, on `signature`'s argument.
 
 ## A complete example
 

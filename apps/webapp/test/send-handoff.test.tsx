@@ -5,7 +5,7 @@ import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import { SENT_LINE_MS } from "../app/shell/mail-send";
+import { SENT_COPY_NOTES_PREFIX, SENT_LINE_MS } from "../app/shell/mail-send";
 import {
   act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
@@ -49,6 +49,15 @@ const gate = (s: DraftShell): (() => void) => {
 const navigate = async (hash: string): Promise<void> => {
   await act(async () => { window.location.hash = hash; window.dispatchEvent(new HashChangeEvent("hashchange")); });
 };
+/** The foot line's rows, top to bottom, and one row's Dismiss by whom its letter was for. */
+const footRows = (): string[] => [...document.querySelectorAll(".rail-sync.sending-line .sl-row")].map((r) => r.textContent ?? "");
+const dismissFor = (name: string): HTMLButtonElement | undefined => {
+  const row = [...document.querySelectorAll<HTMLElement>(".rail-sync.sending-line .sl-row")].find((r) => (r.textContent ?? "").includes(name));
+  return [...(row?.querySelectorAll<HTMLButtonElement>(".sl-act") ?? [])].find((b) => b.textContent === en.sendingLine.dismiss);
+};
+/** What this browser keeps of the notes, every owner's entry. */
+const keptNotes = (): string => Object.keys(window.localStorage).filter((k) => k.startsWith(SENT_COPY_NOTES_PREFIX))
+  .map((k) => window.localStorage.getItem(k) ?? "").join("\n");
 
 async function key(k: string, init: KeyboardEventInit = {}): Promise<void> {
   await act(async () => {
@@ -76,6 +85,20 @@ async function composerWith(s: DraftShell, id = "d-letter", subject = "Plans for
   await waitFor(() => s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`) != null, `${id} in Drafts`);
   await press(s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`), `open ${id}`);
   await waitFor(() => s.el.querySelector<HTMLInputElement>("#compose-subject")?.value === subject, `the composer on ${id}`);
+}
+
+const letterTo = (id: string, name: string, subject: string): EngineDraft => ({
+  ...letter, id, subject, body: `About ${subject}`, to: [{ name, address: `${name.toLowerCase()}@example.invalid` }],
+}) as unknown as EngineDraft;
+const letters = [letter, letterTo("d-jon", "Jon", "Budget review"), letterTo("d-ada", "Ada", "Train times"), letterTo("d-lin", "Lin", "Garden party")];
+/** One letter from Drafts, its delivery answered with `copy` (nothing said of its copy when empty). */
+async function sendLetter(s: DraftShell, id: string, subject: string, copy: DraftShell["sentCopy"] = {}): Promise<void> {
+  await navigate("#/drafts");
+  await composerWith(s, id, subject);
+  for (const k of ["sentCopy", "sentCopyReason", "sentCopyUntil"] as const) delete s.sentCopy[k];
+  Object.assign(s.sentCopy, copy);
+  await press(composeSend(s.el)!, "Send");
+  await waitFor(() => s.el.querySelector(".view-compose") == null, `${id} handed off`);
 }
 
 describe("a healthy send leaves its editor and finishes in the sidebar's foot", () => {
@@ -127,6 +150,60 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     expect(footLine()).not.toContain("{time}");
   }, 40_000);
 
+  it("1g — each letter's note stands until its own Dismiss: a later letter with a note, or without one, replaces none", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], letters, { handOff: true });
+    await sendLetter(s, "d-letter", "Plans for Friday", { sentCopy: "missing", sentCopyReason: "too_big" });
+    await waitFor(() => footLine().includes(en.sentCopy.missingTooBig), "the first letter's note");
+    await sendLetter(s, "d-jon", "Budget review", { sentCopy: "pending", sentCopyReason: "full" });
+    await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "the second letter's note");
+    expect(footLine(), "the second letter replaced the first one's note").toContain(en.sentCopy.missingTooBig);
+    const at = (name: string): number => footRows().findIndex((r) => r.includes(name));
+    expect(at("Mila"), "the older note above the newer").toBeLessThan(at("Jon"));
+    await sendLetter(s, "d-ada", "Train times", { sentCopy: "filed" });
+    await waitFor(() => footLine().includes("Sent to Ada"), "the third letter's Sent");
+    await act(async () => { await new Promise((r) => setTimeout(r, SENT_LINE_MS + 300)); });
+    expect(footLine(), "the third letter's Sent settles away").not.toContain("Ada");
+    expect(footLine(), "a later delivery took a note with it").toContain(en.sentCopy.missingTooBig);
+    expect(footLine()).toContain(en.sentCopy.waitingFull);
+    expect(toasts(), "a note said twice").not.toContain(en.sentCopy.waitingFull);
+  }, 60_000);
+
+  it("1h — a fourth note drops the oldest", async () => {
+    const s = await mountShell("#/drafts", [message("m1")], letters, { handOff: true });
+    const full = { sentCopy: "pending", sentCopyReason: "full" } as const;
+    await sendLetter(s, "d-letter", "Plans for Friday", full);
+    await waitFor(() => footLine().includes("Mila"), "the first note");
+    await sendLetter(s, "d-jon", "Budget review", full);
+    await waitFor(() => footLine().includes("Jon"), "the second note");
+    await sendLetter(s, "d-ada", "Train times", full);
+    await waitFor(() => footLine().includes("Ada"), "the third note");
+    await sendLetter(s, "d-lin", "Garden party", full);
+    await waitFor(() => footLine().includes("Lin"), "the fourth note");
+    expect(footRows().map((r) => ["Lin", "Ada", "Jon", "Mila"].find((n) => r.includes(n))), "the oldest on top, the newest last, three of them")
+      .toEqual(["Jon", "Ada", "Lin"]);
+    expect(keptNotes()).not.toContain("Mila");
+  }, 60_000);
+
+  it("1i — the notes outlive a reload; Dismiss takes one off the line and out of this browser, the other stays", async () => {
+    const before = await mountShell("#/drafts", [message("m1")], letters, { handOff: true });
+    await sendLetter(before, "d-letter", "Plans for Friday", { sentCopy: "missing", sentCopyReason: "too_big" });
+    await sendLetter(before, "d-jon", "Budget review", { sentCopy: "pending", sentCopyReason: "full" });
+    await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "both notes");
+    await unmountAll();
+    stubDom();
+    await mountShell("#/ohbox", [message("m1")], [], { handOff: true, store: before.store });
+    await waitFor(() => footLine().includes(en.sentCopy.missingTooBig) && footLine().includes(en.sentCopy.waitingFull), "both notes after the reload");
+    expect(footLine()).toContain("Sent to Mila");
+    await act(async () => { dismissFor("Mila")!.click(); });
+    await waitFor(() => !footLine().includes("Mila"), "Dismiss ends Mila's note");
+    expect(footLine(), "Dismiss took the other note too").toContain("Sent to Jon");
+    expect(keptNotes(), "the dismissed note is still kept in this browser").not.toContain("Mila");
+    expect(keptNotes()).toContain("Jon");
+    await act(async () => { dismissFor("Jon")!.click(); });
+    await waitFor(() => footLine() === "", "Dismiss ends the last note");
+    expect(keptNotes()).toBe("");
+  }, 60_000);
+
   it("1e — a copy still being filed, for no reason the server gave, says Sent and settles away", async () => {
     const s = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
     await composerWith(s);
@@ -172,6 +249,18 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await waitFor(() => toasts().includes(en.reply.toastSentAndDone), "Sent · marked done");
     await waitFor(() => footLine().includes(en.sentCopy.missingTooBig), "the foot says the copy is missing");
     expect(toasts()).toContain(en.ohbox.undo);
+  }, 40_000);
+
+  it("2d — a reply's note stands while its message's dock is open again", async () => {
+    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { handOff: true });
+    Object.assign(s.sentCopy, { sentCopy: "pending", sentCopyReason: "full" });
+    await replyOpen(s, "See you on Thursday");
+    await act(async () => { replySend(s.el)!.click(); });
+    await waitFor(() => footLine().includes(en.sentCopy.waitingFull), "the reply's note");
+    await key("r");
+    await waitFor(() => replySurface(s.el) != null, "the dock open on the message again");
+    for (let i = 0; i < 10; i++) await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+    expect(footLine(), "the open dock hid the note").toContain(en.sentCopy.waitingFull);
   }, 40_000);
 
   it("3 — a refusal after the hand-off stands in the foot with Open, no toast, and Open brings the words back", async () => {
@@ -224,6 +313,27 @@ describe("a healthy send leaves its editor and finishes in the sidebar's foot", 
     await act(async () => { release(); });
     await waitFor(() => footLine().includes(en.sendingLine.sent), "the restored send finishes in the foot");
     expect(sends(after), "the replay went once").toHaveLength(1);
+  }, 40_000);
+
+  it("7b — a restored send whose Sent copy is missing: its note names the letter, and stands", async () => {
+    const before = await mountShell("#/drafts", [message("m1")], [letter], { handOff: true });
+    await composerWith(before);
+    gate(before);
+    await press(composeSend(before.el)!, "Send");
+    await waitFor(() => before.el.querySelector(".view-compose") == null, "the composer gone");
+    await unmountAll();
+    stubDom();
+    const held: DraftShell["sendGate"] = { wait: null };
+    let release!: () => void;
+    held.wait = new Promise<void>((r) => { release = () => { held.wait = null; r(); }; });
+    const after = await mountShell("#/ohbox", [], [], { handOff: true, store: before.store, sendGate: held });
+    Object.assign(after.sentCopy, { sentCopy: "missing", sentCopyReason: "too_big" });
+    await waitFor(() => footLine().includes("Sending to Mila…"), "the restored send in the foot");
+    await act(async () => { release(); });
+    await waitFor(() => footLine().includes(en.sentCopy.missingTooBig), "the restored send's note");
+    expect(footLine(), "the note does not say which letter").toContain("Sent to Mila");
+    await act(async () => { await new Promise((r) => setTimeout(r, SENT_LINE_MS + 300)); });
+    expect(footLine(), "the note settled away").toContain(en.sentCopy.missingTooBig);
   }, 40_000);
 });
 

@@ -61,6 +61,8 @@ let asked: Array<{ method: string; url: string; body?: string }>;
 /** The account's auto-apply and AI switches, as another device may have left them. */
 let peopleOnly: boolean;
 let aiOn: boolean;
+/** The impersonation filing switch the engine answers with; `undefined`: an engine from before it. */
+let impersonationOn: boolean | undefined;
 const AT = "2026-09-27T08:00:00.000Z";
 
 function engine(): void {
@@ -104,8 +106,12 @@ function engine(): void {
         return encode(200, "{}");
       }
       if (url === "/account/ai") return encode(200, JSON.stringify({ aiEnabled: aiOn }));
+      if (url === "/account/screening" && method === "PATCH" && typeof said.impersonationFiling === "boolean") {
+        impersonationOn = said.impersonationFiling;
+      }
       return encode(200, JSON.stringify({
         ohboxPolicy: peopleOnly ? "people_only" : "people_and_replied", ohboxBar: null, defaultBar: "x", screenerAutoApply: false,
+        ...(impersonationOn === undefined ? {} : { impersonationFiling: impersonationOn }),
       }));
     },
   };
@@ -139,7 +145,7 @@ const ACT = en.screener.suggest.actTitle;
 const SUGGEST = en.desktopScreener.autoSuggestLabel;
 
 beforeEach(() => {
-  suggestOn = true; actAt = null; carriesAxis = true; asked = []; peopleOnly = false; aiOn = true;
+  suggestOn = true; actAt = null; carriesAxis = true; asked = []; peopleOnly = false; aiOn = true; impersonationOn = undefined;
   engine();
 });
 afterEach(async () => {
@@ -193,6 +199,33 @@ describe("the standalone door: the act's switch under automatic suggestions", ()
     await mountPane([ORGANIZER]);
     expect(switchNamed(SUGGEST)).not.toBeNull();
     expect(switchNamed(ACT)).toBeNull();
+  });
+});
+
+describe("filing a held impersonation to Spam, on both desktop doors", () => {
+  const IMPERSONATION = en.desktopScreener.impersonationLabel;
+
+  it("shows the engine's value, writes only its own key over /account/screening, and draws what came back", async () => {
+    for (const door of ["local", "cloud"] as const) {
+      impersonationOn = true;
+      asked = [];
+      await mountPane([ORGANIZER], door);
+      expect(switchNamed(IMPERSONATION)!.getAttribute("aria-checked")).toBe("true");
+      expect(hostEl.textContent).toContain(en.desktopScreener.impersonationWhy);
+      await act(async () => { switchNamed(IMPERSONATION)!.click(); });
+      await settle();
+      const write = asked.find((a) => a.method === "PATCH" && a.url === "/account/screening");
+      expect(write?.body, door).toBe(JSON.stringify({ impersonationFiling: false }));
+      expect(switchNamed(IMPERSONATION)!.getAttribute("aria-checked")).toBe("false");
+      await act(async () => { root!.unmount(); });
+      root = null;
+      hostEl.remove();
+    }
+  });
+
+  it("an engine from before the switch draws none", async () => {
+    await mountPane([ORGANIZER]);
+    expect(switchNamed(IMPERSONATION)).toBeNull();
   });
 });
 

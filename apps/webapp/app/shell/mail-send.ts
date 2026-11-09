@@ -118,6 +118,57 @@ export function sentCopySay(note: SentCopyNote, now = new Date()): { key: string
 }
 
 /**
+ * ONE LETTER'S SENT COPY NOTE ON THE FOOT LINE, until its own Dismiss: the letter by its
+ * Idempotency-Key, its lane, whom it was for and its subject as they read when it was recorded.
+ */
+export interface SentCopyLineNote {
+  key: string; lane: string; to: string | null; subject: string | null; note: SentCopyNote; at: number;
+}
+/** The notes the line keeps, newest first; one more drops the oldest. */
+export const SENT_COPY_NOTES_MAX = 3;
+/**
+ * Every owner's notes key starts here (`{ v: 1, notes }`). A note names a recipient and a subject, so
+ * the sweeps that take the send lanes take these too. Exported so they need not respell it.
+ */
+export const SENT_COPY_NOTES_PREFIX = "ohmail.send.notes.";
+const NOTE_REASONS: ReadonlySet<unknown> = new Set(["too_big", "full", "refused", "unreachable"]);
+
+export function sentCopyNotesKey(owner: string | null): string {
+  return `${SENT_COPY_NOTES_PREFIX}${owner ?? "local"}`;
+}
+
+function isLineNote(x: unknown): x is SentCopyLineNote {
+  const r = x as Partial<SentCopyLineNote> | null;
+  const name = (v: unknown): boolean => v === null || typeof v === "string";
+  const n = r?.note as Partial<SentCopyNote> | undefined;
+  return typeof r?.key === "string" && typeof r.lane === "string" && name(r.to) && name(r.subject) && typeof r.at === "number"
+    && (n?.state === "missing" || n?.state === "pending") && (n.reason === undefined || NOTE_REASONS.has(n.reason))
+    && (n.until === undefined || typeof n.until === "string");
+}
+
+/** The notes this browser keeps for `owner`, newest first: none in an entry it cannot read, null when the jar refuses. */
+export function readSentCopyNotes(owner: string | null): SentCopyLineNote[] | null {
+  let raw: string | null;
+  try {
+    raw = window.localStorage.getItem(sentCopyNotesKey(owner));
+  } catch {
+    return null;
+  }
+  try {
+    const v = raw === null ? null : JSON.parse(raw) as { v?: unknown; notes?: unknown };
+    return v?.v === 1 && Array.isArray(v.notes) ? v.notes.filter(isLineNote).slice(0, SENT_COPY_NOTES_MAX) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSentCopyNotes(owner: string | null, notes: readonly SentCopyLineNote[]): void {
+  const key = sentCopyNotesKey(owner);
+  if (notes.length === 0) durableRemove(key, "send.notes");
+  else durableSet(key, JSON.stringify({ v: 1, notes }), "send.notes");
+}
+
+/**
  * ONE SEND THE SIDEBAR'S FOOT SHOWS (`SendingLine`): a lane no mounted, visible editor shows.
  * Presentation only, derived on each read from the lane states, the frozen press and the outbox;
  * nothing a send decision reads, nothing persisted.
@@ -139,7 +190,7 @@ export interface SendLineItem {
   m?: MailSend;
   /** For `sending`: when the phase began. */
   since?: number;
-  /** For `sent`: its Sent copy's note, which stands until dismissed. */
+  /** For `sent`: its Sent copy's note, which stands until its own Dismiss ({@link SentCopyLineNote}). */
   copy?: SentCopyNote;
 }
 
@@ -1723,9 +1774,9 @@ export function useMailSend(
    * then the toast once left) — today's behaviour on the unhealthy path.
    */
   const handedOff = useRef(new Set<string>());
-  /** Lanes the line says "Sent" for, until {@link SENT_LINE_MS} has passed; one with a copy note until dismissed. */
+  /** Lanes the line says "Sent" for, until {@link SENT_LINE_MS} has passed. A copy note is a letter's own ({@link notes}). */
   const sentLine = useRef(new Map<string, {
-    m: MailSend | undefined; timer: ReturnType<typeof setTimeout> | null; held?: ComposeHeld; copy?: SentCopyNote;
+    m: MailSend | undefined; timer: ReturnType<typeof setTimeout> | null; held?: ComposeHeld;
   }>());
   /**
    * Endings the line stands on until opened or dismissed, by item id: the compose lane can hold two,
@@ -1773,15 +1824,15 @@ export function useMailSend(
       bumpLine();
     };
   }, [bumpLine]);
-  /** Say "Sent" on the line for a lane it shows, then let it settle away; with a copy note it stands until dismissed. */
-  const sayLineSent = useCallback((lane: string, m: MailSend | undefined, held?: ComposeHeld, copy?: SentCopyNote | null): void => {
+  /** Say "Sent" on the line for a lane it shows, then let it settle away. */
+  const sayLineSent = useCallback((lane: string, m: MailSend | undefined, held?: ComposeHeld): void => {
     const was = sentLine.current.get(lane);
     if (was?.timer) clearTimeout(was.timer);
-    const timer = copy ? null : setTimeout(() => {
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
       if (sentLine.current.get(lane)?.timer === timer) sentLine.current.delete(lane);
       bumpLine();
     }, SENT_LINE_MS);
-    sentLine.current.set(lane, { m, timer, ...(held ? { held } : {}), ...(copy ? { copy } : {}) });
+    sentLine.current.set(lane, { m, timer, ...(held ? { held } : {}) });
     // A restored send names no press: it ends no compose message's ending but its own lane's.
     if (lane !== COMPOSE_SEND_KEY || held !== undefined) endLaneOn(lane, held);
     bumpLine();
@@ -1789,6 +1840,32 @@ export function useMailSend(
   useEffect(() => () => {
     for (const s of sentLine.current.values()) if (s.timer) clearTimeout(s.timer);
   }, []);
+  /**
+   * THE LETTERS' COPY NOTES THE LINE STANDS ON, newest first, at most {@link SENT_COPY_NOTES_MAX}: each
+   * until its own Dismiss, whatever is pressed, delivered or shown meanwhile. Kept in this browser under
+   * the mount's owner ({@link SENT_COPY_NOTES_PREFIX}), so a remount and a reload find them.
+   */
+  const notes = useRef<readonly SentCopyLineNote[] | null>(null);
+  if (notes.current === null) notes.current = readSentCopyNotes(storageOwner()) ?? [];
+  /** Change the notes over what this browser keeps now (another tab's included), and keep the result. */
+  const changeNotes = useCallback((change: (was: readonly SentCopyLineNote[]) => readonly SentCopyLineNote[]): void => {
+    const next = change(readSentCopyNotes(owner.current) ?? notes.current ?? []);
+    notes.current = next;
+    writeSentCopyNotes(owner.current, next);
+    bumpLine();
+  }, [bumpLine]);
+  /** A delivered letter's copy note goes on the line, named as it reads now; the same message's ending goes, as with "Sent". */
+  const noteLine = useCallback((
+    key: string, lane: string, m: MailSend | undefined, held: ComposeHeld | undefined, copy: SentCopyNote,
+  ): void => {
+    if (lane !== COMPOSE_SEND_KEY || held !== undefined) endLaneOn(lane, held);
+    const note: SentCopyLineNote = {
+      key, lane, to: firstRecipient(engine, m), subject: pressSubject(engine, m), note: copy, at: Date.now(),
+    };
+    changeNotes((was) => [note, ...was.filter((n) => n.key !== key)].slice(0, SENT_COPY_NOTES_MAX));
+  }, [engine, endLaneOn, changeNotes]);
+  /** A send restored from the outbox, by its key, as the line last read it: its note names its letter. */
+  const restoredPress = useRef(new Map<string, MailSend>());
 
   /** The lane states as last rendered, for the line's reads between renders. */
   const statesRef = useRef(states);
@@ -1837,7 +1914,11 @@ export function useMailSend(
    * closes if it is still the one on screen.
    */
   const settle = useCallback(
-    (key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false, answeredEarlier = false, copy: SentCopyNote | null = null) => {
+    (
+      key: string, m: MailSend, andDone?: SendAndDonePlan, earlierWent = false, answeredEarlier = false,
+      noted: { sendKey: string; note: SentCopyNote } | null = null,
+    ) => {
+      const copy = noted?.note ?? null;
       /* THE IDENTITY THE PRESS RECORDED — see {@link sentFor}. The fallback is the mutation's own
          row and no session, which is the most this can know about a settlement no press on this
          mount produced; an unnameable one admits, which is the rule everywhere else here. */
@@ -1861,8 +1942,9 @@ export function useMailSend(
       /* NO EDITOR SHOWS THIS LANE AND A FOOT LINE IS SEEN: the line finishes it, "Sent", and no
          toast says it twice. Send + Done keeps its Undo toast and gets no "Sent". */
       const onLine = handedOff.current.has(key) && !m.sendAt && lineSeenNow() && !shown;
-      // A copy note the foot line will stand on is not said again by the release's toast.
-      const copyOnLine = copy !== null && onLine && !earlierWent && !answeredEarlier;
+      // A copy note stands on a seen foot line, whatever shows the lane; a toast says it only where none is seen.
+      const copyOnLine = noted !== null && lineSeenNow();
+      if (copyOnLine) noteLine(noted.sendKey, key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined, noted.note);
       const released = outcomeRef.current?.(
         key, m, true, undefined, andDone ? { andDone, ...(copy && !copyOnLine ? { copy } : {}) } : undefined,
       ) === true;
@@ -1922,12 +2004,10 @@ export function useMailSend(
       // machine exists to prevent. The sentence carries the time, read where the reader is.
       /* SEND + DONE TAKES THE SENTENCE: one press, one toast, rather than "Reply sent." replaced a
          beat later by "Sent · marked done". */
-      if (released) {
-        if (copyOnLine) sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined, copy);
-        return;
-      }
+      if (released) return;
       if (onLine && !earlierWent && !answeredEarlier) {
-        sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined, copy);
+        // The note, when there is one, says "Sent" itself.
+        if (!copyOnLine) sayLineSent(key, pressed.current.get(key) ?? m, key === COMPOSE_SEND_KEY ? held : undefined);
         return;
       }
       /* A re-press that joined a send already delivered: the earlier words went, the newer did not. */
@@ -1948,11 +2028,11 @@ export function useMailSend(
         : key.startsWith("fwd:")
           ? t("reply.toastForwarded")
           : t("reply.toastSent");
-      const why = copy ? sentCopySay(copy) : null;
+      const why = copy && !copyOnLine ? sentCopySay(copy) : null;
       if (why) toast(`${said} ${t(why.key, why.values)}`, { duration: SENT_COPY_TOAST_MS });
       else toast(said);
     },
-    [engine, setPhase, toast, t, beat, shownNow, lineSeenNow, sayLineSent],
+    [engine, setPhase, toast, t, beat, shownNow, lineSeenNow, sayLineSent, noteLine],
   );
 
   /**
@@ -2127,7 +2207,8 @@ export function useMailSend(
         // A `firstSend` under the key this lane's press minted is that press's own delivery, answered late.
         const p = pressKey.current.get(key);
         const earlier = res.firstSend !== undefined && !(p?.minted === true && p.key === res.key);
-        settle(key, m, res.andDone, earlier && res.earlierWordsKept === true, earlier, sentCopyNoteOf(res));
+        const note = sentCopyNoteOf(res);
+        settle(key, m, res.andDone, earlier && res.earlierWordsKept === true, earlier, note === null ? null : { sendKey: res.key, note });
       } else {
         /* AND THE LANES THAT WILL NEVER CONFIRM SAY SO. A failed, duplicate or unverified send
            is the end of this press; an arm still waiting on it would wait for ever. `queued` is
@@ -2245,6 +2326,8 @@ export function useMailSend(
   const adoptForeign = useRef<(res: MutationResult) => void>(() => {});
   adoptForeign.current = (res: MutationResult): void => {
     if (res.status === "superseded") return;
+    const restored = restoredPress.current.get(res.key);
+    restoredPress.current.delete(res.key);
     // At any age: see `recordForEndedSend`.
     const record = recordForEndedSend(res.key, owner.current);
     if (record === null) return;
@@ -2268,9 +2351,15 @@ export function useMailSend(
       /* THE INTENT IT WAS PRESSED WITH, from the send's own row: the door reads the release now,
          whichever surface is on screen, because the release is about the source, not the composer. */
       const copy = sentCopyNoteOf(res);
-      const released = res.andDone !== undefined && outcomeRef.current?.(
-        record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined, { andDone: res.andDone, ...(copy ? { copy } : {}) },
-      ) === true;
+      // A copy note stands on a seen foot line, named by the letter the line last read for this key.
+      const copyOnLine = copy !== null && lineSeenNow();
+      if (copyOnLine) noteLine(res.key, record.lane, restored, recordHeld, copy);
+      if (res.andDone !== undefined) {
+        outcomeRef.current?.(
+          record.lane, { kind: "mail_send" } as unknown as MailSend, true, undefined,
+          { andDone: res.andDone, ...(copy && !copyOnLine ? { copy } : {}) },
+        );
+      }
       /**
        * THE SEND COMPLETED WHILE NOBODY WAS LISTENING. The surface bound to that message is told, with the row
        * the send was delivered from, so it can end the way a live confirmation ends it. AND THE RECORD IS LEFT
@@ -2310,10 +2399,9 @@ export function useMailSend(
        * closed ON to be distinguishable from "this shell has no such thing".
        */
       /* A restored send that went finishes on the foot line, where it said "Sending…" — also when the
-         composer holds another message, which is not this one's to finish. */
-      // A Send + Done that released nothing still owes its copy note.
-      if ((!res.andDone || (!released && copy !== null)) && lineSeenNow() && !shownHolding(record.lane, recordHeld)) {
-        sayLineSent(record.lane, undefined, recordHeld, copy);
+         composer holds another message, which is not this one's to finish. Its note, when it has one, says so. */
+      if (!res.andDone && !copyOnLine && lineSeenNow() && !shownHolding(record.lane, recordHeld)) {
+        sayLineSent(record.lane, undefined, recordHeld);
       }
       if (!speaksForScreen) {
         console.warn(
@@ -2877,11 +2965,15 @@ export function useMailSend(
    * The foot line's items — see {@link SendLineItem}. Every one stands on its own: the line shows each
    * kind present (`SendingLine.lineRows`), so a standing ending hides no later send. A lane an editor
    * shows is the editor's to say — for the compose lane, only while the composer holds that message.
+   * A letter's copy note is its own and stands whatever shows its lane, hiding nothing else.
    */
   const line = useCallback((): readonly SendLineItem[] => {
     const out: SendLineItem[] = [];
     const lanes = new Set<string>();
     const add = (item: SendLineItem): void => { lanes.add(item.key); out.push(item); };
+    for (const n of notes.current ?? []) {
+      out.push({ id: `note:${n.key}`, key: n.lane, state: "sent", to: n.to, subject: n.subject, copy: n.note });
+    }
     for (const [id, e] of endedLine.current) {
       if (shownHolding(e.lane, e.held)) continue;
       add({
@@ -2899,16 +2991,15 @@ export function useMailSend(
     }
     for (const [key, s] of sentLine.current) {
       if (shownHolding(key, s.held)) continue;
-      add({
-        id: `sent:${key}`, key, state: "sent", to: firstRecipient(engine, s.m), subject: pressSubject(engine, s.m),
-        ...(s.copy ? { copy: s.copy } : {}),
-      });
+      add({ id: `sent:${key}`, key, state: "sent", to: firstRecipient(engine, s.m), subject: pressSubject(engine, s.m) });
     }
     // A send restored from the last session (or another window's): the outbox carries it.
     if (typeof engine.read === "function") {
       const abandoned = typeof engine.abandoned === "function" ? new Set(engine.abandoned().map((a) => a.key)) : new Set<string>();
       for (const r of pendingSendRows(engine.read())) {
-        if (ownKeys.current.has(r.key) || abandoned.has(r.key) || lanes.has(r.lane) || shownNow(r.lane) || r.m.sendAt) continue;
+        if (ownKeys.current.has(r.key) || abandoned.has(r.key)) continue;
+        restoredPress.current.set(r.key, r.m);
+        if (lanes.has(r.lane) || shownNow(r.lane) || r.m.sendAt) continue;
         add({ id: `out:${r.key}`, key: r.lane, state: "sending", to: firstRecipient(engine, r.m), subject: pressSubject(engine, r.m), m: r.m });
       }
     }
@@ -2947,7 +3038,9 @@ export function useMailSend(
       sentLine.current.delete(id.slice(5));
       bumpLine();
     }
-  }, [bumpLine]);
+    // A letter's note leaves the line and this browser only here.
+    if (id.startsWith("note:")) changeNotes((was) => was.filter((n) => n.key !== id.slice(5)));
+  }, [bumpLine, changeNotes]);
   /** See {@link MailSendApi.pressHere}: in a sent beat, the confirmation's own verdict while the mark holds. */
   const pressHere = useCallback((lane: string): boolean => {
     if (lane !== COMPOSE_SEND_KEY) return true;

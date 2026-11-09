@@ -603,6 +603,7 @@ export interface ScreeningPreferenceWire {
     ohboxBar: string | null;
     defaultBar: string;
     screenerAutoApply: boolean;
+    impersonationFiling?: boolean;
     pending?: true;
     change?: ChangeWire;
 }
@@ -613,6 +614,7 @@ export const screeningSettings: {
         ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
         ohboxBar?: string | null;
         screenerAutoApply?: boolean;
+        impersonationFiling?: boolean;
     }) => Promise<ScreeningPreferenceWire>;
 } = absent;
 
@@ -622,6 +624,8 @@ export interface AutoFiledItemWire {
     subject: string | null;
     to: string;
     filedAt: string;
+    why?: "impersonation" | null;
+    brand?: string | null;
 }
 
 export interface AutoFiledWire {

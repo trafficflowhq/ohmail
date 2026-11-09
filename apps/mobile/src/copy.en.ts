@@ -1369,6 +1369,14 @@ const TABLE = {
   autoFiledRequested: "Sent to the install that organizes this mailbox. It puts them back.",
   autoFiledNone: "Nothing left to put back.",
   autoFiledFailed: "Couldn't put that back — try again.",
+  /* Filing a held impersonation to Spam: the web switch's words, and the Screener's one line. */
+  impersonationTitle: "File impersonations to Spam",
+  impersonationDescription:
+    "When a waiting letter claims to be a company it can't be from, ohmail moves it to Spam on its own, without AI. The Screener lists each one, and you can put it back. On by default.",
+  impersonationFiled: (n: number) =>
+    `${n === 1 ? "1 letter that claimed to be a company went" : `${n} letters that claimed to be a company went`} to Spam`,
+  impersonationRow: (from: string, subject: string) => `${from} · ${subject}`,
+  impersonationOk: "OK",
   autoActFailed: "That setting did not save. It is unchanged.",
   /** The Use-folders switch's two positions. English happens to be the same in German. */
   switchOff: "Off",

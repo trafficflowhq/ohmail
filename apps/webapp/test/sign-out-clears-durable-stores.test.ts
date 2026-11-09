@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dropLocalStorageKeys } from "../app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../app/shell/compose";
 import {
-  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "../app/shell/mail-send";
 import { NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
 import { SCREENER_INTENTS_PREFIX } from "../app/shell/screener-intents";
@@ -61,6 +61,7 @@ const ENGINE = resolve("packages/client-engine/src");
 const SWEPT = [
   "ohmail.boot.",
   SEND_LOCKS_PREFIX,
+  SENT_COPY_NOTES_PREFIX,
   SCREENER_INTENTS_PREFIX,
   DELETE_INTENTS_PREFIX,
   ROUTING_INTENTS_PREFIX,
@@ -108,6 +109,8 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.ui.columns", // the three columns' widths — a fact about the screen, not the mailbox
   "ohmail.ui.search.sort.", // a sort preference, owner-keyed but not content
   "ohmail.ui.reader.afterVerb", // what the pane does after a verb — `ui.search.sort.`'s class exactly
+  // The newest impersonation filing this screen acknowledged, owner-keyed: a timestamp, no mail in it.
+  "ohmail.screener.impersonationSeen.",
   // A per-TAB composer id in sessionStorage, naming no account: the compose keys it suffixes carry
   // the storage owner and are swept by their prefixes, so the next account in this tab starts on its own.
   "ohmail.compose.composer",
@@ -294,6 +297,8 @@ describe("sign-out clears the durable decision stores", () => {
     const jar: Record<string, string> = {
       [`${SEND_LOCKS_PREFIX}acct-a`]: "[]",
       [`${SEND_LOCKS_PREFIX}local`]: "[]",
+      // A letter's Sent copy note: whom it was for and its subject.
+      [`${SENT_COPY_NOTES_PREFIX}acct-a`]: "{}",
       [`${SCREENER_INTENTS_PREFIX}acct-a`]: "[]",
       // A scheduled DELETE, which is the same class of thing one verb along: left behind, the
       // next account on this browser replays it against a mailbox that is not theirs.
@@ -329,6 +334,7 @@ describe("sign-out clears the durable decision stores", () => {
     expect(src).toContain("dropLocalStorageKeys(");
     for (const name of [
       "SEND_LOCKS_PREFIX",
+      "SENT_COPY_NOTES_PREFIX",
       "SCREENER_INTENTS_PREFIX",
       "DELETE_INTENTS_PREFIX",
       "ROUTING_INTENTS_PREFIX",
@@ -371,6 +377,7 @@ describe("sign-out clears the durable decision stores", () => {
     expect(call, "the sweep call must exist").toContain("const durable = sweepFor(");
     for (const name of [
       "SEND_LOCKS_PREFIX",
+      "SENT_COPY_NOTES_PREFIX",
       "SCREENER_INTENTS_PREFIX",
       "DELETE_INTENTS_PREFIX",
       "ROUTING_INTENTS_PREFIX",

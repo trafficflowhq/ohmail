@@ -27,7 +27,7 @@ import { AppShell } from "../../../webapp/app/shell/AppShell";
 import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
 import {
-  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "../../../webapp/app/shell/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents";
@@ -71,6 +71,8 @@ export const HOST_SCRATCH_PREFIXES: readonly string[] = [
   COMPOSE_DRAFT_PREFIX,
   LEGACY_COMPOSE_DRAFT_KEY,
   SEND_LOCKS_PREFIX,
+  // The letters' Sent copy notes: a recipient and a subject each.
+  SENT_COPY_NOTES_PREFIX,
   SCREENER_INTENTS_PREFIX,
   // The two journals beside it, and the delete one was MISSING: each is a scheduled write
   // against a mailbox, owner-keyed, and a pairing that ends without them leaves a delete or a

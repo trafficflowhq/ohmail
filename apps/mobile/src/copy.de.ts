@@ -928,6 +928,13 @@ export const DE: Deck = {
   autoFiledRequested: "An die Installation geschickt, die dieses Postfach organisiert. Sie legt sie zurück.",
   autoFiledNone: "Nichts mehr zurückzulegen.",
   autoFiledFailed: "Konnte nicht zurückgelegt werden — versuch es noch einmal.",
+  impersonationTitle: "Vorgetäuschte Firmen in Spam einsortieren",
+  impersonationDescription:
+    "Gibt sich eine wartende Nachricht als Firma aus, von der sie nicht stammen kann, sortiert ohmail sie ohne KI selbst in Spam ein. Der Screener zeigt jede an, und du kannst sie zurücklegen. Standardmäßig an.",
+  impersonationFiled: (n: number) =>
+    n === 1 ? "1 Nachricht, die sich als Firma ausgab, ist in Spam" : `${n} Nachrichten, die sich als Firma ausgaben, sind in Spam`,
+  impersonationRow: (from: string, subject: string) => `${from} · ${subject}`,
+  impersonationOk: "OK",
   autoActFailed: "Diese Einstellung wurde nicht gespeichert. Sie ist unverändert.",
   switchOff: "Aus",
   switchOn: "An",

@@ -104,7 +104,10 @@ async function holdCopyOf(owner: string): Promise<string[]> {
   store.close();
   const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
   const { COMPOSE_DRAFT_PREFIX } = await import("../app/shell/compose.js");
-  const keys = [`${SEND_LOCKS_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`];
+  const { SENT_COPY_NOTES_PREFIX } = await import("../app/shell/mail-send.js");
+  const keys = [
+    `${SEND_LOCKS_PREFIX}${owner}`, `${SENT_COPY_NOTES_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
+  ];
   for (const k of keys) localStorage.setItem(k, "account data");
   return keys;
 }

@@ -530,6 +530,13 @@ function installShellStub(window) {
         if (url === "/screener/unscreened" && (payload?.method ?? "GET") === "GET") {
           return Promise.resolve(frame(200, "OK", { groups: [], total: 0, max: 200 }));
         }
+        /* AUTO-FILED — `GET /screener/auto-filed`, read once per mount by the Screener's
+           impersonation line. This stub's mailbox had nothing filed on its own: an empty page in
+           the route's real shape. GET only; Put back is a POST this boot never takes. Added AFTER
+           the check named it red. */
+        if (url === "/screener/auto-filed" && (payload?.method ?? "GET") === "GET") {
+          return Promise.resolve(frame(200, "OK", { items: [], more: false }));
+        }
         /* The profile-import PROBE — the "we found your ohmail settings on this mailbox" card
            asks once per mailbox at mount (`useProfileImport`), on both doors, since the desktop
            wired its transport. `state: "none"` is the honest resting answer — this stub's

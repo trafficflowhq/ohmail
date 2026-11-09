@@ -1858,11 +1858,24 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   flex-wrap: wrap;
   gap: 6px;
 }
-/* The pill stacks above the first-sync pill when both float (`--pill-h` is that one's room). */
+/* The pill stacks above the first-sync pill when both float (`--pill-h` is that one's room). It is
+   capped as the rail's slot is and rests on its end (`column-reverse` over one stack, `rail.css`):
+   what overflows is the oldest note, at the top, and the live rows stay in the window. */
 .sync-bar.busy.sending-pill {
   bottom: max(18px, calc(var(--pill-h, 0px) + 8px));
-  flex-direction: column;
+  flex-direction: column-reverse;
+  flex-wrap: nowrap;
   align-items: stretch;
+  max-height: calc(45vh / var(--ui-zoom, 1));
+  max-height: calc(45dvh / var(--ui-zoom, 1));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.sending-pill .sl-stack {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 }
 /* ONE ROW PER KIND (`lineRows`): an ending that waits for the person stands above the sends still
    going, a hairline between them; an outcome's sentence wraps under the message it names. */
@@ -2805,6 +2818,20 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   overflow-wrap: anywhere;
   font-size: calc(12px + var(--type-up));
   color: var(--ink2);
+}
+/* A letter ohmail filed to Spam for claiming a company: what it was over why it went, its Put back beside. */
+.scn-impersonated-letter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.scn-impersonated-why {
+  font-size: calc(11.5px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
 }
 .scn-relay {
   margin: 0;

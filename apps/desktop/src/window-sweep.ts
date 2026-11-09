@@ -15,7 +15,7 @@ import {
 } from "../../webapp/app/shell/compose";
 import { DELETE_INTENTS_PREFIX } from "../../webapp/app/shell/delete-intents";
 import {
-  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, sentCopyNotesKey,
 } from "../../webapp/app/shell/mail-send";
 import { isOwnerShaped } from "../../webapp/app/shell/owner-cookie";
 import { READING_ALONG_PREFIX } from "../../webapp/app/shell/reading-along";
@@ -68,12 +68,13 @@ function scopedTo(key: string, scope: string): boolean {
 /**
  * Remove the window's keys for `scopes`, read back: Sign out's and a revoke's sweep, the send lanes kept.
  * A reply buffer that names no mailbox (written before they did) goes whole; one that names a mailbox goes
- * with it. Nothing owed (no scope) touches nothing and answers null, so a card still up at the next launch
+ * with it, and so do the mailbox's Sent copy notes (exactly its own key: each names a recipient and a
+ * subject). Nothing owed (no scope) touches nothing and answers null, so a card still up at the next launch
  * sweeps nothing again. The marker goes once a clean sweep covered it; a sweep that did not read back clean
  * keeps it, and the next end retries.
  */
 export function forgetWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {
-  return sweepScopes(scopes, () => false);
+  return sweepScopes(scopes, (key, scope) => key === sentCopyNotesKey(scope));
 }
 
 /**
@@ -83,7 +84,7 @@ export function forgetWindowScopes(scopes: readonly (string | null | undefined)[
  * no other, to name the jar's prefix.
  */
 export function forgetErasedWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {
-  return sweepScopes(scopes, (key, scope) => key === `${SEND_LOCKS_PREFIX}${scope}`);
+  return sweepScopes(scopes, (key, scope) => key === `${SEND_LOCKS_PREFIX}${scope}` || key === sentCopyNotesKey(scope));
 }
 
 function sweepScopes(

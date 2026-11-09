@@ -31,6 +31,8 @@ import { SurfaceBoundary } from "../../src/ui/ErrorBoundary";
 import { noneOrganizedWhy, notOrganizingSay } from "../../src/ui/not-organizing";
 import { firstPassWithholds } from "../../src/state/seed-offer";
 import { standaloneHereFor } from "../../src/engine/organizer-session";
+import { useConnection } from "../../src/net/connection";
+import { ImpersonationNotice } from "../../src/ui/ImpersonationNotice";
 
 /**
  * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
@@ -62,6 +64,9 @@ function ScreenerBody() {
      waiting for the next navigation — see `src/i18n/LocaleProvider.tsx`. */
   useLocale();
   const w = useWorld();
+  /* The live session the impersonation line reads through; none, no line. */
+  const conn = useConnection();
+  const session = conn.state.k === "live" ? conn.state.session : null;
   // The waiting queue's first page is the engine's; it is asked when this screen is shown.
   useFocusEffect(useEngineQueuesAsk());
   const pull = usePullToSync();
@@ -179,6 +184,8 @@ function ScreenerBody() {
               ]}
             />
             {seg === "waiting" ? <FailedLetters letters={w.screener.failedAtGate} onFile={w.actions.fileFailed} /> : null}
+            {/* What ohmail filed to Spam for claiming a company: one line, Review, Put back and OK. */}
+            {seg === "waiting" && session !== null ? <ImpersonationNotice session={session} /> : null}
           </>
         }
         empty={shelfEmpty}

@@ -292,6 +292,10 @@ export const KNOWN_SET_NEUTRAL: ReadonlySet<string> = new Set([
   // projecting nothing new). These landed UNCLASSIFIED and the guard suite was red in HEAD from
   // that wave until the 0071 slice ran it again — the dirty-by-default rule did its job late.
   "getMailboxSpecialFolders", "listAiAutoAppliedQuarantine", "listJunkFiledHusks",
+  // That probe's two private halves, reads alone: the impersonation pass's filings (`messages`
+  // joined to `folder_state`, then `audit_log` and `change_log`) and the AI auto-apply's
+  // (`routing_decisions`, `change_log`).
+  "impersonationFiledToPile", "aiAutoAppliedToPile",
   // The blank repair's candidate read (rows joined to folder_state, then their instances): a read.
   // Its `forgetInstanceAt` is not named, so a place it forgets drops the memo.
   "listBlankMessages",

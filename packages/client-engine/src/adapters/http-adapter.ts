@@ -31,7 +31,7 @@ import type {
   TrashRowWire,
 } from "../engine.js";
 import type {
-  AttachmentWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
+  AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
   UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer, ScheduleFilesAnswer,
 } from "./adapter.js";
@@ -1328,6 +1328,36 @@ export class HttpAdapter implements EngineAdapter {
       ? (wire.stayed as Partial<StayedWire>[]).filter((r): r is StayedWire =>
         typeof r.id === "string" && typeof r.why === "string" && known.has(r.why))
       : [];
+  }
+
+  async autoFiled(): Promise<AutoFiledWire> {
+    const res = await this.request("GET", "/screener/auto-filed");
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json().catch(() => null)) as { items?: unknown; more?: unknown } | null;
+    const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+    // A row this client cannot read is dropped: Put back names ids, and a guess names the wrong one.
+    const items = Array.isArray(wire?.items)
+      ? (wire.items as Array<Record<string, unknown>>).flatMap((r): AutoFiledItemWire[] => {
+        const messageId = str(r.messageId);
+        const to = str(r.to);
+        const filedAt = str(r.filedAt);
+        if (messageId === null || to === null || filedAt === null) return [];
+        const claim = r.why === "impersonation";
+        return [{
+          messageId, to, filedAt, from: str(r.from), subject: str(r.subject),
+          why: claim ? "impersonation" : null, brand: claim ? str(r.brand) : null,
+        }];
+      })
+      : [];
+    return { items, more: wire?.more === true };
+  }
+
+  async undoAutoFiled(ids: readonly string[]): Promise<AutoFiledUndoWire> {
+    const res = await this.request("POST", "/screener/auto-filed/undo", { body: { messageIds: [...ids] } });
+    if (!res.ok) throw await this.rejectionOf(res);
+    const wire = (await res.json().catch(() => null)) as { putBack?: unknown; requested?: unknown } | null;
+    const idsOf = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
+    return { putBack: idsOf(wire?.putBack), requested: idsOf(wire?.requested) };
   }
 
   async heldReleases(): Promise<HeldReleaseWire> {

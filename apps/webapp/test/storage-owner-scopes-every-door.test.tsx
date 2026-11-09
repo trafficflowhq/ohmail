@@ -15,7 +15,7 @@ import {
 import { dropLocalStorageKeys } from "../app/shell/boot-cache";
 import {
   COMPOSE_SEND_KEY, clearLaneScratch, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
-  writeReplyDraft, writeReplyMeta,
+  sentCopyNotesKey, writeReplyDraft, writeReplyMeta,
 } from "../app/shell/mail-send";
 import { searchSortKey } from "../app/shell/persisted-ui";
 import {
@@ -283,12 +283,13 @@ describe("the reply buffers are partitioned by the storage owner", () => {
     expect(held(), "the sends left their own scratch").toEqual([undefined, undefined, undefined, "", ""]);
   });
 
-  it("the host door's sweep takes the reply text a pairing named", async () => {
+  it("the host door's sweep takes the reply text a pairing named, and its letters' copy notes", async () => {
     const { HOST_SCRATCH_PREFIXES } = await import("../../desktop/src/host-client/HostGate");
     setStorageOwner("pairing-scope-1");
     writeReplyDraft("m-1", words("typed on a phone"));
     writeReplyMeta("m-1", { subject: "a title" });
-    expect(Object.keys(window.localStorage)).toHaveLength(2);
+    window.localStorage.setItem(sentCopyNotesKey("pairing-scope-1"), JSON.stringify({ v: 1, notes: [] }));
+    expect(Object.keys(window.localStorage)).toHaveLength(3);
     dropLocalStorageKeys(HOST_SCRATCH_PREFIXES);
     expect(Object.keys(window.localStorage), "an ended pairing left its reply text").toEqual([]);
   });
