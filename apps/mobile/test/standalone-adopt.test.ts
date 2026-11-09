@@ -745,6 +745,7 @@ describe("stopping here — one verb, three effects", () => {
         beat: () => running,
         beatIntervalMs: () => 30_000,
         onStopRequested: () => () => undefined,
+        onTimedOut: () => () => undefined,
       },
       stops: () => stops,
     };
@@ -859,6 +860,7 @@ describe("a refused connect leaves no engine, and a second press makes no second
         beat: () => running,
         beatIntervalMs: () => 30_000,
         onStopRequested: () => () => undefined,
+        onTimedOut: () => () => undefined,
       },
       stops: () => stops,
     };
@@ -2030,6 +2032,7 @@ describe("one standing instruction, and a press replaces it rather than racing i
       beat: () => running,
       beatIntervalMs: () => 30_000,
       onStopRequested: () => () => undefined,
+      onTimedOut: () => () => undefined,
     };
     holdStandaloneDoor(door);
     startOrganizerSession(standaloneLaunchGeneration(), {
@@ -2106,6 +2109,7 @@ describe("one standing instruction, and a press replaces it rather than racing i
       beat: () => running,
       beatIntervalMs: () => 30_000,
       onStopRequested: () => () => undefined,
+      onTimedOut: () => () => undefined,
     };
     holdStandaloneDoor(door);
     startOrganizerSession(standaloneLaunchGeneration(), {

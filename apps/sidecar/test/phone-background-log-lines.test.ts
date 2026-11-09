@@ -86,20 +86,25 @@ interface ServiceOpts {
   running?: boolean;
 }
 
-function fakeService(o: ServiceOpts): { service: BackgroundService; fire: () => void } {
+function fakeService(o: ServiceOpts): { service: BackgroundService; fire: () => void; timeOut: () => void } {
   let stop: (() => void) | null = null;
+  let timedOut: (() => void) | null = null;
+  let running = o.running ?? true;
   return {
     service: {
       start: async () => o.starts ?? true,
       stop: async () => undefined,
       beat: () => true,
       beatIntervalMs: () => 60_000,
-      running: () => o.running ?? true,
+      running: () => running,
       restricted: () => o.restricted ?? false,
       canPost: () => true,
       onStopRequested: (listener) => { stop = listener; return () => { stop = null; }; },
+      onTimedOut: (listener) => { timedOut = listener; return () => { timedOut = null; }; },
     },
     fire: () => { stop?.(); },
+    /* The platform stopped the service at its limit: it is down before the event arrives. */
+    timeOut: () => { running = false; timedOut?.(); },
   };
 }
 
@@ -107,7 +112,7 @@ function fakeService(o: ServiceOpts): { service: BackgroundService; fire: () => 
 function wired(
   platform: OrganizerPlatform,
   o: { engine?: EngineOpts; service?: ServiceOpts | null } = {},
-): { live: BackgroundOrganizing; lines: Line[]; fireStop: () => void } {
+): { live: BackgroundOrganizing; lines: Line[]; fireStop: () => void; timeOut: () => void } {
   const lines: Line[] = [];
   const log = createSidecarLog({ sink: (line) => { lines.push(JSON.parse(line) as Line); } });
   /* A SERVICE BY DEFAULT — `null` is the iOS arm and the no-service build, and both are named. */
@@ -126,7 +131,7 @@ function wired(
     sayHandBackLate: () => undefined,
     log,
   });
-  return { live, lines, fireStop: () => svc?.fire() };
+  return { live, lines, fireStop: () => svc?.fire(), timeOut: () => svc?.timeOut() };
 }
 
 const only = (lines: readonly Line[], event: string): Line => {
@@ -223,6 +228,21 @@ describe("the phone's background declines, as lines a person holding a logcat ca
        and the WORD is what tells it from `refused`, which a boolean could not. */
     expect(stopped.stopped).toBe("not_organizing");
     nothingDropped(stopped);
+  });
+
+  it("Android's data-sync time limit: both lines name it and lose nothing", async () => {
+    const w = wired("android");
+    await w.live.phaseChanged("background");
+    w.timeOut();
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    const timedOut = only(w.lines, "organizer_service_timed_out");
+    expect(timedOut.why).toBe("system_time_limit");
+    nothingDropped(timedOut);
+    const back = only(w.lines, "organizer_hand_back");
+    expect(back.why).toBe("system_time_limit");
+    expect(back.handedBack).toBe(true);
+    nothingDropped(back);
   });
 
   it("a thrown engine becomes class and code, never a message with a path in it", async () => {

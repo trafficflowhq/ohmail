@@ -100,6 +100,11 @@ export interface BackgroundService {
    * Returns its own unsubscribe.
    */
   onStopRequested(listener: () => void): () => void;
+  /**
+   * The platform stopped the service at its data-sync time limit (Android 15+, `onTimeout`). Not a
+   * person's stop: the claim goes back and the next foreground resumes. Returns its own unsubscribe.
+   */
+  onTimedOut(listener: () => void): () => void;
 }
 
 /** What this machine needs of the engine. `PhoneEngine` satisfies it structurally. */
@@ -298,7 +303,9 @@ export type BackgroundReason =
   | "holder_left"
   /** The organizer is running behind its notification and goes on running, so leaving the screen
    *  gives nothing back — the only code here that is not about something ending. */
-  | "organizer_still_running";
+  | "organizer_still_running"
+  /** Android stopped the service at its data-sync time limit; opening the app resumes. */
+  | "system_time_limit";
 
 /**
  * Whether the SYSTEM declined — battery saver, or a notification it will not show — rather than
@@ -730,6 +737,23 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
   }) ?? ((): void => undefined);
 
   /**
+   * THE PLATFORM'S TIME LIMIT — the service is already down when this fires. The claim goes back
+   * now (not after the lease's staleness window) and the row keeps saying organizer, so the next
+   * foreground resumes. The watch is disarmed at once: a paused JS timer would otherwise tick
+   * after that resume and hand the mailbox back again.
+   */
+  const unsubscribeTimedOut = deps.service?.onTimedOut(() => {
+    log("organizer_service_timed_out", { why: "system_time_limit" });
+    if (organizerRuns()) return;
+    disarmWatch();
+    moved();
+    void serial(async () => {
+      if (disposed || !inBackground || organizerRuns()) return;
+      await handBack("system_time_limit");
+    });
+  }) ?? ((): void => undefined);
+
+  /**
    * ══ IS THE ORGANIZER RUNNING — the ONE predicate the claim follows ══════════════════════════
    *
    * The claim stands exactly while the thing that renews it can run. On Android that is the
@@ -1111,6 +1135,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       disarmWatch();
       disarmReclaim();
       unsubscribe();
+      unsubscribeTimedOut();
     },
   };
 }

@@ -118,6 +118,7 @@ function service(over: { showing?: boolean; restricted?: boolean } = {}) {
       log.fire = listener;
       return () => { log.unsubscribed += 1; log.fire = null; };
     },
+    onTimedOut: () => () => undefined,
   };
   return { service: impl, log };
 }

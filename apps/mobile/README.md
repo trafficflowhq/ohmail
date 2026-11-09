@@ -176,9 +176,18 @@ declines rather than one nobody thought about:
   defaults, and Expo's `applyPermissions` writes a default string whenever the
   option is left undefined — only the literal value `false` removes the key. So
   "we never set it" was shipping *"Allow ohmail to access your microphone"* for an
-  app that records nothing. It is now `microphonePermission: false`. The Android
-  half of this decision was already made — `recordAudioAndroid: false` keeps
-  `RECORD_AUDIO` out of the manifest — and iOS was the half still missing.
+  app that records nothing. It is now `microphonePermission: false`. On Android,
+  `recordAudioAndroid: false` alone did not keep `RECORD_AUDIO` out: the image
+  picker's plugin adds it with its defaults. `android.blockedPermissions` in
+  `app.json` removes it from the merged manifest, together with the
+  `SYSTEM_ALERT_WINDOW` Expo's template declares and nothing here uses.
+- **Android storage.** `expo-image-picker` and `expo-file-system` declare
+  `READ_EXTERNAL_STORAGE` and `WRITE_EXTERNAL_STORAGE` (up to Android 12L), and
+  `android.blockedPermissions` removes both. Photos come from the system photo
+  picker, files from the document picker into the app's cache, and a saved
+  attachment leaves through the share sheet; none of these asks for storage
+  access on any Android version. `launchCameraAsync` would want it below
+  Android 10, and the app does not call it.
 - **Face ID.** `expo-secure-store` defaults `NSFaceIDUsageDescription` the same
   way. This app stores refresh tokens with `WHEN_UNLOCKED_THIS_DEVICE_ONLY` and
   never asks for biometric authentication, so the key is removed with
