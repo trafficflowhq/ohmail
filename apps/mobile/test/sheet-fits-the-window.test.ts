@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
-import { sheetPanelBounds } from "../src/ui/sheet-bounds";
+import { SHEET_TOP_ROOM, sheetPanelBounds } from "../src/ui/sheet-bounds";
 
 /**
  * A SHEET FITS THE WINDOW AND SCROLLS INSIDE IT (MOBILE-SHEET-PANEL-IS-BOUNDED-IN-POSE-UNITS, ruling
@@ -23,6 +23,27 @@ describe("the panel's bound", () => {
     expect(sheetPanelBounds(1800, 1100, 30, null, { x: 880, y: 0, w: 40, h: 1100 }).maxHeight).toBe(1070);
     expect(sheetPanelBounds(1100, 1800, 30, null, { x: 0, y: 880, w: 1100, h: 40 }).maxHeight).toBe(880);
     expect(sheetPanelBounds(400, 300, 30, null, { x: 0, y: 200, w: 400, h: 40 }).maxHeight, "the hinge floor never passes the window").toBe(270);
+  });
+});
+
+/* ON TWO PANES THE PANEL IS A CARD IN THE PANE (iPad, the Fold landscape): it ran to the window's foot,
+   past the pane's own, with square bottom corners. It ends a gutter above the foot, rounded all round. */
+describe("a pane-anchored panel ends at the pane's foot", () => {
+  const PANE = { x: 420, w: 740 };
+  const FOOT = { gutter: 16, radius: 22 };
+  it("a gutter under it, four round corners, the gutter paid out of its height", () => {
+    const b = sheetPanelBounds(1180, 820, 24, PANE, null, FOOT);
+    expect(b.marginBottom).toBe(16);
+    expect(b.borderBottomLeftRadius).toBe(22);
+    expect(b.borderBottomRightRadius).toBe(22);
+    expect(b.maxHeight).toBe(820 - 24 - SHEET_TOP_ROOM - 16);
+    expect(b.marginLeft).toBe(420);
+    expect(b.width).toBe(740);
+  });
+  it("CONTROL: one pane keeps the thumb sheet on the window's foot", () => {
+    const b = sheetPanelBounds(390, 844, 47, null, null, FOOT);
+    expect(b.marginBottom).toBeUndefined();
+    expect(b.borderBottomLeftRadius).toBeUndefined();
   });
 });
 

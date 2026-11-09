@@ -134,9 +134,9 @@ describe("one pane and tabletop keep their sheets", () => {
 describe("the pane rect reaches the sheet from the pair's own law, nowhere else", () => {
   it("Sheet's bounds read detailPaneRect over the live posture; the composer shares them", () => {
     const sheet = src("../src/ui/Sheet.tsx");
-    expect(sheet).toContain("const pane = detailPaneRect(posture, scaffoldPlan(posture,");
+    expect(sheet).toContain("const pane = detailPaneRect(posture, plan, { w, h }, insets);");
     expect(sheet).toContain("const hinge = posture.panes === 2 || separatingVerticalHinge(posture.fold, posture.hinge) !== null ? posture.hinge : null;");
-    expect(sheet).toContain("return sheetPanelBounds(w, h, insets.top, pane, hinge);");
+    expect(sheet).toContain("return sheetPanelBounds(w, h, insets.top, pane, hinge, { gutter: plan.gutter, radius: t.radius.panel });");
     expect(src("../src/ui/MessageActions.tsx")).toContain("const panelBounds = useSheetPanelBounds();");
   });
   it("the pair renders with the same padding the rect is computed from", () => {

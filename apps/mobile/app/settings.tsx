@@ -933,7 +933,7 @@ function ThisPhonePanel() {
           exactly as it was — which is why the sheet stays open with the server's own words in it
           rather than closing on a send that changed nothing. */}
       {resupplying ? (
-        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain} cancel="own">
+        <Sheet open onClose={() => setResupplying(false)} label={Copy.signInAgain} cancel="own" avoidKeyboard>
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
             {signInAgainSaid(here?.address ?? "").lead}
           </Txt>
@@ -988,7 +988,7 @@ function ThisPhonePanel() {
           and the password the door tries them with before it keeps anything. A refusal keeps the
           sheet open with the sentence on the field it is about. */}
       {servers !== null ? (
-        <Sheet open onClose={() => setServers(null)} label={Copy.serverSettings} cancel="own">
+        <Sheet open onClose={() => setServers(null)} label={Copy.serverSettings} cancel="own" avoidKeyboard>
           <Txt variant="note" tone="ink2" style={{ paddingHorizontal: 14, paddingBottom: 4 }}>
             {Copy.serverSettingsLead}
           </Txt>

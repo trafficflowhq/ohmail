@@ -17,6 +17,8 @@ import { POSTURE_PRESETS, derivePosture, type PostureInput } from "../src/ui/pos
 import { scaffoldPlan } from "../src/ui/scaffold/plan";
 import { readerPaneWidth, readerVerbMode } from "../src/ui/reader-verbs";
 import { TOAST_FLOOR, TOAST_GAP, foldSlots, tallest, toastBottom, toastFrame } from "../src/ui/bottom-chrome";
+import { TOAST_SIDE, foldPane, toastPaneRect, toastSpan, type PillPane } from "../src/ui/bottom-chrome";
+import { detailPaneRect, pairPadding, paneSplit, screenHingeClearance, screenRailClearance } from "../src/ui/scaffold/plan";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.join(HERE, "..");
@@ -259,5 +261,105 @@ describe("the surfaces at the foot report their extent from layout", () => {
   });
   it("the reader's bar holds a slot and feeds it from both of its shapes (compact, ActionBar)", () => {
     expect(reporters(READER_BAR)).toEqual({ slot: "standing", feeds: 2 });
+  });
+});
+
+/* ── 4. the pane the verb happened in ────────────────────────────────────────────────────── */
+
+/* Measured on the iPad and the Fold landscape: the pill stood centred on the window, half over the
+   list and half over the reader, or over "Nothing open" after a swipe in the list. On two panes it
+   now stands in one pane — the reader's while a message is open, the list's otherwise — and beside
+   a one-pane rail it centres in the content. A book fold keeps the reading side. */
+describe("the pill stands in the pane the verb happened in", () => {
+  const win = (name: string) => { const p = postureOf(name); return { ...p, plan: scaffoldPlan(p.posture, p.platform) }; };
+  const NO_HINGE = { left: 0, right: 0 };
+  const frameIn = (name: string, which: PillPane | null) => {
+    const { posture, plan, width, height } = win(name);
+    const rect = toastPaneRect(posture, plan, { w: width, h: height }, { left: 0, right: 0 }, which);
+    const span = toastSpan(NO_HINGE, rect, width, screenRailClearance(plan, true));
+    return { rect, f: toastFrame({ width, height }, { top: 24, bottom: 20 }, 0, PILL_H, NO_HINGE, rect, screenRailClearance(plan, true)), span };
+  };
+
+  for (const name of ["ipad", "android-tablet", "fold-inner"]) {
+    it(`${name}: a message open — inside the reader's pane, centred on it`, () => {
+      const { posture, plan, width, height } = win(name);
+      expect(plan.panes, "not a two-pane posture; this measures nothing").toBe(2);
+      const detail = detailPaneRect(posture, plan, { w: width, h: height }, { left: 0, right: 0 })!;
+      const { rect, f } = frameIn(name, "detail");
+      expect(rect).toEqual(detail);
+      expect(f.left).toBe(detail.x + TOAST_SIDE);
+      expect(f.right).toBe(detail.x + detail.w - TOAST_SIDE);
+      expect((f.left + f.right) / 2).toBe(detail.x + detail.w / 2);
+    });
+    it(`${name}: nothing open — inside the list's pane, never over the reader`, () => {
+      const { posture, plan, width, height } = win(name);
+      const detail = detailPaneRect(posture, plan, { w: width, h: height }, { left: 0, right: 0 })!;
+      const { rect, f } = frameIn(name, "list");
+      const split = paneSplit(posture, plan, width, height)!;
+      expect(rect).toEqual({ x: pairPadding(plan).left, w: split.first });
+      expect(f.left).toBe(rect!.x + TOAST_SIDE);
+      expect(f.right).toBe(rect!.x + rect!.w - TOAST_SIDE);
+      expect(f.right, "the pill reaches the reader").toBeLessThan(detail.x);
+    });
+    it(`${name}: no pair in front (a full-window screen) — the window, less the rail`, () => {
+      const { plan, width } = win(name);
+      const { rect, span } = frameIn(name, null);
+      expect(rect).toBeNull();
+      const rail = screenRailClearance(plan, true);
+      expect(span).toEqual({ left: rail.left + TOAST_SIDE, right: rail.right + TOAST_SIDE });
+      expect(width - span.right - span.left).toBeGreaterThan(0);
+    });
+  }
+
+  it("CONTROL: the pre-fix span straddled both panes on the iPad", () => {
+    const { posture, plan, width, height } = win("ipad");
+    const detail = detailPaneRect(posture, plan, { w: width, h: height }, { left: 0, right: 0 })!;
+    const old = toastSpan(NO_HINGE);
+    expect(old.left).toBeLessThan(detail.x);
+    expect(width - old.right).toBeGreaterThan(detail.x);
+  });
+
+  it("a side inset moves the list pane with the pair", () => {
+    const { posture, plan, width, height } = win("ipad");
+    const rect = toastPaneRect(posture, plan, { w: width, h: height }, { left: 30, right: 0 }, "list")!;
+    expect(rect.x).toBe(30 + pairPadding(plan).left);
+  });
+
+  it("one pane beside a rail: centred in the content, clear of the rail", () => {
+    const { posture, plan, width, height } = win("duo-closed");
+    expect(plan.panes).toBe(1);
+    expect(plan.nav).toBe("rail");
+    expect(toastPaneRect(posture, plan, { w: width, h: height }, { left: 0, right: 0 }, "list"), "no pair, no pane").toBeNull();
+    const rail = screenRailClearance(plan, true);
+    expect(rail.left + rail.right).toBeGreaterThan(0);
+    const span = toastSpan(NO_HINGE, null, width, rail);
+    expect(span).toEqual({ left: rail.left + TOAST_SIDE, right: rail.right + TOAST_SIDE });
+  });
+
+  it("the phone's dock: the whole window, as shipped", () => {
+    const { plan, width } = win("phone");
+    expect(toastSpan(NO_HINGE, null, width, screenRailClearance(plan, true))).toEqual({ left: TOAST_SIDE, right: TOAST_SIDE });
+  });
+
+  it("a book fold keeps the reading side, whichever pane is reported", () => {
+    const { posture, plan, width, height } = win("fold-book");
+    const hinge = screenHingeClearance(posture, plan, true, false, width);
+    expect(hinge.left + hinge.right, "not a book fold; this measures nothing").toBeGreaterThan(0);
+    const list = toastPaneRect(posture, plan, { w: width, h: height }, { left: 0, right: 0 }, "list");
+    expect(toastSpan(hinge, list, width)).toEqual(toastSpan(hinge));
+  });
+});
+
+describe("the pane report folds", () => {
+  it("the pair in front reports, a leaver clears only its own report", () => {
+    let s = foldPane(null, "ohbox", "list");
+    expect(s?.pane).toBe("list");
+    expect(foldPane(s, "ohbox", "list")).toBe(s);
+    s = foldPane(s, "ohbox", "detail");
+    expect(s?.pane).toBe("detail");
+    expect(foldPane(s, "trash", null), "another pair leaving takes nothing").toBe(s);
+    s = foldPane(s, "trash", "list");
+    expect(s).toEqual({ key: "trash", pane: "list" });
+    expect(foldPane(s, "trash", null)).toBeNull();
   });
 });

@@ -815,7 +815,7 @@ function TagSheet({ m, tags, onClose }: { m: WorldMail; tags: WorldTag[]; onClos
   // create "Invoices" while "invoices" exists would promise a tag the server answers 409 for.
   const canCreate = typed.length > 0 && !tags.some((tag) => tag.name.toLowerCase() === typed.toLowerCase());
   return (
-    <Sheet open onClose={onClose} label={Copy.actionTag}>
+    <Sheet open onClose={onClose} label={Copy.actionTag} avoidKeyboard>
       <TextInput
         maxFontSizeMultiplier={t.textCap}
         disableFullscreenUI

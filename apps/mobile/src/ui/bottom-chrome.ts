@@ -7,7 +7,9 @@
  * bar knows its height only at layout, so it is reported, never assumed; a surface that leaves
  * clears its own slot. The provider sits at the root (`app/_layout.tsx`), above the navigator.
  */
-import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, createElement, useCallback, useContext, useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import type { Posture } from "./posture/derive";
+import { detailPaneRect, pairBoxOf, pairPadding, paneSplit, type ScaffoldPlan } from "./scaffold/plan";
 
 /** The pill's floor over the bottom inset — the dock's own height plus its lift, unchanged. */
 export const TOAST_FLOOR = 74;
@@ -19,6 +21,20 @@ export type Slots = Readonly<Record<string, number>>;
 
 const ExtentContext = createContext<number>(0);
 const ReportContext = createContext<Report>(() => undefined);
+
+/** Which pane of the pair in front a verb belongs to: the reader's while a message is open, else the list's. */
+export type PillPane = "list" | "detail";
+type PaneReport = (key: string, pane: PillPane | null) => void;
+export type PaneHeld = { key: string; pane: PillPane } | null;
+
+const PaneContext = createContext<PillPane | null>(null);
+const PaneReportContext = createContext<PaneReport>(() => undefined);
+
+/** One pair's report folded in: a pair takes the slot, and a pair leaving clears only its own. */
+export function foldPane(held: PaneHeld, key: string, pane: PillPane | null): PaneHeld {
+  if (pane === null) return held?.key === key ? null : held;
+  return held?.key === key && held.pane === pane ? held : { key, pane };
+}
 
 /** One report folded into the standing slots; `null` clears; an unchanged extent is the same object. */
 export function foldSlots(slots: Slots, key: string, extent: number | null): Slots {
@@ -37,11 +53,34 @@ export function BottomChromeProvider({ children }: { children: ReactNode }) {
   const [slots, setSlots] = useState<Slots>({});
   const report = useCallback<Report>((key, extent) => setSlots((s) => foldSlots(s, key, extent)), []);
   const extent = useMemo(() => tallest(slots), [slots]);
+  const [pane, setPane] = useState<PaneHeld>(null);
+  const reportPane = useCallback<PaneReport>((key, p) => setPane((h) => foldPane(h, key, p)), []);
   return createElement(
     ReportContext.Provider,
     { value: report },
-    createElement(ExtentContext.Provider, { value: extent }, children),
+    createElement(
+      ExtentContext.Provider,
+      { value: extent },
+      createElement(
+        PaneReportContext.Provider,
+        { value: reportPane },
+        createElement(PaneContext.Provider, { value: pane?.pane ?? null }, children),
+      ),
+    ),
   );
+}
+
+/** The pane the pair in front reports for the pill; null when no pair is in front, or on one pane. */
+export function useToastPane(): PillPane | null {
+  return useContext(PaneContext);
+}
+
+/** The pair's report: which of its panes a verb belongs to, or null; cleared when the pair unmounts. */
+export function useToastPaneSlot(): (pane: PillPane | null) => void {
+  const report = useContext(PaneReportContext);
+  const key = useId();
+  useEffect(() => () => report(key, null), [key, report]);
+  return useCallback((pane: PillPane | null) => report(key, pane), [key, report]);
 }
 
 /** The tallest extent from the window's bottom edge to a standing chrome's top; 0 when none stands. */
@@ -69,12 +108,39 @@ export function toastBottom(insetBottom: number, chromeExtent: number): number {
 export const TOAST_SIDE = 12;
 
 /**
- * THE PILL'S SIDES: the window's, less the side a book fold keeps every screen off
- * (`screenHingeClearance`, passed in), so "Kept in Drafts." is drawn on the reading side and never
- * across the crease. No fold, no clearance: the whole window.
+ * THE PANE THE PILL STANDS IN, in window dp: the detail pane's rect, or the list pane's from the same
+ * split and padding the pair renders with. Null with no pane reported, on one pane and in tabletop.
  */
-export function toastSpan(hinge: { left: number; right: number }): { left: number; right: number } {
-  return { left: hinge.left + TOAST_SIDE, right: hinge.right + TOAST_SIDE };
+export function toastPaneRect(
+  p: Posture,
+  plan: ScaffoldPlan,
+  win: { w: number; h: number },
+  insets: { left: number; right: number },
+  which: PillPane | null,
+): { x: number; w: number } | null {
+  if (which === null) return null;
+  if (which === "detail") return detailPaneRect(p, plan, win, insets);
+  if (plan.panes !== 2 || plan.paneAxis !== "row") return null;
+  const box = pairBoxOf(win, insets);
+  const split = paneSplit(p, plan, box.w, box.h);
+  return split === null ? null : { x: insets.left + pairPadding(plan).left, w: split.first };
+}
+
+/**
+ * THE PILL'S SIDES. A book fold keeps it on the reading side (`screenHingeClearance`, passed in),
+ * never across the crease. Else, on two panes, inside the one pane the verb happened in (`pane`,
+ * from `toastPaneRect`): centred on the window it stood half over the list and half over the reader.
+ * Else the window less the rail's column (`nav`, `screenRailClearance`), so it centres in the content.
+ */
+export function toastSpan(
+  hinge: { left: number; right: number },
+  pane: { x: number; w: number } | null = null,
+  winW = 0,
+  nav: { left: number; right: number } = { left: 0, right: 0 },
+): { left: number; right: number } {
+  if (hinge.left > 0 || hinge.right > 0) return { left: hinge.left + TOAST_SIDE, right: hinge.right + TOAST_SIDE };
+  if (pane !== null) return { left: pane.x + TOAST_SIDE, right: Math.max(0, winW - pane.x - pane.w) + TOAST_SIDE };
+  return { left: nav.left + TOAST_SIDE, right: nav.right + TOAST_SIDE };
 }
 
 /** The pill's frame in window points, for the suite: `bottom` is measured from the window's foot. */
@@ -84,8 +150,10 @@ export function toastFrame(
   chromeExtent: number,
   pillHeight: number,
   hinge: { left: number; right: number } = { left: 0, right: 0 },
+  pane: { x: number; w: number } | null = null,
+  nav: { left: number; right: number } = { left: 0, right: 0 },
 ): { left: number; right: number; top: number; bottom: number; height: number } {
   const bottom = toastBottom(insets.bottom, chromeExtent);
-  const span = toastSpan(hinge);
+  const span = toastSpan(hinge, pane, window.width, nav);
   return { left: span.left, right: window.width - span.right, top: window.height - bottom - pillHeight, bottom, height: pillHeight };
 }
