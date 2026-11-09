@@ -149,7 +149,8 @@ vi.mock("../src/ui/EventCard", () => ({ EventCards: () => null }));
 vi.mock("../src/ui/MailBodyFrame", () => ({ MailBodyFrame: () => null }));
 vi.mock("../src/ui/AttachmentPreview", () => ({ AttachmentPreview: () => null }));
 vi.mock("../src/ui/FadeOut", () => ({ FadeOut: () => null }));
-vi.mock("../src/ui/MessageActions", () => ({ MessageActions: () => null }));
+const verbs = vi.hoisted(() => ({ mode: "compact" as "compact" | "bar" | "rail" }));
+vi.mock("../src/ui/MessageActions", () => ({ MessageActions: () => null, useReaderVerbMode: () => verbs.mode }));
 vi.mock("../src/ui/posture", () => ({ usePosture: () => ({}) }));
 vi.mock("../src/ui/reader-verbs", () => ({ readerVerbMode: () => "compact" }));
 vi.mock("../src/ui/scaffold/plan", () => ({ scaffoldPlan: () => ({}) }));
@@ -222,6 +223,7 @@ beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "Date"] });
   native.offset = 0; native.content = 0; native.view = 640; native.events = []; native.asked = []; native.stuck = false;
+  verbs.mode = "compact";
   world.glanced = [];
   world.files = [];
   nav.focused = true;
@@ -1647,5 +1649,36 @@ describe("each member names who wrote it", () => {
       expect(titleEl.compareDocumentPosition(m.body!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
     expect(v.from!.textContent).toBe("Benben@fake.test10:00");
+  });
+});
+
+describe("Mark unread has one home on the reader", () => {
+  /** The ⋯ taps in a sender line. */
+  const dots = (line: Element | undefined): El[] =>
+    all(line!).filter((x) => x.__props?.accessibilityLabel === Copy.readerMessageActions);
+  const read = (unreadMember = false) => ({
+    ...mailOf("o1", [{ ...memberOf("m1", "Ada"), seen: !unreadMember }]),
+    unread: false,
+  });
+
+  for (const mode of ["compact", "bar"] as const) {
+    it(`${mode}: the bar's ⋯ carries Mark unread, so the opened message's head has no ⋯; a member's stays`, () => {
+      verbs.mode = mode;
+      world.mail = read();
+      const v = views(mountReader("o1"));
+      expect(dots(v.from), "the opened head").toEqual([]);
+      expect(dots(v.member("m1").header), "a member's own ⋯ marks that member").toHaveLength(1);
+    });
+  }
+
+  it("rail: the rail's ⋯ carries no Mark unread, so the head keeps its ⋯", () => {
+    verbs.mode = "rail";
+    world.mail = read();
+    expect(dots(views(mountReader("o1")).from)).toHaveLength(1);
+  });
+
+  it("compact, a member still unread: the bar's slot reads Mark as read, so the head keeps Mark unread", () => {
+    world.mail = read(true);
+    expect(dots(views(mountReader("o1")).from)).toHaveLength(1);
   });
 });

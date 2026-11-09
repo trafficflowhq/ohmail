@@ -43,7 +43,7 @@ describe("every mail list mounts the list-detail pair", () => {
 describe("the reader's three faces are the one verb model", () => {
   const actions = read("../src/ui/MessageActions.tsx");
   it("the mode comes from the plan, the placement from reader-verbs", () => {
-    expect(actions).toContain("readerVerbMode(plan)");
+    expect(actions).toContain("readerVerbMode(plan, readerPaneWidth(");
     expect(actions).toContain("readerVerbPlacement(mode, facts)");
   });
   it("the bar face is the GlassActionBar with the read switch and Delete behind ⋯", () => {

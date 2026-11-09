@@ -132,44 +132,87 @@ describe("one row, at every width, in both languages", () => {
 });
 
 /**
- * FORWARD STANDS BESIDE REPLY. The five-verb row — Reply, Forward, Later, Park, Resurface — at the
- * cover's widths and the phone ones. Forward rides `Button` plain (the `SOLID` box, measured on the
- * rig at 420 dpi like the rest) and never folds: its word while Reply + Forward fits the line, else
- * its 44-dp icon face. What stands after it is the ordinary greedy law.
+ * FORWARD STANDS BESIDE REPLY WHILE IT COSTS NO HORIZON. The five-verb row — Reply, Forward, Later,
+ * Park, Resurface — at the cover's widths and the phone ones. Forward rides `Button` plain (the
+ * `SOLID` box, measured on the rig at 420 dpi like the rest): its word while Later still stands
+ * after it, else its 44-dp icon while that leaves Later standing; where even the icon leaves no horizon
+ * standing, Forward goes behind ⋯ and the first horizon stands. The German bar stood Antworten ·
+ * Weiterleiten · ⋯ at 411 dp, no triage verb at all.
  */
-describe("five verbs, Forward always beside Reply", () => {
+describe("five verbs, Forward beside Reply while it costs no horizon", () => {
   const FIVE = ["forward", ...ROW] as const;
-  const withForward = (locale: "en" | "de") => ({
-    ...widthsOf(locale), forward: solidWidth(TEXT_DP[locale].actionForward), "forward.icon": 44,
+  const withForward = (locale: "en" | "de", fontScale = 1): Record<string, number> => ({
+    ...widthsOf(locale, fontScale), forward: solidWidth(TEXT_DP[locale].actionForward * fontScale), "forward.icon": 44,
   });
   const used = (fit: ReturnType<typeof compactFit>, w: Record<string, number>) =>
     fit.standing.reduce((sum, id) => sum + BAR.gap + (id === "forward" && fit.leadIcon ? w["forward.icon"]! : w[id]!), w.__reply!);
 
   for (const width of [303, 320, 353, 360, 390, 404, 411, 430]) {
     for (const locale of LOCALES) {
-      it(`${width} dp · ${locale}: every verb placed, Forward standing, nothing over the line`, () => {
+      it(`${width} dp · ${locale}: every verb placed once, nothing over the line, a horizon before a lone Forward`, () => {
         const w = withForward(locale);
         const fit = compactFit({ verbs: FIVE, widths: w, room: width, lead: "forward" });
-        expect(fit.standing[0], "Forward left the row").toBe("forward");
         expect([...fit.standing, ...fit.overflow].sort()).toEqual([...FIVE].sort());
-        expect(fit.standing.slice(1)).toEqual(ROW.slice(0, fit.standing.length - 1));
+        expect(fit.standing.filter((v) => fit.overflow.includes(v))).toEqual([]);
+        const horizons = fit.standing.filter((v) => v !== "forward");
+        expect(horizons).toEqual(ROW.slice(0, horizons.length));
+        expect(horizons.length, `${locale} at ${width} dp: no triage verb stands`).toBeGreaterThan(0);
+        if (fit.standing.includes("forward")) expect(fit.standing[0]).toBe("forward");
         expect(used(fit, w), `${locale} at ${width} dp`).toBeLessThanOrEqual(barLineWidth(width));
       });
     }
   }
 
-  /* Read on the rig's frames too: en 404 Reply · Forward · Later · ⋯, en 353 Reply · Forward · ⋯ (Later
-     needs nearly all of the narrower line), de 404 and 353 the word, de 303 the icon. */
-  it("the measured faces: en keeps Later down to 360, de keeps Forward's word to 353 and takes the icon below", () => {
-    const at = (locale: "en" | "de", room: number) => compactFit({ verbs: FIVE, widths: withForward(locale), room, lead: "forward" });
-    expect(at("en", 404)).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: false });
+  const at = (locale: "en" | "de", room: number, w: Record<string, number> = withForward(locale)) =>
+    compactFit({ verbs: FIVE, widths: w, room, lead: "forward" });
+
+  it("wherever Reply · Later fits the line, a horizon stands, at every text size", () => {
+    for (const locale of LOCALES) {
+      for (const scale of [1, 1.1, 1.15, 1.2, 1.3, 1.5]) {
+        const w = withForward(locale, scale);
+        for (let room = 280; room <= 480; room++) {
+          if (w.__reply! + BAR.gap + w.later! > barLineWidth(room)) continue;
+          const fit = at(locale, room, w);
+          expect(fit.standing.filter((v) => v !== "forward").length, `${locale} ×${scale} at ${room} dp`).toBeGreaterThan(0);
+        }
+      }
+    }
+  });
+
+  /* The German phones of the layout census (411, 372, 360 dp; the bar's room is the window). */
+  it("German phones stand Später beside Antworten and Forward's icon", () => {
+    for (const room of [411, 372, 360]) {
+      expect(at("de", room), `de ${room}`).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: true });
+    }
+  });
+
+  /* The review's frame reading (whole capsules): Antworten 120, Weiterleiten 135, Später 88,
+     Parken 84, Wieder auftauchen 150 — the same faces as the rig's text widths. */
+  it("the frame-read German capsules give the same faces", () => {
+    const frame = { __reply: 120, forward: 135, "forward.icon": 44, later: 88, aside: 84, resurface: 150 };
+    for (const room of [411, 372, 360]) {
+      expect(at("de", room, frame), `de ${room}`).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: true });
+    }
+  });
+
+  it("English phones keep Forward's word beside Later; the icon only where the word would push Later out", () => {
+    for (const room of [430, 411, 402, 393, 390, 375]) {
+      expect(at("en", room), `en ${room}`).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: false });
+    }
     expect(at("en", 360)).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: false });
-    expect(at("en", 353)).toEqual({ standing: ["forward"], overflow: [...ROW], leadIcon: false });
-    expect(at("en", 303)).toEqual({ standing: ["forward"], overflow: [...ROW], leadIcon: false });
-    expect(at("de", 404).standing).toEqual(["forward"]);
-    expect(at("de", 353)).toEqual({ standing: ["forward"], overflow: [...ROW], leadIcon: false });
-    expect(at("de", 320).leadIcon, "de 320: Forward is its icon").toBe(true);
-    expect(at("de", 303)).toEqual({ standing: ["forward"], overflow: [...ROW], leadIcon: true });
+    expect(at("en", 303)).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: true });
+  });
+
+  it("where even the icon stands no horizon, Forward goes behind ⋯ and the first horizon stands", () => {
+    expect(at("de", 353)).toEqual({ standing: ["forward", "later"], overflow: ["aside", "resurface"], leadIcon: true });
+    expect(at("de", 320)).toEqual({ standing: ["later"], overflow: ["forward", "aside", "resurface"], leadIcon: false });
+    expect(at("de", 303)).toEqual({ standing: ["later"], overflow: ["forward", "aside", "resurface"], leadIcon: false });
+    expect(at("de", 330)).toEqual({ standing: ["later"], overflow: ["forward", "aside", "resurface"], leadIcon: false });
+    expect(at("en", 300, withForward("en", 1.3))).toEqual({ standing: ["later"], overflow: ["forward", "aside", "resurface"], leadIcon: false });
+  });
+
+  it("a line too narrow for any horizon keeps Forward's icon rather than an empty row", () => {
+    expect(at("de", 250)).toEqual({ standing: ["forward"], overflow: [...ROW], leadIcon: true });
   });
 });
 

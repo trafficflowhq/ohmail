@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 import ts from "typescript";
 import { POSTURE_PRESETS, derivePosture, type PostureInput } from "../src/ui/posture/derive";
 import { scaffoldPlan } from "../src/ui/scaffold/plan";
-import { readerVerbMode } from "../src/ui/reader-verbs";
+import { readerPaneWidth, readerVerbMode } from "../src/ui/reader-verbs";
 import { TOAST_FLOOR, TOAST_GAP, foldSlots, tallest, toastBottom, toastFrame } from "../src/ui/bottom-chrome";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -171,9 +171,9 @@ const postureOf = (name: string) => {
 
 /** What the plan puts at the foot, as the extent each reporter would send. */
 function footOf(name: string, insetBottom: number, barHeight: number): { chrome: string; extent: number } {
-  const { posture, platform } = postureOf(name);
+  const { posture, platform, width, height } = postureOf(name);
   const plan = scaffoldPlan(posture, platform);
-  const mode = readerVerbMode(plan);
+  const mode = readerVerbMode(plan, readerPaneWidth(posture, plan, { w: width, h: height }, { left: 0, right: 0 }, true));
   if (mode === "compact") return { chrome: "compact bar", extent: Math.max(insetBottom, 8) + barHeight };
   if (mode === "bar") return { chrome: "action bar", extent: Math.max(insetBottom, 12) + barHeight };
   if (plan.nav === "dock") return { chrome: "dock", extent: Math.max(insetBottom, 10) + 56 };
