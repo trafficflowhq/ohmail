@@ -1663,7 +1663,21 @@ export const DE: Deck = {
   composeFromSubstitutedUnknown: "Die Adresse dieses Entwurfs ist getrennt, daher geht er von der Adresse oben raus.",
   composeSent: "Gesendet.",
   composeEarlierWent: "Diese Nachricht wurde bereits gesendet. Dein neuerer Text wurde nicht als zweite Kopie gesendet.",
-  sentCopyMissing: (said: string) => `${said} Die Kopie konnte nicht in deinen Gesendet-Ordner gelegt werden.`,
+  sentCopyMissing: (reason: string, said: string) => `${said} ${
+    reason === "too_big" ? "Dein Mailserver behält keine so große Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; du musst nichts erneut senden."
+      : reason === "full" ? "Dein Postfach auf dem Mailserver ist voll, deshalb liegt keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; schaffe dort Platz."
+        : reason === "refused" ? "Dein Mailserver hat die Kopie für deinen Gesendet-Ordner abgelehnt, deshalb liegt dort keine. Die Nachricht ist versendet; du musst nichts erneut senden."
+          : reason === "unreachable" ? "Dein Mailserver war nicht erreichbar, deshalb liegt keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; du musst nichts erneut senden."
+            : "Die Kopie für deinen Gesendet-Ordner konnte nicht gespeichert werden. Die Nachricht ist versendet; du musst nichts erneut senden."}`,
+  sentCopyWaiting: (reason: string, said: string) => `${said} ${
+    reason === "full" ? "Dein Postfach auf dem Mailserver ist voll, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; schaffe dort Platz, dann versucht ohmail es erneut."
+      : reason === "unreachable" ? "Dein Mailserver war nicht erreichbar, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; ohmail versucht es später erneut."
+        : "Dein Mailserver hat die Kopie für deinen Gesendet-Ordner vorerst abgelehnt. Die Nachricht ist versendet; ohmail versucht es später erneut."}`,
+  sentCopyWaitingUntil: (reason: string, said: string, until: string) => `${said} ${
+    reason === "full" ? `Dein Postfach auf dem Mailserver ist voll, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; schaffe dort Platz, ohmail versucht es bis ${until} erneut.`
+      : reason === "unreachable" ? `Dein Mailserver war nicht erreichbar, deshalb liegt noch keine Kopie in deinem Gesendet-Ordner. Die Nachricht ist versendet; ohmail versucht es bis ${until} erneut.`
+        : reason === "refused" ? `Dein Mailserver hat die Kopie für deinen Gesendet-Ordner vorerst abgelehnt. Die Nachricht ist versendet; ohmail versucht es bis ${until} erneut.`
+          : `Die Kopie für deinen Gesendet-Ordner ist noch nicht gespeichert. Die Nachricht ist versendet; ohmail versucht es bis ${until} erneut.`}`,
   composeKept: "In den Entwürfen behalten.",
   composeKeptWithoutFiles: "In den Entwürfen behalten. Die Anhänge wurden nicht behalten.",
   composeKeptQueued: "Als Entwurf behalten. Er erscheint in den Entwürfen, sobald dieses Handy wieder online ist.",

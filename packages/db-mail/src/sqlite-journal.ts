@@ -705,5 +705,13 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
     "statements": [
       "ALTER TABLE \"mailboxes\" ADD COLUMN \"legacy_news_clean_at\" integer;"
     ]
+  },
+  {
+    "name": "0183_outbound_sent_copies_staged_parts.sql",
+    "statements": [
+      "ALTER TABLE \"outbound_sent_copies\" ADD COLUMN \"staged_parts\" text;",
+      "ALTER TABLE \"outbound_sent_copies\" ADD COLUMN \"files_until\" integer;",
+      "ALTER TABLE \"outbound_sent_copies\" ADD COLUMN \"files_next_attempt_at\" integer;"
+    ]
   }
 ] as const;

@@ -3526,6 +3526,21 @@ export interface ToastOpts {
   shown?: () => void;
 }
 
+/**
+ * What a delivery says, with its Sent copy's note: missing, still owed for a reason the server gave,
+ * or kept without its files and tried until a time, read in `zone`.
+ */
+function withSentCopy(
+  sentAnswer: Pick<MutationResult, "sentCopy" | "sentCopyReason" | "sentCopyUntil"> | null | undefined, said: RefusalArg, now: Date, zone: string,
+): RefusalArg {
+  const why = sentAnswer?.sentCopyReason;
+  if (sentAnswer?.sentCopy === "missing") return refuse("sentCopyMissing", why ?? "", said);
+  if (sentAnswer?.sentCopy === "pending" && sentAnswer.sentCopyUntil !== undefined) {
+    return refuse("sentCopyWaitingUntil", why ?? "", said, setTimeLabel(sentAnswer.sentCopyUntil, now, zone));
+  }
+  return sentAnswer?.sentCopy === "pending" && why ? refuse("sentCopyWaiting", why, said) : said;
+}
+
 /** The sentence a Send + Done release earned, with the Undo that puts the row back. */
 export interface DoneSaid {
   say: RefusalArg;
@@ -5196,7 +5211,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
       /* The row's own Done door — `engine.mutate` through the watched seam, exactly as
          `resurfaceDone` dispatches it. A refused step files nothing more and earns no sentence. */
       const filed = await applySendAndDone(release, async (m) => (await watched(engine.mutate(m))).kind === "applied");
-      if (filed) said.set(r.key, { say: refuse("toastSentAndDone"), opts: undoable(release.undo) });
+      if (filed) said.set(r.key, { say: withSentCopy(r, refuse("toastSentAndDone"), now(), zone), opts: undoable(release.undo) });
     }
     for (const r of results) if (r.status === "confirmed") replyLanded(r.key);
     return said;
@@ -5599,7 +5614,7 @@ export function liveActions(deps: LiveDeps): LiveWorldActions {
     const resumed = first !== null && resumedAnswers.has(first);
     const confirmed = earlierWent ? earlierWentToast
       : alreadyWent ? (alreadyWentToast ?? (resumed ? Copy.unsavedSendAlreadyWent : sentToast)) : sentToast;
-    const sentSay = settled?.sentCopy === "missing" ? refuse("sentCopyMissing", confirmed) : confirmed;
+    const sentSay = withSentCopy(settled, confirmed, now(), zone);
     const said = first ? done.get(first.key) : undefined;
     if (said) toast(said.say, said.opts);
     // A waiting send that will not carry these words says so, never "goes when it is back".

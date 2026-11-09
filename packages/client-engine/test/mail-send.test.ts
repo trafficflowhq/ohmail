@@ -949,6 +949,18 @@ describe("mail_send — the client half of the gated send", () => {
    * Mutation that proves it bites: move the `materializeSentOverlay` call above the `try` (or into
    * the `catch`) and this goes red — a message the recipient never got would appear as sent.
    */
+  it("a confirmed send whose Sent copy is missing paints no Sent row, and says why", async () => {
+    const w = await world();
+    w.setIntercept((url, pass) => (!url.endsWith("/send") ? null : pass().then(async (r) => new Response(
+      JSON.stringify({ ...(await r.json() as object), sentCopy: "missing", sentCopyReason: "too_big" }),
+      { status: r.status, headers: r.headers },
+    ))));
+    const res = await w.engine.mutate({ kind: "mail_send", inReplyTo: w.parent.id, body: "ok" });
+    expect({ status: res.status, sentCopy: res.sentCopy, reason: res.sentCopyReason })
+      .toEqual({ status: "confirmed", sentCopy: "missing", reason: "too_big" });
+    expect(w.engine.read().list<EngineMessage>("message").some((m) => m.local === true)).toBe(false);
+  });
+
   it("a rejected send (unverified) leaves NO Sent copy in the mirror", async () => {
     const w = await world();
     w.spy.throwOnSend = true;
@@ -1508,5 +1520,18 @@ describe("mail_send again — one request about the held row", () => {
     expect(said.sentCopy).toBe("missing");
     const odd = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: "lost" }).adapter.mutate(again, { idempotencyKey: "k2" });
     expect(odd.sentCopy).toBeUndefined();
+    const why = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: "missing", sentCopyReason: "full" }).adapter.mutate(again, { idempotencyKey: "k3" });
+    expect(why.sentCopyReason).toBe("full");
+    const unknown = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: "missing", sentCopyReason: "mila@lichtgrat.example" })
+      .adapter.mutate(again, { idempotencyKey: "k4" });
+    expect({ sentCopy: unknown.sentCopy, reason: unknown.sentCopyReason }).toEqual({ sentCopy: "missing", reason: undefined });
+    const until = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: "pending", sentCopyUntil: "2026-07-29T08:00:00.000Z" })
+      .adapter.mutate(again, { idempotencyKey: "k5" });
+    expect(until.sentCopyUntil).toBe("2026-07-29T08:00:00.000Z");
+    for (const [i, odd] of [["pending", "tomorrow"], ["missing", "2026-07-29T08:00:00.000Z"]].entries()) {
+      const read = await wire({ status: "sent", providerMessageId: "<x@y>", sentCopy: odd[0], sentCopyUntil: odd[1] })
+        .adapter.mutate(again, { idempotencyKey: `k6-${i}` });
+      expect(read.sentCopyUntil, "an end time only on a copy still owed, and only an instant").toBeUndefined();
+    }
   });
 });

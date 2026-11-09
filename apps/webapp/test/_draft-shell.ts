@@ -22,6 +22,7 @@ import {
   type EngineMessage,
   type EngineMutation,
   type MirrorStore,
+  type MutationOutcome,
   type SyncChange,
 } from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
@@ -96,6 +97,8 @@ export interface DraftShell {
   mailto: { open: (d: ComposePrefill) => Promise<void>; seeded: number };
   /** While on, `/sync` answers an empty page at the same cursor: this window's mirror learns nothing new. */
   syncHeld: { on: boolean };
+  /** What a delivered `mail_send` says of its Sent copy; empty (the default) says nothing, as an older server. */
+  sentCopy: Pick<MutationOutcome, "sentCopy" | "sentCopyReason" | "sentCopyUntil">;
 }
 
 let roots: Root[] = [];
@@ -300,6 +303,7 @@ function engineOver(
   parts = false,
   locks: EngineLocks | null = null,
   syncHeld: DraftShell["syncHeld"] = { on: false },
+  sentCopy: DraftShell["sentCopy"] = {},
 ): OhmailEngine {
   const delivered = new Set<string>();
   return new OhmailEngine({
@@ -483,7 +487,10 @@ function engineOver(
         if (sendKey !== null && loseSendAnswer.on) {
           throw new MutationRejectedError("network failure: TypeError: Failed to fetch", { code: "network", retryable: true });
         }
-        return { changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}), ...(revision ? { revision } : {}) };
+        return {
+          changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}), ...(revision ? { revision } : {}),
+          ...(m.kind === "mail_send" ? sentCopy : {}),
+        };
       },
       withdrawSend: async () => (offline.on || withdrawAnswer.outcome === null
         ? { outcome: "unreachable" as const }
@@ -620,10 +627,11 @@ export async function mountShell(
   const withdrawAnswer: DraftShell["withdrawAnswer"] = { outcome: null };
   const loseSendAnswer: DraftShell["loseSendAnswer"] = { on: false };
   const refuseSave = new Set<string>();
+  const sentCopy: DraftShell["sentCopy"] = {};
   const engine = engineOver(
     store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow, withdrawAnswer,
     versions, loseSendAnswer, options.outboxReplayDeadlineMs, options.server, refuseSave, options.parts === true,
-    options.locks ?? null, syncHeld,
+    options.locks ?? null, syncHeld, sentCopy,
   );
   const handOff: DraftShell["handOff"] = { on: options.handOff === true };
   const outboxHeld = engine.outboxHeld.bind(engine);
@@ -674,7 +682,7 @@ export async function mountShell(
   };
   return {
     el, engine, store, sent, refuseSend, saveGate, remote, offline, sendGate, serverGone, resync, refuseDiscard, spendSentRow,
-    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave, mailto, syncHeld,
+    withdrawAnswer, handOff, versions: versions ?? new Map(), editElsewhere, loseSendAnswer, refuseSave, mailto, syncHeld, sentCopy,
   };
 }
 

@@ -1042,6 +1042,8 @@ export const internalRoutes: Route[] = [
             throw new Error("no storage-cap policy is configured for this host");
           }),
           ...(eligible ? { accountEligible: eligible } : {}),
+          // A copy kept without its files is spliced back from its uploads, read under its own account.
+          ...(deps.services?.attachmentStaging ? { stagedAttachments: deps.services.attachmentStaging(deps.db).source } : {}),
           budgetMs: 60_000,
           log,
           now: deps.now,

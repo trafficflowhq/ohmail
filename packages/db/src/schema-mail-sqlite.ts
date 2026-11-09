@@ -2426,7 +2426,7 @@ export const outboundSendFingerprints = sqliteTable("outbound_send_fingerprints"
   ),
 }));
 
-/** Mail 0170: a delivered send's Sent copy, owed until filed — the pg table's twin. */
+/** Mail 0170: a delivered send's Sent copy, owed until filed — the pg table's twin; 0183's three columns too. */
 export const outboundSentCopies = sqliteTable("outbound_sent_copies", {
   sendId: text("send_id").notNull().references(() => outboundSends.id, { onDelete: "cascade" }),
   seq: integer("seq").notNull().default(0),
@@ -2436,6 +2436,9 @@ export const outboundSentCopies = sqliteTable("outbound_sent_copies", {
   attempts: integer("attempts").notNull().default(0),
   nextAttemptAt: integer("next_attempt_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  stagedParts: text("staged_parts"),
+  filesUntil: integer("files_until", { mode: "timestamp_ms" }),
+  filesNextAttemptAt: integer("files_next_attempt_at", { mode: "timestamp_ms" }),
 }, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.sendId, t.seq] }) }));
 
 /** Mail 0178: the rules a person removed, one row per rule key — the pg table's twin. */
