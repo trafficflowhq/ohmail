@@ -21,6 +21,7 @@ describe("the desktop job's files in this tree", () => {
   it("are the desktop tests that import the desktop's vite config or carry the desktop-install marker, and the map names none of them", () => {
     expect(files).toEqual([
       "apps/desktop/test/desktop-messages.test.ts",
+      "apps/desktop/test/desktop-sent-copy-line.test.tsx",
       "apps/desktop/test/desktop-shell.test.ts",
       "apps/desktop/test/host-client-arm.test.ts",
       "apps/desktop/test/host-client-no-engine-door.test.ts",

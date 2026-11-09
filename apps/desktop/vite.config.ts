@@ -259,6 +259,9 @@ const BASE_MESSAGE_NAMESPACES = [
   "stream",
   // `sendingLine` is the sidebar foot's line for a send that left its editor (`SendingLine.tsx`).
   "sendingLine", "shortcuts", "sync", "tag", "triage",
+  // `sentCopy` is why a sent letter's Sent copy is missing or still owed, said under that line and in
+  // the send toast; `mail-send.ts` computes the key and the unscoped `t` reads it.
+  "sentCopy",
   // `trash` is the Trash view's own namespace — the list's empty and scope sentences, the
   // Restore verb, its four toasts and the "ohmail never erases mail" line the disabled delete
   // keys carry. Shared shell code reads it (`views/TrashView.tsx` and `MessagePane`'s bar), so
@@ -416,7 +419,7 @@ export const SHELL_MESSAGE_KEYS: Record<string, readonly string[]> = {
  * An absent namespace ABORTS the build. The alternative is a binary that renders
  * `rail.ohbox` where a word should be, discovered by a user.
  */
-function shellMessagesOnly(): Plugin {
+export function shellMessagesOnly(): Plugin {
   /**
    * EVERY catalogue, not just English. `src/DesktopLocale.tsx` imports both, so a filter that named
    * one file would put the marketing site's GERMAN copy — the pricing table, the FAQ — straight back
