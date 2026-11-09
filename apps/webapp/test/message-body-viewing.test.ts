@@ -1,12 +1,12 @@
 /** @vitest-environment jsdom */
-import { readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { resolve } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
+import { parseCssColor, relativeLuminance } from "@ohmail/client-engine";
 import { GRAY_WRAPPER_HTML, GRAY_WRAPPER_TEXT, TINTED_WRAPPER_HTML } from "./fixtures/gray-wrapper-letter";
+import { CORPUS_WIDTHS, LETTER_PAPER_CORPUS } from "../../../packages/client-engine/test/fixtures/letter-paper-corpus";
+import { LetterJudge, judgeEngines, type OsScheme } from "../../../packages/client-engine/test/fixtures/letter-paper-judge";
 
 /**
  * ── HOW A MESSAGE IS *VIEWED*: DARK ADAPTATION AND FITTING THE COLUMN ───────────────────
@@ -117,51 +117,12 @@ const DATA_GIF =
 // ══ 1. which mail is light, and what the answer is read from ════════════════════════════
 
 describe("the paper a mail is painted on", () => {
-  it("parses the colour spellings mail is written in, and refuses the ones that paint nothing", async () => {
-    // THE GUARD under everything else in this file: a colour this cannot read is a background
-    // that reads as "none declared", which defaults to LIGHT — so a parser gap silently turns
-    // a dark mail into an inverted one. Mutation: drop the `#rgb` branch (return null for
-    // length 3). Real failure text:
-    //   AssertionError: expected null to deeply equal { r: 255, g: 255, b: 255, a: 1 }
-    const { parseCssColor } = await mod();
-    expect(parseCssColor("#fff")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
-    expect(parseCssColor("#FFFFFF")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
-    expect(parseCssColor("#111111")).toEqual({ r: 17, g: 17, b: 17, a: 1 });
-    expect(parseCssColor("rgb(13, 17, 23)")).toEqual({ r: 13, g: 17, b: 23, a: 1 });
-    expect(parseCssColor("rgb(13 17 23 / 50%)")?.a).toBeCloseTo(0.5, 5);
-    expect(parseCssColor("white")).toEqual({ r: 255, g: 255, b: 255, a: 1 });
-    expect(parseCssColor("black")).toEqual({ r: 0, g: 0, b: 0, a: 1 });
-    // The ones that are NOT a background: no opinion, so the scan keeps looking.
-    expect(parseCssColor("transparent")).toBeNull();
-    expect(parseCssColor("inherit")).toBeNull();
-    expect(parseCssColor("linear-gradient(#fff,#000)")).toBeNull();
-    expect(parseCssColor("")).toBeNull();
-    // `rgba(0,0,0,0)` is spelled like a colour and paints nothing. Reading it as BLACK is
-    // precisely how a white mail would be classified dark and left uninverted.
-    const invisible = parseCssColor("rgba(0,0,0,0)");
-    expect(invisible?.a).toBe(0);
-  });
-
-  it("weights luminance perceptually, so the threshold means what it says", async () => {
-    // Mutation: replace the linearisation with a plain (r+g+b)/3/255 average. Real failure
-    // text: AssertionError: expected 0.4 to be less than 0.179  — a mid green would then
-    // count as light and a dark-green mail would be inverted to a bright one.
-    const { relativeLuminance, parseCssColor, LIGHT_LUMINANCE } = await mod();
-    expect(relativeLuminance(parseCssColor("#ffffff")!)).toBeCloseTo(1, 5);
-    expect(relativeLuminance(parseCssColor("#000000")!)).toBeCloseTo(0, 5);
-    expect(relativeLuminance(parseCssColor("#008000")!)).toBeLessThan(LIGHT_LUMINANCE);
-    // The crossover is where black and white ink contrast equally; white is above it.
-    expect(relativeLuminance(parseCssColor("#f5f5f5")!)).toBeGreaterThan(LIGHT_LUMINANCE);
-    expect(relativeLuminance(parseCssColor("#0d1117")!)).toBeLessThan(LIGHT_LUMINANCE);
-  });
-
   it("mail that declares no background at all is LIGHT — the default the product rests on", async () => {
     // THE ONE THAT MATTERS MOST, because it is most of the mail there is. Mutation: make
     // `mailIsLight(null)` return false. Real failure text:
     //   AssertionError: expected false to be true
     // and dark viewing would then be switched off for nearly every message, silently.
-    const { sanitizeMailHtml, mailIsLight } = await mod();
-    expect(mailIsLight(null)).toBe(true);
+    const { sanitizeMailHtml } = await mod();
     const plain = sanitizeMailHtml(PLAIN);
     expect(plain.background).toBeNull();
     expect(plain.light).toBe(true);
@@ -170,7 +131,7 @@ describe("the paper a mail is painted on", () => {
   it("reads the paper from the body attribute, the stylesheet, and the outermost wrapper", async () => {
     // THE THREE SOURCES, one assertion each, because each is a different code path and a
     // mutation to any one of them leaves the other two green. Mutation: delete the
-    // `parsedBody` branch of `effectiveBackground`. Real failure text:
+    // body branch of `letterPaperOf`. Real failure text:
     //   AssertionError: expected true to be false   (DARK_BODY classified light)
     const { sanitizeMailHtml } = await mod();
 
@@ -190,7 +151,7 @@ describe("the paper a mail is painted on", () => {
 
   it("a highlighted WORD is not the paper", async () => {
     // The scan is restricted to elements that paint a page. Mutation: delete the
-    // `PAINTS_THE_PAGE.has(...)` test in `effectiveBackground`. Real failure text:
+    // `PAINTS_THE_PAGE.has(...)` test in `letterPaperOf`. Real failure text:
     //   AssertionError: expected false to be true
     // — a black `<span>` highlight in the first line would decide the whole message.
     const { sanitizeMailHtml } = await mod();
@@ -324,30 +285,11 @@ describe("dark viewing is offered for light mail and withheld from dark mail", (
 // ══ 2b. a near-neutral light paper is clamped to the app's own white ══════════════════════
 
 describe("a colourless light paper is clamped to white; a real canvas keeps its ground", () => {
-  it("clampedPaper drops a colourless light ground and keeps everything else", async () => {
-    // THE UNIT GUARD. A letter that declares a faint grey/off-white page is not asking to keep
-    // that grey — it is the sender's template — so the frame is painted on the app's white
-    // instead. Mutation: `return bg` (never clamp). Real failure text:
-    //   AssertionError: expected { r: 239, g: 239, b: 239, a: 1 } to be null
-    const { clampedPaper, parseCssColor } = await mod();
-    // near-neutral LIGHT → the app's own white (null, the same as "declared nothing")
-    expect(clampedPaper(parseCssColor("#efefef"))).toBeNull();
-    expect(clampedPaper(parseCssColor("#ffffff"))).toBeNull();
-    expect(clampedPaper(parseCssColor("#f5f5f5"))).toBeNull();
-    expect(clampedPaper(parseCssColor("#faf8f2"))).toBeNull(); // a warm template off-white
-    // a DELIBERATE light tint clears the neutral band and is kept
-    expect(clampedPaper(parseCssColor("#cfe0ff"))).toEqual({ r: 207, g: 224, b: 255, a: 1 });
-    // a DARK canvas is a sender who drew a dark page — kept
-    expect(clampedPaper(parseCssColor("#111111"))).toEqual({ r: 17, g: 17, b: 17, a: 1 });
-    // a mail that declared nothing stays nothing
-    expect(clampedPaper(null)).toBeNull();
-  });
-
   it("the grey-wrapper letter renders on white, and a tinted canvas keeps its paper", async () => {
     // THE FIXTURE GUARD, end to end through the component. The grey wrapper used to paint the
     // frame's paper #efefef and read as a dull sheet behind a plain letter; it must carry no
     // paper at all now (the app's white). Mutation: `paper: background` in place of
-    // `paper: clampedPaper(background)` — red: the srcdoc gains `--ohmail-paper:rgb(239,239,239)`.
+    // `paintedPaper` in `letterPaperOf` — red: the srcdoc gains `--ohmail-paper:rgb(239,239,239)`.
     await renderIn("light", { text: GRAY_WRAPPER_TEXT, html: GRAY_WRAPPER_HTML });
     expect(rootTag(), "the grey wrapper still paints a grey paper").not.toContain("--ohmail-paper");
 
@@ -367,7 +309,6 @@ const framePaint = (prop: "background" | "color"): string => {
     new RegExp(`${name}:([^;"]+)`).exec(vars)?.[1] ?? fallback);
 };
 const frameContrast = async (): Promise<number> => {
-  const { parseCssColor, relativeLuminance } = await mod();
   const [a, b] = [relativeLuminance(parseCssColor(framePaint("background"))!), relativeLuminance(parseCssColor(framePaint("color"))!)];
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 };
@@ -404,45 +345,25 @@ describe("a letter's page and ink read together", () => {
   const SHEET_OVER_INLINE = '<style>body{background:#ffffff}</style><body style="background:#000;color:#fff"><p>Sheet page words</p></body>';
 
   it("a sheet html/body rule is the page over the body's dropped inline one", async () => {
-    const { sanitizeMailHtml, pageBackground } = await mod();
+    const { sanitizeMailHtml } = await mod();
     const mail = sanitizeMailHtml(SHEET_OVER_INLINE);
     expect(mail.light).toBe(true);
     expect(mail.ink ?? null).toBeNull();
-    const body = new DOMParser().parseFromString('<body style="background:#000" bgcolor="#000"></body>', "text/html").body;
-    expect(pageBackground(body, "body{background-color:#fff}")).toMatchObject({ r: 255, g: 255, b: 255 });
     // With no such rule (or one only for print) the body's own page counts.
-    expect(pageBackground(body, "@media print{body{background:#fff}}")).toMatchObject({ r: 0, g: 0, b: 0 });
+    expect(sanitizeMailHtml('<style>@media print{body{background:#fff}}</style><body style="background:#000" bgcolor="#000"><p>x</p></body>').background)
+      .toMatchObject({ r: 0, g: 0, b: 0 });
   });
 
-  it("a background value is split in one bounded pass, a function's arguments kept together", async () => {
-    const { colourTokens } = await mod();
-    expect(colourTokens(" rgb(18, 18, 18)  url(x) ")).toEqual(["rgb(18, 18, 18)", "url(x)"]);
-    expect(colourTokens("url(a b) rgb(1, 2, 3) no-repeat")).toEqual(["url(a b)", "rgb(1, 2, 3)", "no-repeat"]);
-    expect(colourTokens("rgb(var(--a, 1) , 2, 3) #fff")).toEqual(["rgb(var(--a, 1) , 2, 3)", "#fff"]);
-    // Counted work: each character is visited at most once, and only the first 4 KB are read.
-    for (const n of [1_000, 200_000]) {
-      const value = "a ".repeat(n);
-      const work = { visited: 0 };
-      colourTokens(value, work);
-      expect(work.visited, String(n)).toBeGreaterThan(0);
-      expect(work.visited, String(n)).toBeLessThanOrEqual(Math.min(value.length, 4096));
-    }
-  });
-
-  it("nested at-rule blocks are read in one bounded pass, however deep", async () => {
-    const { screenRules, sanitizeMailHtml } = await mod();
-    for (const open of ["@layer a{", "@supports (a){"]) {
+  it("nested at-rule blocks are read without throwing, however deep", async () => {
+    const { sanitizeMailHtml } = await mod();
+    for (const open of ["@layer a{", "@supports (a:b){"]) {
       for (const n of [1_000, 12_000, 30_000]) {
         for (const css of [open.repeat(n), `${open.repeat(n)}body{background:#000}${"}".repeat(n)}`]) {
-          const work = { visited: 0 };
-          screenRules(css, work);
-          expect(work.visited, `${open} ${n}`).toBeGreaterThan(0);
-          expect(work.visited, `${open} ${n}`).toBeLessThanOrEqual(2 * css.length);
           expect(() => sanitizeMailHtml(`<style>${css}</style><p>x</p>`), `${open} ${n}`).not.toThrow();
         }
       }
     }
-    // A page rule a few blocks deep still paints the page; one past the depth followed is left to the browser.
+    // A page rule a few blocks deep still paints the page; one past the depth is dropped, from the frame and the reading.
     const nested = (n: number): string => `<style>${"@layer a{".repeat(n)}body{background:#000}${"}".repeat(n)}</style><p>x</p>`;
     expect(sanitizeMailHtml(nested(3)).light).toBe(false);
     expect(sanitizeMailHtml(nested(40)).light).toBe(true);
@@ -487,11 +408,11 @@ describe("a letter's page and ink read together", () => {
     expect(rootTag()).toContain('data-ohmail-dark="1"');
     // A top-level rule after such a block still paints the page.
     expect(sanitizeMailHtml(`<style>@media print{body{background:#fff}} body{background:#0d1117}</style><p>x</p>${DARK_PIXEL}`).light).toBe(false);
-    // A block that holds at every width (screen, all, @supports, @layer) still paints it.
-    for (const wrap of ["@media screen", "@media all", "@media only screen", "@supports (display:grid)", "@layer base"])
+    // A block that holds in the 572-px frame (screen, all, @supports, @layer, a width it meets) paints it.
+    for (const wrap of ["@media screen", "@media all", "@media only screen", "@supports (display:grid)", "@layer base", "@media only screen and (min-width:480px)"])
       expect(sanitizeMailHtml(`<style>${wrap}{.a{color:red} html,body{background:#000}}</style><p>x</p>`).light, wrap).toBe(false);
-    // A block for print, or one that holds only at some sizes, is left to the browser.
-    for (const wrap of ["@media print", "@media only screen and (min-width:480px)", "@media (max-height:400px)",
+    // A block for print, or for a size the frame is not, is dropped.
+    for (const wrap of ["@media print", "@media (max-height:400px)",
       "@media screen and (orientation:landscape)", "@media (min-aspect-ratio:1/1)", "@container (min-width:400px)"])
       expect(sanitizeMailHtml(`<style>${wrap}{.a{color:red} html,body{background:#000}}</style><p>x</p>`).light, wrap).toBe(true);
   });
@@ -504,14 +425,6 @@ describe("a letter's page and ink read together", () => {
     }
   });
 
-  it("a dark page said only for narrow screens is drawn on the light paper, in its ink", async () => {
-    await renderIn("light", { text: "", html: NARROW_DARK });
-    expect(framePaint("background")).toBe("#fff");
-    expect(await frameContrast()).toBeGreaterThanOrEqual(4.5);
-    await renderIn("dark", { text: "", html: NARROW_DARK });
-    expect(rootTag()).toContain('data-ohmail-dark="1"');
-  });
-
   it("a letter that sets its own dark page and light ink is drawn in light ink", async () => {
     for (const html of OWN_INK) {
       await renderIn("light", { text: "", html });
@@ -520,11 +433,19 @@ describe("a letter's page and ink read together", () => {
     }
   });
 
+  it("a dark page that names no ink, where no element paints a background, is set in ohmail's light ink in both themes", async () => {
+    for (const theme of ["light", "dark"] as const) {
+      await renderIn(theme, { text: "", html: `<body bgcolor="#111111"><p>No ink named</p>${DARK_PIXEL}</body>` });
+      expect(rootTag(), theme).not.toContain("data-ohmail-dark");
+      expect(framePaint("color"), theme).toBe("rgb(228,228,228)");
+      expect(await frameContrast(), theme).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("an ink that does not read on its page, or no ink at all, is the frame's own", async () => {
-    // A light ink on a page that names none (read on white), and a dark page that names no ink: drawn as sent.
+    // A light ink on a page that names none (read on white): drawn as sent.
     for (const html of [
       "<body text=#ffffff><p>White ink, no page</p></body>",
-      `<body bgcolor="#111111"><p>No ink named</p>${DARK_PIXEL}</body>`,
       // A light page painted white: its light ink would vanish on the white.
       GREY_OWN_INK,
       // The sheet's light page is the one painted, so the inline light ink is not taken.
@@ -544,57 +465,167 @@ describe("a letter's page and ink read together", () => {
     expect(framePaint("background")).toBe("#fff");
   });
 
-  describe.runIf(process.platform === "linux")("in a browser, light and dark", () => {
-    it("every letter reads on screen in both themes; an inverted frame never matches the letter's dark-scheme rules", async () => {
-      const css = readFileSync(resolve(process.cwd(), "apps/webapp/app/components/message-body.css"), "utf8");
-      const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as typeof import("@playwright/test");
-      const browser = await chromium.launch();
+});
+
+// ══ 2d. a letter is read at the frame's own width ═══════════════════════════════════════════
+
+describe("a letter is read at the frame's own width, and again only when the frame crosses one of its widths", () => {
+  /** A dark page said only for phones, naming no ink; a light page said for phones over a dark body with light ink. */
+  const DM7 = `<style>@media only screen and (max-width:600px){body{background-color:#000000 !important}}</style><p>Wide words</p>${DARK_PIXEL}`;
+  const LIGHT_UNDER = `<style>@media (max-width:600px){body{background:#ffffff !important}}</style><body style="background:#000;color:#fff"><p>Words</p>${DARK_PIXEL}</body>`;
+  let width = 572;
+  const observers = new Set<(entries: unknown[]) => void>();
+  beforeEach(() => {
+    vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("mb") ? width : 0;
+    });
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(private readonly cb: (entries: unknown[]) => void) {}
+      observe(): void { observers.add(this.cb); }
+      unobserve(): void {}
+      disconnect(): void { observers.delete(this.cb); }
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    observers.clear();
+  });
+  const resize = async (w: number): Promise<void> => {
+    width = w;
+    await act(async () => { for (const cb of [...observers]) cb([]); });
+  };
+  const at = async (w: number, theme: "light" | "dark", html: string): Promise<void> => {
+    width = w;
+    await renderIn(theme, { text: "", html });
+  };
+
+  it("a page made dark for phones is the page in the 572-px column, never inverted, in ohmail's light ink; not in a 730-px one", async () => {
+    for (const theme of ["light", "dark"] as const) {
+      await at(572, theme, DM7);
+      expect(rootTag(), theme).not.toContain("data-ohmail-dark");
+      expect(rootTag(), theme).toContain("--ohmail-paper:rgb(0,0,0)");
+      expect(framePaint("color"), theme).toBe("rgb(228,228,228)");
+      expect(await frameContrast(), theme).toBeGreaterThanOrEqual(4.5);
+      expect(srcdoc()).toContain("body{background-color:#000000 !important}");
+      expect(srcdoc()).not.toContain("max-width:600px");
+      await at(730, theme, DM7);
+      expect(rootTag().includes('data-ohmail-dark="1"'), theme).toBe(theme === "dark");
+      expect(rootTag(), theme).not.toContain("--ohmail-paper");
+      expect(framePaint("color"), theme).toBe("#1b1b1b");
+      expect(srcdoc()).not.toContain("#000000 !important");
+    }
+    // A white card on the same page: an element paints a background, so the letter is drawn as written.
+    await at(572, "light", DM7.replace("<p>Wide words</p>", '<table bgcolor="#ffffff"><tr><td>Card words</td></tr></table>'));
+    expect(rootTag()).toContain("--ohmail-paper:rgb(0,0,0)");
+    expect(framePaint("color")).toBe("#1b1b1b");
+  });
+
+  it("a page made light for phones over a dark body reads light in the frame's ink at 572, and as the body's dark page at 730", async () => {
+    for (const theme of ["light", "dark"] as const) {
+      await at(572, theme, LIGHT_UNDER);
+      expect(framePaint("background"), theme).toBe("#fff");
+      expect(framePaint("color"), theme).toBe("#1b1b1b");
+      expect(rootTag().includes('data-ohmail-dark="1"'), theme).toBe(theme === "dark");
+      await at(730, theme, LIGHT_UNDER);
+      expect(rootTag(), theme).toContain("--ohmail-paper:rgb(0,0,0)");
+      expect(rootTag(), theme).toContain("--ohmail-ink:rgb(255,255,255)");
+      expect(rootTag(), theme).not.toContain("data-ohmail-dark");
+      expect(await frameContrast(), theme).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("a resize across one of the letter's widths builds one new document; one within a band builds none", async () => {
+    const DOMPurify = (await import("dompurify")).default;
+    const passes = vi.spyOn(DOMPurify, "sanitize");
+    const LETTER = `<style>@media (min-width:480px){.a{color:#333333}}</style><p class="a">Words</p>${DARK_PIXEL}`;
+    await at(572, "light", LETTER);
+    const doc = srcdoc();
+    let n = passes.mock.calls.length;
+    await resize(560);
+    expect(passes.mock.calls.length, "572 to 560 crosses nothing").toBe(n);
+    await resize(400);
+    expect(passes.mock.calls.length, "560 to 400 crosses 480").toBe(n + 1);
+    expect(srcdoc()).not.toBe(doc);
+    expect(srcdoc()).not.toContain("color:#333333");
+    // A letter with no width of its own is never built again.
+    await at(572, "light", `<p>Plain words</p>${DARK_PIXEL}`);
+    n = passes.mock.calls.length;
+    await resize(343);
+    await resize(900);
+    expect(passes.mock.calls.length).toBe(n);
+  });
+
+  it("a scrollbar answering the last crossing does not take it back", async () => {
+    const DOMPurify = (await import("dompurify")).default;
+    const passes = vi.spyOn(DOMPurify, "sanitize");
+    const LETTER = `<style>@media (max-width:580px){.a{padding-bottom:2000px}}</style><p class="a">Words</p>${DARK_PIXEL}`;
+    await at(590, "light", LETTER);
+    const n = passes.mock.calls.length;
+    await resize(575);
+    expect(passes.mock.calls.length, "590 to 575 crosses 580").toBe(n + 1);
+    await resize(590);
+    expect(passes.mock.calls.length, "the 15-px step back is the pane's scrollbar").toBe(n + 1);
+    // A real change is taken: the pane widened past the scrollbar's step.
+    await resize(620);
+    expect(passes.mock.calls.length).toBe(n + 2);
+  });
+
+  const engines = judgeEngines();
+  it.runIf(process.platform === "linux")(`every corpus letter meets its pinned verdict at 343, 572 and 730 px and reads on screen as well as it was sent, in ${engines.join(" and ")}`, async () => {
+    const { buildMailDocument } = await mod();
+    // The frames this reader draws, in both themes, built here first.
+    const frames: Array<{ name: string; html: string; words: string; width: number; theme: "light" | "dark"; doc: string; paper: number[] | null; light: boolean; scheme: boolean; reads: boolean }> = [];
+    for (const letter of LETTER_PAPER_CORPUS) {
+      for (const width of CORPUS_WIDTHS) {
+        for (const theme of ["light", "dark"] as const) {
+          await at(width, theme, letter.html);
+          const label = `${letter.name} at ${width}, ${theme}`;
+          const paper = /--ohmail-paper:rgb\((\d+),(\d+),(\d+)\)/.exec(rootTag())?.slice(1).map(Number) ?? null;
+          const inverted = rootTag().includes('data-ohmail-dark="1"');
+          expect.soft(paper === null ? "sheet" : "letter", label).toBe(letter.expect[width].page);
+          expect.soft(inverted, label).toBe(theme === "dark" && letter.expect[width].light);
+          frames.push({ name: letter.name, html: letter.html, words: letter.words, width, theme, doc: srcdoc(), paper, light: letter.expect[width].light, scheme: letter.scheme === true, reads: letter.reads === true });
+        }
+      }
+    }
+    const SHEETS = ["255,255,255", "228,228,228"];
+    for (const engine of engines) {
+      const judge = await LetterJudge.open(engine);
       try {
-        // No emulated scheme: Playwright's default would answer every frame's media query itself.
-        const page = await browser.newPage({ colorScheme: null });
-        const letters: [string, string][] = [[DARK_MEDIA, "Your receipt"], [SCREEN_DARK, "Dark newsletter words"], ...CARDS.map((c): [string, string] => [c, "Your order has shipped"]),
-          ...OWN_INK.map((c): [string, string] => [c, "Dark page, light words"]), ["<body text=#fff><p>White ink, no page</p></body>", "White ink, no page"],
-          [NARROW_DARK, "Wide words"], [GREY_OWN_INK, "Grey page, white words"], [SHEET_OVER_INLINE, "Sheet page words"]];
-        for (const [html, words] of letters) {
-          for (const theme of ["light", "dark"] as const) {
-            await renderIn(theme, { text: "", html });
-            const sheet = host!.querySelector(".mb-sheet")!.cloneNode(true) as Element;
-            sheet.querySelector("iframe")!.removeAttribute("sandbox"); // so the test can read the frame
-            await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>${sheet.outerHTML}</body></html>`);
-            await page.waitForFunction((w) => document.querySelector("iframe")?.contentDocument?.body?.textContent?.includes(w), words);
-            const seen = await page.evaluate((w) => {
-              const doc = document.querySelector("iframe")!.contentDocument!;
-              const win = doc.defaultView!;
-              const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
-              let at: Element = doc.body;
-              while (walk.nextNode()) if (walk.currentNode.textContent!.includes(w)) at = walk.currentNode.parentElement!;
-              const inverted = win.getComputedStyle(doc.body).filter.includes("invert");
-              const ctx = doc.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
-              const shown = (c: string): number => {
-                ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = c; ctx.fillRect(0, 0, 1, 1);
-                const v = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map((x) => (inverted ? 255 - x : x) / 255);
-                const [r, g, b] = v.map((s) => (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4));
-                return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
-              };
-              // The ground is the nearest painted box under the words (a card, a gradient's first stop), else the page.
-              const paint = (el: Element): string | null => {
-                const s = win.getComputedStyle(el);
-                if (!/^rgba\(.*, 0\)$|^transparent$/.test(s.backgroundColor)) return s.backgroundColor;
-                return /gradient/.test(s.backgroundImage) ? /rgba?\([^)]*\)/.exec(s.backgroundImage)?.[0] ?? null : null;
-              };
-              let under: Element = at;
-              while (under !== doc.body && paint(under) === null) under = under.parentElement!;
-              const [ink, ground] = [shown(win.getComputedStyle(at).color), shown(paint(under) ?? win.getComputedStyle(under).backgroundColor)];
-              return { inverted, schemeDark: win.matchMedia("(prefers-color-scheme: dark)").matches, contrast: (Math.max(ink, ground) + 0.05) / (Math.min(ink, ground) + 0.05) };
-            }, words);
-            expect.soft(seen.contrast, `${words}, ${theme}: ${html.slice(0, 90)}`).toBeGreaterThanOrEqual(4.5);
-            if (seen.inverted) expect(seen.schemeDark, `${words}, ${theme}: dark-scheme rules under the inversion`).toBe(false);
+        const base = await judge.judge(buildMailDocument("<p>Baseline words</p>", {}), "Baseline words", 572, "light");
+        for (const f of frames) {
+          for (const os of (f.scheme ? ["light", "dark"] : ["light"]) as OsScheme[]) {
+            const label = `${engine}: ${f.name} at ${f.width}, app ${f.theme}, OS ${os}`;
+            const seen = await judge.judge(f.doc, f.words, f.width, os);
+            if (f.paper !== null) expect.soft(seen.page, label).toEqual(f.paper);
+            else expect.soft(SHEETS, label).toContain(seen.page.join(","));
+            expect.soft(seen.inverted, label).toBe(f.theme === "dark" && f.light);
+            expect.soft(seen.conditional, `${label}: a sender condition reached the frame`).toBe(base.conditional);
+            expect.soft(seen.requests, label).toBe(0);
+            expect.soft(seen.visible, `${label}: "${f.words}" is not shown`).toBe(true);
+            const raw = await judge.raw(f.html, f.words, f.width, os);
+            expect.soft(seen.contrast >= 4.5 || (!f.reads && raw < 4.5), `${label}: ${seen.contrast.toFixed(2)}:1, as sent ${raw.toFixed(2)}:1`).toBe(true);
           }
         }
       } finally {
-        await browser.close();
+        await judge.close();
       }
-    }, 60_000);
+    }
+  }, 600_000);
+
+  it("a folded reply is read without the dark history it does not draw; opened, the whole letter is", async () => {
+    const REPLY = `<p style="color:#333">Thanks, see below.</p>${DARK_PIXEL}<div><div>On Thu, 22 Oct 2026 at 09:14, A wrote:</div><blockquote type="cite">`
+      + '<style>body{background:#000000}</style><p style="color:#fff">Old dark letter</p></blockquote></div>';
+    await at(572, "dark", REPLY);
+    expect(srcdoc()).not.toContain("Old dark letter");
+    expect(rootTag(), "the folded letter is light, inverted in the dark theme").toContain('data-ohmail-dark="1"');
+    const toggle = host!.querySelector<HTMLButtonElement>(".msg-history-toggle");
+    expect(toggle).toBeTruthy();
+    await act(async () => { toggle!.click(); });
+    expect(srcdoc()).toContain("Old dark letter");
+    expect(rootTag()).not.toContain("data-ohmail-dark");
+    expect(rootTag()).toContain("--ohmail-paper:rgb(0,0,0)");
   });
 });
 

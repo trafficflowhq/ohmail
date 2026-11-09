@@ -19,7 +19,7 @@
  * asked again here. The html is held on the entry and compared whole — a replaced body is a miss,
  * and overwrites.
  */
-import type { OhmailEngine } from "@ohmail/client-engine";
+import { letterBand, type LetterBreak, type OhmailEngine } from "@ohmail/client-engine";
 import { syncMayRead } from "../shell/sync-scheduler";
 
 /** Entries kept per engine, least recently used first out. */
@@ -43,6 +43,17 @@ export interface MailDocInputs {
   forward: boolean;
   /** A marked link asks in a tab of its own, so it carries no `href` (`link-ask.ts`). */
   askInPage: boolean;
+  /**
+   * The frame's width: not in the key, because most letters read alike at every width. An entry holds the
+   * width it was resolved at and the widths its sheets compared against; it serves a width in the same band.
+   */
+  frameWidth?: number;
+}
+
+/** The width a document was resolved at, and the thresholds its sheets compared against. */
+export interface MailDocMedia {
+  width: number;
+  breaks: readonly LetterBreak[];
 }
 
 /** A frame's fitted height, remembered for the next element that shows the same document. */
@@ -55,12 +66,13 @@ interface Entry<T> {
   html: string;
   value: T;
   chars: number;
+  media: MailDocMedia | undefined;
 }
 
 export interface MailDocCache<T> {
   /** The kept document for these inputs, or `undefined` (a miss, or a proxied one past the gate). */
   read(inputs: MailDocInputs): { value: T } | undefined;
-  write(inputs: MailDocInputs, value: T, chars: number): void;
+  write(inputs: MailDocInputs, value: T, chars: number, media?: MailDocMedia): void;
   fitOf(frameKey: string): MailDocFit | undefined;
   setFit(frameKey: string, fit: MailDocFit): void;
   clear(): void;
@@ -123,12 +135,14 @@ class Cache<T> implements MailDocCache<T> {
     const key = keyOf(inputs);
     const hit = this.entries.get(key);
     if (!hit || hit.html !== inputs.html) return undefined;
+    const m = hit.media;
+    if (m !== undefined && inputs.frameWidth !== undefined && letterBand(inputs.frameWidth, m.breaks) !== letterBand(m.width, m.breaks)) return undefined;
     this.entries.delete(key);
     this.entries.set(key, hit);
     return { value: hit.value };
   }
 
-  write(inputs: MailDocInputs, value: T, chars: number): void {
+  write(inputs: MailDocInputs, value: T, chars: number, media?: MailDocMedia): void {
     this.fresh();
     if (inputs.proxied && !syncMayRead(this.engine)) return;
     const key = keyOf(inputs);
@@ -138,7 +152,7 @@ class Cache<T> implements MailDocCache<T> {
       this.chars -= old.chars;
     }
     if (chars > MAIL_DOC_CHARS_MAX) return;
-    this.entries.set(key, { html: inputs.html, value, chars });
+    this.entries.set(key, { html: inputs.html, value, chars, media });
     this.chars += chars;
     for (const [k, e] of this.entries) {
       if (this.entries.size <= MAIL_DOC_ENTRIES_MAX && this.chars <= MAIL_DOC_CHARS_MAX) break;

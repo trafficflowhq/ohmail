@@ -357,7 +357,7 @@ describe("LOW 3: every frame timer is cancelled by what arms it", () => {
 
 describe("the frame is wired to that height, with JavaScript still off", () => {
   it("its height is the learned one; the settle is armed only by a seed-size reading", () => {
-    expect(FRAME).toContain("const sized = frameHeightFor(frameHeight, frameId, windowWidth, rememberedFrameHeight(frameId));");
+    expect(FRAME).toContain("const sized = frameHeightFor(frameHeight, frameId, layoutWidth, rememberedFrameHeight(frameId));");
     expect(FRAME).toContain("if (frameHeight !== null) rememberFrameHeight(frameHeight);");
     expect(FRAME).toContain("update((s) => nextFrameHeight(s, reported, view, at, widths));");
     expect(FRAME).toContain("const reported = e.nativeEvent.contentSize.height;");

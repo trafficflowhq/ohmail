@@ -29,6 +29,16 @@ export function flushLayout(): void {
   act(() => { for (const fn of q) fn(); });
 }
 
+/* Each drawn view's latest layout handler, so a test can lay it out at a size (`fireLayout`). */
+const layouts = new WeakMap<Element, () => unknown>();
+
+/** The device lays `el` out again at `width` × `height` (a rotation, a fold, a pane resize). */
+export function fireLayout(el: Element, width: number, height = 0): void {
+  const fn = layouts.get(el)?.();
+  if (typeof fn !== "function") throw new Error("this view has no layout handler");
+  act(() => { fn({ nativeEvent: { layout: { x: 0, y: 0, width, height } } }); });
+}
+
 /* The style a slot was given, readable from the node: React DOM drops what CSS does not know. */
 const host = (name: string) =>
   function Host({ style, children, testID, onLayout, onPress, accessibilityRole, accessibilityLabel, accessibilityState, accessibilityElementsHidden }: Props) {
@@ -36,6 +46,10 @@ const host = (name: string) =>
     /* The device lays a view out after it is mounted; so does this, once. */
     const latest = useRef(onLayout);
     latest.current = onLayout;
+    const node = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+      if (node.current) layouts.set(node.current, () => latest.current);
+    }, []);
     useEffect(() => {
       const fire = () => {
         const fn = latest.current;
@@ -47,6 +61,7 @@ const host = (name: string) =>
     /* What a screen reader is told, and the press, so a test can read and operate a control. */
     const state = accessibilityState as { expanded?: boolean } | undefined;
     return createElement("div", {
+      ref: node,
       "data-rn": name, "data-testid": testID, "data-style": JSON.stringify(s),
       "data-role": accessibilityRole, "data-label": accessibilityLabel,
       "data-expanded": state && "expanded" in state ? String(state.expanded) : undefined,

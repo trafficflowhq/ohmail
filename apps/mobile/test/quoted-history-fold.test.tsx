@@ -14,6 +14,18 @@ import { mount, rnDom } from "./_rendered-dom";
 import { qhFixtures, qhFolds, qhNorm, qhTypedAnswers } from "../../../packages/client-engine/test/quoted-history-fixtures";
 
 vi.mock("react-native", async () => (await import("./_rendered-dom")).rnDom);
+/** The html detector made to throw, as a hostile part might make it. */
+const detector = vi.hoisted(() => ({ throws: false }));
+vi.mock("@ohmail/client-engine", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@ohmail/client-engine")>();
+  return {
+    ...real,
+    quotedHistoryVerdictOfHtml: (...args: Parameters<typeof real.quotedHistoryVerdictOfHtml>) => {
+      if (detector.throws) throw new RangeError("Maximum call stack size exceeded");
+      return real.quotedHistoryVerdictOfHtml(...args);
+    },
+  };
+});
 vi.mock("../src/ui/base", async () => {
   const { rnDom } = await import("./_rendered-dom");
   return { Txt: rnDom.Text, Tap: rnDom.Pressable };
@@ -25,6 +37,7 @@ vi.mock("../src/theme", () => ({
 const { BodyPages } = await import("../src/ui/BodyPages");
 const { HistoryFold } = await import("../src/ui/HistoryFold");
 const { sanitizeMailHtmlPhone } = await import("../src/mail/sanitize");
+const { htmlHistoryVerdict } = await import("../src/mail/quoted-tree");
 const { EN } = await import("../src/copy.en");
 const { DE } = await import("../src/copy.de");
 
@@ -96,6 +109,18 @@ describe("a body with an html part folds its text only where that html folds", (
       });
     }
   }
+
+  it("an html part whose reading throws is unread: its text folds by its own reading, and the screen stays", () => {
+    const html = "<p>Thanks.</p><div>On Thu, 22 Oct 2026 at 09:14, A wrote:</div><blockquote type=\"cite\"><p>Old words</p></blockquote><p>Throw-once marker</p>";
+    detector.throws = true;
+    try {
+      expect(htmlHistoryVerdict(html)).toBe("unread");
+      const el = body("Thanks.\n\n> Old words", "readerBody", [], html);
+      expect(shown(el)).toContain("Thanks.");
+    } finally {
+      detector.throws = false;
+    }
+  });
 
   it("73 as a member and under Show as text: both answers on screen, no row", () => {
     const fx = FIXTURES.find((f) => f.id === "73")!;

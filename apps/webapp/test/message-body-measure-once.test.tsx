@@ -35,6 +35,9 @@ class FakeRO {
   disconnect(): void { this.targets.clear(); FakeRO.all = FakeRO.all.filter((o) => o !== this); }
 }
 
+/** The observers watching the frame's own document (the shell's width observer watches the app's). */
+const frameObservers = (): number => FakeRO.all.filter((o) => [...o.targets].some((t) => t.ownerDocument !== document)).length;
+
 /** The observer reports every target at these sizes (border box, CSS px). */
 async function report(size: (el: Element) => [number, number]): Promise<void> {
   for (const ro of [...FakeRO.all]) {
@@ -94,7 +97,7 @@ describe("the frame is probed once per load", () => {
     await act(async () => { root!.render(h(MessageBody, { text: "copy", html: HTML })); });
     await settle();
     expect(probes(), "the load did not probe the frame, or probed it twice").toBe(1);
-    expect(FakeRO.all.length, "control: the observer was armed after the load").toBe(1);
+    expect(frameObservers(), "control: the observer was armed after the load").toBe(1);
     const reads = countReads(host!.querySelector("iframe")!);
     await report(() => [0, 0]); // what the measurement left: jsdom's zero box
     await report(() => [0, 0]);
@@ -121,7 +124,7 @@ describe("the frame is probed once per load", () => {
     await act(async () => { root!.render(at("hidden")); });
     await act(async () => { root!.render(at("visible")); });
     await settle();
-    expect(FakeRO.all.length, "control: the reveal armed the observer again").toBe(1);
+    expect(frameObservers(), "control: the reveal armed the observer again").toBe(1);
     await report(() => [0, 0]);
     expect(probes(), "the reveal probed a frame whose document and column had not moved").toBe(1);
     expect(reads(), "the reveal read the layout of a frame nothing had moved").toBe(0);

@@ -123,12 +123,12 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
   });
 
   it("the pictures are written only into a document whose length was read inside the ceiling first", () => {
-    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, {})), [folding, folded, html]);");
+    expect(FRAME).toContain("const bare = useMemo(() => (folding ? folded : sanitizeGuarded(html, { frame })), [folding, folded, html, frame]);");
     expect(FRAME).toMatch(/if \(!pictured \|\| bare === UNREADABLE\) return null;\s*try \{\s*return drawnLength\(html, pictures, bare, drawnTheme\);/);
     expect(FRAME).toContain("const tooLong = drawnChars !== null && drawnChars > ceiling;");
     expect(FRAME).toContain("(lengthThrew ? UNREADABLE : pictured && !tooLong && bare !== UNREADABLE ? sanitizeGuarded(html, pictures) : bare)");
     // The bare document, the pictured one, and the picture-free fold reading (`{ fold: true }`), each guarded.
-    expect(FRAME).toContain("const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject }), [html, m.subject]);");
+    expect(FRAME).toContain("const folded = useMemo(() => sanitizeGuarded(html, { fold: true, subject: m.subject, frame }), [html, m.subject, frame]);");
     expect(code(FRAME).split("sanitizeGuarded(").length - 1).toBe(4);
     expect(code(FRAME).split("sanitizeMailHtmlPhone(").length - 1).toBe(1);
     expect(code(FRAME).split("drawnLength(").length - 1).toBe(1);
@@ -148,7 +148,7 @@ describe("the frame is mounted only over a counted tree (`src/mail/frame-tree.ts
     // …and a document too tall to draw as one page (`src/mail/frame-height.ts`) takes the same path.
     expect(FRAME).toContain('const asText = unreadable || shows.show === "text" || sized.text !== null;');
     expect(FRAME).toContain("if (asText) {");
-    expect(FRAME).toMatch(/const lead = shows\.show === "frame" && shows\.withheld\s*\? Copy\.mailImagesTooLarge/);
+    expect(FRAME).toMatch(/const lead = shows\.show === "frame" && \(shows\.withheld \|\| picturesThrew\)\s*\? Copy\.mailImagesTooLarge/);
   });
 
   it("one count per mounted document, started once and cancelled on cleanup, its reading for that document", () => {
