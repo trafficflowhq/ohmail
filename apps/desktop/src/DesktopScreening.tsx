@@ -155,6 +155,24 @@ export function DesktopScreening({
         }
       />
 
+      {/* FILE IMPERSONATIONS TO SPAM — on by default; the organizer files a held letter that claims
+          a company it cannot be from, without AI, each one listed in the Screener with Put back.
+          Absent from an older engine, which files none. On a reader the change travels, as the
+          posture's does. */}
+      {pref.impersonationFiling !== undefined ? (
+        <SettingsRow
+          label={t("impersonationLabel")}
+          description={t("impersonationWhy")}
+          control={
+            <Switch
+              checked={pref.impersonationFiling}
+              ariaLabel={t("impersonationLabel")}
+              onChange={(on) => apply({ impersonationFiling: on })}
+            />
+          }
+        />
+      ) : null}
+
       {/* SUGGEST FOR NEW SENDERS AUTOMATICALLY, ON THE STANDALONE DOOR ONLY — genuinely the
           other door's control, not the same one moved. On the HOSTED door this consent lives
           on the account (`/consent/settings` writes it, the hosted worker acts on it) and

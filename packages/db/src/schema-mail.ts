@@ -2867,6 +2867,12 @@ export const accountSettings = pgTable("account_settings", {
   htmlWordsBackfillAt: timestamp("html_words_backfill_at", { withTimezone: true }),
   /** The walk's resume point: the last message id it decided, in id order. NULL = from the start. */
   htmlWordsBackfillCursor: uuid("html_words_backfill_cursor"),
+  /**
+   * Mail 0184 — when the person turned off filing a held letter that impersonates a company to Spam
+   * on its own; NULL = on, every account's default. Read by the organizer's screening pass; a failed
+   * read reads as off. LAST: `ADD COLUMN` appends and the twins are compared in order.
+   */
+  impersonationFilingOffAt: timestamp("impersonation_filing_off_at", { withTimezone: true }),
 });
 
 /**

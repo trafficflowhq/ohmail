@@ -7,10 +7,10 @@ import { ServiceError } from "./errors.js";
 import { bridgeTx, type ServiceContext } from "./context.js";
 
 /**
- * WHAT THE SCREENER FILED ON ITS OWN, AND PUTTING IT BACK (row 140). The auto-apply pass, and the
+ * WHAT THE SCREENER FILED ON ITS OWN, AND PUTTING IT BACK (row 140). The auto-apply pass, the
  * act on suggestions where it files a letter with no rule (`rerouteUnconfirmedHeld`,
- * `rerouteAdvisedLetter`), write one `screener_auto_apply_move` audit row per message filed, with
- * the undo as its inverse.
+ * `rerouteAdvisedLetter`) and the organizer's impersonation filing (`fileImpersonationLetters`)
+ * write one `screener_auto_apply_move` audit row per message filed, with the undo as its inverse.
  * The read lists the recent ones still where the pass put them; the undo moves each back to the
  * gate through the ordinary move door and marks `folder_state.auto_filing_undone_at` in the same
  * transaction, which the pass's candidate statement reads as its sixth exclusion — put back is
@@ -27,6 +27,10 @@ export interface AutoFiledItem {
   /** Where the pass filed it — where it still is. */
   to: string;
   filedAt: string;
+  /** `impersonation`: the letter claimed a company it cannot be from. `null` for every other filing. */
+  why: "impersonation" | null;
+  /** The company it claimed, on an `impersonation` filing; `null` otherwise. */
+  brand: string | null;
 }
 
 export interface AutoFiledPage {
@@ -48,8 +52,10 @@ async function inPlace(
   const d = dialect(db);
   const named = sql`${auditLog.payload}->>'messageId'`;
   const to = sql<string>`${auditLog.payload}->>'to'`;
+  const why = sql<string | null>`${auditLog.payload}->>'why'`;
   const rows = await db.select({
     id: messages.id, from: messages.fromAddress, subject: messages.subject, to, at: auditLog.createdAt,
+    why, brand: messages.senderCheckBrand,
   }).from(auditLog)
     .innerJoin(messages, and(eq(messages.id, d.castUuid(named)), eq(messages.accountId, auditLog.accountId)))
     .innerJoin(folderState, eq(folderState.messageId, messages.id))
@@ -66,7 +72,11 @@ async function inPlace(
     if (seen.has(r.id)) return [];
     seen.add(r.id);
     const at = r.at instanceof Date ? r.at : new Date(r.at as unknown as number);
-    return [{ messageId: r.id, from: r.from, subject: r.subject, to: String(r.to), filedAt: at.toISOString() }];
+    const claim = r.why === "impersonation";
+    return [{
+      messageId: r.id, from: r.from, subject: r.subject, to: String(r.to), filedAt: at.toISOString(),
+      why: claim ? "impersonation" as const : null, brand: claim ? r.brand ?? null : null,
+    }];
   });
 }
 

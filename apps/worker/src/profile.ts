@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import {
-  PROFILE_FOUND_AUDIT_ACTION, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
+  PROFILE_FOUND_AUDIT_ACTION, accountSettings, auditLog, latestProfileFoundMarker, profileImportResolutionExists,
   profileImportWriteReleased, askStands, importAskSignature, readImportAsk, resolveImportAsk,
   type ImportAskRefusal,
   mailboxProfileMirror, mailboxes, recordChanges, recordMailboxProfileChange, profileWritesRecorded, recordProfileWrite,
@@ -2324,6 +2324,23 @@ export class OrganizerProfileSync {
         // reader walking past the lapse onto an older unmatched question and reporting it open.
         if (fact.state !== "lapsed") this.markerPending = null;
         return;
+      }
+      /* A HELD COPY THAT TURNED OFF FILING IMPERSONATIONS TO SPAM (mail 0184) turns it off here at once,
+         before its marker, so a marker on record means the switch moved: the key can only turn filing
+         off, so it waits for no Import, and Not now keeps it. Its own transaction takes the settings
+         row after the account fence, as every settings writer does. */
+      if (fact.state === "found" && heldForImport && fact.doc.impersonationFiling === false) {
+        const at = (deps.now ?? ((): Date => new Date()))();
+        await fencedAccountWrite(deps.db, { accountId: deps.accountId }, async (tx) => {
+          await tx.insert(accountSettings).values({ accountId: deps.accountId, impersonationFilingOffAt: at, updatedAt: at })
+            .onConflictDoUpdate({
+              target: accountSettings.accountId, set: { impersonationFilingOffAt: at, updatedAt: at },
+              setWhere: isNull(accountSettings.impersonationFilingOffAt),
+            });
+          await recordChanges(tx as LedgerTx, [
+            { accountId: deps.accountId, entityType: "settings", entityId: deps.accountId, op: "update" },
+          ]);
+        });
       }
       /* THE MARKER RINGS THE SETTINGS DOORBELL, in its own transaction: the card is asked for at
          the find, not at a client's next poll. The row re-materializes the account's unchanged

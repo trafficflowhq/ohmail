@@ -222,6 +222,27 @@ export interface HeldReleaseSenderWire {
 export type StayedWhy = "failed-checks" | "set-aside" | "replied" | "filed-elsewhere";
 export interface StayedWire { id: string; why: StayedWhy }
 
+/** One letter ohmail filed out of the Screener on its own and that is still where it put it. */
+export interface AutoFiledItemWire {
+  messageId: string;
+  from: string | null;
+  subject: string | null;
+  /** The pile it was filed to. */
+  to: string;
+  /** When, ISO. */
+  filedAt: string;
+  /** `impersonation`: it claimed a company it cannot be from, and was filed to Spam with no AI. */
+  why: "impersonation" | null;
+  /** The company it claimed, beside `impersonation`. */
+  brand: string | null;
+}
+
+/** `GET /screener/auto-filed`'s answer: the newest filings still in place, and whether more are behind them. */
+export interface AutoFiledWire { items: AutoFiledItemWire[]; more: boolean }
+
+/** Put back's answer: put back here, or sent to the install that organizes the mailbox. */
+export interface AutoFiledUndoWire { putBack: string[]; requested: string[] }
+
 export interface HeldReleaseWire {
   groups: HeldReleaseGroupWire[];
   /**
@@ -534,6 +555,19 @@ export interface EngineAdapter {
    * never mirrored: who placed a message and whether it was answered are the server's facts.
    */
   whyStayed?(ids: readonly string[]): Promise<StayedWire[]>;
+
+  /**
+   * `GET /screener/auto-filed` — what ohmail filed out of the Screener on its own, still where it
+   * put it, newest first, each with why. Asked, never mirrored: who filed a letter is the server's
+   * fact. A door without it answers nothing, and the Screener shows no notice.
+   */
+  autoFiled?(): Promise<AutoFiledWire>;
+
+  /**
+   * `POST /screener/auto-filed/undo` — PUT BACK: each named filing goes back to the Screener and no
+   * automatic path files it again. Desired state only; the organizer moves the mail.
+   */
+  undoAutoFiled?(ids: readonly string[]): Promise<AutoFiledUndoWire>;
 
   /**
    * `POST /screener/held-releases` — THE PRESS. Releases the named groups, or every group when

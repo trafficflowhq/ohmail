@@ -135,6 +135,10 @@ const FORWARDED_IN_CLOUD_MODE = [
      IMAP runs there — so both forward, like every other screener route. */
   "GET /screener/unscreened",
   "POST /screener/unscreened",
+  /* What the Screener filed on its own, and Put back: who filed a letter is the hosted account's
+     audit trail, and the move back runs on its reconciler — both forward, like the pairs above. */
+  "GET /screener/auto-filed",
+  "POST /screener/auto-filed/undo",
   /* THE SCREENER'S QUEUE, a read that joined the list on purpose: the waiting set and its count
      are the hosted account's own queue, which the local mirror cannot answer — it is windowed,
      and a count served from it is the window's. The route is `relay: true`. */

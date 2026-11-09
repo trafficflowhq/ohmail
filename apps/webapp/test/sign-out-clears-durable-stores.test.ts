@@ -108,6 +108,8 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.ui.columns", // the three columns' widths — a fact about the screen, not the mailbox
   "ohmail.ui.search.sort.", // a sort preference, owner-keyed but not content
   "ohmail.ui.reader.afterVerb", // what the pane does after a verb — `ui.search.sort.`'s class exactly
+  // The newest impersonation filing this screen acknowledged, owner-keyed: a timestamp, no mail in it.
+  "ohmail.screener.impersonationSeen.",
   // A per-TAB composer id in sessionStorage, naming no account: the compose keys it suffixes carry
   // the storage owner and are swept by their prefixes, so the next account in this tab starts on its own.
   "ohmail.compose.composer",

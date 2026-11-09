@@ -135,6 +135,12 @@
       "ohmail-source": "./src/act-admission-retire.ts",
       "node": "./dist/act-admission-retire.js",
       "default": "./src/act-admission-retire.ts"
+    },
+    "./screener-impersonation": {
+      "types": "./src/screener-impersonation.ts",
+      "ohmail-source": "./src/screener-impersonation.ts",
+      "node": "./dist/screener-impersonation.js",
+      "default": "./src/screener-impersonation.ts"
     }
   },
   "dependencies": {

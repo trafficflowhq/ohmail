@@ -81,6 +81,7 @@
       "@trafficflow/worker/known-set": ["../worker/src/known-set.ts"],
       "@trafficflow/worker/dead-letter": ["../worker/src/dead-letter.ts"],
       "@trafficflow/worker/screener-auto-act": ["../worker/src/screener-auto-act.ts"],
+      "@trafficflow/worker/screener-impersonation": ["../worker/src/screener-impersonation.ts"],
       "@trafficflow/worker/screener-correspondent-retro": ["../worker/src/screener-correspondent-retro.ts"],
       "@trafficflow/worker/thread-join-heal": ["../worker/src/thread-join-heal.ts"],
       "@trafficflow/worker/inbound-quiet": ["../worker/src/inbound-quiet.ts"],

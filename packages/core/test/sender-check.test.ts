@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  CAP_CONFIDENCE, SOFT_CEILING, capSuggestion, claimedIdentity, denyMayRuleTheAddress, identityOfRow, normalizeSubject,
+  CAP_CONFIDENCE, SOFT_CEILING, capSuggestion, claimedIdentity, denyMayRuleTheAddress, identityOfRow, impersonationFiling,
+  normalizeSubject,
   registrableDomain, senderCheck, senderCheckAll, senderDomainOf, senderFacts,
   type CheckedSuggestion, type SenderCheckInput, type SenderReasonCode,
 } from "../src/sender-check.js";
@@ -650,5 +651,107 @@ describe("the identity fact — claimedIdentity, the one definition the gate rea
     const advice = senderCheck({ fromAddress: SENDER, fromName: "Sunrise", subject: "Hallo", snippet: "" });
     expect(advice.impersonation, "an advice-only row never makes the fact").toBeUndefined();
     expect(advice.brandMention?.brand).toBe("Sunrise");
+  });
+});
+
+describe("impersonationFiling — the held claim ohmail files to Spam on its own", () => {
+  const NO_TIES = { own: false, consented: false, correspondent: false, listed: false, putBack: false };
+  /** A held letter as the store keeps it: the fact the ingest wrote, its brand, no code. */
+  const letter = (fromName: string | null, fromAddress: string, subject = "Ihre Rechnung") => {
+    const fact = claimedIdentity({ fromName, fromAddress, subject });
+    return {
+      fromName, fromAddress, subject, sensitivityCategory: null as string | null,
+      senderCheck: (fact ? "impersonation" : "none") as string | null, senderCheckBrand: fact?.brand ?? null,
+    };
+  };
+  const verdict = (l: ReturnType<typeof letter>, ties: Partial<typeof NO_TIES> = {}) =>
+    impersonationFiling({ letter: l, ties: { ...NO_TIES, ...ties } });
+
+  it("a lure files: a brand's name alone, at a domain that carries none of its names", () => {
+    const lure = letter("Metanet", "billing@hosting-renewals.example",
+      "Erinnerung: Bitte aktualisieren Sie Ihre Zahlungsinformationen");
+    expect(verdict(lure)).toEqual({ file: true, brand: "Metanet" });
+    // A legal form beside the name is still the company alone.
+    expect(verdict(letter("Hostpoint AG", "billing@some-shop.example"))).toEqual({ file: true, brand: "Hostpoint" });
+    expect(verdict(letter("PayPal 24", "billing@some-shop.example"))).toEqual({ file: true, brand: "PayPal" });
+    expect(verdict(letter("PayPal Service", personalAt("fixture.reto", GMAIL)))).toEqual({ file: true, brand: "PayPal" });
+  });
+
+  it("a local part claims under a name of service words only; a person's or a shop's name keeps it", () => {
+    expect(verdict(letter("Info", `paypal-service@mailer.${ELSEWHERE}`))).toEqual({ file: true, brand: "PayPal" });
+    expect(verdict(letter(null, `paypal@mailer.${ELSEWHERE}`))).toEqual({ file: true, brand: "PayPal" });
+    expect(verdict(letter("Seller Shop", "amazon@seller-shop.example"))).toEqual({ file: false, keep: "not_presented" });
+    expect(verdict(letter("Hans Muster", "paypal@hans.example"))).toEqual({ file: false, keep: "not_presented" });
+  });
+
+  it("real mail that wears a brand stays held: a second name, a relay, a person, a subject's lead-in", () => {
+    for (const [name, from, subject] of [
+      ["Sparkasse Musterstadt", "info@musterstadt-bank.example", "Ihr neues Postfach"],
+      ["Amazon.fr", "auto-confirm@amazon-shop.example", "Votre commande"],
+      ["Microsoft Teams", "no-reply@teams-mail.example", "You have a new message"],
+      ["Anna Muster via Google Groups", "somegroup@groups-host.example", "Re: Treffen"],
+      ["Dropbox Sign", "noreply@mail.signing.example", "Please sign"],
+      ["Laura Meier (Google)", personalAt("fixture.laura", GMAIL), "Kurze Frage"],
+      ["PayPal Sicherheitsdienst", "x@some-shop.example", "Konto gesperrt"],
+      ["Newsportal", "newsletter@newsportal.example", "Netflix: Die besten Serien im Dezember"],
+    ] as const) {
+      const l = letter(name, from, subject);
+      expect(l.senderCheck, `${name} is a claim to begin with`).toBe("impersonation");
+      expect(verdict(l), name).toEqual({ file: false, keep: "not_presented" });
+    }
+  });
+
+  it("a brand's name alone at a domain carrying one of its names stays held", () => {
+    for (const [name, from] of [
+      ["Sparkasse", "info@sparkasse-musterstadt.example"],
+      ["PayPal", "service@paypal.example"],
+      ["Microsoft", "no-reply@teams.mail-microsoft.example"],
+      ["Amazon", "auto-confirm@amazon.example"],
+      // A first label of a domain the brand owns counts: Microsoft sends from office.com.
+      ["Microsoft", "noreply@office-tools.example"],
+    ] as const) {
+      expect(verdict(letter(name, from)), `${name} at ${from}`).toEqual({ file: false, keep: "brand_domain" });
+    }
+  });
+
+  it("a code, a reset, a verification or a security alert stays where the person sees it", () => {
+    for (const category of ["otp", "verification", "password_reset", "security_alert"]) {
+      const l = { ...letter("PayPal", "x@some-shop.example", "Verify your account"), sensitivityCategory: category };
+      expect(verdict(l), category).toEqual({ file: false, keep: "code" });
+    }
+  });
+
+  it("any tie between the sender and the account keeps the letter, in the order they are asked", () => {
+    const lure = letter("Metanet", "billing@hosting-renewals.example");
+    expect(verdict(lure, { own: true })).toEqual({ file: false, keep: "own" });
+    expect(verdict(lure, { consented: true })).toEqual({ file: false, keep: "consented" });
+    expect(verdict(lure, { correspondent: true })).toEqual({ file: false, keep: "correspondent" });
+    expect(verdict(lure, { listed: true })).toEqual({ file: false, keep: "listed" });
+    expect(verdict(lure, { putBack: true })).toEqual({ file: false, keep: "put_back" });
+    expect(verdict(lure, { own: true, putBack: true })).toEqual({ file: false, keep: "own" });
+  });
+
+  it("the stored fact must be a claim, and still the claim the function reads today", () => {
+    const lure = letter("Metanet", "billing@hosting-renewals.example");
+    expect(verdict({ ...lure, senderCheck: "none" })).toEqual({ file: false, keep: "no_claim" });
+    expect(verdict({ ...lure, senderCheck: null })).toEqual({ file: false, keep: "no_claim" });
+    expect(verdict({ ...lure, senderCheckBrand: "PayPal" })).toEqual({ file: false, keep: "stale_claim" });
+    expect(verdict({ ...lure, senderCheckBrand: null })).toEqual({ file: false, keep: "stale_claim" });
+    expect(verdict({ ...lure, fromName: "Anna" })).toEqual({ file: false, keep: "stale_claim" });
+  });
+
+  it("claimedIdentity answers as before: the filing reads the same fact", () => {
+    expect(claimedIdentity({ fromName: "Metanet", fromAddress: "billing@hosting-renewals.example", subject: "Hi" }))
+      .toEqual({ brand: "Metanet", via: "name" });
+    expect(claimedIdentity({ fromName: "Info", fromAddress: `paypal-service@${ELSEWHERE}`, subject: "Hi" }))
+      .toEqual({ brand: "PayPal", via: "local_part" });
+  });
+
+  it("a crafted name of 4,096 characters is decided within 250 ms", () => {
+    const name = "Metanet AG 24 ".repeat(300).slice(0, 4096);
+    const t0 = performance.now();
+    const v = verdict({ ...letter("Metanet", "billing@hosting-renewals.example"), fromName: name });
+    expect(performance.now() - t0).toBeLessThan(250);
+    expect(v).toEqual({ file: true, brand: "Metanet" });
   });
 });

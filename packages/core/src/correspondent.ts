@@ -170,11 +170,13 @@ export const ANSWERING_HELD_PER_SENDER = 20;
  * THE EVIDENCE FOR EACH OF THESE SENDERS WITH ANY HELD MESSAGE ANSWERING THE ACCOUNT'S OWN WRITING,
  * not only the newest one the Screener shows: an answer held before its copy synced, then buried
  * under a newer mail citing nothing, keeps the act off the sender and is the retro's to release. A
- * row that FAILED authentication or carries a company claim is no answer. One read per page, each
- * sender's newest held messages to a bound of their own, so one address's flood buries no other.
+ * row that FAILED authentication is no answer, nor one that carries a company claim unless `claims`
+ * asks: a path whose answer only keeps a letter where the person decides (the impersonation filing)
+ * counts a claim that cites the account's own mail. One read per page, each sender's newest held
+ * messages to a bound of their own, so one address's flood buries no other.
  */
 export async function sendersAnsweringOwnWriting(
-  db: Tx, accountId: string, senders: readonly string[],
+  db: Tx, accountId: string, senders: readonly string[], opts: { claims?: boolean } = {},
 ): Promise<Map<string, CorrespondentEvidence>> {
   const out = new Map<string, CorrespondentEvidence>();
   const wanted = [...new Set(senders.map((s) => s.trim().toLowerCase()).filter(Boolean))];
@@ -193,7 +195,7 @@ export async function sendersAnsweringOwnWriting(
       eq(folderState.desiredFolder, "ohmail/Screener"),
       isNull(messages.deletedAt),
       notFailedAuthSql(messages),
-      notAClaimSql(messages),
+      opts.claims === true ? undefined : notAClaimSql(messages),
       inArray(sender, wanted),
     ))
     .as("an_held");

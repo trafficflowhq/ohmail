@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import type { NativeLocator } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
-import type { WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import { makeDrizzleRepo, type WorkerRepo } from "@trafficflow/core/adapters/drizzle-repo";
+import {
+  accounts, accountSettings, folderState, mailboxes, messageBodies, messageInstances, messages, rerouteAdvisedLetter,
+  type Tx,
+} from "@trafficflow/db";
+import { carryDialect } from "@trafficflow/db/dialect";
+import { makeTestDb } from "@trafficflow/db/testing";
 import { reconcileMailbox } from "../src/sync.js";
 import { physicalDestination, junkAuditCode, SPAM_PILE, NO_SPECIAL_FOLDERS } from "../src/junk-filing.js";
+import { screenerImpersonationPass } from "../src/screener-impersonation.js";
 import { FIXTURE_LEASE } from "./_door.js";
 
 /**
@@ -470,5 +479,69 @@ describe("junk-filing — the pure mapping", () => {
     const special = { junkFolder: JUNK, trashFolder: TRASH };
     expect(physicalDestination(SPAM_PILE, special, { aiAuthored: true })).toBe(SPAM_PILE);
     expect(physicalDestination(SPAM_PILE, special, { aiAuthored: false })).toBe(JUNK);
+  });
+});
+
+/**
+ * THE ORGANIZER'S IMPERSONATION FILING STAYS ON OHMAIL'S OWN PILE, on the real store: no hand
+ * commanded it, so it never reaches the provider's Junk, where its body would be husked and the
+ * provider may delete it. The act's filing of a confirmed letter still goes to Junk, as before.
+ */
+describe("junk-filing — an automatic impersonation filing keeps the pile", () => {
+  it("at a mailbox with a Junk folder, the impersonation filing lands in ohmail/Quarantine whole; the act's in Junk", async () => {
+    const db = (await makeTestDb()) as unknown as Tx;
+    const accountId = randomUUID();
+    await db.insert(accounts).values({ id: accountId, name: "junk-imp" });
+    const [mb] = await db.insert(mailboxes).values({
+      accountId, provider: "imap", address: "owner@own.example", junkFolder: JUNK, trashFolder: TRASH,
+    }).returning();
+    await db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
+    let uid = 1;
+    const held = async (fromName: string, from: string, brand: string | null): Promise<string> => {
+      const n = uid++;
+      const [m] = await db.insert(messages).values({
+        accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `junk-imp:${randomUUID()}`, subject: "Ihre Rechnung",
+        fromName, fromAddress: from, authVerdict: "pass", noAi: brand !== null,
+        senderCheck: brand === null ? "none" : "impersonation", senderCheckBrand: brand,
+        nativeLocator: { folder: "ohmail/Screener", ref: `1:${n}` },
+      }).returning();
+      await db.insert(folderState).values({
+        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      });
+      await db.insert(messageInstances).values({
+        accountId, mailboxId: mb!.id, messageId: m!.id, folder: "ohmail/Screener", uidvalidity: 1n, uid: n, isPrimary: true,
+      });
+      await db.insert(messageBodies).values({ messageId: m!.id, text: "the letter's own words" });
+      return m!.id;
+    };
+    const phish = await held("Metanet", "billing@hosting-renewals.example", "Metanet");
+    const advised = await held("Shop", "deals@shop.example", null);
+
+    expect((await screenerImpersonationPass(db, { accountId, mailboxIds: [mb!.id] })).filed).toBe(1);
+    await db.transaction((tx) => rerouteAdvisedLetter(carryDialect(db, tx), {
+      accountId, address: "deals@shop.example", appliedFolder: SPAM_PILE, now: new Date(), messageId: advised,
+    }));
+    const repo = makeDrizzleRepo(db) as unknown as WorkerRepo;
+    expect(await repo.listAiAutoAppliedQuarantine!(accountId, [phish, advised])).toEqual([phish]);
+
+    const rec = fresh();
+    await reconcileMailbox({
+      writeAuthority: FIXTURE_LEASE, repo, adapter: adapterOf(rec), accountId, mailboxId: mb!.id,
+      trustedAuthservIds: new Set<string>(), ohboxPolicy: "trusted_only", ohboxBar: 0.9,
+    } as unknown as Parameters<typeof reconcileMailbox>[0]);
+    expect(rec.moves.map((m) => m.to).sort()).toEqual([JUNK, SPAM_PILE].sort());
+    const placed = async (id: string) => (await db.select({ o: folderState.observedFolder }).from(folderState)
+      .where(eq(folderState.messageId, id)))[0]!.o;
+    const withheld = async (id: string) => (await db.select({ w: messageBodies.withheldReason }).from(messageBodies)
+      .where(eq(messageBodies.messageId, id)))[0]!.w;
+    expect(await placed(phish), "the impersonation filing stays on ohmail's pile").toBe(SPAM_PILE);
+    expect(await withheld(phish), "its body is kept, no placeholder").toBeNull();
+    expect(await placed(advised), "the act's filing goes to the provider's Junk").toBe(JUNK);
+    expect(await withheld(advised)).toBe("junk_filed");
+
+    // A person's own Spam after a put back is a commanded verdict, and files to Junk again.
+    await db.update(folderState).set({ autoFilingUndoneAt: new Date() }).where(eq(folderState.messageId, phish));
+    expect(await repo.listAiAutoAppliedQuarantine!(accountId, [phish])).toEqual([]);
   });
 });

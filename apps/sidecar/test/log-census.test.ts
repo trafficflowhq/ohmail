@@ -1521,6 +1521,9 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
   // `written` addresses), never an address; its failure is `error` on the identity backfill's reading.
   list_address_backfill: "info",
   list_address_backfill_failed: "error",
+  // A held letter that impersonates a company, filed to Spam on its own: the count, and its failure.
+  screener_impersonation: "info",
+  screener_impersonation_failed: "error",
   // engine.ts — the 0.25.9 press repair, once per launch: counts only, and only when it wrote.
   // The failure is `error` on the name repair's reading: the next drain asks again.
   inferred_presses_repaired: "info",

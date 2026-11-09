@@ -6,9 +6,11 @@
  */
 import { createServer, type Server } from "node:http";
 import { describe, expect, it } from "vitest";
-import { putBackAutoFiled, readAutoFiled } from "../src/net/auto-filed";
+import { putBackAutoFiled, readAutoFiled, readImpersonationFiling, saveImpersonationFiling } from "../src/net/auto-filed";
 import type { ConnectedSession } from "../src/net/pairing";
 import { autoFiledSaid } from "../src/ui/auto-filed-said";
+import { impersonationWhy, newestSeen, unseenImpersonations } from "../src/ui/impersonation-notice";
+import { impersonationSeenStore, IMPERSONATION_SEEN_KEY } from "../src/state/impersonation-seen-store";
 import { DECKS } from "../src/copy";
 
 function server(answer: { get: number; getBody: unknown }) {
@@ -51,7 +53,9 @@ describe("the route pair", () => {
     try {
       const session = sessionFor(origin);
       expect(await readAutoFiled(session)).toEqual({
-        items: [{ messageId: "m1", from: "news@shop.test", subject: "Deals", to: "ohmail/News" }], more: false,
+        items: [{
+          messageId: "m1", from: "news@shop.test", subject: "Deals", to: "ohmail/News", filedAt: null, why: null, brand: null,
+        }], more: false,
       });
       expect(await putBackAutoFiled(session, ["m1"])).toEqual({ putBack: ["m1"], requested: [] });
       expect(posts).toEqual([{ messageIds: ["m1"] }]);
@@ -73,5 +77,86 @@ describe("the sentence after a press", () => {
     expect(autoFiledSaid({ k: "requested" })).toContain("install that organizes");
     expect(autoFiledSaid(null)).toBeNull();
     expect(DECKS.de.autoFiledPutBackDone(1)).toContain("1 Nachricht kommt");
+  });
+});
+
+/* A HELD IMPERSONATION FILED TO SPAM (owner, 2026-11-09): the Screener tab's line and the Settings switch. */
+describe("the impersonation filings and their switch", () => {
+  const PHISH = {
+    messageId: "p1", from: "billing@hosting-renewals.example", subject: "Zahlung", to: "ohmail/Quarantine",
+    filedAt: "2026-11-09T11:00:00.000Z", why: "impersonation" as const, brand: "Metanet",
+  };
+
+  it("a filing carries its reason and company; any other reason reads as none", async () => {
+    const { s } = server({ get: 200, getBody: { items: [
+      { ...PHISH },
+      { messageId: "a1", from: "deals@shop.test", subject: "Sale", to: "ohmail/Quarantine", filedAt: "x", why: "crowd", brand: "Shop" },
+    ], more: false } });
+    const origin = await listen(s);
+    try {
+      const page = await readAutoFiled(sessionFor(origin));
+      expect(page!.items).toEqual([
+        PHISH,
+        { messageId: "a1", from: "deals@shop.test", subject: "Sale", to: "ohmail/Quarantine", filedAt: "x", why: null, brand: null },
+      ]);
+    } finally { s.close(); }
+  });
+
+  it("the line counts impersonations newer than this phone's mark, and OK records the newest", () => {
+    const older = { ...PHISH, messageId: "p0", filedAt: "2026-11-09T09:00:00.000Z" };
+    const other = { ...PHISH, messageId: "a1", why: null, brand: null };
+    expect(unseenImpersonations([PHISH, older, other], "").map((i) => i.messageId)).toEqual(["p1", "p0"]);
+    expect(unseenImpersonations([PHISH, older, other], older.filedAt).map((i) => i.messageId)).toEqual(["p1"]);
+    expect(newestSeen([older, PHISH], "")).toBe(PHISH.filedAt);
+    expect(newestSeen([], older.filedAt)).toBe(older.filedAt);
+    expect(impersonationWhy(PHISH)).toBe(
+      "This message claims to be from Metanet, but hosting-renewals.example isn't one of Metanet's addresses.");
+    expect(DECKS.de.impersonationFiled(2)).toBe("2 Nachrichten, die sich als Firma ausgaben, sind in Spam");
+    expect(DECKS.en.impersonationFiled(1)).toBe("1 letter that claimed to be a company went to Spam");
+  });
+
+  it("the mark is kept on this phone, and a late boot read never takes back a newer OK", async () => {
+    const kept = new Map<string, string>();
+    let release: (v: string | null) => void = () => {};
+    const kv = {
+      get: (k: string) => (k === IMPERSONATION_SEEN_KEY ? new Promise<string | null>((r) => { release = r; }) : Promise.resolve(null)),
+      set: async (k: string, v: string) => { kept.set(k, v); },
+      remove: async () => {},
+    };
+    const seen: string[] = [];
+    const store = impersonationSeenStore(kv, (iso) => seen.push(iso));
+    const boot = store.boot();
+    store.set(PHISH.filedAt);
+    release("2026-11-01T00:00:00.000Z");
+    await boot;
+    expect(seen).toEqual([PHISH.filedAt]);
+    expect(kept.get(IMPERSONATION_SEEN_KEY)).toBe(PHISH.filedAt);
+  });
+
+  it("the switch reads and writes /account/screening, and a server without it answers null", async () => {
+    let stored: boolean | undefined = true;
+    const bodies: unknown[] = [];
+    const sv = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (c) => { raw += String(c); });
+      req.on("end", () => {
+        if (req.method === "PATCH") {
+          const body = JSON.parse(raw) as { impersonationFiling: boolean };
+          bodies.push(body);
+          stored = body.impersonationFiling;
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify(stored === undefined ? { ohboxPolicy: null } : { impersonationFiling: stored }));
+      });
+    });
+    const origin = await listen(sv);
+    try {
+      const session = sessionFor(origin);
+      expect(await readImpersonationFiling(session)).toBe(true);
+      expect(await saveImpersonationFiling(session, false)).toBe(false);
+      expect(bodies).toEqual([{ impersonationFiling: false }]);
+      stored = undefined;
+      expect(await readImpersonationFiling(session), "an older server draws no switch").toBeNull();
+    } finally { sv.close(); }
   });
 });

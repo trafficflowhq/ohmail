@@ -98,6 +98,7 @@ const SAME_IN_BOTH: Record<string, string> = {
   tagsTitle: "the web client's German calls the group Tags too (rail.tags)",
   /* Two-letter interface conventions German shares. */
   folderDismiss: "OK is OK (rail.folderDismiss)",
+  impersonationOk: "OK is OK (screener.impersonationOk)",
   helpDApp: "App is App in German (help.dApp)",
   helpDAccount: "the ohmail account is an Account in German (help.dAccount; test/german-says-mail.test.ts)",
   languageSystem: "the same word, and the same segment as the control above it",
@@ -532,6 +533,7 @@ describe("the phone's two copy decks", () => {
     trashFromLine: { why: "a name and an address joined by a middle dot — no words of its own" },
     autoFiledRow: { why: "a sender, a subject and a pile joined by middle dots, and the one word "
       + "between them, \"in\", is the same word in German" },
+    impersonationRow: { why: "a sender and a subject joined by a middle dot — no words of its own" },
     ariaNameThenSentence: { why: "a name and a sentence the caller already translated, joined by "
       + "a full stop — no words of its own" },
     metaWithReason: { why: "a count and the sentence qualifying it, both already translated, joined "

@@ -86,6 +86,7 @@ import { Gated } from "../src/ui/Gated";
 import { Segmented } from "../src/ui/Segmented";
 import { AutoActPanel, readsOnly } from "../src/ui/AutoActPanel";
 import { AutoFiledPanel } from "../src/ui/AutoFiledPanel";
+import { ImpersonationFilingPanel } from "../src/ui/ImpersonationFilingPanel";
 import { IMAGE_QUALITY_LEVELS, type ImageQualityLevel } from "../src/compose/attach";
 
 /** The dial's four names, read at render so they follow the app's language. */
@@ -372,6 +373,8 @@ function SettingsBody({ inPane }: { inPane: boolean }) {
 
         {/* WHAT THE SCREENER FILED ON ITS OWN, with Put back — beside the other automatic act.
             The phone has no auto-apply switch of its own; the panel reads the same route pair. */}
+        {/* FILE IMPERSONATIONS TO SPAM — on by default; the switch every device agrees on. */}
+        {session !== null ? <ImpersonationFilingPanel session={session} /> : null}
         {session !== null ? <AutoFiledPanel session={session} /> : null}
 
         {/* STORAGE — the card's numbers in full, where the account keeps a storage limit. */}

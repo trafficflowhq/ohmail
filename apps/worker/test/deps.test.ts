@@ -513,6 +513,9 @@ describe("worker dependency boundary", () => {
       // row: a hand-written undo would test a copy. The import boundary still holds.
       "screener-auto-put-back.test.ts",
       "screener-cron-press.race.pg.test.ts",
+      // The impersonation filing is listed and put back through the same doors, and its claim that no
+      // one-click request is sent is the unsubscribe drain's own. The import boundary still holds.
+      "screener-impersonation.test.ts",
       "seed-release.test.ts",
       "send-multipart.e2e.test.ts", "send-warm-connection.e2e.test.ts", "send.e2e.test.ts",
       // Its press is `RulesService.update`, whose provenance write the ingest here then honours: a

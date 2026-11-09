@@ -1004,6 +1004,14 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         ...(adapter.organizerRequests
           ? { organizerRequests: gatedRead(adapter.organizerRequests.bind(adapter), "what waits on the organizer") }
           : {}),
+        /* WHAT THE SCREENER FILED ON ITS OWN, and Put back — a read of the caller's own filings and a
+           press that moves mail, at the two strengths the pairs above take. */
+        ...(adapter.autoFiled
+          ? { autoFiled: gatedRead(adapter.autoFiled.bind(adapter), "what your Screener filed on its own") }
+          : {}),
+        ...(adapter.undoAutoFiled
+          ? { undoAutoFiled: gatedPress(adapter.undoAutoFiled.bind(adapter), "putting back what your Screener filed") }
+          : {}),
       } satisfies GatedAdapter & { transport: EngineAdapter };
     },
   };

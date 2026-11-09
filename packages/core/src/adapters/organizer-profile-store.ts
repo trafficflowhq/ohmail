@@ -74,7 +74,7 @@ export async function serializeOrganizerProfileCounted(
   // something no store ever held (self-healing one flush later, but "a burst is one write" is
   // the contract, and a torn read is how it becomes two). REPEATABLE READ pins all five reads
   // to one snapshot; PGlite is real Postgres, so the same statement works on both stores.
-  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows, removalRows] = await db.transaction(async (tx) => {
+  const [contactRows, ruleRows, notifyRows, awayRows, tagRows, mailboxRows, screening, appliedRows, removalRows, switchRows] = await db.transaction(async (tx) => {
     return [
       // Each list is the newest PROFILE_LIST_MAX of its kind, so the import on another machine
       // takes what this one publishes; automatic (promoted) rules are the first to stay behind.
@@ -133,6 +133,9 @@ export async function serializeOrganizerProfileCounted(
         : null,
       // THE NINTH READ: the rules removed here, in the same snapshot as the rules they must not name.
       opts.removed === undefined ? null : await readRuleRemovals(tx as unknown as Tx, accountId),
+      // THE TENTH READ: the impersonation filing's switch (mail 0184), published only while off.
+      await tx.select({ offAt: accountSettings.impersonationFilingOffAt }).from(accountSettings)
+        .where(eq(accountSettings.accountId, accountId)).limit(1),
     ] as const;
   }, { isolationLevel: "repeatable read", accessMode: "read only" });
 
@@ -185,6 +188,8 @@ export async function serializeOrganizerProfileCounted(
        with no text beside it; stating it here keeps the RAW payload the key census reads honest
        about what the store actually holds. */
     ...(mailboxRows[0]?.signatureHtml ? { signatureHtml: mailboxRows[0].signatureHtml } : {}),
+    // PRESENT ONLY WHILE OFF: on is the default, and a copy never states it.
+    ...((switchRows[0]?.offAt ?? null) !== null ? { impersonationFiling: false as const } : {}),
   };
   const { payload, changed: normalized } = profilePayloadAsRead(stored);
   return {
@@ -746,6 +751,17 @@ export async function applyOrganizerProfile(
     // Only a write the consent read answers moves its stamp and appends its settings row.
     await moveSettingsStamp(tx, o.accountId, now);
     changes.push({ accountId: o.accountId, entityType: "settings", entityId: o.accountId, op: "update", meta: null });
+  }
+
+  /* THE IMPERSONATION FILING'S OFF CHOICE (mail 0184) carried through an organizer change: a copy
+     that says off turns it off here, once; a copy that says nothing changes nothing, so an import
+     never turns the filing back on. The settings row was locked first, above. */
+  if (o.doc.impersonationFiling === false) {
+    await tx.insert(accountSettings).values({ accountId: o.accountId, impersonationFilingOffAt: now, updatedAt: now })
+      .onConflictDoUpdate({
+        target: accountSettings.accountId, set: { impersonationFilingOffAt: now, updatedAt: now },
+        setWhere: isNull(accountSettings.impersonationFilingOffAt),
+      });
   }
 
   // One allocation for every change row (contacts/notify/away are REST-only, so only the

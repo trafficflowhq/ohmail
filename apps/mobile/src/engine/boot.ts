@@ -593,6 +593,9 @@ function accountGuarded(
     /* What waits on the organizer — this account's own requests, on `screenerWaiting`'s rule. Left
        out, the phone lists only what this session sent and a relaunch forgets the rest. */
     organizerRequests: () => adapter.organizerRequests(),
+    /* What the Screener filed on its own, and Put back — on `screenerWaiting`'s and `mutate`'s rules. */
+    autoFiled: () => adapter.autoFiled(),
+    undoAutoFiled: (ids) => adapter.undoAutoFiled(ids),
   };
 }
 

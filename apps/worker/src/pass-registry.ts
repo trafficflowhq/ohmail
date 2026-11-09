@@ -305,6 +305,22 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; the account erasure fence per chunk and for the stamp; writes list_addresses and the stamp, never a contact or a move",
   },
   {
+    name: "screener_impersonation",
+    module: `${W}/screener-impersonation.ts`, entry: "screenerImpersonationPass",
+    triggers: ["cycle-tail", "sidecar-drain"],
+    cadence: "when owed, per account whose impersonation filing is on (`account_settings.impersonation_filing_off_at` NULL, "
+      + "the default): the first tail or drain after start, after ingest held a sender or took mail in, after the switch "
+      + "turned on, after a run that left senders waiting, and after a mailbox's settings question opened or was answered; "
+      + "only over mailboxes whose settings question is answered; on a standalone install behind the organizer gate",
+    budget: "IMPERSONATION_SENDERS_PER_RUN senders per run, resuming after the last one examined (a walk kept per account), "
+      + "and IMPERSONATION_LETTERS_PER_RUN letters read in turns across them; the ties read once per page, one transaction "
+      + "per filed sender; a TAIL_SLICE_BUDGET_MS `until` clock in the tail",
+    owns: "a held letter that presents itself as a dictionary company it cannot be from, with no code in it and no tie between "
+      + "its sender and the account, is filed to Spam, alone, listed under Filed automatically; it never lets a sender in",
+    fence: "leader lock; the account erasure fence and the rule-key lock per sender, the mailbox role read under lock; "
+      + "`fileImpersonationLetters` writes desired state, a change row and an audit row with its inverse, never a rule",
+  },
+  {
     name: "act_admission_retire",
     module: `${W}/act-admission-retire.ts`, entry: "retireActAdmissionsPass",
     triggers: ["cycle-tail", "sidecar-drain"],

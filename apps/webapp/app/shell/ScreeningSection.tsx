@@ -5,8 +5,9 @@
  * one account setting (`GET/PATCH /account/screening`): a POSTURE switch (ON = keep the Ohbox for what is relevant
  * and file obvious bulk to Reads/Receipts; OFF = today's default — framed around RELEVANCE, never "only real people",
  * because the mechanism keeps relevant service mail); and the free-text BAR, which is {@link OhboxWords} — one
- * editor over one column, the transport handed in. No switch files a first-time sender out of the Screener: only a
- * person lets a sender in.
+ * editor over one column, the transport handed in. No switch lets a first-time sender in: only a person does. One files
+ * out of it: FILE IMPERSONATIONS TO SPAM (on by default) has the organizer file a held letter that claims to be a
+ * company it cannot be from to Spam, without AI, one letter at a time, each listed with Put back.
  */
 
 /**
@@ -56,8 +57,8 @@ export function ScreeningSection() {
   if (!pref) return null;
   const relevanceOn = pref.ohboxPolicy === "people_only";
 
-  /** The SWITCH's write. The bar has its own — see {@link OhboxWords}. */
-  const apply = (next: Partial<{ ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"] }>) => {
+  /** The SWITCHES' write. The bar has its own — see {@link OhboxWords}. */
+  const apply = (next: Partial<{ ohboxPolicy: ScreeningPreferenceWire["ohboxPolicy"]; impersonationFiling: boolean }>) => {
     if (pending) return;
     setPending(true);
     setFailed(false);
@@ -92,6 +93,22 @@ export function ScreeningSection() {
           />
         }
       />
+
+      {/* FILING A HELD IMPERSONATION TO SPAM — absent from an older server, which files none. */}
+      {pref.impersonationFiling !== undefined ? (
+        <SettingsRow
+          label={t("screening.impersonationTitle")}
+          description={pref.impersonationFiling ? t("screening.impersonationOn") : t("screening.impersonationOff")}
+          control={
+            <Switch
+              checked={pref.impersonationFiling}
+              disabled={pending}
+              ariaLabel={t("screening.impersonationTitle")}
+              onChange={(next) => apply({ impersonationFiling: next })}
+            />
+          }
+        />
+      ) : null}
 
       {/* What was filed out of the Screener automatically, still in place, with Put back. */}
       <AutoFiledReview />

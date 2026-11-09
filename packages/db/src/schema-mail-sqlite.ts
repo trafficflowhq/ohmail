@@ -2382,6 +2382,8 @@ export const accountSettings = sqliteTable("account_settings", {
   /** The html-words backfill's stamp and cursor (mail 0172). See the server twin. LAST. */
   htmlWordsBackfillAt: integer("html_words_backfill_at", { mode: "timestamp_ms" }),
   htmlWordsBackfillCursor: text("html_words_backfill_cursor"),
+  /** Mail 0184 — the impersonation filing switch, off when set. See the server twin. LAST. */
+  impersonationFilingOffAt: integer("impersonation_filing_off_at", { mode: "timestamp_ms" }),
 });
 
 /**

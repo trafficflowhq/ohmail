@@ -226,6 +226,13 @@ export interface OrganizerProfilePayload {
    * a plaintext reader. `PROFILE_VERSION` does not move — field-level compatible both ways.
    */
   signatureHtml?: string | null;
+  /**
+   * THE PERSON TURNED OFF FILING A HELD IMPERSONATION TO SPAM (mail 0184) — `false`, written only
+   * while the switch is off. ABSENT means unstated and changes nothing on import: on is every
+   * account's default, and a copy never turns the filing back on. The canonical form omits the key
+   * when absent, so every document written before it keeps its fingerprint (`signatureHtml`'s rule).
+   */
+  impersonationFiling?: false;
 }
 
 /**
@@ -322,7 +329,9 @@ export function isEmptyProfilePayload(p: OrganizerProfilePayload): boolean {
        a payload whose only content is `signatureHtml` is empty once canonicalised. Stated anyway,
        because this predicate runs on the RAW payload and "publish nothing" must be decided on
        what the payload says rather than on what the canonicaliser would make of it. */
-    && (p.signatureHtml ?? null) === null;
+    && (p.signatureHtml ?? null) === null
+    // An off switch is configuration: it is published even with nothing else to say.
+    && p.impersonationFiling !== false;
 }
 
 /** One document rule as the import writes it: the entry, validated and normalized. */
@@ -618,6 +627,7 @@ function canonicalizeV1(p: OrganizerProfilePayload): OrganizerProfilePayload {
        Normalised here, in the one function every fingerprint goes through. */
     signature: p.signature ?? null,
     ...signatureHtmlOf(p),
+    ...impersonationFilingOf(p),
   };
 }
 
@@ -637,7 +647,13 @@ function canonicalizeV2(p: OrganizerProfilePayload): OrganizerProfilePayload {
     tagNames: [...p.tagNames].sort(byCodeUnit),
     signature: p.signature ?? null,
     ...signatureHtmlOf(p),
+    ...impersonationFilingOf(p),
   };
+}
+
+/** The off switch, present only when off: absent leaves every older document's fingerprint as written. */
+function impersonationFilingOf(p: OrganizerProfilePayload): { impersonationFiling?: false } {
+  return p.impersonationFiling === false ? { impersonationFiling: false } : {};
 }
 
 /**
@@ -845,6 +861,8 @@ export function makeProfileDoc(
        re-fingerprints every document written before the field. This line is the envelope
        carrying what the canonicaliser answered, and nothing else. */
     ...(canonical.signatureHtml === undefined ? {} : { signatureHtml: canonical.signatureHtml }),
+    // The same rule: present only when the canonical form kept it, so an older copy's bytes stand.
+    ...(canonical.impersonationFiling === false ? { impersonationFiling: false as const } : {}),
   };
 }
 
@@ -1269,6 +1287,8 @@ function readPayload(raw: Record<string, unknown>): OrganizerProfilePayload {
     screener, rules, notifyRules, awayResponder, tagNames, signature,
     ...(signature !== null && typeof signatureHtml === "string" && signatureHtml.trim().length > 0
       ? { signatureHtml } : {}),
+    // Only `false` says anything; any other value is unstated, never "on".
+    ...(raw.impersonationFiling === false ? { impersonationFiling: false as const } : {}),
   };
 }
 
@@ -2796,7 +2816,9 @@ export type WriteProfileResult =
 export type ProfileUnkeptWhy = "not_self_readable" | "not_listed" | "not_a_profile" | "served_malformed" | "served_different";
 
 /** The payload's sections, as `profile_append_unreadable` names the ones a copy states otherwise. */
-const PAYLOAD_SECTIONS = ["screener", "rules", "notifyRules", "awayResponder", "tagNames", "signature", "signatureHtml"] as const;
+const PAYLOAD_SECTIONS = [
+  "screener", "rules", "notifyRules", "awayResponder", "tagNames", "signature", "signatureHtml", "impersonationFiling",
+] as const;
 
 /** The sections a read copy states otherwise than the written document, compared at the document's canonical version. */
 function sectionsDiffering(written: OrganizerProfileDoc, read: OrganizerProfilePayload): string[] {

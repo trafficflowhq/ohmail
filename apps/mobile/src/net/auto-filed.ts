@@ -15,6 +15,11 @@ export interface AutoFiledItem {
   subject: string | null;
   /** The pile the pass filed it to. */
   to: string;
+  /** When, ISO; `null` from a server that does not say. */
+  filedAt: string | null;
+  /** `impersonation`: it claimed a company it cannot be from (`brand`), filed to Spam with no AI. */
+  why: "impersonation" | null;
+  brand: string | null;
 }
 
 export interface AutoFiledPage { items: AutoFiledItem[]; more: boolean }
@@ -34,7 +39,11 @@ export async function readAutoFiled(session: ConnectedSession): Promise<AutoFile
       const r = raw as Record<string, unknown>;
       const messageId = str(r.messageId);
       const to = str(r.to);
-      return messageId === null || to === null ? [] : [{ messageId, to, from: str(r.from), subject: str(r.subject) }];
+      const claim = r.why === "impersonation";
+      return messageId === null || to === null ? [] : [{
+        messageId, to, from: str(r.from), subject: str(r.subject), filedAt: str(r.filedAt),
+        why: claim ? "impersonation" as const : null, brand: claim ? str(r.brand) : null,
+      }];
     });
     return { items, more: body.more === true };
   } catch {
@@ -53,6 +62,40 @@ export async function putBackAutoFiled(session: ConnectedSession, messageIds: re
     const body = (await res.json()) as { putBack?: unknown; requested?: unknown };
     const ids = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []);
     return { putBack: ids(body.putBack), requested: ids(body.requested) };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * FILING A HELD IMPERSONATION TO SPAM — `GET`/`PATCH /account/screening`'s `impersonationFiling`, the
+ * web Settings switch's door. `null`: the read or the save could not be made, or the server does not
+ * know the switch; a surface then offers no control rather than a guessed one.
+ */
+export async function readImpersonationFiling(session: ConnectedSession): Promise<boolean | null> {
+  try {
+    const res = await session.fetch(`${requestBase(session)}/account/screening`, { method: "GET" });
+    if (res.status !== 200) return null;
+    const body = (await res.json()) as { impersonationFiling?: unknown } | null;
+    return typeof body?.impersonationFiling === "boolean" ? body.impersonationFiling : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The switch written; answers the value the server now holds, or `null` when it did not save. */
+export async function saveImpersonationFiling(session: ConnectedSession, on: boolean): Promise<boolean | null> {
+  try {
+    const res = await session.fetch(`${requestBase(session)}/account/screening`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ impersonationFiling: on }),
+    });
+    // 202: sent to the install that organizes the mailbox; it applies the change there.
+    if (res.status !== 200 && res.status !== 202) return null;
+    const body = (await res.json()) as { impersonationFiling?: unknown; pending?: unknown } | null;
+    if (body?.pending === true) return on;
+    return typeof body?.impersonationFiling === "boolean" ? body.impersonationFiling : null;
   } catch {
     return null;
   }

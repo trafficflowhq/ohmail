@@ -296,13 +296,15 @@ const OHBOX_POLICY_VALUES: ReadonlySet<string> = new Set(["people_only", "people
  */
 export const TRAVELLING_OHBOX_BAR_MAX_BYTES = 2048;
 /** The three sub-keys the reader's screening door sends. Anything else refuses the record. */
-const SCREENING_KEYS: ReadonlySet<string> = new Set(["ohboxPolicy", "ohboxBar", "screenerAutoApply"]);
+const SCREENING_KEYS: ReadonlySet<string> = new Set(["ohboxPolicy", "ohboxBar", "screenerAutoApply", "impersonationFiling"]);
 
 /** The screening preference as it travels: partial, each present key replaces. */
 export interface ProfileScreeningUpdate {
   ohboxPolicy?: string | null;
   ohboxBar?: string | null;
   screenerAutoApply?: boolean;
+  /** Filing a held impersonation to Spam (mail 0184): `false` turns it off, `true` on. */
+  impersonationFiling?: boolean;
 }
 
 /** The away responder as it travels — the whole row, replaced together. */
@@ -373,6 +375,10 @@ function readScreeningUpdate(v: unknown): ProfileScreeningUpdate | null {
   if ("screenerAutoApply" in r) {
     if (typeof r.screenerAutoApply !== "boolean") return null;
     out.screenerAutoApply = r.screenerAutoApply;
+  }
+  if ("impersonationFiling" in r) {
+    if (typeof r.impersonationFiling !== "boolean") return null;
+    out.impersonationFiling = r.impersonationFiling;
   }
   return Object.keys(out).length === 0 ? null : out;
 }
@@ -609,6 +615,12 @@ export async function applyProfileUpdate(
     settings.screenerAutoApplyAt = screening.screenerAutoApply ? now : null;
     insert.screenerAutoApplyAt = screening.screenerAutoApply ? now : null;
     wrote.push("screenerAutoApply");
+  }
+  if (screening?.impersonationFiling !== undefined) {
+    // A boolean on the wire, a timestamp in the column: when it was turned off, NULL for on.
+    settings.impersonationFilingOffAt = screening.impersonationFiling ? null : now;
+    insert.impersonationFilingOffAt = screening.impersonationFiling ? null : now;
+    wrote.push("impersonationFiling");
   }
   if (screening?.ohboxPolicy !== undefined) {
     settings.ohboxPolicy = screening.ohboxPolicy;

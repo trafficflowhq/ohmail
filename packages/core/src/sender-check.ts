@@ -542,6 +542,22 @@ function onlyServiceWordsOutside(hay: string, start: number, end: number): boole
  * name ("PostFinance (via Google Drive)") excuses nothing. First claim wins. Pure.
  */
 export function claimedIdentity(input: IdentityInput): IdentityFact | undefined {
+  const claim = readClaim(input);
+  return claim === undefined ? undefined : { brand: claim.brand.name, via: claim.via };
+}
+
+/** The fact as read, with where it stands: the source's folded text and every span naming the brand. */
+interface ClaimReading {
+  brand: Brand;
+  via: IdentityFact["via"];
+  hay: string;
+  spans: Array<[number, number]>;
+  /** The folded display name, whichever source claimed. */
+  name: string;
+}
+
+/** {@link claimedIdentity}'s reading, kept whole for {@link impersonationFiling}. */
+function readClaim(input: IdentityInput): ClaimReading | undefined {
   const sources: Array<{ via: IdentityFact["via"]; hay: string; tag: boolean }> = [];
   const capped = (s: string): string => (s.length > MAX_IDENTITY_INPUT ? s.slice(0, MAX_IDENTITY_INPUT) : s);
   const name = input.fromName === null ? "" : fold(capped(input.fromName)).slice(0, MAX_FOLDED_NAME);
@@ -562,7 +578,10 @@ export function claimedIdentity(input: IdentityInput): IdentityFact | undefined 
       .map(([s, e]) => ({ brand: g.brand, s, e })));
     const owned = hits.filter((h) => owns(h.brand, domain));
     const claim = hits.find((h) => !owns(h.brand, domain) && !owned.some((o) => o.s < h.e && h.s < o.e));
-    if (claim) return { brand: claim.brand.name, via };
+    if (claim) {
+      const spans = hits.filter((h) => h.brand === claim.brand).map((h): [number, number] => [h.s, h.e]);
+      return { brand: claim.brand, via, hay, spans, name };
+    }
   }
   return undefined;
 }
@@ -583,6 +602,110 @@ export function identityOfRow(row: IdentityRow): IdentityFact | null {
   const fresh = claimedIdentity(row) ?? null;
   if (row.senderCheck !== "impersonation") return fresh;
   return { brand: row.senderCheckBrand || fresh?.brand || "", via: fresh?.via ?? "name" };
+}
+
+/** Legal forms a company's own name carries beside it ("Hostpoint AG"): never a second name. */
+const LEGAL_FORMS: ReadonlySet<string> = new Set([
+  "ag", "gmbh", "sa", "sarl", "sàrl", "se", "inc", "ltd", "llc", "plc", "kg", "ug", "eg",
+]);
+
+/** The words of `hay` outside `spans`, one pass by code point; a span cutting a word splits it. */
+function wordsOutside(hay: string, spans: ReadonlyArray<readonly [number, number]>): string[] {
+  const merged: Array<[number, number]> = [];
+  for (const [s, e] of [...spans].sort((a, b) => a[0] - b[0])) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && s <= last[1]) last[1] = Math.max(last[1], e); else merged.push([s, e]);
+  }
+  const words: string[] = [];
+  let word = "";
+  let k = 0;
+  let at = 0;
+  for (const cp of hay) {
+    while (k < merged.length && merged[k]![1] <= at) k++;
+    const covered = k < merged.length && merged[k]![0] <= at;
+    if (!covered && isWordChar(cp)) word += cp;
+    else if (word !== "") { words.push(word); word = ""; }
+    at += cp.length;
+  }
+  if (word !== "") words.push(word);
+  return words;
+}
+
+/** Beside a brand, a word that adds no second name: a service word, a legal form, or digits. */
+const besideOnly = (w: string): boolean => SERVICE_WORDS.has(w) || LEGAL_FORMS.has(w) || letters(w) === 0;
+
+/** Folded, letters and digits only: `hosting-renewals.example` reads `hostingrenewalsexample`. */
+function bareOf(s: string): string {
+  let out = "";
+  for (const cp of fold(s)) if (isWordChar(cp)) out += cp;
+  return out;
+}
+
+/** Every token the brand's own name is spelled with, separators removed: what its own domains carry. */
+function brandTokens(b: Brand): string[] {
+  const firstLabels = b.domains.filter((d) => !isSharedProviderDomain(d)).map((d) => d.split(".")[0] ?? "");
+  return [b.name, ...b.aliases, ...(b.gate ?? []), ...(b.gateShort ?? []), ...(b.gateToken ?? []), ...firstLabels]
+    .map(bareOf).filter((t) => t.length >= 2);
+}
+
+/** Why a held letter claiming a brand stays where the person decides it. */
+export type ImpersonationKeep =
+  | "own" | "consented" | "correspondent" | "listed" | "put_back"
+  | "no_claim" | "stale_claim" | "not_presented" | "brand_domain" | "code";
+
+/** One held letter as the filing reads it: the stored fact and the fields it is read from again. */
+export interface ImpersonationLetter extends IdentityInput {
+  senderCheck: string | null;
+  senderCheckBrand: string | null;
+  /** `messages.sensitivity_category`: a code, a reset, a verification or a security alert. */
+  sensitivityCategory: string | null;
+}
+
+/** The sender's ties to the account, read by the caller; any one keeps the letter. */
+export interface ImpersonationTies {
+  /** One of the account's own addresses. */
+  own: boolean;
+  /** Named by a rule of any kind and state, or a contact of any source. */
+  consented: boolean;
+  /** Written to by the account, or answering its mail. */
+  correspondent: boolean;
+  /** A mailing list's address. */
+  listed: boolean;
+  /** The sender of a letter the person put back. */
+  putBack: boolean;
+}
+
+export type ImpersonationVerdict = { file: true; brand: string } | { file: false; keep: ImpersonationKeep };
+
+/**
+ * DOES OHMAIL FILE THIS HELD LETTER TO SPAM ON ITS OWN — deterministic, no model. Only a letter that
+ * presents itself as a dictionary brand and nothing else, from a domain that carries none of the
+ * brand's names, with no code in it and no tie between its sender and the account. The stored fact
+ * must still be the one the function reads today. The claim is a fact about this letter: the caller
+ * files it alone and writes nothing about the address. Pure.
+ */
+export function impersonationFiling(input: { letter: ImpersonationLetter; ties: ImpersonationTies }): ImpersonationVerdict {
+  const { letter, ties } = input;
+  const keep = (k: ImpersonationKeep): ImpersonationVerdict => ({ file: false, keep: k });
+  if (ties.own) return keep("own");
+  if (ties.consented) return keep("consented");
+  if (ties.correspondent) return keep("correspondent");
+  if (ties.listed) return keep("listed");
+  if (ties.putBack) return keep("put_back");
+  if (letter.senderCheck !== "impersonation") return keep("no_claim");
+  const claim = readClaim(letter);
+  if (claim === undefined || !letter.senderCheckBrand || claim.brand.name !== letter.senderCheckBrand) return keep("stale_claim");
+  // The name, or the local part under a name of service words only; a subject's lead-in never files.
+  const presented = claim.via === "name"
+    ? wordsOutside(claim.hay, claim.spans).every(besideOnly)
+    : claim.via === "local_part"
+      && wordsOutside(claim.hay, claim.spans).every(besideOnly)
+      && wordsOutside(claim.name, []).every((w) => SERVICE_WORDS.has(w));
+  if (!presented) return keep("not_presented");
+  const domain = bareOf(senderDomainOf(letter.fromAddress));
+  if (brandTokens(claim.brand).some((t) => domain.includes(t))) return keep("brand_domain");
+  if (letter.sensitivityCategory !== null) return keep("code");
+  return { file: true, brand: claim.brand.name };
 }
 
 /** Where a brand's name was found outside the fact. The subject claims; a snippet mentions. */

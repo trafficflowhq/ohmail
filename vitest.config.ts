@@ -210,6 +210,7 @@ export default defineConfig({
       { find: "@trafficflow/worker/known-set", replacement: r("./apps/worker/src/known-set.ts") },
       { find: "@trafficflow/worker/dead-letter", replacement: r("./apps/worker/src/dead-letter.ts") },
       { find: "@trafficflow/worker/screener-auto-act", replacement: r("./apps/worker/src/screener-auto-act.ts") },
+      { find: "@trafficflow/worker/screener-impersonation", replacement: r("./apps/worker/src/screener-impersonation.ts") },
       { find: "@trafficflow/worker/screener-correspondent-retro", replacement: r("./apps/worker/src/screener-correspondent-retro.ts") },
       { find: "@trafficflow/worker/thread-join-heal", replacement: r("./apps/worker/src/thread-join-heal.ts") },
       { find: "@trafficflow/worker/inbound-quiet", replacement: r("./apps/worker/src/inbound-quiet.ts") },

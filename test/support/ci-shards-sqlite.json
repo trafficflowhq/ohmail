@@ -10,6 +10,7 @@
       "apps/worker/test/own-mail-claim-keeps-its-place.test.ts",
       "apps/worker/test/phone-buffer-one-message.test.ts",
       "apps/worker/test/screener-auto-act.test.ts",
+      "apps/worker/test/screener-impersonation.test.ts",
       "apps/worker/test/store-fault-classes.test.ts",
       "packages/core/test/flag-completion-dialect.test.ts",
       "packages/db/test/allocate-seq-fence.test.ts",

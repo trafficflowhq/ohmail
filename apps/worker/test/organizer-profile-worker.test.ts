@@ -2740,6 +2740,11 @@ describe("the serialized document carries configuration and NOTHING else", () =>
        match and terms escaped. The fixture records one with both terms, so a dropped key is red too. */
     "removedRules", "removedRules[].kind", "removedRules[].match", "removedRules[].subjectContains",
     "removedRules[].bodyContains", "removedRules[].removedAt", "removedRules[].by",
+    /* The person turned off filing a held impersonation to Spam (mail 0184), admitted as an OPTIONAL
+       payload key on `signatureHtml`'s rule: written only while off, so every older document keeps
+       its fingerprint, and an import of a copy without it changes nothing. The fixture turns it off,
+       so a dropped key is red here too. */
+    "impersonationFiling",
   ]);
 
   it("key census exact, and sentinels planted in every non-config table stay out of the message", async () => {
@@ -2758,7 +2763,7 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     });
     await db.insert(accountSettings).values({
       accountId, ohboxBar: "TF_SECRET_SENTINEL_BAR", updatedAt: new Date(),
-      screeningBaselineAt: new Date("2026-07-01T00:00:00Z"), dormancyDays: 30,
+      screeningBaselineAt: new Date("2026-07-01T00:00:00Z"), dormancyDays: 30, impersonationFilingOffAt: new Date(),
     });
     // …and the full configuration, every section populated.
     await db.insert(contacts).values({ accountId, address: "anna@x.example", name: "Anna" });

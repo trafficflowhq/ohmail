@@ -2575,6 +2575,11 @@ export interface ScreeningPreferenceWire {
    * reversible. Absent/failed reads resolve to `false`, so the default is off.
    */
   screenerAutoApply: boolean;
+  /**
+   * Whether ohmail files a held letter that impersonates a company to Spam on its own, with no AI;
+   * on by default. Absent from an older server, which files none: read as `undefined`.
+   */
+  impersonationFiling?: boolean;
   /** Present when the save was sent to the install that organizes, and nothing was written here. */
   pending?: true;
   /** On a reader: where this install's last Screening change went. */
@@ -2591,6 +2596,7 @@ export const screeningSettings = {
     ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
     ohboxBar?: string | null;
     screenerAutoApply?: boolean;
+    impersonationFiling?: boolean;
   }) => api<ScreeningPreferenceWire>("/account/screening", { method: "PATCH", body }),
 };
 
@@ -2602,6 +2608,9 @@ export interface AutoFiledItemWire {
   /** The pile the pass filed it to. */
   to: string;
   filedAt: string;
+  /** `impersonation`: it claimed a company it cannot be from (`brand`). Absent from an older server. */
+  why?: "impersonation" | null;
+  brand?: string | null;
 }
 
 /** The read: the newest automatic filings still in place, and whether more are behind them. */
