@@ -76,6 +76,8 @@ export function SignaturesPanel() {
               </Txt>
               <TextInput
                 maxFontSizeMultiplier={t.textCap}
+                disableFullscreenUI
+                keyboardAppearance={t.scheme}
                 value={shown}
                 onChangeText={(v) => { setDrafts((cur) => ({ ...cur, [row.id]: v })); if (failed === row.id) setFailed(null); }}
                 editable={!row.readOnly && pending === null}

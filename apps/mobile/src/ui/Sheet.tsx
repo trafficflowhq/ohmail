@@ -123,7 +123,7 @@ export function Sheet({
     </>
   );
   return (
-    <Modal key={modalKey} transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={onClose}>
+    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={onClose}>
       {avoidKeyboard ? (
         <KeyboardAvoidingView
           behavior={Platform.OS === "ios" ? "padding" : undefined}

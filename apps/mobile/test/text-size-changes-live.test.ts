@@ -183,6 +183,51 @@ describe("every text host carries the theme's cap", () => {
   });
 });
 
+/* Android's landscape IME takes the whole screen for a bare field unless the input opts out (no-op on
+   iOS); iOS draws a light keyboard under a Dark app unless the input names the theme's scheme. */
+const holds = (tag: string, prop: RegExp): boolean => {
+  const at = tag.search(prop);
+  return at >= 0 && !tag.slice(at).includes("{...");
+};
+const inPlace = (tag: string): boolean => holds(tag, /\bdisableFullscreenUI(?=[\s/>])/);
+const keyboardInScheme = (tag: string): boolean => holds(tag, /\bkeyboardAppearance=\{t\.scheme\}/);
+
+describe("every text input stays in place under the keyboard, in the app's scheme", () => {
+  const files = [...tsxUnder(join(ROOT, "src")), ...tsxUnder(join(ROOT, "app"))];
+  const inputs = files.flatMap((f) => textHosts(readFileSync(f, "utf8")).filter((h) => h.tag.startsWith("<TextInput"))
+    .map((h) => ({ ...h, at: `${relative(ROOT, f)}:${h.line}` })));
+
+  it("no input hands the screen to Android's full-screen editor", () => {
+    expect(inputs.length).toBeGreaterThan(8);
+    expect(inputs.filter((h) => !inPlace(h.tag)).map((h) => h.at)).toEqual([]);
+  });
+
+  it("every input opens the iOS keyboard in the theme's scheme", () => {
+    expect(inputs.filter((h) => !keyboardInScheme(h.tag)).map((h) => h.at)).toEqual([]);
+  });
+
+  it("the census reads a bare input as bare and admits one in place", () => {
+    const hosts = textHosts([
+      "const A = () => <TextInput value={v} />;",
+      "const B = () => <TextInput disableFullscreenUI value={v} />;",
+      "const C = () => <TextInput disableFullscreenUI {...rest} />;",
+      "const D = () => <TextInput disableFullscreenUIX />;",
+    ].join("\n"));
+    expect(hosts.map((h) => inPlace(h.tag))).toEqual([false, true, false, false]);
+  });
+
+  it("the census admits only the theme's scheme, never a literal or a spread after it", () => {
+    const hosts = textHosts([
+      "const A = () => <TextInput value={v} />;",
+      "const B = () => <TextInput keyboardAppearance={t.scheme} value={v} />;",
+      'const C = () => <TextInput keyboardAppearance="dark" />;',
+      "const D = () => <TextInput keyboardAppearance={t.scheme} {...rest} />;",
+      "const E = () => <TextInput keyboardAppearance={t.schemeX} />;",
+    ].join("\n"));
+    expect(hosts.map((h) => keyboardInScheme(h.tag))).toEqual([false, true, false, false, false]);
+  });
+});
+
 describe("a display-size change re-opens every dialog at the new density", () => {
   it("every Modal is keyed on the window scale", () => {
     const files = [...tsxUnder(join(ROOT, "src")), ...tsxUnder(join(ROOT, "app"))];

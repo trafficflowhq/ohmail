@@ -147,6 +147,8 @@ function SearchBody() {
       <View style={{ paddingHorizontal: 12, paddingBottom: 8 }}>
         <TextInput
           maxFontSizeMultiplier={t.textCap}
+          disableFullscreenUI
+          keyboardAppearance={t.scheme}
           value={addr ?? q}
           onChangeText={(text) => {
             // Typing is a new question — it leaves the address view and asks the index.

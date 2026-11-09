@@ -806,6 +806,8 @@ function TagSheet({ m, tags, onClose }: { m: WorldMail; tags: WorldTag[]; onClos
     <Sheet open onClose={onClose} label={Copy.actionTag}>
       <TextInput
         maxFontSizeMultiplier={t.textCap}
+        disableFullscreenUI
+        keyboardAppearance={t.scheme}
         value={query}
         onChangeText={setQuery}
         placeholder={Copy.tagPlaceholder}
@@ -2006,7 +2008,7 @@ export function ComposeSheet({
   if (notesMeasured(notesHeight, noteItems.length) !== notesHeight) setNotesHeight(null);
 
   return (
-    <Modal key={modalKey} transparent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer} onShow={focusKeeper.onShow}>
+    <Modal key={modalKey} transparent statusBarTranslucent navigationBarTranslucent animationType={t.reduceMotion ? "none" : "slide"} visible onRequestClose={closeComposer} onShow={focusKeeper.onShow}>
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={room}
@@ -2143,6 +2145,8 @@ export function ComposeSheet({
                 ref={subjectField}
                 {...focusKeeper.bind(subjectField)}
                 maxFontSizeMultiplier={t.textCap}
+                disableFullscreenUI
+                keyboardAppearance={t.scheme}
                 value={subject}
                 onChangeText={editWhileIdle(phase, setSubject)}
                 editable={phase === "idle"}
@@ -2170,6 +2174,8 @@ export function ComposeSheet({
             ref={bodyField}
             {...focusKeeper.bind(bodyField)}
             maxFontSizeMultiplier={t.textCap}
+            disableFullscreenUI
+            keyboardAppearance={t.scheme}
             value={body}
             onChangeText={editWhileIdle(phase, setBody)}
             editable={phase === "idle"}
@@ -2261,6 +2267,8 @@ export function ComposeSheet({
                   block — the webapp's own 8-row ceiling, in points. */}
               <TextInput
                 maxFontSizeMultiplier={t.textCap}
+                disableFullscreenUI
+                keyboardAppearance={t.scheme}
                 value={sigText}
                 onChangeText={editWhileIdle(phase, (text: string) => setSig({ kind: "edited", text }))}
                 editable={phase === "idle"}
