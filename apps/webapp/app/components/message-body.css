@@ -164,6 +164,8 @@
   color-scheme: light;
 }
 .mb-sheet[data-dark] .mb-frame { background: #1b1b1b; color-scheme: dark; }
+/* An inverted letter is a light one: its own dark-scheme rules would be inverted back to light. */
+.mb-sheet[data-inverted] .mb-frame { color-scheme: light; }
 
 /* ── the letter's own structure, in the app's type ─────────────────────────────────────
    The native rich rendering (`BodyText`'s rich nodes, walked out of the sanitized document

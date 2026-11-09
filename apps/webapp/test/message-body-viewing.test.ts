@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
@@ -351,6 +354,247 @@ describe("a colourless light paper is clamped to white; a real canvas keeps its 
     // The other side of the clamp: a real pale-blue canvas is a design, and it keeps its ground.
     await renderIn("light", { text: "A designed card.", html: TINTED_WRAPPER_HTML });
     expect(rootTag()).toContain("--ohmail-paper:rgb(207,224,255)");
+  });
+});
+
+// ══ 2c. the page a letter is drawn on, and the ink on it ═══════════════════════════════════
+
+/** The frame body's painted `prop` (`background` or `color`), resolved through the root's custom properties. */
+const framePaint = (prop: "background" | "color"): string => {
+  const rule = new RegExp(`(?:^|[}\\n])body\\{[^}]*?(?:^|;)${prop}:([^;}]+)`).exec(srcdoc())?.[1] ?? "";
+  const vars = /<html[^>]*style="([^"]*)"/.exec(rootTag())?.[1] ?? "";
+  return rule.replace(/var\((--[\w-]+),([^)]+)\)/, (_m, name: string, fallback: string) =>
+    new RegExp(`${name}:([^;"]+)`).exec(vars)?.[1] ?? fallback);
+};
+const frameContrast = async (): Promise<number> => {
+  const { parseCssColor, relativeLuminance } = await mod();
+  const [a, b] = [relativeLuminance(parseCssColor(framePaint("background"))!), relativeLuminance(parseCssColor(framePaint("color"))!)];
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+};
+
+describe("a letter's page and ink read together", () => {
+  /** A receipt whose dark-scheme rule follows another rule in its @media block. */
+  const DARK_MEDIA = "<style>@media (prefers-color-scheme: dark){ .logo{display:none} body{background-color:#1e1e1e !important} }</style>"
+    + '<table><tr><td style="color:#333333">Your receipt</td></tr></table>';
+  /** A dark newsletter whose page rule sits in a screen block, after another rule. */
+  const SCREEN_DARK = "<style>@media screen{ .a{margin:0} body{background:#000000;color:#ffffff} }</style><p>Dark newsletter words</p>";
+  /** White cards with no ink of their own under a page read as dark: (a) a dark header table, (b) a dark header div, (c) a dark body. */
+  const CARDS = [
+    `<table bgcolor=#222><tr><td style=color:#fff>Brand</td></tr></table><table bgcolor=#fff><tr><td>Your order has shipped</td></tr></table>${DARK_PIXEL}`,
+    `<div style="background:#222;color:#fff">Brand</div><div style="background:#fff">Your order has shipped</div>${DARK_PIXEL}`,
+    `<body bgcolor=#000><table bgcolor=#fff><tr><td>Your order has shipped</td></tr></table>${DARK_PIXEL}</body>`,
+    // The same white card on a dark body, spelled as editors write it: spaced rgb, a rule, hsl, a gradient, a variable.
+    '<body bgcolor=#000><table style="background-color: rgb(255, 255, 255)"><tr><td>Your order has shipped</td></tr></table></body>',
+    '<html><head><style>.card{background-color: rgb(255, 255, 255)}</style></head><body bgcolor=#000><table class="card"><tr><td>Your order has shipped</td></tr></table></body></html>',
+    '<body bgcolor=#000><table style="background-color: hsl(0, 0%, 100%)"><tr><td>Your order has shipped</td></tr></table></body>',
+    '<body bgcolor=#000><table style="background: linear-gradient(to bottom, #ffffff, #ffffff)"><tr><td>Your order has shipped</td></tr></table></body>',
+    '<html><head><style>.card{--card: #ffffff; background-color: var(--card)}</style></head><body bgcolor=#000><table class="card"><tr><td>Your order has shipped</td></tr></table></body></html>',
+  ];
+  /** Letters that set their own dark page and light ink. */
+  const OWN_INK = [
+    '<body style="background-color:#121212;color:#f5f5f5"><p>Dark page, light words</p></body>',
+    "<body bgcolor=#000 text=#fff><p>Dark page, light words</p></body>",
+    '<body style="background-color: rgb(18, 18, 18); color: rgb(245, 245, 245)"><p>Dark page, light words</p></body>',
+  ];
+  /** A dark page said only for narrow screens: the browser applies it, the page reading never does. */
+  const NARROW_DARK = "<style>@media only screen and (max-width:600px){body{background-color:#000000}}</style><p>Wide words</p>";
+  /** A mid-grey page (classed light, painted white) with a light ink of its own. */
+  const GREY_OWN_INK = '<body bgcolor="#767676" text="#ffffff"><p>Grey page, white words</p></body>';
+  /** A sheet rule paints a light page; the body's inline dark page and light ink are dropped with the body. */
+  const SHEET_OVER_INLINE = '<style>body{background:#ffffff}</style><body style="background:#000;color:#fff"><p>Sheet page words</p></body>';
+
+  it("a sheet html/body rule is the page over the body's dropped inline one", async () => {
+    const { sanitizeMailHtml, pageBackground } = await mod();
+    const mail = sanitizeMailHtml(SHEET_OVER_INLINE);
+    expect(mail.light).toBe(true);
+    expect(mail.ink ?? null).toBeNull();
+    const body = new DOMParser().parseFromString('<body style="background:#000" bgcolor="#000"></body>', "text/html").body;
+    expect(pageBackground(body, "body{background-color:#fff}")).toMatchObject({ r: 255, g: 255, b: 255 });
+    // With no such rule (or one only for print) the body's own page counts.
+    expect(pageBackground(body, "@media print{body{background:#fff}}")).toMatchObject({ r: 0, g: 0, b: 0 });
+  });
+
+  it("a background value is split in one bounded pass, a function's arguments kept together", async () => {
+    const { colourTokens } = await mod();
+    expect(colourTokens(" rgb(18, 18, 18)  url(x) ")).toEqual(["rgb(18, 18, 18)", "url(x)"]);
+    expect(colourTokens("url(a b) rgb(1, 2, 3) no-repeat")).toEqual(["url(a b)", "rgb(1, 2, 3)", "no-repeat"]);
+    expect(colourTokens("rgb(var(--a, 1) , 2, 3) #fff")).toEqual(["rgb(var(--a, 1) , 2, 3)", "#fff"]);
+    // Counted work: each character is visited at most once, and only the first 4 KB are read.
+    for (const n of [1_000, 200_000]) {
+      const value = "a ".repeat(n);
+      const work = { visited: 0 };
+      colourTokens(value, work);
+      expect(work.visited, String(n)).toBeGreaterThan(0);
+      expect(work.visited, String(n)).toBeLessThanOrEqual(Math.min(value.length, 4096));
+    }
+  });
+
+  it("nested at-rule blocks are read in one bounded pass, however deep", async () => {
+    const { screenRules, sanitizeMailHtml } = await mod();
+    for (const open of ["@layer a{", "@supports (a){"]) {
+      for (const n of [1_000, 12_000, 30_000]) {
+        for (const css of [open.repeat(n), `${open.repeat(n)}body{background:#000}${"}".repeat(n)}`]) {
+          const work = { visited: 0 };
+          screenRules(css, work);
+          expect(work.visited, `${open} ${n}`).toBeGreaterThan(0);
+          expect(work.visited, `${open} ${n}`).toBeLessThanOrEqual(2 * css.length);
+          expect(() => sanitizeMailHtml(`<style>${css}</style><p>x</p>`), `${open} ${n}`).not.toThrow();
+        }
+      }
+    }
+    // A page rule a few blocks deep still paints the page; one past the depth followed is left to the browser.
+    const nested = (n: number): string => `<style>${"@layer a{".repeat(n)}body{background:#000}${"}".repeat(n)}</style><p>x</p>`;
+    expect(sanitizeMailHtml(nested(3)).light).toBe(false);
+    expect(sanitizeMailHtml(nested(40)).light).toBe(true);
+    // A rule after a closed block is read again; a stray brace ends nothing it did not open.
+    expect(sanitizeMailHtml("<style>@layer a{@media print{body{background:#fff}} .a{x:y}} } body{background:#000}</style><p>x</p>").light).toBe(false);
+  });
+
+  it("a letter whose sanitizing throws is shown as text, and the letters around it stay", async () => {
+    const DOMPurify = (await import("dompurify")).default;
+    const spy = vi.spyOn(DOMPurify, "sanitize").mockImplementation(() => { throw new RangeError("Maximum call stack size exceeded"); });
+    try {
+      const { MessageBody } = await mod();
+      await unmount();
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await act(async () => {
+        root!.render(h(ThemeProvider, {
+          defaultPreference: "light", storageKey: null,
+          children: [h("p", { key: "a" }, "The letter above"), h(MessageBody, { key: "b", text: "Plain words of the letter", html: "<p>Rich words</p>" })],
+        }));
+      });
+      expect(spy).toHaveBeenCalled();
+      expect(host.textContent).toContain("The letter above");
+      expect(host.textContent).toContain("Plain words of the letter");
+      expect(host.querySelector(".mb-note")?.textContent).toBeTruthy();
+      expect(host.querySelector("iframe")).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a body rule inside an at-rule block is neither the paper nor the light/dark class", async () => {
+    const { sanitizeMailHtml } = await mod();
+    const mail = sanitizeMailHtml(DARK_MEDIA);
+    expect(mail.background).toBeNull();
+    expect(mail.light).toBe(true);
+    await renderIn("light", { text: "", html: DARK_MEDIA });
+    expect(rootTag()).not.toContain("--ohmail-paper");
+    expect(srcdoc()).toContain("Your receipt");
+    await renderIn("dark", { text: "", html: DARK_MEDIA });
+    expect(rootTag()).toContain('data-ohmail-dark="1"');
+    // A top-level rule after such a block still paints the page.
+    expect(sanitizeMailHtml(`<style>@media print{body{background:#fff}} body{background:#0d1117}</style><p>x</p>${DARK_PIXEL}`).light).toBe(false);
+    // A block that holds at every width (screen, all, @supports, @layer) still paints it.
+    for (const wrap of ["@media screen", "@media all", "@media only screen", "@supports (display:grid)", "@layer base"])
+      expect(sanitizeMailHtml(`<style>${wrap}{.a{color:red} html,body{background:#000}}</style><p>x</p>`).light, wrap).toBe(false);
+    // A block for print, or one that holds only at some sizes, is left to the browser.
+    for (const wrap of ["@media print", "@media only screen and (min-width:480px)", "@media (max-height:400px)",
+      "@media screen and (orientation:landscape)", "@media (min-aspect-ratio:1/1)", "@container (min-width:400px)"])
+      expect(sanitizeMailHtml(`<style>${wrap}{.a{color:red} html,body{background:#000}}</style><p>x</p>`).light, wrap).toBe(true);
+  });
+
+  it("a dark page said inside @media screen is still a dark letter, never inverted in the dark theme", async () => {
+    for (const html of [SCREEN_DARK, "<style>.a{margin:0} body{background:#000000;color:#ffffff}</style><p>Dark newsletter words</p>"]) {
+      await renderIn("dark", { text: "", html });
+      expect(srcdoc()).toContain("Dark newsletter words");
+      expect(rootTag(), html).not.toContain("data-ohmail-dark");
+    }
+  });
+
+  it("a dark page said only for narrow screens is drawn on the light paper, in its ink", async () => {
+    await renderIn("light", { text: "", html: NARROW_DARK });
+    expect(framePaint("background")).toBe("#fff");
+    expect(await frameContrast()).toBeGreaterThanOrEqual(4.5);
+    await renderIn("dark", { text: "", html: NARROW_DARK });
+    expect(rootTag()).toContain('data-ohmail-dark="1"');
+  });
+
+  it("a letter that sets its own dark page and light ink is drawn in light ink", async () => {
+    for (const html of OWN_INK) {
+      await renderIn("light", { text: "", html });
+      expect(await frameContrast(), html).toBeGreaterThanOrEqual(4.5);
+      expect(framePaint("color")).toMatch(/245|255/);
+    }
+  });
+
+  it("an ink that does not read on its page, or no ink at all, is the frame's own", async () => {
+    // A light ink on a page that names none (read on white), and a dark page that names no ink: drawn as sent.
+    for (const html of [
+      "<body text=#ffffff><p>White ink, no page</p></body>",
+      `<body bgcolor="#111111"><p>No ink named</p>${DARK_PIXEL}</body>`,
+      // A light page painted white: its light ink would vanish on the white.
+      GREY_OWN_INK,
+      // The sheet's light page is the one painted, so the inline light ink is not taken.
+      SHEET_OVER_INLINE,
+    ]) {
+      await renderIn("light", { text: "", html });
+      expect.soft(framePaint("color"), html).toBe("#1b1b1b");
+    }
+    // White cards under a page read as dark keep the frame's dark ink: a light one would vanish on the cards.
+    for (const html of CARDS) {
+      await renderIn("light", { text: "", html });
+      expect.soft(framePaint("color"), html).toBe("#1b1b1b");
+    }
+    // The ordinary letter keeps the frame's own ink and paper.
+    await renderIn("light", { text: "fallback", html: LIGHT_TABLE });
+    expect(framePaint("color")).toBe("#1b1b1b");
+    expect(framePaint("background")).toBe("#fff");
+  });
+
+  describe.runIf(process.platform === "linux")("in a browser, light and dark", () => {
+    it("every letter reads on screen in both themes; an inverted frame never matches the letter's dark-scheme rules", async () => {
+      const css = readFileSync(resolve(process.cwd(), "apps/webapp/app/components/message-body.css"), "utf8");
+      const { chromium } = createRequire(resolve(process.cwd(), "package.json"))("@playwright/test") as typeof import("@playwright/test");
+      const browser = await chromium.launch();
+      try {
+        // No emulated scheme: Playwright's default would answer every frame's media query itself.
+        const page = await browser.newPage({ colorScheme: null });
+        const letters: [string, string][] = [[DARK_MEDIA, "Your receipt"], [SCREEN_DARK, "Dark newsletter words"], ...CARDS.map((c): [string, string] => [c, "Your order has shipped"]),
+          ...OWN_INK.map((c): [string, string] => [c, "Dark page, light words"]), ["<body text=#fff><p>White ink, no page</p></body>", "White ink, no page"],
+          [NARROW_DARK, "Wide words"], [GREY_OWN_INK, "Grey page, white words"], [SHEET_OVER_INLINE, "Sheet page words"]];
+        for (const [html, words] of letters) {
+          for (const theme of ["light", "dark"] as const) {
+            await renderIn(theme, { text: "", html });
+            const sheet = host!.querySelector(".mb-sheet")!.cloneNode(true) as Element;
+            sheet.querySelector("iframe")!.removeAttribute("sandbox"); // so the test can read the frame
+            await page.setContent(`<!doctype html><html><head><style>${css}</style></head><body>${sheet.outerHTML}</body></html>`);
+            await page.waitForFunction((w) => document.querySelector("iframe")?.contentDocument?.body?.textContent?.includes(w), words);
+            const seen = await page.evaluate((w) => {
+              const doc = document.querySelector("iframe")!.contentDocument!;
+              const win = doc.defaultView!;
+              const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+              let at: Element = doc.body;
+              while (walk.nextNode()) if (walk.currentNode.textContent!.includes(w)) at = walk.currentNode.parentElement!;
+              const inverted = win.getComputedStyle(doc.body).filter.includes("invert");
+              const ctx = doc.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+              const shown = (c: string): number => {
+                ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = c; ctx.fillRect(0, 0, 1, 1);
+                const v = [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map((x) => (inverted ? 255 - x : x) / 255);
+                const [r, g, b] = v.map((s) => (s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4));
+                return 0.2126 * r! + 0.7152 * g! + 0.0722 * b!;
+              };
+              // The ground is the nearest painted box under the words (a card, a gradient's first stop), else the page.
+              const paint = (el: Element): string | null => {
+                const s = win.getComputedStyle(el);
+                if (!/^rgba\(.*, 0\)$|^transparent$/.test(s.backgroundColor)) return s.backgroundColor;
+                return /gradient/.test(s.backgroundImage) ? /rgba?\([^)]*\)/.exec(s.backgroundImage)?.[0] ?? null : null;
+              };
+              let under: Element = at;
+              while (under !== doc.body && paint(under) === null) under = under.parentElement!;
+              const [ink, ground] = [shown(win.getComputedStyle(at).color), shown(paint(under) ?? win.getComputedStyle(under).backgroundColor)];
+              return { inverted, schemeDark: win.matchMedia("(prefers-color-scheme: dark)").matches, contrast: (Math.max(ink, ground) + 0.05) / (Math.min(ink, ground) + 0.05) };
+            }, words);
+            expect.soft(seen.contrast, `${words}, ${theme}: ${html.slice(0, 90)}`).toBeGreaterThanOrEqual(4.5);
+            if (seen.inverted) expect(seen.schemeDark, `${words}, ${theme}: dark-scheme rules under the inversion`).toBe(false);
+          }
+        }
+      } finally {
+        await browser.close();
+      }
+    }, 60_000);
   });
 });
 
