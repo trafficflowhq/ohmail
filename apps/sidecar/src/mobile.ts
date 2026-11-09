@@ -56,6 +56,7 @@ import {
 import type { LocalDb, OpenLocalDb } from "./db.js";
 /* The live-holder read both consent doors ask, the phone's and the desktop's. */
 import { liveForeignHolder, recordConsentWithoutClaim, type RowHolderAnswer } from "./organize-here.js";
+import { mirrorRowsRemain } from "./local-mirror.js";
 /* A VALUE import now: {@link PhoneEngineDeps.logSink} builds the hardened logger HERE, in the
    artifact, rather than letting the app assemble log lines of its own. `log.ts` is this package's
    own funnel — the allowlist, the redaction and the value grammars come with it. */
@@ -1252,6 +1253,9 @@ async function composePhoneEngine(
      The app paints what the store holds while the launch dials behind it — the offline start's state.
      An empty store still waits (nothing to paint), and so does every configured start. */
   const opensAtOnce = imap === null && await storeHoldsMail(store.db);
+  /* The mailboxes a configured start found; one it did not find is the one this launch added. */
+  const rowsBefore = imap === null ? null
+    : new Set((await store.db.select({ id: mailboxes.id }).from(mailboxes)).map((r) => r.id));
   const sidecar = await createSidecar({
     dataDir: deps.dataDir ?? "",
     /**
@@ -1370,8 +1374,29 @@ async function composePhoneEngine(
           "attempt would dial the refused one again; entering it again replaces the row",
       });
     });
+    /* A mailbox this launch added and never signed in to goes too, or it stays beside the next
+       press's mailbox asking for a password (the desktop's undo of an unsaved first door). Before
+       `stop()`, which closes the store. */
+    const added = sidecar.world.mailboxId;
+    let verdict: "row_removed" | "row_kept" | "seal_only" = "seal_only";
+    if (rowsBefore !== null && added !== "" && !rowsBefore.has(added) && seedDialNow?.outcome !== "dialled") {
+      verdict = await store.db.transaction(async (tx) => {
+        if (await mirrorRowsRemain(tx as unknown as LocalDb, added)) return "row_kept" as const;
+        await tx.delete(mailboxCredentials).where(eq(mailboxCredentials.mailboxId, added));
+        await tx.delete(mailboxes).where(eq(mailboxes.id, added));
+        return "row_removed" as const;
+      }).catch((err: unknown) => {
+        log("mailbox_open_undo_failed", {
+          err,
+          reason: "a refused launch could not remove the mailbox it had added, so it stays signed "
+            + "out beside the next one until it is removed",
+        });
+        return "row_kept" as const;
+      });
+    }
     log("mailbox_open_seal_discarded", {
       reason: why,
+      verdict,
     });
   };
 
