@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.3" date="2026-11-10">
+      <description>
+        <ul>
+          <li>The desktop app says why a Sent copy is missing</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.2" date="2026-11-09">
       <description>
         <ul>
@@ -117,13 +124,6 @@
       <description>
         <ul>
           <li>Cloud shows the storage estimate for very large mailboxes, never below what is kept</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.49" date="2026-11-08">
-      <description>
-        <ul>
-          <li>The phone's storage figures match the web for small mailboxes</li>
         </ul>
       </description>
     </release>
