@@ -10,9 +10,11 @@
  * A DOCUMENT WIDER THAN ITS FRAME IS DRAWN SCALED TO IT ({@link frameFit}), as a phone's mail app draws a
  * fixed-width newsletter. The document pins its scale at 1 (`minimum-scale=1`), so a reading is in the
  * frame's own units; a reading wider than the frame records the width and grows nothing, and the frame
- * then draws the document zoomed by the frame's width over it. A fit below {@link FRAME_MIN_FIT} would
- * not be legible, and a fit no narrower reading ever answers was undone by the letter's own sheet:
- * both read as text (`wide`).
+ * then draws the document zoomed by the frame's width over it. A reading carries the zoom its document
+ * was drawn at, so a fitted document still wider than its frame is fitted again from what it read, in
+ * whatever order the readings come; until a reading of the drawn document fits, the frame is not final.
+ * A fit below {@link FRAME_MIN_FIT} would not be legible, and a fit no fitting reading ever answers was
+ * undone by the letter's own sheet: both read as text (`wide`).
  */
 
 /** Where a frame starts, and the size it re-measures at when the width changes. */
@@ -58,16 +60,17 @@ export interface FrameHeight {
   readonly measured: number | null;
   readonly firstMeasuredAt: number | null;
   /**
-   * The document read wider than its frame before it was fitted: its width, and the frame's, in dp;
-   * `pending` until a reading of the fitted document answers a fit taller than the frame.
+   * The document read wider than its frame: its width as written, and the frame's, in dp; `pending`
+   * until a reading of the fitted document fits the frame.
    */
   readonly wide: { readonly doc: number; readonly frame: number; readonly pending: boolean } | null;
 }
 
-/** A reading's widths: the document's (the scroll range) and the frame's own, in dp. */
+/** A reading's widths: the document's (the scroll range) and the frame's own, in dp; the zoom it was drawn at (1 unset). */
 export interface FrameWidths {
   readonly doc: number;
   readonly frame: number;
+  readonly zoom?: number;
 }
 
 const fresh = (key: string, width: number, floor: number | null): FrameHeight => ({
@@ -94,25 +97,19 @@ export function frameFit(s: FrameHeight): number {
 }
 
 /**
- * A reading wider than its frame, from the document as written: its width is recorded and its height
- * grows nothing. Null for a reading that fits, or for the fitted document's own: its height counts.
+ * A reading wider than its frame, at any zoom: its width as written is recorded, its height grows nothing,
+ * and the frame waits for a reading of the fitted document. Null for a reading that fits: its height counts.
  */
-function readWide(base: FrameHeight, reportedDp: number, viewDp: number, widths: FrameWidths | undefined, now: number): FrameHeight | null {
+function readWide(base: FrameHeight, widths: FrameWidths | undefined): FrameHeight | null {
   if (widths === undefined || !Number.isFinite(widths.doc) || !(widths.frame > 0)) return null;
   if (widths.doc <= widths.frame + FRAME_FIT_SLACK_DP) return null;
-  const was = base.wide;
-  // As wide as the document as written: read late, or the fit did not take (a pending fit's bound decides).
-  if (was !== null && Math.abs(widths.doc - was.doc) <= FRAME_FIT_SLACK_DP) return base;
-  // Narrower than the document as written: the fitted one, still a little wide (drawn, height counts).
-  if (was !== null && widths.doc < was.doc) return null;
-  if (!(widths.frame / widths.doc >= FRAME_MIN_FIT)) return asText(base, "wide");
+  const zoom = widths.zoom !== undefined && widths.zoom > 0 && widths.zoom <= 1 ? widths.zoom : 1;
+  const written = widths.doc / zoom;
+  // The fit already drawn narrows it: a less fitted document read late; the fitted one's reading decides.
+  if (written * frameFit(base) <= widths.frame + FRAME_FIT_SLACK_DP) return base;
+  if (!(widths.frame / written >= FRAME_MIN_FIT)) return asText(base, "wide");
   if (base.readings + 1 > FRAME_MAX_READINGS) return asText(base, "readings");
-  // Taller than the frame: only a narrower reading shows the fit took. No taller: the fitted one may never report.
-  const pending = reportedDp > viewDp + FRAME_GROW_STEP_DP;
-  const next = { ...base, wide: { doc: Math.ceil(widths.doc), frame: widths.frame, pending }, answered: true, readings: base.readings + 1 };
-  if (base.floor === null || pending) return next;
-  // Re-measuring: the fitted document reads no taller than the seed, so a settle is armed now.
-  return { ...next, measured: base.measured ?? FRAME_SEED_DP, firstMeasuredAt: base.firstMeasuredAt ?? now };
+  return { ...base, wide: { doc: Math.ceil(written), frame: widths.frame, pending: true }, answered: true, readings: base.readings + 1 };
 }
 
 /** A reading of the fitted document (or one that fits) answers a pending fit. */
@@ -127,7 +124,7 @@ export function nextFrameHeight(given: FrameHeight, reportedDp: number, viewDp: 
   if (given.floor !== null) {
     // Re-measuring: only a reading made at the seed's size is this width's document.
     if (Math.abs(viewDp - FRAME_SEED_DP) > 1) return given;
-    const wide = readWide(given, reportedDp, viewDp, widths, now);
+    const wide = readWide(given, widths);
     if (wide !== null) return wide;
     const base = fitAnswered(given);
     if (reportedDp > FRAME_MAX_DP) return asText(base, "ceiling");
@@ -136,7 +133,7 @@ export function nextFrameHeight(given: FrameHeight, reportedDp: number, viewDp: 
     if (base.readings + 1 > FRAME_MAX_READINGS) return asText(base, "readings");
     return { ...base, measured: dp, firstMeasuredAt: base.firstMeasuredAt ?? now, readings: base.readings + 1, answered: true };
   }
-  const wide = readWide(given, reportedDp, viewDp, widths, now);
+  const wide = readWide(given, widths);
   if (wide !== null) return wide;
   const base = fitAnswered(given);
   const answered = base.answered ? base : { ...base, answered: true };
@@ -159,7 +156,7 @@ export function frameFinal(s: FrameHeight, asText: boolean): boolean {
 export function frameAwaits(s: FrameHeight): string | null {
   if (s.text !== null) return null;
   if (!s.answered) return `${s.key}@${s.width}`;
-  return s.wide?.pending === true ? `${s.key}@${s.width}:fit${s.wide.doc}` : null;
+  return s.wide?.pending === true ? `${s.key}@${s.width}:fit${s.wide.doc}/${s.wide.frame}` : null;
 }
 
 /** When a re-measure settles: null with no seed-size reading at this width (no settle is armed). */
