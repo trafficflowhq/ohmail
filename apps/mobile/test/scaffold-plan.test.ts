@@ -156,3 +156,37 @@ describe("the panes' split", () => {
     expect(paneSplit(posture, scaffoldPlan(posture, "ios"), 390, 844)).toBeNull();
   });
 });
+
+/* A window between compact and two panes (the Fold's inner portrait, 673 and 616 dp) was a phone
+   stretched across it: the dock at the foot and rows a window wide. */
+describe("a one-pane window past compact width takes the leading rail", () => {
+  const android = (width: number, height: number) =>
+    derivePosture({ platform: "android", width, height, folds: null, hasFold: true });
+  it("673 and 616 dp: one pane, the rail at the left, no dock", () => {
+    for (const [w, h] of [[673, 841], [616, 679]] as const) {
+      expect(android(w, h).panes, `${w}`).toBe(1);
+      expect(scaffoldPlan(android(w, h), "android"), `${w}`).toMatchObject({ nav: "rail", navSide: "left", panes: 1 });
+    }
+  });
+  it("iOS reads the same rule for a one-pane window that wide", () => {
+    const one = { ...derivePosture({ platform: "ios", width: 673, height: 841, folds: [], isPad: true }), panes: 1 as const };
+    expect(scaffoldPlan(one, "ios")).toMatchObject({ nav: "rail", navSide: "left" });
+  });
+  it("the control: a compact window keeps the dock", () => {
+    expect(scaffoldPlan(android(599, 841), "android")).toMatchObject({ nav: "dock" });
+  });
+});
+
+/* Android's two panes listed the destinations three times: the rail, More, and a drawer. */
+describe("Android's two panes list the destinations on the rail, with no drawer", () => {
+  it("the Fold inner, its book posture and the tablet plan no drawer", () => {
+    for (const name of ["fold-inner", "fold-book", "android-tablet"]) {
+      expect(plan(name), name).toMatchObject({ panes: 2, nav: "rail", drawer: false });
+    }
+  });
+  it("the iPad and the unfolded Duo keep theirs: there it is the one list of destinations", () => {
+    for (const name of ["ipad", "ipad-portrait", "duo-unfolded", "duo-unfolded-portrait"]) {
+      expect(plan(name).drawer, name).toBe(true);
+    }
+  });
+});

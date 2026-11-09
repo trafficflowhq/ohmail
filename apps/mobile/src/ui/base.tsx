@@ -29,7 +29,7 @@ import { useBottomChromeExtent } from "./bottom-chrome";
 import { KeyboardRoom } from "./keyboard-room";
 import { useAppWindow, usePosture } from "./posture";
 import { listNavClearance, scaffoldPlan, screenFillsWindow, screenHingeClearance, screenRailClearance, screenSideInsets } from "./scaffold/plan";
-import { useInPane } from "./pane-chrome";
+import { useInPane, useListFoot } from "./pane-chrome";
 import { useNavDrawn } from "./nav-drawn";
 import { cardSides, topPad } from "./safe-area";
 import { useTheme, type Theme } from "../theme";
@@ -86,12 +86,21 @@ export function useCardSides(gap: number): { marginLeft: number; marginRight: nu
 /**
  * {@link listInsets} over the live bottom inset — the ONE rule for a list's side gutter and its
  * clearance under the flying nav, read by `Scroller` and `MailList` alike. A second spelling of
- * either padding is what `test/list-insets-shared.test.ts` refuses.
+ * either padding is what `test/list-insets-shared.test.ts` refuses. `measure` (the mail lists):
+ * a one-pane list past compact width keeps the reading measure; a phone held sideways keeps its rows.
  */
-export function useListInsets(): ListInsets {
+export function useListInsets(measure = false): ListInsets {
   const t = useTheme();
-  const plan = scaffoldPlan(usePosture(), Platform.OS === "ios" ? "ios" : "android");
-  return listInsets(t.space, useSafeAreaInsets().bottom, listNavClearance(plan, t.space.tabClearance, useNavDrawn()), useBottomChromeExtent());
+  const posture = usePosture();
+  const plan = scaffoldPlan(posture, Platform.OS === "ios" ? "ios" : "android");
+  const nav = listNavClearance(plan, t.space.tabClearance, useNavDrawn());
+  const safe = useSafeAreaInsets();
+  const win = useAppWindow().width;
+  const inPane = useInPane();
+  const foot = useListFoot();
+  const room = measure && !inPane && plan.panes === 1 && posture.heightClass !== "compact"
+    ? win - safe.left - safe.right - nav.left - nav.right : 0;
+  return listInsets(t.space, foot > 0 ? foot : safe.bottom, nav, useBottomChromeExtent(), room);
 }
 
 /* ---------------------------------------------------------------- surfaces */

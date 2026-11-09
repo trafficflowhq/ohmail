@@ -19,10 +19,11 @@ import { beginMark } from "../engine/ui-marks";
 import { Empty, Rule, Screen, Tap, Txt } from "./base";
 import { useToastPaneSlot } from "./bottom-chrome";
 import { SurfaceBoundary } from "./ErrorBoundary";
+import { FadeOut } from "./FadeOut";
 import { GlassRail, GlassSidebar } from "./glass";
 import { Icon } from "./Icon";
-import { MoreNav, Nav } from "./MoreNav";
-import { InPaneContext, PaneChromeContext } from "./pane-chrome";
+import { MoreNav, MoreNavFoot, Nav } from "./MoreNav";
+import { InPaneContext, ListFootContext, PaneChromeContext } from "./pane-chrome";
 import { useAppWindow, usePosture, useStatusCluster } from "./posture";
 import { useReaderRail } from "./reader-rail";
 import { readerHeldNow, subscribeReaderHeld } from "./reader-held";
@@ -30,6 +31,9 @@ import { endIdleVisit } from "./visit-records";
 import { pairBoxOf, pairPadding, pairSlots, paneFootSearch, railHome, scaffoldPlan, type PairShow } from "./scaffold/plan";
 
 const platformName = Platform.OS === "ios" ? ("ios" as const) : ("android" as const);
+
+/** The fade the list pane ends in above its foot, and so the room its last row keeps. */
+const FOOT_FADE = 12;
 
 /**
  * The screen half of the pair: the `open` param as selection, and one press verb that
@@ -138,18 +142,23 @@ export function ListDetail({
   const slots = pairSlots(posture, plan, pairBoxOf({ w: win.width, h: win.height }, insets), show, lastAxis.current);
   const split = slots.split;
   const pad = show === "pair" ? pairPadding(plan) : { left: 0, right: 0, top: 0, bottom: 0 };
+  const foot = show === "pair" && paneFootSearch(plan, platformName);
 
   const listPane = (
     <InPaneContext.Provider value={show === "pair"}>
     <PaneChromeContext.Provider value={plan.drawer ? { openDrawer: () => setDrawerOpen(true) } : null}>
       <View style={{ flex: 1 }}>
-        <View style={{ flex: 1 }}>{list}</View>
+        <View style={{ flex: 1 }}>
+          <ListFootContext.Provider value={foot ? FOOT_FADE : 0}>{list}</ListFootContext.Provider>
+          {/* Rows scrolled past the pane's foot end in canvas, not a flat cut. */}
+          {foot ? <FadeOut color={t.c.canvas} height={FOOT_FADE} edge="bottom" /> : null}
+        </View>
         {/* The search field at the list pane's foot, with New mail beside it — Mail's shape on
             the iPad and the Duo's inner portrait (owner rule 5 keeps search in every
             navigation). They open `app/search.tsx` and `app/compose.tsx`. Where the nav IS the
             rail its pill already carries both, so the foot stands down rather than render the
             same controls twice (`paneFootSearch`). */}
-        {show === "pair" && paneFootSearch(plan, platformName) ? (
+        {foot ? (
           <View
             style={{
               flexDirection: "row",
@@ -350,22 +359,30 @@ function DrawerContent({ onNavigate }: { onNavigate: () => void }) {
   const dest = (path: string, label: string, count: number) => (
     <Nav label={label} count={count} onPress={() => (pathname === path ? onNavigate() : go(path))} />
   );
+  /* Settings and the pairing door are pinned below the rows that scroll: on the iPad mini in
+     landscape they sat below the drawer's fold. */
   return (
-    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: insets.bottom + 14 }}>
-      <View style={{ paddingHorizontal: 20, paddingBottom: 10 }}>
-        <Txt variant="cardTitle" numberOfLines={1}>
-          {w.account.name}
-        </Txt>
-        <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ marginTop: 2 }}>
-          {w.account.email}
-        </Txt>
+    <View style={{ flex: 1 }}>
+      <ScrollView style={{ flex: 1 }} keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: insets.top + 14, paddingBottom: 14 }}>
+        <View style={{ paddingHorizontal: 20, paddingBottom: 10 }}>
+          <Txt variant="cardTitle" numberOfLines={1}>
+            {w.account.name}
+          </Txt>
+          <Txt variant="caption" tone="ink3" numberOfLines={1} style={{ marginTop: 2 }}>
+            {w.account.email}
+          </Txt>
+        </View>
+        {dest("/", Copy.ohbox, w.ohbox.unread)}
+        {dest("/screener", Copy.screener, w.screener.waiting.length)}
+        {dest("/reads", Copy.reads, w.reads.newCount)}
+        {dest("/receipts", Copy.receipts, w.receipts.newCount)}
+        <Rule inset={20} />
+        <MoreNav onNavigate={onNavigate} foot={false} />
+      </ScrollView>
+      <View style={{ paddingBottom: insets.bottom + 12 }}>
+        <Rule inset={20} />
+        <MoreNavFoot onNavigate={onNavigate} />
       </View>
-      {dest("/", Copy.ohbox, w.ohbox.unread)}
-      {dest("/screener", Copy.screener, w.screener.waiting.length)}
-      {dest("/reads", Copy.reads, w.reads.newCount)}
-      {dest("/receipts", Copy.receipts, w.receipts.newCount)}
-      <Rule inset={20} />
-      <MoreNav onNavigate={onNavigate} />
-    </ScrollView>
+    </View>
   );
 }

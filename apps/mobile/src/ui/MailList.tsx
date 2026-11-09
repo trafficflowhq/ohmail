@@ -298,7 +298,7 @@ export function MailList<T>({
       onMomentumScrollEnd: (e: ScrollEv) => { k.land(viewOf(e)); own.current.onMomentumScrollEnd?.(e); },
     };
   }, [keeping]);
-  const insets = useListInsets();
+  const insets = useListInsets(true);
   const sections = useMemo(() => planSections(groups), [groups]);
   useEffect(() => {
     if (topFor !== undefined) listRef.current?.getScrollResponder()?.scrollTo({ y: 0, animated: false });

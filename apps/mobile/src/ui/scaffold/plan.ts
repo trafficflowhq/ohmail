@@ -36,6 +36,8 @@ export interface ScaffoldPlan {
   gutter: number;
   /** Tabletop only: the rail owns the upper half, so nothing sits on or below the seam. */
   railUpperHalfOnly: boolean;
+  /** The rail's stand-off from a window edge no inset holds it off: Android's 8; iOS's rails keep the prototype's edge. */
+  railEdge: number;
 }
 
 const KEEP_OUT = 8;
@@ -62,6 +64,10 @@ function foldPaintOf(p: Posture): { foldPaint: FoldPaint; foldGap: number } {
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 export const RAIL_W = 62;
+export const RAIL_EDGE = 8;
+
+/** What the rail's column costs on its side: the rail and its stand-off from the edge. */
+export const railSpan = (plan: Pick<ScaffoldPlan, "railEdge">): number => RAIL_W + plan.railEdge;
 
 /** What a one-pane list must reserve so the flying nav does not sit over its content. */
 export interface NavClearance {
@@ -74,7 +80,7 @@ export interface NavClearance {
  * The clearance a one-pane list scroller reserves for the flying navigation. The dock floats at
  * the bottom, so the list keeps its footer clear (`dockClearance`, the caller's token). A rail
  * hugs a side edge — a closed foldable's right rail, a compact-height landscape phone's left
- * rail — so the list insets from THAT edge by the rail's own footprint (`RAIL_W + gutter`, the
+ * rail — so the list insets from THAT edge by the rail's own footprint (`railSpan + gutter`, the
  * same room the two-pane scaffold leaves), or its rows run under the rail (dates and the
  * Screener pill were clipped on the real Duo). The two-pane surfaces ("bars") reserve their own
  * gutter in `AppScaffold`, so a list there asks for nothing here.
@@ -83,7 +89,7 @@ export function listNavClearance(plan: ScaffoldPlan, dockClearance: number, navD
   /* Nothing is drawn before a mailbox is open (the connect flow): nothing to clear. */
   if (!navDrawn) return { bottom: 0, left: 0, right: 0 };
   if (plan.nav === "rail") {
-    const w = RAIL_W + plan.gutter;
+    const w = railSpan(plan) + plan.gutter;
     return { bottom: 0, left: plan.navSide === "left" ? w : 0, right: plan.navSide === "right" ? w : 0 };
   }
   if (plan.nav === "dock") return { bottom: dockClearance, left: 0, right: 0 };
@@ -159,7 +165,7 @@ export function paneSplit(
   containerH: number,
 ): { first: number; gap: number } | null {
   if (plan.panes !== 2) return null;
-  const railW = plan.nav === "rail" ? RAIL_W : 0;
+  const railW = plan.nav === "rail" ? railSpan(plan) : 0;
   if (plan.paneAxis === "column") {
     if (p.hinge === null) return null;
     const center = p.hinge.y + p.hinge.h / 2;
@@ -183,7 +189,7 @@ export function paneSplit(
  * the rail by the one-pane rule, so the padding does not pay it again.
  */
 export function pairPadding(plan: ScaffoldPlan): { left: number; right: number; top: number; bottom: number } {
-  const rail = plan.nav === "rail" && plan.panes === 2 ? RAIL_W : 0;
+  const rail = plan.nav === "rail" && plan.panes === 2 ? railSpan(plan) : 0;
   return {
     left: plan.gutter + (plan.navSide === "left" ? rail : 0),
     right: plan.gutter + (plan.navSide === "right" ? rail : 0),
@@ -287,6 +293,7 @@ export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
     drawer: false,
     gutter,
     railUpperHalfOnly: false,
+    railEdge: platform === "android" ? RAIL_EDGE : 0,
   };
 
   /* Split View: each app places controls along its OUTER edge (Apple); Android keeps
@@ -326,7 +333,8 @@ export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
     /* A book fold too narrow for two panes: the rail at the leading edge, never a dock laid
        across the crease; every screen keeps to one side of it (`screenHingeClearance`). */
     if (separatingVerticalHinge(p.fold, p.hinge) !== null) return { ...base, nav: "rail", navSide: "left" };
-    if (p.heightClass === "compact") return { ...base, nav: "rail", navSide: "left" };
+    /* Past compact width one pane is no phone (the Fold's inner portrait, 616–699 dp): the rail, not a stretched dock. */
+    if (p.heightClass === "compact" || p.sizeClass !== "compact") return { ...base, nav: "rail", navSide: "left" };
     return base;
   }
 
@@ -355,14 +363,14 @@ export function scaffoldPlan(p: Posture, platform: PlatformName): ScaffoldPlan {
   }
 
   /* Android two panes (Fold inner, tablets): the leading icon rail at medium AND expanded,
-     panes snapping to a vertical fold where one crosses the window. */
+     panes snapping to a vertical fold where one crosses the window. No drawer: the rail and
+     More already list every destination. */
   return {
     ...base,
     nav: "rail",
     navSide: "left",
     snapToHinge: p.hinge !== null && p.hinge.h >= p.hinge.w,
     actionBar: true,
-    drawer: true,
   };
 }
 
@@ -409,10 +417,10 @@ export const OUTER_CLUSTER_TOP_FLOOR = 20;
  * camera (Apple: controls "move to the right side … aligned with the camera"), and its first
  * pill starts below the status cluster; content keeps the safe area and never runs under it.
  * Where the inset is narrower than the rail (the inner display, a landscape phone's left
- * rail), the column hugs the inset as before. A left-mirrored rail carries no clock.
+ * rail), the column hugs the inset, past the plan's `railEdge`. A left-mirrored rail carries no clock.
  */
 export function railHome(
-  plan: Pick<ScaffoldPlan, "navSide">,
+  plan: Pick<ScaffoldPlan, "navSide" | "railEdge">,
   insets: RailInsets,
   win: { w: number; h: number },
   cluster: { bottom: number } | null,
@@ -421,7 +429,7 @@ export function railHome(
   const inset = side === "left" ? insets.left : insets.right;
   const inStrip = inset >= RAIL_W;
   const width = inStrip ? inset : RAIL_W;
-  const x = side === "left" ? (inStrip ? 0 : inset) : win.w - (inStrip ? inset : inset + RAIL_W);
+  const x = side === "left" ? (inStrip ? 0 : inset + plan.railEdge) : win.w - (inStrip ? inset : inset + plan.railEdge + RAIL_W);
   const clusterBottom =
     side !== "right" ? 0
     : cluster !== null ? cluster.bottom

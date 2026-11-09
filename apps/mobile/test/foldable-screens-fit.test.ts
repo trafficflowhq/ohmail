@@ -16,7 +16,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { installEngineLogWriter, logPostureDerived, type EngineLogLevel } from "../src/engine/engine-log";
 import { derivePosture, type FoldFeature } from "../src/ui/posture/derive";
 import { composeBodyMin, letterRunsOn, notesMeasured, notesPinned, pinnedNotesMax } from "../src/ui/compose-fit";
-import { RAIL_W, scaffoldPlan, screenFillsWindow, screenRailClearance } from "../src/ui/scaffold/plan";
+import { railSpan, scaffoldPlan, screenFillsWindow, screenRailClearance } from "../src/ui/scaffold/plan";
 
 const src = (rel: string) => withoutComments(readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8"));
 
@@ -176,7 +176,7 @@ describe("a single-pane route under a two-pane posture starts past the rail", ()
       expect(plan.panes, "not a two-pane posture; this measures nothing").toBe(2);
       expect(plan.nav).toBe("rail");
       const alone = screenRailClearance(plan, screenFillsWindow(undefined, false));
-      expect(alone).toEqual({ left: RAIL_W + plan.gutter, right: 0 });
+      expect(alone).toEqual({ left: railSpan(plan) + plan.gutter, right: 0 });
       expect(screenRailClearance(plan, screenFillsWindow(undefined, true)), "a pane of the pair pays twice").toEqual({ left: 0, right: 0 });
     });
   }

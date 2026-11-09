@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { derivePosture, type FoldFeature } from "../src/ui/posture/derive";
-import { RAIL_W, listNavClearance, scaffoldPlan, screenHingeClearance, screenRailClearance } from "../src/ui/scaffold/plan";
+import { listNavClearance, railSpan, scaffoldPlan, screenHingeClearance, screenRailClearance } from "../src/ui/scaffold/plan";
 import { TOAST_SIDE, toastFrame, toastSpan } from "../src/ui/bottom-chrome";
 import { IPAD_WINDOW_CONTROLS_PT, topInsetWithControls } from "../src/ui/window-controls";
 import { TEXT_CAP_FLOOR, textCapOf, textEpochOf, textKeyOf } from "../src/theme/text-scale";
@@ -27,8 +27,8 @@ describe("R5-05: a screen with no navigation drawn pays no rail", () => {
   it("the connect flow (nothing drawn) is centred; a mailbox's screens clear the rail", () => {
     expect(plan.nav).toBe("rail");
     expect(screenRailClearance(plan, true, false, false)).toEqual({ left: 0, right: 0 });
-    expect(screenRailClearance(plan, true, false, true).left, "the positive control").toBe(RAIL_W + plan.gutter);
-    expect(screenRailClearance(plan, true).left, "unsaid, the navigation is drawn").toBe(RAIL_W + plan.gutter);
+    expect(screenRailClearance(plan, true, false, true).left, "the positive control").toBe(railSpan(plan) + plan.gutter);
+    expect(screenRailClearance(plan, true).left, "unsaid, the navigation is drawn").toBe(railSpan(plan) + plan.gutter);
   });
 
   it("a list in the connect flow clears neither the rail nor the dock", () => {

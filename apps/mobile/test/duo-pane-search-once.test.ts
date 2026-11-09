@@ -63,7 +63,7 @@ describe("search stands once per posture", () => {
 
   it("ListDetail renders the foot through the law, not through a platform test of its own", () => {
     const src = source("../src/ui/list-detail.tsx");
-    expect(src).toContain("paneFootSearch(plan, platformName) ?");
+    expect(src).toContain('const foot = show === "pair" && paneFootSearch(plan, platformName);');
     /* The shape the defect had: a bare platform test, which is true on every iOS posture. */
     expect(src).not.toContain('{platformName === "ios" ? (');
   });
