@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.6" date="2026-11-10">
+      <description>
+        <ul>
+          <li>Deleting your account removes its preferences too, and a returning browser drops its copy</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.5" date="2026-11-10">
       <description>
         <ul>
@@ -107,21 +114,6 @@
           <li>A sent message whose Sent copy could not be saved now says so, and why</li>
           <li>Letters are read at the width they are drawn</li>
           <li>Phone: newsletters wider than the screen are drawn scaled to it, not shown as text</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.1" date="2026-11-09">
-      <description>
-        <ul>
-          <li>Phone: one ring on a selected segment, the server confirm fits, a calmer News head</li>
-          <li>HTML letters are readable on the phone in dark appearance</li>
-          <li>Foldables and the iPad: the rail on mid-width screens, one list of places, Settings always in reach</li>
-          <li>More opens its destinations beside its list on a tablet or an unfolded phone</li>
-          <li>Phone: sheets with a text field stay above the keyboard, and notices stand where you acted</li>
-          <li>The phone's message bar keeps Later and Park in reach on narrow screens and panes</li>
-          <li>The phone no longer says "Handed back" when you return to it</li>
-          <li>The phone keeps the composer on screen while you type in landscape</li>
-          <li>Dark letters read on the web and desktop</li>
         </ul>
       </description>
     </release>
