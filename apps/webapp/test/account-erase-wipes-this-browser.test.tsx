@@ -152,7 +152,10 @@ async function seedThisBrowser(): Promise<{ close: () => void; keys: string[] }>
   await waitFor(() => localStorage.getItem("ohmail.mirror.__since") !== null, "the registry anchor");
   const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
   const { COMPOSE_SESSION_PREFIX } = await import("../app/shell/compose.js");
-  const keys = [`${SEND_LOCKS_PREFIX}${OWNER}`, `${COMPOSE_SESSION_PREFIX}${OWNER}`, `ohmail.boot.ownAddresses.${OWNER}`];
+  const { SENT_COPY_NOTES_PREFIX } = await import("../app/shell/mail-send.js");
+  const keys = [
+    `${SEND_LOCKS_PREFIX}${OWNER}`, `${SENT_COPY_NOTES_PREFIX}${OWNER}`, `${COMPOSE_SESSION_PREFIX}${OWNER}`, `ohmail.boot.ownAddresses.${OWNER}`,
+  ];
   for (const k of keys) localStorage.setItem(k, "account data");
   return { close: () => store.close(), keys };
 }
@@ -195,7 +198,8 @@ async function seedAnotherAccount(): Promise<string[]> {
   await store.putLocal("message", "o1", { id: "o1", subject: "another account's letter" });
   store.close();
   const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
-  const keys = [`${SEND_LOCKS_PREFIX}${OTHER}`, `ohmail.boot.ownAddresses.${OTHER}`];
+  const { SENT_COPY_NOTES_PREFIX } = await import("../app/shell/mail-send.js");
+  const keys = [`${SEND_LOCKS_PREFIX}${OTHER}`, `${SENT_COPY_NOTES_PREFIX}${OTHER}`, `ohmail.boot.ownAddresses.${OTHER}`];
   for (const k of keys) localStorage.setItem(k, "the other account's data");
   return keys;
 }

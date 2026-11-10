@@ -607,8 +607,10 @@ describe("a one-account wipe takes only what its reach allows", () => {
   const A = "acct_A";
   const B = "acct_B";
   let engine: typeof import("@ohmail/client-engine");
-  let k = { locks: "", reply: "", minted: "", owed: "" };
-  const ownKeys = (owner: string): string[] => [`${k.locks}${owner}`, `ohmail.access.${owner}`, `ohmail.boot.ownAddresses.${owner}`];
+  let k = { locks: "", notes: "", reply: "", minted: "", owed: "" };
+  const ownKeys = (owner: string): string[] => [
+    `${k.locks}${owner}`, `${k.notes}${owner}`, `ohmail.access.${owner}`, `ohmail.boot.ownAddresses.${owner}`,
+  ];
   const jarKeys = (): string[] => [`${k.reply}m-b`, k.minted];
   const left = (keys: string[]): string[] => keys.filter((key) => localStorage.getItem(key) !== null);
 
@@ -623,6 +625,7 @@ describe("a one-account wipe takes only what its reach allows", () => {
     engine = await import("@ohmail/client-engine");
     k = {
       locks: (await import("../app/shell/send-lock")).SEND_LOCKS_PREFIX,
+      notes: (await import("../app/shell/mail-send")).SENT_COPY_NOTES_PREFIX,
       reply: (await import("../app/shell/mail-send")).REPLY_DRAFT_PREFIX,
       minted: (await import("../app/session-refresh")).SESSION_MINTED_KEY,
       owed: (await import("../app/(product)/resume/signed-out-note")).REVOKE_OWED_PREFIX,

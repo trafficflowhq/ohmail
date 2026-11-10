@@ -49,10 +49,15 @@ const OFFER = [{ id: "mb1", address: "a@x.example", count: 2, strangers: 0 }];
 
 interface Shape {
   tags: number; folders: number; gap: boolean; stopped?: boolean; empty?: boolean; sending?: boolean;
-  /** A longer send line (`lineRows`): 3 = a failed send, queued, sending; 4 = the same and a sent; 5 = two endings, queued, sending, sent. */
-  rows?: 3 | 4 | 5;
+  /**
+   * A longer send line (`lineRows`): 3 = a failed send, queued, sending; 4 = the same and a sent; 5 = two endings, queued,
+   * sending, sent; "notes" = three letters' copy notes, a failed send and a sending one.
+   */
+  rows?: 3 | 4 | 5 | "notes";
   /** The mailbox's own warning line, above the send line ("after": below it, `AppShell`'s order). */
   warn?: boolean | "after";
+  /** The narrow-width pill too (`SendingLine`'s shell form), with the same line. */
+  pill?: boolean;
 }
 
 /** A send in flight, as the shell's line api holds it (`SendingLine`'s rail form). */
@@ -68,8 +73,13 @@ const ITEMS = [
   { id: "s1", key: "reply:t4", state: "sending" as const, to: "Mila Example", subject: "The fair", since: Date.now() },
   { id: "d1", key: "reply:t5", state: "sent" as const, to: "Dora Example", subject: "Clay" },
 ];
-const lineOf = (rows: 3 | 4 | 5) => ({
-  ...SENDING, line: () => ITEMS.filter((i) => rows === 5 || (i.id !== "e2" && (rows === 4 || i.id !== "d1"))),
+/** Three letters' copy notes, newest first as `line()` lists them. */
+const NOTES = [["k3", "Jon Example", "Budget review"], ["k2", "Ada Example", "Train times"], ["k1", "Lin Example", "Garden party"]]
+  .map(([k, to, subject]) => ({ id: `note:${k}`, key: "compose", state: "sent" as const, to, subject, copy: { state: "pending", reason: "full" } }));
+const lineOf = (rows: 3 | 4 | 5 | "notes") => ({
+  ...SENDING,
+  line: () => (rows === "notes" ? [...NOTES, ITEMS[0]!, ITEMS[3]!]
+    : ITEMS.filter((i) => rows === 5 || (i.id !== "e2" && (rows === 4 || i.id !== "d1")))),
 });
 
 const warnLine = () => h("div", { className: "rail-sync warn", role: "status" },
@@ -117,6 +127,7 @@ function rail(o: Shape, locale: "en" | "de"): string {
       children: h(React.Fragment, null,
         // The shell's narrow-width copy stands before the topbar, as `AppShell` renders it.
         o.gap ? h(GapLettersNotice, { offers: OFFER, onAnswer: noop, variant: "shell" }) : null,
+        o.pill ? h(SendingLine, { api: lineOf(o.rows ?? 3), variant: "shell", onOpen: () => false, onOpenMany: () => {} } as never) : null,
         h("div", { className: "topbar" }, h("b", null, "Ohbox")),
         h("div", { className: "deck" },
           h(RailNav, {
@@ -320,7 +331,10 @@ describe("a send in flight: the rail's foot line is inside the window", () => {
  * Pull button, a warning line and a standing failure filled it and "Sending to …" fell below its fold:
  * the person sent again and the foot showed only the old failure. The slot now rests on its end.
  */
-const LONG: Array<{ rows: 3 | 4 | 5; warn: boolean | "after"; width: number; height: number }> = [
+const LONG: Array<{ rows: 3 | 4 | 5 | "notes"; warn: boolean | "after"; width: number; height: number; locale?: "de" }> = [
+  // Notes stand above the live rows: the cap cuts the oldest note first, never an ending, a send or the newest note.
+  { rows: "notes", warn: false, width: 1366, height: 768 },
+  { rows: "notes", warn: false, width: 1366, height: 768, locale: "de" },
   { rows: 3, warn: true, width: 1280, height: 600 },
   { rows: 3, warn: true, width: 1024, height: 500 },
   { rows: 5, warn: true, width: 1280, height: 600 },
@@ -335,11 +349,13 @@ const LONG: Array<{ rows: 3 | 4 | 5; warn: boolean | "after"; width: number; hei
 ];
 
 describe("a long send line on a short window: the list, Compose and the foot stay reachable", () => {
-  for (const { rows, warn, width, height } of LONG) {
-    it(`${rows} rows${warn ? `, a warning line${warn === "after" ? " below" : ""}` : ""}, ${width}x${height}`, async () => {
-      const { ctx, page } = await open({ tags: 12, folders: 30, gap: false, rows, warn }, { width, height });
+  for (const { rows, warn, width, height, locale } of LONG) {
+    const said = rows === "notes" ? "three copy notes, an ending and a send" : `${rows} rows`;
+    it(`${said}${warn ? `, a warning line${warn === "after" ? " below" : ""}` : ""}, ${width}x${height}${locale ? " German" : ""}`, async () => {
+      const { ctx, page } = await open({ tags: 12, folders: 30, gap: false, rows, warn }, { width, height, ...(locale ? { locale } : {}) });
+      const newest = rows === "notes" ? ["Ana Example", "Mila Example", "Jon Example"] : rows === 3 ? ["Mila Example"] : ["Mila Example", "Dora Example"];
       try {
-        const m = await page.evaluate(() => {
+        const m = await page.evaluate((names) => {
           const nav = document.querySelector("nav.rail") as HTMLElement;
           const sc = nav.querySelector(".rail-scroll") as HTMLElement;
           const slot = nav.querySelector(".rail-sync-slot") as HTMLElement;
@@ -348,13 +364,14 @@ describe("a long send line on a short window: the list, Compose and the foot sta
           const cta = nav.querySelector(".compose-cta")!.getBoundingClientRect();
           const hit = document.elementFromPoint(cta.left + cta.width / 2, cta.top + cta.height / 2);
           const sr = slot.getBoundingClientRect();
-          // The slot is read as it rests: nobody scrolls it.
+          // The slot is read as it rests: nobody scrolls it. A row reads from its title to its last action.
           const seen = (who: string) => {
             const row = [...slot.querySelectorAll(".sl-row")].find((r) => r.textContent!.includes(who));
             if (!row) return null;
             const b = row.querySelector(".rs-line")!.getBoundingClientRect();
+            const last = [...row.querySelectorAll("button")].pop()?.getBoundingClientRect();
             const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
-            return { top: b.top, bottom: b.bottom, hit: at !== null && row.contains(at) };
+            return { who, top: b.top, bottom: Math.max(b.bottom, last?.bottom ?? 0), hit: at !== null && row.contains(at) };
           };
           return {
             rows: slot.querySelectorAll(".sl-row").length,
@@ -363,22 +380,59 @@ describe("a long send line on a short window: the list, Compose and the foot sta
             rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
             mail: nav.querySelector(".rail-mail")!.getBoundingClientRect().bottom, navBottom: nr.bottom,
             slotBox: { top: sr.top, bottom: sr.bottom },
-            sending: seen("Mila Example"), sent: seen("Dora Example"),
+            seen: names.map(seen),
             status: slot.querySelector(".sending-line")!.getAttribute("role"),
           };
-        });
-        expect(m.rows, "premise: every row of the line renders").toBe(rows);
+        }, newest);
+        expect(m.rows, "premise: every row of the line renders").toBe(rows === "notes" ? 5 : rows);
         expect(m.hit, "Compose is covered or clipped").toBe(true);
         expect(m.client, `the list is ${m.client}px tall`).toBeGreaterThanOrEqual(Math.min(9 * m.rem, 0.35 * m.inner) - 1);
         expect(m.mail, `the account line ends at ${m.mail}, the rail at ${m.navBottom}`).toBeLessThanOrEqual(m.navBottom);
         expect(m.status).toBe("status");
-        const newest = rows === 3 ? [m.sending] : [m.sending, m.sent];
-        for (const r of newest) {
-          expect(r, "premise: the row renders").not.toBeNull();
-          const where = `row at ${r!.top}-${r!.bottom}, slot ${m.slotBox.top}-${m.slotBox.bottom}`;
+        for (const [i, r] of m.seen.entries()) {
+          expect(r, `premise: ${newest[i]}'s row renders`).not.toBeNull();
+          const where = `${r!.who}'s row at ${r!.top}-${r!.bottom}, slot ${m.slotBox.top}-${m.slotBox.bottom}`;
           expect(r!.top, where).toBeGreaterThanOrEqual(m.slotBox.top - 1);
           expect(r!.bottom, where).toBeLessThanOrEqual(m.slotBox.bottom + 1);
           expect(r!.hit, `nothing of the row is under its centre, ${where}`).toBe(true);
+        }
+      } finally {
+        await ctx.close();
+      }
+    });
+  }
+});
+
+/**
+ * THE NARROW PILL HAS THE SLOT'S CAP AND ANCHOR. Uncapped, it grew up past the window's top on a phone
+ * held sideways, and its first rows, a "Not sent" among them, could not be reached at all.
+ */
+describe("the narrow pill: three copy notes, an ending and a send, its live rows inside the window", () => {
+  for (const [width, height, locale] of [[844, 390, "en"], [844, 390, "de"], [915, 412, "de"]] as const) {
+    it(`${width}x${height}${locale === "de" ? " German" : ""}`, async () => {
+      const { ctx, page } = await open({ tags: 3, folders: 0, gap: false, rows: "notes", pill: true }, { width, height, locale, touch: true });
+      try {
+        const m = await page.evaluate((names) => {
+          const pill = document.querySelector(".sending-pill")!;
+          const pr = pill.getBoundingClientRect();
+          return {
+            display: getComputedStyle(pill).display, top: pr.top, bottom: pr.bottom,
+            seen: names.map((who) => {
+              const row = [...pill.querySelectorAll(".sl-row")].find((r) => r.textContent!.includes(who))!;
+              const b = row.querySelector("b")!.getBoundingClientRect();
+              const last = [...row.querySelectorAll("button")].pop()?.getBoundingClientRect();
+              const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+              return { who, top: b.top, bottom: Math.max(b.bottom, last?.bottom ?? 0), hit: at !== null && row.contains(at) };
+            }),
+          };
+        }, ["Ana Example", "Mila Example"]);
+        expect(m.display, "premise: the pill shows at this width").not.toBe("none");
+        expect(m.top, `the pill at ${m.top}-${m.bottom}`).toBeGreaterThanOrEqual(0);
+        for (const r of m.seen) {
+          const where = `${r.who}'s row at ${r.top}-${r.bottom}, pill ${m.top}-${m.bottom}`;
+          expect(r.top, where).toBeGreaterThanOrEqual(m.top - 1);
+          expect(r.bottom, where).toBeLessThanOrEqual(m.bottom + 1);
+          expect(r.hit, `nothing of the row is under its centre, ${where}`).toBe(true);
         }
       } finally {
         await ctx.close();

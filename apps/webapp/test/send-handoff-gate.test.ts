@@ -77,6 +77,14 @@ describe("the foot line's rows (lineRows)", () => {
     expect(lineRows([])).toEqual([]);
   });
 
+  it("letters' copy notes (listed newest first) stand above every live row, the oldest on top: the line's end keeps the endings, the sends and the newest note", () => {
+    const note = (key: string): SendLineItem => item(key, "sent", { copy: { state: "pending", reason: "full" } });
+    expect(shape([note("n3"), note("n2"), note("n1"), kept("d"), item("c", "queued"), item("b", "sending"), item("a", "sent")])).toEqual([
+      { kind: "sent", keys: ["n1"] }, { kind: "sent", keys: ["n2"] }, { kind: "sent", keys: ["n3"] },
+      { kind: "ended", keys: ["d"] }, { kind: "queued", keys: ["c"] }, { kind: "sending", keys: ["b"] }, { kind: "sent", keys: ["a"] },
+    ]);
+  });
+
   it("an unverified ending is never counted as not sent: it says its own line, above the count", () => {
     expect(shape([kept("d"), item("u", "ended", { ended: { phase: "unverified" } }), kept("e")])).toEqual([
       { kind: "ended", keys: ["u"] },

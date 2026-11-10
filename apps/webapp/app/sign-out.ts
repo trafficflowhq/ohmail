@@ -7,7 +7,7 @@ import {
 } from "./shell/compose";
 import { FACE_ACCOUNT_KEY, FACE_ACCOUNT_OWNER_KEY } from "./shell/face-mirror";
 import {
-  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX,
+  OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "./shell/mail-send";
 import {
   NOTIFICATION_SUBSCRIPTION_PREFIX, SUBSCRIPTION_OWNER_KEY, revokeWakeRegistration,
@@ -166,6 +166,8 @@ export async function forgetThisBrowser(
   // simply never told. What it does is let a one-account wipe reach it.
   const durable = sweepFor(only ? owner! : null, [
     SEND_LOCKS_PREFIX,
+    // The letters' Sent copy notes on the foot line: each names a recipient and a subject.
+    SENT_COPY_NOTES_PREFIX,
     SCREENER_INTENTS_PREFIX,
     // The DELETE journal, for the Screener journal's reason exactly: it is a scheduled write
     // against a mailbox, owner-keyed, and left behind it would be replayed by whoever signs in
@@ -319,7 +321,7 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
  * id, an old reply key), or belongs to the jar's session.
  */
 const OWNER_KEYED: readonly string[] = [
-  SEND_LOCKS_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
+  SEND_LOCKS_PREFIX, SENT_COPY_NOTES_PREFIX, SCREENER_INTENTS_PREFIX, DELETE_INTENTS_PREFIX, ROUTING_INTENTS_PREFIX,
   COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, READING_ALONG_PREFIX,
   ACCESS_VERDICT_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX,
 ];
