@@ -21,6 +21,16 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.7] — 2026-11-10
+
+### The Screener's line for letters that claimed to be a company follows a filing at once
+
+When ohmail filed a letter to Spam for claiming a company while the Screener was open, the Spam count
+moved but the line ("1 letter that claimed to be a company went to Spam"), its Review list and Put back
+waited for a reload on the web and desktop, or a restart of the phone app. On the phone this mattered most,
+since a phone that organizes its own mailbox files only while the app runs. The line now asks again
+whenever the letters in Spam change, one read at a time.
+
 ## [1.0.6] — 2026-11-10
 
 ### Deleting your account removes its preferences too, and a returning browser drops its copy
@@ -17435,7 +17445,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.6...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.7...HEAD
+[1.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.7
 [1.0.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.6
 [1.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.5
 [1.0.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.4

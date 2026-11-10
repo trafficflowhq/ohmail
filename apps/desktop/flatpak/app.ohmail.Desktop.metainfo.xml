@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.7" date="2026-11-10">
+      <description>
+        <ul>
+          <li>The Screener's line for letters that claimed to be a company follows a filing at once</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.6" date="2026-11-10">
       <description>
         <ul>
@@ -104,16 +111,6 @@
       <description>
         <ul>
           <li>The desktop app says why a Sent copy is missing</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.2" date="2026-11-09">
-      <description>
-        <ul>
-          <li>On ohmail Cloud, a sent message with uploaded files gets its Sent copy later too</li>
-          <li>A sent message whose Sent copy could not be saved now says so, and why</li>
-          <li>Letters are read at the width they are drawn</li>
-          <li>Phone: newsletters wider than the screen are drawn scaled to it, not shown as text</li>
         </ul>
       </description>
     </release>
