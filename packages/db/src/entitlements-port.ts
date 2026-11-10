@@ -654,14 +654,17 @@ export function isMetered(e: EntitlementsComposition): e is EntitlementsPort {
 
 /**
  * Which of these accounts are PARKED — the one answer both the worker's roster and every alert
- * pass read, so the roster and the pager cannot disagree about who is on duty. `ok: false` is
- * parked. `null` on an unmetered host: nobody parks there, and the caller says so explicitly.
- * The client never throws and a fault answers last-known/allow, so a faulting read syncs more.
+ * pass read, so the roster and the pager cannot disagree about who is on duty (the pager passes no
+ * `stored`, so during a fault it may count a stored closure on duty). `ok: false` is parked. `null`
+ * on an unmetered host: nobody parks there, and the caller says so explicitly. The client never
+ * throws; a fault answers the verdict this process holds, else the caller's stored closure, else allow.
  */
 export type ParkedAccountsReader = (
   accountIds: readonly string[], now: Date,
   /** Accounts whose refusal must be asked again from `since` (the client's clock) — see below. */
   recheck?: { accounts: ReadonlySet<string>; since: number },
+  /** Accounts whose rows the caller read as `account_closed`: the last answer it stored. */
+  stored?: ReadonlySet<string>,
 ) => Promise<Set<string>>;
 
 /** Bounded fan-out: one `access` per account, eight at a time. */
@@ -758,7 +761,7 @@ export function parkedAccountsOf(
   entitlements: EntitlementsComposition, bound?: PlaneReadBound,
 ): ParkedAccountsReader | null {
   if (!isMetered(entitlements)) return null;
-  return async (accountIds, _now, recheck) => {
+  return async (accountIds, _now, recheck, stored) => {
     /* A REFUSAL IS ASKED AGAIN FOR A RECHECKED ACCOUNT (mail 0135): its row was kicked, and the
        reopening door kicks in the statement that clears the block, so a refusal held from before
        the kick may predate the clear. Only a refusal is asked twice; an allow stands. */
@@ -770,7 +773,11 @@ export function parkedAccountsOf(
     }, bound);
     // A partial parked set would call every unread account on duty, so an unfinished read throws.
     if (!complete) throw new ParkedReadUnfinished(answered.length, accountIds.length);
-    return new Set(answered.filter(([, v]) => !v.ok).map(([id]) => id));
+    // `UNMETERED_ACCESS` itself means the program answered nothing (the fault arm with nothing held,
+    // or nothing since the kick): a stored closure stands on it. Any other verdict is an answer.
+    return new Set(answered
+      .filter(([id, v]) => !v.ok || (v === UNMETERED_ACCESS && stored?.has(id) === true))
+      .map(([id]) => id));
   };
 }
 

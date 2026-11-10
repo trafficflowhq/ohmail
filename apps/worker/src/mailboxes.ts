@@ -255,6 +255,8 @@ export function accountShardFilter(selection: MailboxSelection, accountId: SQL |
 export type ParkedAccountsReader = (
   accountIds: readonly string[], now: Date,
   recheck?: { accounts: ReadonlySet<string>; since: number },
+  /** Accounts whose rows this read found `account_closed`: an unanswered plane read keeps them parked. */
+  stored?: ReadonlySet<string>,
 ) => Promise<Set<string>>;
 
 /**
@@ -322,8 +324,10 @@ export async function loadRosterMailboxes(
   // THE READ ABOVE HAS RETURNED: a call begun from here on began after every clear it saw, so a
   // kicked account's refusal is asked again from this instant (mail 0135, see `kickStamp`).
   const kicked = new Set(rows.filter((r) => r.kickStamp !== null).map((r) => r.accountId));
+  // The plane's last refusal, as the rows store it: a read it did not answer never clears it.
+  const stored = new Set(rows.filter((r) => r.syncBlockedReason === "account_closed").map((r) => r.accountId));
   const parked = parkedAccounts && ids.length > 0
-    ? await parkedAccounts(ids, now, { accounts: kicked, since: Date.now() })
+    ? await parkedAccounts(ids, now, { accounts: kicked, since: Date.now() }, stored)
     : new Set<string>();
   const shape = (r: (typeof rows)[number]): EnabledMailbox => ({
     accountId: r.accountId, mailboxId: r.id, provider: r.provider, address: r.address, status: r.status,

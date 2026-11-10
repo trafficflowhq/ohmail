@@ -176,8 +176,11 @@ export const accountRoutes: Route[] = [
       const reading = entitlementsPort(deps) !== null
         ? await storageReadingOf(ctx.db as unknown as Tx, ctx.accountId).catch(() => null)
         : null;
+      // A fault in this read (it always dials) moves the fault count: such an allow reopens nothing.
+      const before = entitlementsPort(deps)?.accessFaults?.();
       const verdict = await accessFor(deps, ctx.accountId,
         reading !== null ? { fresh: true, storageNeed: reading.need } : { fresh: true });
+      const answered = before === undefined || entitlementsPort(deps)?.accessFaults?.() === before;
       // `null` = this host declared no program. Not an error, and not a refusal.
       if (verdict === null) return json({ metered: false }, 200);
       if (!verdict.ok) {
@@ -193,9 +196,9 @@ export const accountRoutes: Route[] = [
       // asked back as a `join` — the gate decides, a live claim elsewhere keeps its mailbox, and a
       // mailbox the person released is never touched. In THIS order, and not at all when the
       // catch-up faulted: the resume clears the facts it is anchored on, and the worker's pass
-      // records them before it spends them.
-      const caughtUp = verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
-      if (caughtUp !== "fault") await resumeAfterReopen(deps, ctx);
+      // records them before it spends them. Neither on a read the program did not answer.
+      const caughtUp = answered && verdict.lifecycle ? await reopenedCatchUp(deps, ctx) : null;
+      if (answered && caughtUp !== "fault") await resumeAfterReopen(deps, ctx);
       // THE PERSON'S OWN STORAGE, where a cap is a number: the reading above, and the limit as every
       // cap reader applies it (a lower one held 14 days, cloud 0055). A failed read leaves the block
       // out (nothing drawn); it never fails the wall's read.
