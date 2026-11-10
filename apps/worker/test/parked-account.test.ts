@@ -50,7 +50,8 @@ function fakePlane(): {
   answered: Array<{ accountId: string; closed: boolean; at: number }>;
   /** Called right after an answer is written — where a case acts at the plane's own instant. */
   onAnswer: { fn: ((accountId: string, closed: boolean) => void) | null };
-  /** While `on`, every call is answered 429 (the plane's limiter, 2026-11-10), counted per account. */
+  /** While `on`, every call is answered 429 (the limiter of the edge in front of the plane, 2026-11-10),
+   *  counted per account. The client asks a 429 once more, so one read is two of these. */
   limited: { on: boolean; count: Map<string, number> };
 } {
   const parked = new Set<string>();
@@ -508,9 +509,9 @@ describe("a parked account leaves the roster and its organizer stands down (mail
     expect((await rowOf(db, B.mailboxId)).organizerRole).toBe("reader");
   }, 60_000);
 
-  /* THE PLANE ANSWERING 429 (2026-11-10): a worker that started inside it held no answer, allowed,
-     and unparked a closed account: its block cleared, its mailbox signed in to. The stored block is
-     the plane's last answer, so it stands until the plane answers again. */
+  /* THE EDGE IN FRONT OF THE PLANE ANSWERING 429 (2026-11-10): a worker that started inside it held
+     no answer, allowed, and unparked a closed account: its block cleared, its mailbox signed in to.
+     The stored block is the plane's last answer, so it stands until the plane answers again. */
   const walledAt = (at: Date) => ({
     organizerRole: "reader", organizerParkedAt: at, syncBlockedReason: "account_closed", syncBlockedSince: at,
   }) as const;
@@ -562,12 +563,13 @@ describe("a parked account leaves the roster and its organizer stands down (mail
     const fleet = new FakeAdapterFleet();
     const w = await runWorkerSupervised(cfgFor(fleet, plane.url()));
     closers.push(() => w.stop());
-    // Counted work: A and C synced, and B asked twice, the second past the client's 5 s fault hold.
+    // Counted work: A and C synced, and B read twice (a 429 and its retry each), the second read past
+    // the client's 5 s fault hold.
     await waitFor(async () => {
       await watch.sample();
       return [A, C].every((m) => fleet.indicesOf(m.mailboxId, "sync_end").length > 0)
-        && (plane.limited.count.get(B.accountId) ?? 0) >= 2;
-    }, 20_000, "A and C to sync and the plane to answer B 429 twice");
+        && (plane.limited.count.get(B.accountId) ?? 0) >= 4;
+    }, 20_000, "A and C to sync and the plane to answer two reads of B 429");
     await w.stop();
     await expectStillClosed(db, fleet, B, watch);
   }, 60_000);
@@ -594,8 +596,8 @@ describe("a parked account leaves the roster and its organizer stands down (mail
     const D = await seedAccount(db);
     await waitFor(async () => {
       await watch.sample();
-      return (plane.limited.count.get(B.accountId) ?? 0) >= 2 && fleet.indicesOf(D.mailboxId, "sync_end").length > 0;
-    }, 20_000, "two 429s for B, and D to sync");
+      return (plane.limited.count.get(B.accountId) ?? 0) >= 4 && fleet.indicesOf(D.mailboxId, "sync_end").length > 0;
+    }, 20_000, "two reads of B answered 429, and D to sync");
     await w.stop();
     await expectStillClosed(db, fleet, B, watch);
   }, 60_000);
@@ -646,8 +648,8 @@ describe("a parked account leaves the roster and its organizer stands down (mail
     await waitFor(async () => {
       for (const w of watches) await w.sample();
       return fleet2.indicesOf(A.mailboxId, "sync_end").length > 0
-        && soft.every((s) => (plane.limited.count.get(s.at.accountId) ?? 0) >= 2);
-    }, 20_000, "A to sync and the plane to answer each closed account 429 twice");
+        && soft.every((s) => (plane.limited.count.get(s.at.accountId) ?? 0) >= 4);
+    }, 20_000, "A to sync and the plane to answer two reads of each closed account 429");
     await w2.stop();
     for (const [i, s] of soft.entries()) await expectStillClosed(db, fleet2, s.at, watches[i]!);
   }, 60_000);

@@ -587,8 +587,8 @@ export interface EntitlementsPort {
    */
   confirmReturn?(accountId: string, sessionId: string): Promise<ReturnConfirmOutcome>;
   /**
-   * The program's own failures (`POST /v1/ops`), for the alert pass. Never throws, never retries
-   * and records no call fault: the pass's own `plane_ops_unreadable` is the outage's record.
+   * The program's own failures (`POST /v1/ops`), for the alert pass. Never throws, retries a 429
+   * once and records no call fault: the pass's own `plane_ops_unreadable` is the outage's record.
    * Optional: a port without it states nothing, and the pass reads the plane rules as unread.
    */
   readOps?(): Promise<PlaneOpsReading>;

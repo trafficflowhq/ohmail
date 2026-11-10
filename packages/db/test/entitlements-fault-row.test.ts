@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { entitlementsFaultRow, OUTLIVED_REQUEST_ERROR_CLASS } from "../src/api-faults.js";
+import { entitlementsFaultRow, EDGE_THROTTLED_ERROR_CLASS, OUTLIVED_REQUEST_ERROR_CLASS } from "../src/api-faults.js";
 
 /**
  * THE CREDIT-CHECK FAULT AS AN `api_faults` ROW (cloud 0033).
@@ -85,5 +85,22 @@ describe("a call that outlived its request is its own class", () => {
       .errorClass).toBe("EntitlementsCallRefused");
     expect(entitlementsFaultRow({ path: "/v1/access", status: null, outlivedRequest: false }, "api", AT)
       .errorClass).toBe("EntitlementsCallTimeout");
+  });
+});
+
+describe("a 429 is the edge's: the program never answers it, so no upstream did", () => {
+  it("reads 502 under the edge class, whoever waited", () => {
+    expect(EDGE_THROTTLED_ERROR_CLASS).toBe("EntitlementsEdgeThrottled");
+    for (const outlivedRequest of [false, true]) {
+      const row = entitlementsFaultRow({ path: "/v1/access", status: 429, outlivedRequest }, "worker", AT);
+      expect([row.status, row.errorClass], String(outlivedRequest)).toEqual([502, EDGE_THROTTLED_ERROR_CLASS]);
+    }
+  });
+
+  it("every other status the column refuses stays the program's refusal at 502", () => {
+    for (const s of [400, 401, 404, 200, 301]) {
+      expect(entitlementsFaultRow({ path: "/v1/access", status: s }, "api", AT), String(s))
+        .toMatchObject({ status: 502, errorClass: "EntitlementsCallRefused" });
+    }
   });
 });
