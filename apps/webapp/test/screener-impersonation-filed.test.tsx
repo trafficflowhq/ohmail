@@ -37,11 +37,11 @@ Element.prototype.scrollIntoView ??= function scrollIntoView() {};
 const NOW = new Date("2026-11-09T12:00:00.000Z");
 let seq = 0;
 
-function held(id: string, from: string): EngineMessage {
+function held(id: string, from: string, folder: EngineMessage["folder"] = "ohmail/Screener"): EngineMessage {
   return {
     id, accountId: "acct", mailboxId: "mb", threadId: null, messageIdHeader: null,
     subject: `Subject ${id}`, from: { name: null, address: from }, to: [], cc: [],
-    date: "2026-11-09T09:00:00.000Z", folder: "ohmail/Screener", snippet: `snippet ${id}`, unread: true,
+    date: "2026-11-09T09:00:00.000Z", folder, snippet: `snippet ${id}`, unread: true,
     hasAttachments: false, attachmentCount: 0,
     sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
     triage: null, labels: [], remoteContent: "none", updatedAt: "2026-11-09T09:00:00.000Z",
@@ -59,6 +59,11 @@ const ACT: AutoFiledItemWire = {
 
 let filed: AutoFiledItemWire[] = [];
 let undone: Array<readonly string[]> = [];
+/** What the next pull carries, and how many times the line's list was read. */
+let incoming: SyncChange[] = [];
+let reads = 0;
+/** Set, the next reads wait for it: a read still in the air when more filings land. */
+let gate: Promise<void> | null = null;
 
 async function engineWith(door: boolean): Promise<OhmailEngine> {
   const store = new MemoryMirrorStore();
@@ -71,14 +76,18 @@ async function engineWith(door: boolean): Promise<OhmailEngine> {
     now: () => NOW,
     adapter: {
       sync: async () => ({
-        changes: { creates: [], updates: [], moves: [], deletes: [] },
+        changes: { creates: incoming.splice(0), updates: [], moves: [], deletes: [] },
         cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
       }),
       mutate: async () => ({ changes: [], seq: null }),
       fetchBody: async () => null,
       ...(door
         ? {
-          autoFiled: async () => ({ items: filed, more: false }),
+          autoFiled: async () => {
+            reads++;
+            if (gate !== null) await gate;
+            return { items: filed, more: false };
+          },
           undoAutoFiled: async (ids: readonly string[]) => {
             undone.push(ids);
             filed = filed.filter((i) => !ids.includes(i.messageId));
@@ -96,6 +105,9 @@ let host: HTMLDivElement | null = null;
 beforeEach(() => {
   filed = [PHISH, ACT];
   undone = [];
+  incoming = [];
+  reads = 0;
+  gate = null;
   try { localStorage.removeItem(impersonationSeenKey()); } catch { /* none to clear */ }
 });
 afterEach(async () => {
@@ -104,6 +116,14 @@ afterEach(async () => {
   root = null;
   host = null;
 });
+
+const created = (m: EngineMessage): SyncChange =>
+  ({ type: "message", op: "create", id: m.id, seq: ++seq, updatedAt: m.updatedAt, entity: m });
+
+async function pull(engine: OhmailEngine): Promise<void> {
+  await act(async () => { await engine.syncOnce(); });
+  await flush();
+}
 
 async function flush(): Promise<void> {
   for (let i = 0; i < 12; i++) await act(async () => { await Promise.resolve(); });
@@ -178,6 +198,45 @@ describe("the Screener's line for letters filed to Spam for claiming a company",
     host?.remove();
     filed = [...filed, { ...PHISH, messageId: "p2", filedAt: "2026-11-09T11:45:00.000Z" }];
     await mount(await engineWith(true));
+    expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
+  });
+
+  it("a letter the organizer files while the Screener is open shows in the line and Review at once", async () => {
+    filed = [ACT];
+    const engine = await engineWith(true);
+    await mount(engine);
+    expect(line()).toBeNull();
+    filed = [PHISH, ACT];
+    incoming = [created(held("p1", PHISH.from!, "ohmail/Quarantine"))];
+    await pull(engine);
+    expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
+    await press(button("Review"));
+    expect(line()?.textContent ?? "").toContain("billing@hosting-renewals.example · Erinnerung: Zahlungsinformationen");
+    expect(undone).toEqual([]);
+    await press(button("Put back"));
+    expect(undone).toEqual([["p1"]]);
+  });
+
+  it("asks again only when Spam's letters change, and once for filings landing during a read", async () => {
+    filed = [ACT];
+    const engine = await engineWith(true);
+    await mount(engine);
+    const first = reads;
+    incoming = [created(held("m9", "another@example.test"))];
+    await pull(engine);
+    expect(reads, "a pull that filed nothing to Spam asked again").toBe(first);
+    let open!: () => void;
+    gate = new Promise<void>((r) => { open = r; });
+    for (const id of ["q1", "q2", "q3"]) {
+      incoming = [created(held(id, `${id}@example.test`, "ohmail/Quarantine"))];
+      await pull(engine);
+    }
+    expect(reads, "each filing during the read asked on its own").toBe(first + 1);
+    filed = [PHISH, ACT];
+    gate = null;
+    await act(async () => { open(); });
+    await flush();
+    expect(reads, "the filings during the read were not asked about after it").toBe(first + 2);
     expect(line()?.querySelector(".scn-held-lead")?.textContent).toBe("1 letter that claimed to be a company went to Spam");
   });
 
