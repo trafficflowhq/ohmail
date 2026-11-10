@@ -21,6 +21,40 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.5] — 2026-11-10
+
+### Letters that pretend to be a company go to Spam on their own
+
+A waiting first-time letter that presents itself as a company it cannot be from, such as a hosting
+provider's name on a stranger's address asking you to update your payment details, is now filed to
+Spam on its own, without AI and without a rule. ohmail decides this from the letter alone: a sender
+you wrote to, whose mail answers yours, or you have a contact or rule for, a mailing list, and any
+letter with a code or a security alert in it stay in the Screener. A letter you put back or move
+back to the Screener is never filed again, and its sender's next letters wait for you. The Screener
+says how many such letters went to Spam, lists each with its reason and Put back, and OK hides the
+line on that device until the next one. Such a letter stays in ohmail's own Spam rather than your
+provider's Junk, and nothing is unsubscribed. It is on by default; switch it off in Settings with
+"File impersonations to Spam", on the web, desktop and phone apps, and every device follows. A
+device that takes over organizing your mailbox waits until you answer its question about the
+settings it found, and keeps the switch off if you turned it off on the other device. Letters
+already waiting are filed on the next pass.
+
+### Sent copies waiting on a full mailbox are saved within minutes once it has room
+
+When your mailbox on your mail server is full, ohmail Cloud, your own server and the desktop app now ask it
+again for the waiting Sent copies every ten minutes while it answers that it is full, instead of waiting up
+to a day after a few refusals; after one failure of another kind in between, such as the server restarting,
+the next try comes within an hour, not a day. A copy saved in Sent sends the others of that mailbox on their
+way at the next try. In the desktop app a full mailbox no longer uses up a copy's tries; a copy still not
+saved after seven days is given up, as on the servers. A copy your mail server will not keep because of its
+size is given up at once with that reason, also one left waiting by an earlier version.
+
+On the web and the desktop, each message's sentence about its Sent copy stays in the sidebar until you
+dismiss that one: a later message, opening its conversation again or reloading the page no longer takes
+it away. The sidebar keeps the three newest, above the messages still being sent, and signing out removes
+them. On a narrow window the box with these lines no longer grows past the top of the window: the oldest
+sentence scrolls away first.
+
 ## [1.0.4] — 2026-11-10
 
 ### A wide newsletter is fitted to the fold's cover screen on every open
@@ -17381,7 +17415,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.4...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.5...HEAD
+[1.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.5
 [1.0.4]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.4
 [1.0.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.3
 [1.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.2
