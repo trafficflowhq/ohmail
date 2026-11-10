@@ -21,6 +21,15 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.3] — 2026-11-10
+
+### The desktop app says why a Sent copy is missing
+
+When your mail server refuses the copy of a sent letter for your Sent folder (a full mailbox, a
+message too large, a refusal or no connection), the desktop app's sidebar line and send notice now
+say why and, where ohmail keeps trying, until when. Before, the desktop showed a raw message key
+there instead of the sentence the web app shows.
+
 ## [1.0.2] — 2026-11-09
 
 ### On ohmail Cloud, a sent message with uploaded files gets its Sent copy later too
@@ -17362,7 +17371,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.3
 [1.0.2]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.2
 [1.0.1]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.1
 [1.0.0]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.0
