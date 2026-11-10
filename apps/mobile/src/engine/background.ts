@@ -147,7 +147,7 @@ export interface BackgroundEngine {
    */
   claimHere(opts: { by: "press" | "watch" }): Promise<
     "claimed" | "held" | "held_consented" | "held_returns" | "unreadable" | "meta_folder_full" | "meta_undeletable"
-    | "clock_off" | "refused"
+    | "mailbox_full" | "clock_off" | "refused"
   >;
   /**
    * DOES A LIVE FOREIGN CLAIM HOLD THE MAILBOX, as the row says — asked before {@link claimHere},
@@ -1065,7 +1065,7 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
     const held = await (deps.engine.heldElsewhere?.() ?? Promise.resolve(null)).catch(() => null);
     if (held === true || disposed) return;
     let outcome: "claimed" | "held" | "held_consented" | "held_returns" | "unreadable" | "meta_folder_full"
-      | "meta_undeletable" | "clock_off" | "refused";
+      | "meta_undeletable" | "mailbox_full" | "clock_off" | "refused";
     try {
       /* THE WATCH, NEVER A PERSON: it carries no consent, so it can only take back a mailbox
          somebody consented to on this phone. */
@@ -1087,9 +1087,10 @@ export function createBackgroundOrganizing(deps: BackgroundDeps): BackgroundOrga
       log("organizer_reclaim_unreadable", { why: "holder_left" });
       return;
     }
-    /* A folder the person must fix on the server, or a clock, is a standing refusal: backed off like one. */
+    /* A folder or a full mailbox the person must fix on the server, or a clock, is a standing refusal: backed off like one. */
     /* `held_consented` and `held_returns` are a person's press only; the watch's answer is `held`. */
-    reclaimSettled(outcome === "meta_folder_full" || outcome === "meta_undeletable" || outcome === "clock_off" ? "refused"
+    reclaimSettled(outcome === "meta_folder_full" || outcome === "meta_undeletable" || outcome === "mailbox_full"
+      || outcome === "clock_off" ? "refused"
       : outcome === "held_consented" || outcome === "held_returns" ? "held" : outcome);
   };
 

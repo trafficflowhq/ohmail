@@ -144,14 +144,14 @@ describe("the deletions this census exists for are each red, and the ordinary ca
     expect(unpinnedVerdict(mailPins(m), MAIL_UNPINNED).missing).toEqual(["0153_rule_revoke_keeps_its_decisions"]);
   });
 
-  it("a CHECK name pins only its first creator: without 0143's needle, the five replacements are unpinned", () => {
+  it("a CHECK name pins only its first creator: without 0185's needle, the six replacements are unpinned", () => {
     // `mailboxes_sync_blocked_reason_closed` stays in SCHEMA_CHECK_MARKERS and pins 0029 alone;
-    // 0130 keeps its column marker. A name probe cannot tell 0102, 0105, 0124, 0142 or 0143 from 0029.
+    // 0130 keeps its column marker. A name probe cannot tell 0102, 0105, 0124, 0142, 0143 or 0185 from 0029.
     const m = { ...MAIL, definitions: without(MAIL_CHECK_DEFINITION_MARKERS, ([n]) => n === "mailboxes_sync_blocked_reason_closed") };
     expect(unpinnedVerdict(mailPins(m), MAIL_UNPINNED).missing).toEqual([
       "0102_sync_blocked_reason_read_limited", "0105_sync_blocked_reason_clock_off",
       "0124_sync_blocked_reason_account_closed", "0142_sync_blocked_reason_meta_folder_full",
-      "0143_sync_blocked_reason_meta_undeletable",
+      "0143_sync_blocked_reason_meta_undeletable", "0185_sync_blocked_reason_mailbox_full",
     ]);
   });
 });

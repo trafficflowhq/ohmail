@@ -17,6 +17,7 @@ describe("the notification's body", () => {
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: null }, mb2: { unreadableReason: "meta_undeletable" } }))
       .toBe(EN.phoneStateMetaUndeletable);
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: "clock_off" } })).toBe(EN.phoneStateClockOff);
+    expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: "mailbox_full" } })).toBe(EN.phoneStateMailboxFull);
   });
   it("says Organizing over every other state, an older engine's included (control)", () => {
     expect(organizerNoticeBody("mila@example.com", { mb1: { unreadableReason: null } })).toBe(EN.notifBody("mila@example.com"));

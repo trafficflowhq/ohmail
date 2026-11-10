@@ -111,6 +111,13 @@ export interface MemoryImapOptions {
    * 1-based number of that read: a case changes the folder between the gate's reads.
    */
   onBetweenReads?: (server: MemoryImapServer, read: number) => void;
+  /**
+   * The mailbox's own quota at the provider, in bytes over every folder. An APPEND that does not fit
+   * throws imapflow 1.7.8's tagged NO (`responseStatus`, and `serverResponseCode` unless `code` is
+   * null; Dovecot's `OVERQUOTA` by default). `announce: false` is a server without QUOTA, whose
+   * `getQuota` answers `false`. An EXPUNGE frees what it removes.
+   */
+  quota?: { limit: number; code?: string | null; announce?: boolean };
 }
 
 /** The HEADER searches in a command log: a SEARCH whose header term names at least one field. */
@@ -206,6 +213,8 @@ export interface MemoryImapServer extends LeaseImapClient, ProfileImapClient {
   heal(mode: "expungeRefused" | "headerSearch" | "fetchTruncatesAt" | "headersBlankFor"): void;
   /** Turn a misbehaving mode ON after the fixture is built — a provider changing under a folder. */
   misbehave(patch: Partial<MemoryImapOptions>): void;
+  /** Bytes stored over every folder, the figure {@link MemoryImapOptions.quota} counts against. */
+  usage(): number;
 }
 
 class MailboxMissingError extends Error {
@@ -286,6 +295,11 @@ export function memoryImapServer(given: MemoryImapOptions = {}): MemoryImapServe
   /** What the CLIENT believes the selected folder holds — see {@link MemoryImapOptions.staleExists}. */
   let cachedExists: number | null = null;
   const trueCount = (): number => (selected === null ? 0 : tree.get(selected)?.messages.length ?? 0);
+  const usage = (): number => {
+    let n = 0;
+    for (const f of tree.values()) for (const m of f.messages) n += Buffer.byteLength(m.raw, "utf8");
+    return n;
+  };
 
   const server: MemoryImapServer = {
     log,
@@ -693,6 +707,12 @@ export function memoryImapServer(given: MemoryImapOptions = {}): MemoryImapServe
       const text = opts.transformOnAppend
         ? opts.transformOnAppend(typeof content === "string" ? content : content.toString("utf8"))
         : (typeof content === "string" ? content : content.toString("utf8"));
+      if (opts.quota !== undefined && usage() + Buffer.byteLength(text, "utf8") > opts.quota.limit) {
+        const code = opts.quota.code === undefined ? "OVERQUOTA" : opts.quota.code;
+        throw Object.assign(new Error("Command failed"), {
+          responseStatus: "NO", ...(code === null ? {} : { serverResponseCode: code }),
+        });
+      }
       const uid = f.nextUid++;
       /* INTERNALDATE, which this omitted. Every message a server holds has one, and a `before`
        * search is answered against it — so an APPENDED record compared as `undefined < Date` was
@@ -780,6 +800,14 @@ export function memoryImapServer(given: MemoryImapOptions = {}): MemoryImapServe
       else delete opts[mode];
     },
     misbehave(patch: Partial<MemoryImapOptions>): void { Object.assign(opts, patch); },
+    usage,
+    /* GETQUOTAROOT, in imapflow's shape: `false` with no QUOTA capability, bytes otherwise. */
+    async getQuota(path: string) {
+      log.push(`getquota ${path}`);
+      const q = opts.quota;
+      if (q === undefined || q.announce === false) return false;
+      return { path, storage: { usage: usage(), limit: q.limit, status: `${Math.round((usage() / q.limit) * 100)}%` } };
+    },
   };
 
   return server;

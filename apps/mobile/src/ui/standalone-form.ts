@@ -392,12 +392,13 @@ export type PhoneClaim =
    */
   | { k: "blocked"; reason: GateBlock; holding: boolean };
 
-/** The gate's refusals a person fixes outside ohmail: on the mail server (`_meta`), or the phone's clock. */
-export type GateBlock = "meta_folder_full" | "meta_undeletable" | "clock_off";
+/** The gate's refusals a person fixes outside ohmail: on the mail server (`_meta`, room), or the phone's clock. */
+export type GateBlock = "meta_folder_full" | "meta_undeletable" | "mailbox_full" | "clock_off";
 
 /** The engine's `unreadableReason` when it is one of those, else `null`. */
 export function gateBlockOf(reason: unknown): GateBlock | null {
-  return reason === "meta_folder_full" || reason === "meta_undeletable" || reason === "clock_off" ? reason : null;
+  return reason === "meta_folder_full" || reason === "meta_undeletable" || reason === "mailbox_full" || reason === "clock_off"
+    ? reason : null;
 }
 
 /** The chip's caption. `null` for `unknown`: no chip at all rather than a chip that guesses. */
@@ -440,7 +441,8 @@ function settingsBlockedLine(code: string | null): string {
 /** The desktop row's sentence for the gate's named refusals. */
 export function metaBlockedLine(reason: GateBlock): string {
   return reason === "meta_folder_full" ? Copy.phoneStateMetaFolderFull
-    : reason === "meta_undeletable" ? Copy.phoneStateMetaUndeletable : Copy.phoneStateClockOff;
+    : reason === "meta_undeletable" ? Copy.phoneStateMetaUndeletable
+      : reason === "mailbox_full" ? Copy.phoneStateMailboxFull : Copy.phoneStateClockOff;
 }
 
 /**
@@ -806,7 +808,7 @@ export function claimNoteLine(
  * and rendered each on its own, so the two could both be standing at once over one card.
  */
 export type PressSaid = "startRefused" | "startUnreadable" | "startMetaFolderFull" | "startMetaUndeletable"
-  | "startClockOff" | "startHeldConsented" | "startHeldReturns" | "stopRefused" | null;
+  | "startMailboxFull" | "startClockOff" | "startHeldConsented" | "startHeldReturns" | "stopRefused" | null;
 
 /** What a START press answered, as the line beside the verb records it; `null` owes no sentence. */
 export function pressSaidOf(outcome: string): PressSaid {
@@ -814,10 +816,11 @@ export function pressSaidOf(outcome: string): PressSaid {
     : outcome === "unreadable" ? "startUnreadable"
       : outcome === "meta_folder_full" ? "startMetaFolderFull"
         : outcome === "meta_undeletable" ? "startMetaUndeletable"
-          : outcome === "clock_off" ? "startClockOff"
-            : outcome === "held_consented" ? "startHeldConsented"
-              : outcome === "held_returns" ? "startHeldReturns"
-                : null;
+          : outcome === "mailbox_full" ? "startMailboxFull"
+            : outcome === "clock_off" ? "startClockOff"
+              : outcome === "held_consented" ? "startHeldConsented"
+                : outcome === "held_returns" ? "startHeldReturns"
+                  : null;
 }
 
 /**
@@ -852,9 +855,9 @@ export function pressSaidLine(said: PressSaid, claim: PhoneClaim): string | null
   }
   /* A press refused over a `_meta` the gate cannot read says the desktop row's sentence — once: a
      chip already saying it needs no second copy beside it. */
-  if (said === "startMetaFolderFull" || said === "startMetaUndeletable" || said === "startClockOff") {
+  if (said === "startMetaFolderFull" || said === "startMetaUndeletable" || said === "startMailboxFull" || said === "startClockOff") {
     return claim.k === "blocked" ? null : metaBlockedLine(said === "startMetaFolderFull" ? "meta_folder_full"
-      : said === "startMetaUndeletable" ? "meta_undeletable" : "clock_off");
+      : said === "startMetaUndeletable" ? "meta_undeletable" : said === "startMailboxFull" ? "mailbox_full" : "clock_off");
   }
   /* HELD, CONSENT KEPT: both facts, while a holder still stands. Once nothing holds it the card
      offers Start again and the sentence would describe a holder that left. */
