@@ -17,7 +17,7 @@ export const DIAGNOSTIC_DISABLED_REASONS = [
 
 export const DIAGNOSTIC_BLOCK_REASONS = [
   "lease_unreadable", "awaiting_credentials", "at_capacity", "read_limited", "clock_off",
-  "account_closed", "provider_unavailable", "meta_folder_full", "meta_undeletable",
+  "account_closed", "provider_unavailable", "meta_folder_full", "meta_undeletable", "mailbox_full",
 ] as const;
 
 /** The client mirror's types — `@ohmail/client-engine`'s `MIRROR_ENTITY_TYPES`, held equal there. */
@@ -40,7 +40,7 @@ export const DIAGNOSTIC_SYNC_OUTCOMES = [
 /** The organizer lease as this install last read it. `none` is a row that says nothing about one. */
 export const DIAGNOSTIC_LEASE_OUTCOMES = [
   "held", "stopped", "unchecked", "sibling_lapse", "unreadable", "clock_off", "meta_folder_full",
-  "meta_undeletable", "none",
+  "meta_undeletable", "mailbox_full", "none",
 ] as const;
 
 export const DIAGNOSTIC_ROLES = ["organizer", "reader", "unknown"] as const;

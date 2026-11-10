@@ -238,13 +238,15 @@ export type ClaimHereOutcome =
    */
   | "meta_folder_full"
   | "meta_undeletable"
+  /** The mailbox is at its quota on the mail server, so the gate's claim was refused for room. */
+  | "mailbox_full"
   /** The gate refused this phone's clock as too far from the server's (`LeaseClockSkewError`). */
   | "clock_off"
   /** The door said no for any other reason. The caller says so where a person can read it. */
   | "refused";
 
 /** The lease refusals a person can act on, which the door answers under their own codes. */
-const NAMED_META_BLOCKS: ReadonlySet<string> = new Set(["meta_folder_full", "meta_undeletable", "clock_off"]);
+const NAMED_META_BLOCKS: ReadonlySet<string> = new Set(["meta_folder_full", "meta_undeletable", "mailbox_full", "clock_off"]);
 
 /** A consent press's body, read once by the door: see `readOrganizePress`. */
 interface OrganizePress {
@@ -1550,7 +1552,8 @@ async function composePhoneEngine(
           code: op,
           message: op === "clock_off"
             ? "this phone's clock is too far from the mail server's to organize this mailbox"
-            : "the claim folder on this mail server cannot be read until it is fixed there",
+            : op === "mailbox_full" ? "the mailbox on this mail server is full"
+              : "the claim folder on this mail server cannot be read until it is fixed there",
         }
         : { code: "organizer_unreadable", message: "whether another install organizes this mailbox could not be read" },
     }),
@@ -2180,7 +2183,7 @@ async function composePhoneEngine(
       );
       if (body.error?.code === "organizer_unreadable") return "unreadable";
       const code = body.error?.code;
-      if (code === "meta_folder_full" || code === "meta_undeletable" || code === "clock_off") return code;
+      if (code === "meta_folder_full" || code === "meta_undeletable" || code === "mailbox_full" || code === "clock_off") return code;
       return "refused";
     }
     /* ── THE LOCAL DOOR ANSWERS 200 FOR EVERY OUTCOME, so the OUTCOME is what is read ────────

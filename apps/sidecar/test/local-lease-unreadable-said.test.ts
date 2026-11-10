@@ -25,6 +25,8 @@ class Meta implements LeaseIo {
   broken = true;
   /** A folder too full to READ WHOLE: the enumerator's refusal, by record count or by bytes. */
   full: MetaEnumCode | null = null;
+  /** A mailbox at its quota: the claim APPEND is refused as Dovecot refuses it. */
+  noRoom = false;
   readonly claims: RawClaimMessage[] = [];
   private uid = 1;
   private check(): void { if (this.broken) throw Object.assign(new Error("SEARCH failed"), { code: "ESOCKETFAKE" }); }
@@ -36,7 +38,11 @@ class Meta implements LeaseIo {
     }
     return this.claims.map((c) => ({ ...c }));
   }
-  async appendClaim(raw: string): Promise<void> { this.check(); this.claims.push({ ref: this.uid++, raw }); }
+  async appendClaim(raw: string): Promise<void> {
+    this.check();
+    if (this.noRoom) throw Object.assign(new Error("Command failed"), { responseStatus: "NO", serverResponseCode: "OVERQUOTA" });
+    this.claims.push({ ref: this.uid++, raw });
+  }
   async removeClaims(refs: readonly unknown[]): Promise<void> {
     this.check();
     const gone = new Set(refs);
@@ -75,9 +81,10 @@ describe("the local mailbox list says what the runtime knows about the lease", (
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => { for (const c of cleanups.splice(0).reverse()) await c(); });
 
-  async function boot(opts: { organizer: boolean; broken: boolean; full?: MetaEnumCode }) {
+  async function boot(opts: { organizer: boolean; broken: boolean; full?: MetaEnumCode; noRoom?: boolean }) {
     const meta = new Meta();
     meta.broken = opts.broken;
+    meta.noRoom = opts.noRoom ?? false;
     meta.full = opts.full ?? null;
     const dataDir = await freshDataDir("ohmail-lease-unreadable-");
     const sidecar: Sidecar = await createSidecar({
@@ -122,6 +129,15 @@ describe("the local mailbox list says what the runtime knows about the lease", (
     expect(row.status, "a full folder is not a mailbox fault").toBe("connected");
     expect(row.syncBlockedReason).toBe("meta_folder_full");
     expect(row.syncBlockedSince).toBe(since);
+  }, 60_000);
+
+  it("an organizer whose claim is refused for room is listed mailbox_full", async () => {
+    const w = await boot({ organizer: true, broken: false, noRoom: true });
+    const since = w.sidecar.organizerState().unreadableSince;
+    expect(since, "the claim was never refused, so this case is about nothing").not.toBeNull();
+    expect(w.sidecar.organizerState().unreadableReason).toBe("mailbox_full");
+    const row = await w.listed();
+    expect([row.status, row.syncBlockedReason, row.syncBlockedSince]).toEqual(["connected", "mailbox_full", since]);
   }, 60_000);
 
   it("ONE DERIVATION: the engine spells no lease block reason of its own", () => {

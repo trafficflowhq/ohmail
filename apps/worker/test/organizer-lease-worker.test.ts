@@ -842,6 +842,33 @@ describe("the worker's organizer lease: the states two healthy workers never rea
     expect(oursIn(server), "the probe and the renew after it did not shrink the folder").toBeLessThan(claims);
   }, 60_000);
 
+  /* A MAILBOX AT ITS QUOTA: the claim is refused for room. Connected, no error, no stand-down, no
+     sync while full; room returned clears the reason with no press and a cycle runs. */
+  it("a mailbox at its quota says mailbox_full, and room returned clears it with no press", async () => {
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db, undefined, { consented: true });
+    const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", REAL_META] });
+    server.seed("INBOX", `Subject: a letter\r\n\r\n${"x".repeat(8_192)}`);
+    server.misbehave({ quota: { limit: server.usage() } });
+    const worker = await startWorker({
+      databaseUrl: DB, keyProvider: KP, pollIntervalMs: 200, rosterIntervalMs: 600, syncBlockGraceMs: 0,
+      sentDomain: "trafficflow.test", adapterFactory: realMetaFactory(fleet, server), mailboxRetryMs: 100,
+      maxSyncFailures: 1, organizer: { installId: "cloud-test", displayName: "Cloud", staleAfterMs: 60_000 },
+    });
+    closers.push(() => worker.stop());
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).syncBlockedReason === "mailbox_full"),
+      "a claim refused for room was never named").toBe(true);
+    await new Promise((r) => { setTimeout(r, 2_000); });
+    const held = await rowOf(db, mb.mailboxId);
+    expect([held.status, held.syncBlockedReason, held.disabledReason, held.errorCode])
+      .toEqual(["connected", "mailbox_full", null, null]);
+    expect(fleet.syncs, "a full mailbox was synced without a claim").toBe(0);
+    server.misbehave({ quota: { limit: server.usage() + 4_096 } });
+    expect(await waitFor(async () => (await rowOf(db, mb.mailboxId)).syncBlockedReason === null && fleet.syncs > 0),
+      "the block outlived the room that cured it").toBe(true);
+  }, 60_000);
+
   it("CONTROL: a server whose read-back fails is never named undeletable", async () => {
     const fleet = new FakeAdapterFleet();
     const db = makeDb(DB);

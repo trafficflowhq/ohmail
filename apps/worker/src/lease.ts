@@ -325,15 +325,17 @@ function standDownReason(verdict: Exclude<LeaseVerdict, { verdict: "organize" }>
  * and cycle arms and the desktop's runtime, so no host spells a reason of its own. A wrong clock is
  * `clock_off` (the one thing anybody can do is set it); a folder too full to read is
  * `meta_folder_full` (the cure is in the person's mailbox); a folder that takes no delete is
- * `meta_undeletable` (the cure is a permission on it); every other `LeaseUnavailableError` is
- * `lease_unreadable`. All four stay the one exempt class.
+ * `meta_undeletable` (the cure is a permission on it); a claim refused for room is `mailbox_full`
+ * (the cure is room in the mailbox); every other `LeaseUnavailableError` is `lease_unreadable`. All
+ * five stay the one exempt class.
  */
 export function leaseBlockReason(err: Pick<LeaseUnavailableError, "op">): MailboxSyncBlockReason {
   /* By `op`, which every `LeaseUnavailableError` carries and `LeaseClockSkewError` fixes at
      `clock_skew`: a caller holding only the op (the desktop's peek answer) derives the same. */
   return err.op === "clock_skew" ? "clock_off"
     : err.op === "meta_folder_full" ? "meta_folder_full"
-      : err.op === "meta_undeletable" ? "meta_undeletable" : "lease_unreadable";
+      : err.op === "meta_undeletable" ? "meta_undeletable"
+        : err.op === "mailbox_full" ? "mailbox_full" : "lease_unreadable";
 }
 
 /**

@@ -135,6 +135,7 @@ const SAME_AS_WEBAPP: Record<string, string> = {
   /* The gate's two named `_meta` refusals — the desktop row's sentences on the phone's strip. */
   phoneStateMetaFolderFull: "sync.blocked_meta_folder_full",
   phoneStateMetaUndeletable: "sync.blocked_meta_undeletable",
+  phoneStateMailboxFull: "sync.blocked_mailbox_full",
   /* The folder verbs — the rail's whole vocabulary. */
   folders: "rail.folders",
   folderEmpty: "rail.folderEmpty",

@@ -365,6 +365,9 @@ const TABLE = {
     "Not syncing — the ohmail/_meta folder on that server holds more messages than ohmail can read. Move mail that was filed into it to another folder and leave the messages ohmail wrote (their subject starts with \"ohmail\"). ohmail starts again on its own.",
   phoneStateMetaUndeletable:
     "Not syncing — the mail server will not let ohmail remove its own messages from ohmail/_meta. Give that folder delete permission, or ask your provider. ohmail starts again on its own.",
+  /* The desktop's `sync.blocked_mailbox_full`: the mailbox is at its quota at the provider. */
+  phoneStateMailboxFull:
+    "Not syncing — your mailbox on that mail server is full, and ohmail needs a little room there to organize it. Free up space in your provider's webmail or another mail app; ohmail starts again on its own.",
   /* The desktop's `sync.blocked_clock_off`, for this phone. */
   phoneStateClockOff:
     "Not syncing — this phone's clock is too far from the mail server's, so ohmail cannot organize this mailbox safely. Set the clock; ohmail starts again on its own.",

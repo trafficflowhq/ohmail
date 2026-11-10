@@ -221,6 +221,8 @@ export const DE: Deck = {
     "Wird nicht synchronisiert — der Ordner ohmail/_meta auf diesem Server enthält mehr Nachrichten, als ohmail lesen kann. Verschiebe dort abgelegte Mails in einen anderen Ordner und lass die Nachrichten von ohmail stehen (ihr Betreff beginnt mit „ohmail“). ohmail macht dann von selbst weiter.",
   phoneStateMetaUndeletable:
     "Wird nicht synchronisiert — der Mailserver lässt ohmail seine eigenen Nachrichten in ohmail/_meta nicht entfernen. Gib diesem Ordner die Berechtigung zum Löschen oder frag deinen Anbieter. ohmail macht dann von selbst weiter.",
+  phoneStateMailboxFull:
+    "Wird nicht synchronisiert — dein Postfach auf diesem Mailserver ist voll, und ohmail braucht dort etwas Platz, um es zu organisieren. Schaffe Platz im Webmail deines Anbieters oder in einer anderen Mail-App; ohmail macht dann von selbst weiter.",
   phoneStateClockOff:
     "Wird nicht synchronisiert — die Uhr dieses Handys weicht zu stark von der des Mailservers ab, als dass ohmail dieses Postfach sicher organisieren könnte. Stell die Uhr richtig; ohmail macht dann von selbst weiter.",
 

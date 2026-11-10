@@ -565,6 +565,10 @@ const META_SINKS: Record<string, { how: MetaDisposition; clock: MetaClock; why: 
   "sweepStaleAcks|getMailboxLock": { clock: "write_not_raced", how: "no_server_sized_result", why: "SELECT" },
   "compactMeta|getMailboxLock": { clock: "write_not_raced", how: "no_server_sized_result", why: "SELECT" },
   "appendClaim|append": { clock: "write_not_raced", how: "no_server_sized_result", why: "APPEND answers a status line" },
+  "makeLeaseIo|getQuota": {
+    clock: "under_read_budget", how: "no_server_sized_result",
+    why: "GETQUOTAROOT, once, after a refused claim APPEND: two resources of usage and limit",
+  },
   "append|append": { clock: "write_not_raced", how: "no_server_sized_result", why: "APPEND answers a status line" },
   "ack|append": { clock: "write_not_raced", how: "no_server_sized_result", why: "APPEND answers a status line" },
   "removeClaims|messageDelete": { clock: "write_not_raced", how: "no_server_sized_result", why: "EXPUNGE answers a status line" },
