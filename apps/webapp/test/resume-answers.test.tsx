@@ -16,7 +16,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { resumeOnceKey } from "../app/(product)/resume/ResumeScreen.js";
 import { REVOKE_OWED_PREFIX, shareSignedOutNote } from "../app/(product)/resume/signed-out-note.js";
-import { SESSION_MINTED_KEY } from "../app/session-refresh.js";
+import { SESSION_MINTED_KEY, SETTLE_DEADLINE_MS } from "../app/session-refresh.js";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -49,6 +49,11 @@ const reuseSwept = (cause: string, clearing: boolean) => (): Response => {
   return json({ error: { code: "refresh_revoked", message: "refresh token reuse detected", details: { cause } } }, 401);
 };
 const platform401 = (): Response => new Response("<html>401</html>", { status: 401, headers: { "content-type": "text/html" } });
+/** The refresh door's answer for an account deleted elsewhere: it names the account and clears the jar. */
+const erasedClearing = (): Response => {
+  document.cookie = "tf_owner=; Path=/; Max-Age=0";
+  return json({ error: { code: "account_erased", message: "deleted" } }, 410, { "X-Ohmail-Account": "acct_A" });
+};
 const minted = (): Response => new Response(null, { status: 204 });
 
 let script: Array<() => Response> = [];
@@ -106,6 +111,9 @@ beforeEach(async () => {
 afterEach(async () => {
   await unmount();
   (await import("../app/revoked-door.js")).resetRevokedDoorForTests();
+  // An erasure heard in one case latches the tab: the next case starts on a live one.
+  (await import("../app/erased-door.js")).resetErasedDoorForTests();
+  (await import("../app/shell/account-erased.js")).clearAccountErased();
   globalThis.fetch = priorFetch;
   document.cookie = "tf_owner=; Path=/; Max-Age=0";
   document.cookie = "tf_signed_out=; Path=/; Max-Age=0";
@@ -292,15 +300,21 @@ describe("(d) the door's refusals go to /login on the FIRST attempt, with the se
     expect(refreshes).toBe(1);
   });
 
-  it("an erased account's 410, on a splash that registers no erased door: one purge, then /login", async () => {
-    script = [() => {
-      document.cookie = "tf_owner=; Path=/; Max-Age=0";
-      return json({ error: { code: "account_erased", message: "deleted" } }, 410, { "X-Ohmail-Account": "acct_A" });
-    }];
-    await mountResume();
-    expect(purges, "the erased account's cached files stay on this browser's disk").toBe(1);
-    expect(refreshes).toBe(1);
-    expect(replaced).toEqual(["/login"]);
+  it("an account erased elsewhere: the splash waits for its copy to go, no longer than the wipe's bound", async () => {
+    vi.resetModules();
+    vi.doMock("../app/sign-out", async (importOriginal: () => Promise<typeof import("../app/sign-out")>) => ({
+      ...await importOriginal(), forgetThisBrowser: () => new Promise<never>(() => {}),
+    }));
+    try {
+      script = [erasedClearing];
+      await mountResume();
+      await tick(SETTLE_DEADLINE_MS - 1_000);
+      expect(replaced, "the splash left before the erased account's copy was gone").toEqual([]);
+      await tick(1_500);
+      expect(replaced, "a wipe that never ends held the splash").toEqual(["/login"]);
+    } finally {
+      vi.doUnmock("../app/sign-out");
+    }
   });
 });
 
@@ -647,7 +661,28 @@ describe("the loop guard belongs to the account that wrote it", () => {
  */
 describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
   let held: boolean[] = [];
+  /** The keys in this tab's two jars that name acct_A, read as the splash leaves. */
+  let named: string[][] = [];
   let engine: typeof import("@ohmail/client-engine");
+  const keysNaming = (owner: string): string[] =>
+    [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.includes(owner)).sort();
+  /** An account's keys beside its copy: its data, its preferences and this tab's note about it. */
+  async function plantKeysOf(owner: string): Promise<string[]> {
+    const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
+    const { COMPOSE_DRAFT_PREFIX } = await import("../app/shell/compose.js");
+    const { searchSortKey } = await import("../app/shell/persisted-ui.js");
+    const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
+    const keys = [
+      `${SEND_LOCKS_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
+      searchSortKey(owner), seedNotNowKey(owner), `ohmail.ui.reader.afterVerb:${owner}`,
+      // The Screener's impersonation mark (#777), by name until its builder is on main.
+      `ohmail.screener.impersonationSeen.${owner}`,
+    ];
+    for (const k of keys) localStorage.setItem(k, "the account's");
+    const note = `ohmail.lifecycle.${owner}.caughtUp`;
+    sessionStorage.setItem(note, "2026-09-20T00:00:00.000Z");
+    return [...keys, note];
+  }
   /** An account's copy on this browser's disk, closed as a reload leaves it. */
   async function holdCopyOf(owner: string): Promise<void> {
     const store = new engine.IndexedDbMirrorStore({ owner });
@@ -669,9 +704,11 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
     engine = await import("@ohmail/client-engine");
     await holdCopyOf("acct_A");
     held = [];
+    named = [];
     (window.location as unknown as { replace: (u: string) => void }).replace = (u) => {
       replaced.push(u);
       held.push(engine.holdsMirrorOf("acct_A"));
+      named.push(keysNaming("acct_A"));
     };
   });
   afterEach(() => {
@@ -721,6 +758,31 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
     await mountResume(null);
     await untilLeft();
     expect(held, "the copy of a session that came back was taken").toEqual([true]);
+  });
+
+  /*
+   * PAST THE ACCESS WINDOW THE SPLASH IS WHERE A RETURNING BROWSER HEARS ITS ACCOUNT WAS DELETED: the refresh
+   * door's 410 names it. Its mirror, its keys and this tab's notes about it are gone before the splash leaves.
+   */
+  it.each([
+    ["the edge saw the account", "acct_A"],
+    ["the edge saw no marker (a cross-site navigation)", null],
+  ])("an account erased elsewhere, %s: its copy and every key naming it are gone before the splash leaves; another's stay", async (_, seen) => {
+    await holdCopyOf("acct_B");
+    await plantKeysOf("acct_A");
+    const theirs = await plantKeysOf("acct_B");
+    script = [erasedClearing];
+    await mountResume(seen);
+    await untilLeft();
+    expect(replaced).toEqual(["/login"]);
+    expect(held, "the splash left with the erased account's copy").toEqual([false]);
+    expect(named, "keys naming the erased account outlived the splash").toEqual([[]]);
+    expect([engine.holdsMirrorOf("acct_B"), theirs.filter((k) => localStorage.getItem(k) === null
+      && sessionStorage.getItem(k) === null)], "another account's copy or keys went with it").toEqual([true, []]);
+    expect([refreshes, purges], "one presentation, one cache purge").toEqual([1, 1]);
+    // The erased door tells the other tabs itself; a revoke's sentence would misname the erasure.
+    expect([sessionStorage.getItem(NOTE_KEY), document.cookie.includes("tf_signed_out=")], "a session's end was said")
+      .toEqual([null, false]);
   });
 
   /**
@@ -826,6 +888,15 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
       const el = await loginAfter(answer);
       expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the sign-in form stood over the revoked copy").toBe(true);
       expect(el.querySelector("#login-pw"), "the form went").not.toBeNull();
+    });
+
+    it("an erasure heard by the page's own check, on a page of the product layout: the erased copy goes, another stays", async () => {
+      // What the product layout loads for every page (`(product)/layout.tsx`).
+      await import("../app/(product)/providers.js");
+      await holdCopyOf("acct_B");
+      const el = await loginAfter(erasedClearing);
+      expect(await until(() => !engine.holdsMirrorOf("acct_A")), "the sign-in form stood over the erased copy").toBe(true);
+      expect([engine.holdsMirrorOf("acct_B"), el.querySelector("#login-pw") !== null]).toEqual([true, true]);
     });
 
     it.each(["refresh_expired", "refresh_missing"])("CONTROL — %s: the next sign-in leaves with the copy kept", async (code) => {

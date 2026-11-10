@@ -96,17 +96,20 @@ export function dropLocalStorageKeys(prefixes: readonly string[]): LocalSweep {
   return dropLocalStorageKeysWhere((key) => prefixes.some((p) => key.startsWith(p)));
 }
 
-/** {@link dropLocalStorageKeys} for any rule over the key — the same pass, removal and read-back. */
-export function dropLocalStorageKeysWhere(doom: (key: string) => boolean): LocalSweep {
+/** {@link dropLocalStorageKeys} for any rule over the key — the same pass, removal and read-back, in either jar. */
+export function dropLocalStorageKeysWhere(
+  doom: (key: string) => boolean, area: "localStorage" | "sessionStorage" = "localStorage",
+): LocalSweep {
   try {
+    const jar = window[area];
     const doomed: string[] = [];
-    for (let i = 0; i < window.localStorage.length; i++) {
-      const key = window.localStorage.key(i);
+    for (let i = 0; i < jar.length; i++) {
+      const key = jar.key(i);
       if (key !== null && doom(key)) doomed.push(key);
     }
     for (const key of doomed) {
       try {
-        window.localStorage.removeItem(key);
+        jar.removeItem(key);
       } catch {
         /* one refusal must not spare the rest — the read-back below is the judge */
       }
@@ -120,7 +123,7 @@ export function dropLocalStorageKeysWhere(doom: (key: string) => boolean): Local
     // is named, and the caller decides what to say about it.
     const survivors = doomed.filter((key) => {
       try {
-        return window.localStorage.getItem(key) !== null;
+        return jar.getItem(key) !== null;
       } catch {
         return true; // cannot be checked ⇒ cannot be claimed gone
       }

@@ -522,6 +522,31 @@ export class ServerProfileStore {
     });
   }
 
+  /**
+   * Remove an erased account's own rows (`account-rows.ts`), each read back: answers the keys still held. Never a
+   * pairing's row, which leaves through {@link remove}.
+   */
+  forgetRows(keys: readonly string[]): Promise<string[]> {
+    return this.enqueue(async () => {
+      const held: string[] = [];
+      for (const key of keys) {
+        try {
+          await this.kv.remove(key);
+        } catch {
+          /* the read-back below is the judge */
+        }
+        let still = true;
+        try {
+          still = (await this.kv.get(key)) !== null;
+        } catch {
+          /* unreadable: not claimed gone */
+        }
+        if (still) held.push(key);
+      }
+      return held;
+    });
+  }
+
   /** Switch which profile the app boots. Unknown id ⇒ refused, the index untouched. */
   setActive(id: string): Promise<void> {
     return this.enqueue(async () => {

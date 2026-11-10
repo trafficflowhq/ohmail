@@ -5,7 +5,7 @@
  * compose scratch, the reply buffers and the intent journals outlived the account. This is that sweep,
  * scoped to the mailboxes named: another mailbox's keys and the preferences stay, and the reply buffers
  * that name no mailbox go whole. A lapse (an expired sign-in) keeps them, as it keeps the mail. Only an
- * erasure takes the send lanes as well.
+ * erasure takes the send lanes, and the mailbox's preferences and tab notes, as well.
  */
 
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
@@ -18,9 +18,11 @@ import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, sentCopyNotesKey,
 } from "../../webapp/app/shell/mail-send";
 import { isOwnerShaped } from "../../webapp/app/shell/owner-cookie";
+import { RETIRED_ID_SETS } from "../../webapp/app/shell/persisted-ui";
 import { READING_ALONG_PREFIX } from "../../webapp/app/shell/reading-along";
 import { SCREENER_INTENTS_PREFIX } from "../../webapp/app/shell/screener-intents";
 import { SEND_LOCKS_PREFIX } from "../../webapp/app/shell/send-lock";
+import { namesOwner } from "../../webapp/app/shell/storage-owner";
 import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
 import { windowSentFoldersKey } from "./window-outbox-store.js";
 
@@ -78,17 +80,21 @@ export function forgetWindowScopes(scopes: readonly (string | null | undefined)[
 }
 
 /**
- * AN ERASED ACCOUNT'S SWEEP: {@link forgetWindowScopes}, and each mailbox's send lane (exactly
- * `<SEND_LOCKS_PREFIX><mailbox>`). The engine discarded the window's outbox with the account, so no send
- * is owed and nothing else would ever prune them. The send-record door census admits this function, and
- * no other, to name the jar's prefix.
+ * AN ERASED ACCOUNT'S SWEEP: {@link forgetWindowScopes}, each mailbox's send lane (exactly
+ * `<SEND_LOCKS_PREFIX><mailbox>`), and every other key and tab note naming the mailbox ({@link namesOwner}),
+ * its preferences included, which Sign out and a revoke keep, and the id sets an earlier build kept for every
+ * mailbox in one value. The engine discarded the window's outbox with the account, so no send is owed and
+ * nothing else would ever prune them. The send-record door census admits this function, and no other, to name
+ * the jar's prefix.
  */
 export function forgetErasedWindowScopes(scopes: readonly (string | null | undefined)[]): LocalSweep | null {
-  return sweepScopes(scopes, (key, scope) => key === `${SEND_LOCKS_PREFIX}${scope}` || key === sentCopyNotesKey(scope));
+  return sweepScopes(scopes, (key, scope) =>
+    key === `${SEND_LOCKS_PREFIX}${scope}` || key === sentCopyNotesKey(scope) || namesOwner(key, scope)
+    || RETIRED_ID_SETS.includes(key), true);
 }
 
 function sweepScopes(
-  scopes: readonly (string | null | undefined)[], alsoGone: (key: string, scope: string) => boolean,
+  scopes: readonly (string | null | undefined)[], alsoGone: (key: string, scope: string) => boolean, notes = false,
 ): LocalSweep | null {
   const owed = [...new Set(scopes.filter((s): s is string => typeof s === "string" && isOwnerShaped(s)))];
   if (owed.length === 0) return null;
@@ -96,6 +102,8 @@ function sweepScopes(
     k === LEGACY_COMPOSE_DRAFT_KEY || k.startsWith(REPLY_DRAFT_PREFIX) || k.startsWith(REPLY_META_PREFIX)
     || owed.some((s) => scopedTo(k, s) || k === windowSentFoldersKey(s) || alsoGone(k, s)));
   const sweeps = [keys, ...owed.map((s) => clearBootCaches(s))];
+  // The tab's notes naming the mailbox, an erasure's alone; one left over keeps the marker below for a retry.
+  if (notes) sweeps.push(dropLocalStorageKeysWhere((k) => owed.some((s) => namesOwner(k, s, true)), "sessionStorage"));
   const swept: LocalSweep = {
     survivors: sweeps.flatMap((s) => s.survivors),
     enumerated: sweeps.every((s) => s.enumerated),

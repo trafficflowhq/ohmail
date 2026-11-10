@@ -6,8 +6,10 @@ import { columnsBootScript } from "../shell/column-store";
 // One door per host, at module scope; its face mirror names the account it was written for.
 import { THEME_DOOR } from "../shell/face-mirror";
 import { textSizeBootScript } from "../shell/text-size";
-// Every product page hears a revoke and finishes a wipe a closed page left (`revoked-door.ts`).
+// Every product page hears a revoke and finishes a wipe a closed page left (`revoked-door.ts`),
+// and drops the copy of an account the server says was erased (`erased-door.ts`).
 import "../revoked-door";
+import "../erased-door";
 
 export function Providers({ children, nonce }: { children: ReactNode; nonce?: string }) {
   return (

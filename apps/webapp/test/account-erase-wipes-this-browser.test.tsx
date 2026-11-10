@@ -143,8 +143,11 @@ async function submit(form: Element): Promise<void> {
   await act(async () => { form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
 }
 
-/** A mirror the page itself holds open, as the running engine does, plus account-keyed keys. */
-async function seedThisBrowser(): Promise<{ close: () => void; keys: string[] }> {
+/**
+ * A mirror the page itself holds open, as the running engine does, plus account-keyed keys and the
+ * account's preferences and tab notes, which a sign-out keeps and an erasure does not.
+ */
+async function seedThisBrowser(): Promise<{ close: () => void; keys: string[]; prefs: string[] }> {
   const engine = await import("@ohmail/client-engine");
   const store = new engine.IndexedDbMirrorStore({ owner: OWNER });
   await store.load();
@@ -157,7 +160,34 @@ async function seedThisBrowser(): Promise<{ close: () => void; keys: string[] }>
     `${SEND_LOCKS_PREFIX}${OWNER}`, `${SENT_COPY_NOTES_PREFIX}${OWNER}`, `${COMPOSE_SESSION_PREFIX}${OWNER}`, `ohmail.boot.ownAddresses.${OWNER}`,
   ];
   for (const k of keys) localStorage.setItem(k, "account data");
-  return { close: () => store.close(), keys };
+  return { close: () => store.close(), keys, prefs: await plantPreferences(OWNER) };
+}
+
+/** One account's preferences and this tab's notes about it, through the product's own builders. */
+async function plantPreferences(owner: string): Promise<string[]> {
+  const before = new Set([...Object.keys(localStorage), ...Object.keys(sessionStorage)]);
+  const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui.js");
+  const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
+  const { writeAfterVerb } = await import("../app/shell/after-verb.js");
+  const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
+  const { dismissKey } = await import("../app/(product)/mailbox/LifecycleBanner.js");
+  const { resumeOnceKey } = await import("../app/(product)/resume/ResumeScreen.js");
+  localStorage.setItem(searchSortKey(owner), "oldest");
+  localStorage.setItem(seedNotNowKey(owner), "1");
+  writeAfterVerb("stay", owner);
+  localStorage.setItem(imageQualityKeyFor(owner), "low");
+  // The rail's opened branches and the messages kept in their original colours: folder paths and message ids.
+  localStorage.setItem(foldersOpenedKey(owner), JSON.stringify([`mbx-${owner.slice(0, 4)}|Clients/Acme Corp`]));
+  localStorage.setItem(mailOriginalKey(owner), JSON.stringify(["m1"]));
+  // The Screener's impersonation mark (#777), by name until its builder is on main.
+  localStorage.setItem(`ohmail.screener.impersonationSeen.${owner}`, "2026-09-26T15:00:00.000Z");
+  sessionStorage.setItem(dismissKey({ kind: "trialEnding", deadline: "2026-09-28T00:00:00.000Z" }, owner), "1");
+  sessionStorage.setItem(resumeOnceKey(owner), JSON.stringify({ at: 0, answer: "resumed", reloads: 0 }));
+  // The catch-up note's builder is private to the API client.
+  sessionStorage.setItem(`ohmail.lifecycle.${owner}.caughtUp`, "2026-09-20T00:00:00.000Z");
+  const planted = [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => !before.has(k));
+  expect(planted, "a builder wrote nothing").toHaveLength(10);
+  return planted.sort();
 }
 
 async function mirrorsLeft(): Promise<string[]> {
@@ -214,7 +244,11 @@ async function entitiesOf(owner: string): Promise<number> {
   return n;
 }
 
-const keysNaming = (owner: string): string[] => Object.keys(localStorage).filter((k) => k.includes(owner)).sort();
+/** Every key in this tab's two jars that carries `owner`'s id anywhere. */
+const keysNaming = (owner: string): string[] =>
+  [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.includes(owner)).sort();
+
+const held = (key: string): boolean => localStorage.getItem(key) !== null || sessionStorage.getItem(key) !== null;
 
 const receiptShown = (c: HTMLElement): boolean => c.textContent!.includes(en.account.doneTitle);
 
@@ -233,6 +267,7 @@ describe("Delete your account wipes this browser's copy of that account", () => 
     expect(rig.asked.filter((a) => a === "POST /api/auth/step-up/totp")).toHaveLength(1);
     expect(await mirrorsLeft(), "the erased account's mirror is still in this browser").toEqual([]);
     expect(seeded.keys.filter((k) => localStorage.getItem(k) !== null), "account-keyed storage survived").toEqual([]);
+    expect(seeded.prefs.filter(held), "the account's preferences or this tab's notes about it survived").toEqual([]);
     expect(document.cookie.includes("tf_owner="), "the name went with the mail").toBe(false);
     // The receipt no longer carries the cache clear: the browser asks for it once, and the receipt
     // shows while that request is still unanswered.
@@ -242,7 +277,16 @@ describe("Delete your account wipes this browser's copy of that account", () => 
 
   it("THE CENSUS: zero entities and zero keys for the erased account; another account's copy survives", async () => {
     await seedThisBrowser();
-    const others = await seedAnotherAccount();
+    const others = [...await seedAnotherAccount(), ...await plantPreferences(OTHER)];
+    // Ids that extend the erased one's, and keys that name no account: none of them is the erasure's.
+    const { searchSortKey } = await import("../app/shell/persisted-ui.js");
+    const kin = [searchSortKey(`${OWNER}0`), searchSortKey(`${OWNER}.x`)].sort();
+    const device = ["ohmail.theme", "ohmail.ui.columns", searchSortKey(null)];
+    for (const k of [...kin, ...device]) localStorage.setItem(k, "kept");
+    // The id sets an earlier build kept device-wide, the erased account's folder paths and message ids among them.
+    const retired = ["ohmail.ui.rail.foldersOpened", "ohmail.ui.mail.original"];
+    localStorage.setItem(retired[0]!, JSON.stringify([`mbx-${OWNER.slice(0, 4)}|Clients/Acme Corp`]));
+    localStorage.setItem(retired[1]!, JSON.stringify(["m1"]));
     expect(await entitiesOf(OTHER), "the control seeded nothing").toBe(1);
     expect(keysNaming(OWNER).length, "the census has nothing to find").toBeGreaterThan(0);
     // A renewal the server did not answer keeps its name owed, in its own IndexedDB database.
@@ -258,8 +302,9 @@ describe("Delete your account wipes this browser's copy of that account", () => 
     expect(await renewalNames(), "the erased session's renewal name survived").toEqual([]);
     expect(await mirrorsLeft(), "the erase took another account's mirror, or left its own")
       .toEqual([`ohmail-mirror:${OTHER}`]);
-    expect(keysNaming(OWNER), "keys naming the erased account survived").toEqual([]);
-    expect(others.filter((k) => localStorage.getItem(k) === null), "another account's keys went with it").toEqual([]);
+    expect(keysNaming(OWNER), "keys naming the erased account survived").toEqual(kin);
+    expect(retired.filter(held), "a device-wide set holding the erased account's folder paths survived").toEqual([]);
+    expect([...others, ...kin, ...device].filter((k) => !held(k)), "another account's keys went with it").toEqual([]);
     expect(await entitiesOf(OTHER), "another account's mail went with it").toBe(1);
   }, 30_000);
 
@@ -290,6 +335,8 @@ describe("Delete your account wipes this browser's copy of that account", () => 
 
     expect(receiptShown(c), "a blocked wipe must not hide a completed erasure").toBe(true);
     expect(c.textContent).toContain(en.account.erasedMirrorBlocked);
+    // The registry record of the mirror still on disk stays, so a later wipe can name it; nothing else.
+    expect(keysNaming(OWNER)).toEqual([`ohmail.mirror.ohmail-mirror:${OWNER}`]);
     other.close();
   }, 30_000);
 
@@ -321,7 +368,7 @@ describe("a refused erase says so, and the next press can erase", () => {
     expect(c.querySelector<HTMLInputElement>("#acct-typed")?.value, "not back at the top, address kept").toBe(EMAIL);
     // The account still exists, so this browser keeps it, and its cache.
     expect(await mirrorsLeft()).toEqual([`ohmail-mirror:${OWNER}`]);
-    expect(seeded.keys.filter((k) => localStorage.getItem(k) === null)).toEqual([]);
+    expect([...seeded.keys, ...seeded.prefs].filter((k) => !held(k))).toEqual([]);
     expect(rig.purges, "a cache clear after a refused erase").toBe(0);
 
     // The window the factor opened is still open: the next press erases with no prompt and no sign-in.

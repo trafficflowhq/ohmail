@@ -1,6 +1,6 @@
-import { clearAllMirrors } from "@ohmail/client-engine";
+import { clearAllMirrors, mirrorDbName } from "@ohmail/client-engine";
 import { auth } from "./api-client";
-import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere } from "./shell/boot-cache";
+import { clearBootCaches, dropLocalStorageKeys, dropLocalStorageKeysWhere, type LocalSweep } from "./shell/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, forgetComposeRows,
   LEGACY_COMPOSE_DRAFT_KEY,
@@ -14,6 +14,8 @@ import {
 } from "./shell/notification-settings";
 import { bindApiOwner, blockApiOwner } from "./api-client";
 import { forgetOwner, markSignedOutPending, readOwner } from "./shell/owner-cookie";
+import { namesOwner } from "./shell/storage-owner";
+import { RETIRED_ID_SETS } from "./shell/persisted-ui";
 import { SCREENER_INTENTS_PREFIX } from "./shell/screener-intents";
 import { DELETE_INTENTS_PREFIX } from "./shell/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
@@ -98,6 +100,11 @@ export async function forgetThisBrowser(
      * when they name `owner`.
      */
     only?: boolean;
+    /**
+     * With `only`: the account was ERASED, so every other key naming it goes too, its preferences and this tab's
+     * notes included ({@link forgetEveryKeyOf}). The erased doors pass it; a revoke keeps them, as a sign-out does.
+     */
+    erased?: boolean;
     /** With `only`: how far the wipe may still reach, asked before each step (the revoke door's). Absent, `jar`. */
     reach?: () => WipeReach;
   } = {},
@@ -264,13 +271,31 @@ export async function forgetThisBrowser(
   }
   const wipe = !may("account") ? { remaining: [], inventory: "complete" as const }
     : only ? await clearAllMirrors(owner, undefined, { only: true }) : await clearAllMirrors(owner);
+  // Last: the mirror's own sweep has decided its registry record by now.
+  const named = only && opts.erased === true && may("account") ? forgetEveryKeyOf(owner!) : null;
   return {
-    remaining: [...survivors, ...wipe.remaining].sort(),
+    remaining: [...survivors, ...wipe.remaining, ...(named?.survivors ?? [])].sort(),
     // EVERY store has to be answerable, not just the mirrors. A jar that could not be walked
     // names no survivors and proves nothing by it — see `dropLocalStorageKeys`'s catch.
     inventoryComplete: wipe.inventory === "complete" && boot.enumerated && durable.enumerated
-      && deviceCeremonySwept,
+      && deviceCeremonySwept && (named?.enumerated ?? true),
   };
+}
+
+/**
+ * EVERY KEY NAMING AN ERASED ACCOUNT ({@link namesOwner}), in the jar and in this tab. Two records stay, each a
+ * wipe still owed: the registry name of a mirror still on disk (`clearAllMirrors` drops it once the mirror is gone),
+ * and a revoke's owed record, which its door drops itself. The id sets earlier builds kept device-wide go whole:
+ * their values hold the account's folder paths and message ids under a key that names nobody.
+ */
+function forgetEveryKeyOf(owner: string): LocalSweep {
+  const mirror = mirrorDbName(owner);
+  const sweeps = [
+    dropLocalStorageKeysWhere((k) => RETIRED_ID_SETS.includes(k)
+      || (namesOwner(k, owner) && !k.endsWith(mirror) && !k.startsWith(REVOKE_OWED_PREFIX))),
+    dropLocalStorageKeysWhere((k) => namesOwner(k, owner, true), "sessionStorage"),
+  ];
+  return { survivors: sweeps.flatMap((s) => s.survivors), enumerated: sweeps.every((s) => s.enumerated) };
 }
 
 /**

@@ -177,7 +177,7 @@ describe("the connection layer", () => {
     const arm = text.slice(at, text.indexOf("return { ok: false, reason: outcome.reason };", at));
     expect(arm).toContain('enter({ k: "ended", reason: outcome.reason })');
     expect(arm).toContain("if (outcome.removesCopy === true)");
-    expect(arm).toContain("forgetProfile(env, id, { revoke: async () => true })");
+    expect(arm).toContain('forgetProfile(env, id, { revoke: async () => true, erased: outcome.died === "erased" })');
   });
 });
 

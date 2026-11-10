@@ -8,7 +8,7 @@
 
 /**
  * Per mailbox (address labels only when 2+ exist): the folder TREE, first level by default, the opened-set persisted
- * per device (`UI_KEYS.foldersOpened`), navigation opening ancestors; unread badges with ROLL-UP on a collapsed
+ * per account and device (`foldersOpenedKey`), navigation opening ancestors; unread badges with ROLL-UP on a collapsed
  * parent (own + hidden descendants — collapsing must never hide unread truth); and the many-folders treatment above
  * {@link FOLDER_FILTER_AT} roots — a type-to-filter line, the first 12 roots plus a "Show all N…" expander scrolling
  * in its OWN bounded region, so the piles, tags and Settings never leave reach; filtered matches render flat wearing
@@ -46,8 +46,9 @@ import {
   visibleFolderRows,
   type FolderTreeRow,
 } from "./folders";
-import { UI_KEYS, usePersistedFlag, usePersistedIdSet } from "./persisted-ui";
+import { UI_KEYS, foldersOpenedKey, usePersistedFlag, usePersistedIdSet } from "./persisted-ui";
 import { useRowMenuFit } from "./row-menu-fit";
+import { storageOwner } from "./storage-owner";
 
 const branchKey = (mailboxId: string, path: string): string => `${mailboxId}|${path}`;
 
@@ -134,7 +135,7 @@ export function FoldersRailGroup({
      translation, read by both surfaces that carry the note (`join.mailboxConnected`'s rule). */
   const ts = useTranslations("screener");
   const [open, setOpen] = usePersistedFlag(UI_KEYS.foldersOpen, true);
-  const opened = usePersistedIdSet(UI_KEYS.foldersOpened);
+  const opened = usePersistedIdSet(foldersOpenedKey(storageOwner()));
   /** Transient chrome: the per-mailbox filter text and the per-mailbox "Show all" expansion. */
   const [filter, setFilter] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
