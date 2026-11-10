@@ -37,6 +37,29 @@ export type EntitlementsPath =
   | "/v1/access" | "/v1/spend" | "/v1/spend/release" | "/v1/manage-link" | "/v1/account/release"
   | "/v1/checkout/confirm" | "/v1/usage" | "/v1/ops";
 
+/**
+ * A STATUS THE PROGRAM NEVER ANSWERS: the wire contract has no 429 on any path, so a hop in front of
+ * the program (the platform's edge) answered it, and the program did not see the call (2026-11-10).
+ */
+export const EDGE_THROTTLE_STATUS = 429;
+
+/**
+ * ONE RETRY AFTER AN EDGE 429, inside the call's own budget: a full-jitter pause in
+ * [`minDelayMs`, `maxDelayMs`), and only while `roomMs` of the budget is left after it, about 2.5
+ * times the worst `/v1/access` sample (390 ms). Retry-After is not read.
+ */
+export const EDGE_THROTTLE_RETRY = { minDelayMs: 250, maxDelayMs: 1_000, roomMs: 1_000 } as const;
+
+/** The two reads a 429 is asked again on. Every other path spends, records usage, mints or writes. */
+const RETRIED_ON_THROTTLE: ReadonlySet<EntitlementsPath> = new Set<EntitlementsPath>(["/v1/access", "/v1/ops"]);
+
+/** A whole pause in [min, max): a random source answering outside [0, 1), or NaN, cannot widen it. */
+function throttlePause(r: number): number {
+  const { minDelayMs: min, maxDelayMs: max } = EDGE_THROTTLE_RETRY;
+  const step = Math.floor((Number.isFinite(r) ? r : 0) * (max - min));
+  return min + Math.min(max - min - 1, Math.max(0, step));
+}
+
 /** How long an `access` verdict is reused before it is re-read. */
 export const ACCESS_TTL_MS = 60_000;
 
@@ -127,6 +150,8 @@ export interface CallFault {
    * refused nobody (the held verdict answered).
    */
   outlivedRequest: boolean;
+  /** How many times the call was sent: 1, or 2 when an edge 429 on a read was asked again. */
+  attempts: number;
 }
 
 /** The named opt-out for {@link EntitlementsClientConfig.onCallFault}: logged, never counted. */
@@ -141,6 +166,8 @@ export interface EntitlementsClientConfig {
   fetchImpl?: EntitlementsFetch;
   /** Test-only, per path. Production states nothing and takes the measured budgets above. */
   budgetsMs?: Partial<Record<EntitlementsPath, number>>;
+  /** Test-only, like `budgetsMs`: the retry's jitter. Production takes `Math.random`. */
+  random?: () => number;
   ttlMs?: number;
   now?: () => number;
   /**
@@ -476,6 +503,7 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     cfg.budgetsMs?.[p] ?? ENTITLEMENTS_CALL_BUDGET_MS;
   const ttlMs = cfg.ttlMs ?? ACCESS_TTL_MS;
   const clock = cfg.now ?? (() => Date.now());
+  const random = cfg.random ?? Math.random;
   const fetchImpl: EntitlementsFetch =
     cfg.fetchImpl ?? (globalThis.fetch as unknown as EntitlementsFetch);
   const report = cfg.onContractFault ?? ((f: ContractFault) => {
@@ -489,8 +517,13 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     console.warn(
       `[entitlements] ${f.path} `
       + (f.status === null ? "did not answer" : `answered ${String(f.status)}`)
-      + ` in ${String(f.elapsedMs)} ms of a ${String(f.budgetMs)} ms budget. The call took the `
-      + "fault path, so no verdict was read from it.");
+      + (f.attempts > 1 ? ` after ${String(f.attempts)} attempts` : "")
+      + ` in ${String(f.elapsedMs)} ms of a ${String(f.budgetMs)} ms budget. `
+      + (f.status === EDGE_THROTTLE_STATUS
+        ? "The program never answers 429: a hop in front of the program answered, and the program "
+          + "did not see the call. "
+        : "")
+      + "The call took the fault path, so no verdict was read from it.");
   });
   const reportUsage = cfg.onUsageUnrecorded ?? ((f: UsageUnrecorded) => {
     console.warn(`[entitlements] usage_not_recorded path=${f.path} lines=${String(f.lines)} why=${f.why}`);
@@ -513,12 +546,12 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
     try { report({ path, status, field }); } catch { /* observability is never load-bearing */ }
   };
   const callFault = async (
-    path: EntitlementsPath, status: number | null, startedAt: number, flight?: Flight,
+    path: EntitlementsPath, status: number | null, startedAt: number, attempts: number, flight?: Flight,
   ): Promise<void> => {
     try {
       await reportCall({
         path, status, elapsedMs: Date.now() - startedAt, budgetMs: budgetFor(path),
-        outlivedRequest: flight !== undefined && !flight.waited,
+        outlivedRequest: flight !== undefined && !flight.waited, attempts,
       });
     } catch { /* observability is never load-bearing */ }
   };
@@ -546,6 +579,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
    * that answers headers and then stalls still returns at the ceiling. Never throws: every
    * caller here has a degrade arm and a rejection would only move the mapping outwards.
    * `record: false` reports no call fault: the caller's answer is the record (`readOps`).
+   * An edge 429 on a read is sent once more inside the same budget ({@link EDGE_THROTTLE_RETRY});
+   * a fault then describes the last attempt.
    */
   const post = async (
     path: EntitlementsPath, payload: unknown, flight?: Flight, record = true,
@@ -563,7 +598,12 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
       else controller.signal.addEventListener("abort", fire, { once: true });
     });
     aborted.catch(() => { /* raced away */ });
-    try {
+    let attempts = 0;
+    // Not unref'd: a cron process must not exit in the middle of a retry.
+    let pause: ReturnType<typeof setTimeout> | undefined;
+    /** One attempt, its body read and drained, under the exchange's one signal. */
+    const send = async (): Promise<Exchange> => {
+      attempts += 1;
       const res = await Promise.race([
         fetchImpl(`${base}${path}`, {
           method: "POST",
@@ -582,13 +622,25 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
         // A non-JSON body is a fact the caller reads: `bodyIsJson` stays false, the status decides.
         body = undefined;
       }
-      if (record && res.status !== 200) await callFault(path, res.status, startedAt, flight);
       return { status: res.status, body, bodyIsJson };
+    };
+    try {
+      let res = await send();
+      if (res.status === EDGE_THROTTLE_STATUS && RETRIED_ON_THROTTLE.has(path)) {
+        const delay = throttlePause(random());
+        if (Date.now() - startedAt + delay + EDGE_THROTTLE_RETRY.roomMs <= budgetFor(path)) {
+          await Promise.race([new Promise<void>((resolve) => { pause = setTimeout(resolve, delay); }), aborted]);
+          res = await send();
+        }
+      }
+      if (record && res.status !== 200) await callFault(path, res.status, startedAt, attempts, flight);
+      return res;
     } catch {
-      if (record) await callFault(path, null, startedAt, flight);
+      if (record) await callFault(path, null, startedAt, attempts, flight);
       return null;
     } finally {
       clearTimeout(timer);
+      clearTimeout(pause);
     }
   };
 
@@ -840,8 +892,8 @@ export function makeEntitlementsClient(cfg: EntitlementsClientConfig): Entitleme
 
     async readOps(): Promise<PlaneOpsReading> {
       // NOT RECORDED: an `api_faults` row would page the outage a second time beside the pass's own
-      // `plane_ops_unreadable`, and would count a plane older than the route (404) as a 502. No
-      // retry either: the next pass is the retry. No cache, hold or flight is touched.
+      // `plane_ops_unreadable`, and would count a plane older than the route (404) as a 502. One
+      // retry on a 429; the next pass retries the rest. No cache, hold or flight is touched.
       const res = await post("/v1/ops", {}, undefined, false);
       if (res === null) return { state: "unreachable" };
       if (res.status === 404) return { state: "unsupported" };

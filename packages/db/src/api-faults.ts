@@ -1,7 +1,7 @@
 import { inArray, sql } from "drizzle-orm";
 import { apiFaults } from "./schema.js";
 import type { Tx } from "./change-log.js";
-import type { CallFault } from "./entitlements-client.js";
+import { EDGE_THROTTLE_STATUS, type CallFault } from "./entitlements-client.js";
 
 /**
  * THE API'S OWN 5xx RECORD (cloud 0033) — write, read, prune.
@@ -38,6 +38,13 @@ export const POOLER_REFUSAL_ERROR_CLASSES = [POOLER_REFUSAL_ERROR_CLASS, "DbConn
  * it ran is on the warn line the same call writes; the row carries no timing.
  */
 export const OUTLIVED_REQUEST_ERROR_CLASS = "EntitlementsCallOutlivedRequest";
+
+/**
+ * A credit-check call the caller received 429 for: the program never answers 429, so no upstream
+ * answered, and the edge in front of it refused the call ({@link EDGE_THROTTLE_STATUS}). The status
+ * column still reads 502 (its CHECK is 5xx); the 429 itself is on the warn line.
+ */
+export const EDGE_THROTTLED_ERROR_CLASS = "EntitlementsEdgeThrottled";
 
 /** Which arm answered the request. `alert_pass_runs.driver`'s closed set, with a CHECK behind it. */
 export type ApiFaultArm = "api" | "worker";
@@ -88,7 +95,9 @@ export function entitlementsFaultRow(
     // A closed set, not the status spelled into a name: every rule that groups on this column
     // wants a small set, and the exact status is on the warn line the same call writes. A program
     // that ANSWERED 5xx did so whoever waited; only a missing answer behind a response is moot.
-    errorClass: s !== null ? "EntitlementsCallRefused"
+    // A 429 is never the program's, so it names the hop that answered.
+    errorClass: s === EDGE_THROTTLE_STATUS ? EDGE_THROTTLED_ERROR_CLASS
+      : s !== null ? "EntitlementsCallRefused"
       : fault.outlivedRequest ? OUTLIVED_REQUEST_ERROR_CLASS : "EntitlementsCallTimeout",
     // Our own request id is bound by the middleware, downstream of the client that dials. Null is
     // the state the column names, not a value we could have had and dropped.
@@ -120,7 +129,7 @@ export function entitlementsFaultRecorder(
     const row = entitlementsFaultRow(fault, arm, at);
     opts.log?.warn("entitlements_call_fault", {
       route: row.route, status: fault.status, errorClass: row.errorClass,
-      elapsedMs: fault.elapsedMs, budgetMs: fault.budgetMs,
+      elapsedMs: fault.elapsedMs, budgetMs: fault.budgetMs, attempts: fault.attempts,
     });
     if (ENTITLEMENTS_FAULT_GRAIN[arm] === "minute") {
       const minute = Math.floor(at.getTime() / 60_000);
