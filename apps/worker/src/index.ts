@@ -1363,8 +1363,9 @@ export async function startWorkerWithLock(
      * WHICH ACCOUNTS ARE PARKED (mail 0124, the wall) — ONE reader for the roster AND the alert
      * pass, composed from the SAME client the spend sites take; `null` on a deployment that
      * meters nothing, the self-host truth: nobody parks. `ok: false ⇒ parked`; a fault answers
-     * last-known/allow, so a faulting reader can only sync more. The pass once read no parked set
-     * and paged hourly about accounts this roster had parked (`alert-pass-callers-name-parked`).
+     * the verdict this process holds, else the rows' stored closure, else allow. The pass once
+     * read no parked set and paged hourly about accounts this roster had parked
+     * (`alert-pass-callers-name-parked`).
      */
     const alertReaders = alertReadersOf(entitlements);
     const parkedAccountsReader: ParkedAccountsReader | null = alertReaders.parkedAccounts;
@@ -3645,11 +3646,13 @@ export async function startWorkerWithLock(
         if (stopped) return;
         // A reopened account whose catch-up was not recorded keeps its block one more pass.
         if (deferred.has(mb.accountId)) continue;
-        const block = leaseBlocked.get(mb.mailboxId)
+        // The park first (it holds only this pass's parked rows): a ceiling or a throttle noted before
+        // it must not keep account_closed off the row, the closure a worker started in a plane fault reads.
+        const block = parkedBlocked.get(mb.mailboxId)
+          ?? leaseBlocked.get(mb.mailboxId)
           ?? awaitingCreds.get(mb.mailboxId)
           ?? capDropped.get(mb.mailboxId)
-          ?? readLimited.get(mb.mailboxId)
-          ?? parkedBlocked.get(mb.mailboxId);
+          ?? readLimited.get(mb.mailboxId);
         try {
           // `>=`, so a grace of 0 writes on the first observation — which is what the roster guards
           // configure. The narrowing is written inline rather than hoisted into a `due` boolean
