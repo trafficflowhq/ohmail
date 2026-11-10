@@ -53,6 +53,7 @@ describe("the strip over a gate refused by name", () => {
   it.each([
     ["meta_folder_full", EN.phoneStateMetaFolderFull],
     ["meta_undeletable", EN.phoneStateMetaUndeletable],
+    ["mailbox_full", EN.phoneStateMailboxFull],
     ["clock_off", EN.phoneStateClockOff],
   ] as const)("%s: the desktop sentence, and no Start", (reason, sentence) => {
     expect(holdStandaloneDoor(door(reason))).toBe(true);
@@ -80,6 +81,7 @@ describe("the strip over a gate refused by name", () => {
   it("the German strip says the German desktop sentence", () => {
     expect(DE.phoneStateMetaFolderFull).toContain("ohmail/_meta");
     expect(DE.phoneStateMetaUndeletable).toContain("ohmail/_meta");
+    expect(DE.phoneStateMailboxFull).toContain("Postfach auf diesem Mailserver ist voll");
     expect(DE.phoneStateClockOff).toContain("Uhr dieses Handys");
   });
 });
@@ -88,6 +90,7 @@ describe("a Start refused under that code says the same sentence", () => {
   it.each([
     ["meta_folder_full", "startMetaFolderFull", EN.phoneStateMetaFolderFull],
     ["meta_undeletable", "startMetaUndeletable", EN.phoneStateMetaUndeletable],
+    ["mailbox_full", "startMailboxFull", EN.phoneStateMailboxFull],
     ["clock_off", "startClockOff", EN.phoneStateClockOff],
   ] as const)("%s", async (code, said, sentence) => {
     expect(holdStandaloneDoor(door(null, code))).toBe(true);
@@ -114,6 +117,7 @@ describe("an organizing phone whose poll gate refuses", () => {
   it.each([
     ["meta_folder_full", EN.phoneStateMetaFolderFull],
     ["meta_undeletable", EN.phoneStateMetaUndeletable],
+    ["mailbox_full", EN.phoneStateMailboxFull],
     ["clock_off", EN.phoneStateClockOff],
   ] as const)("%s: the sentence over Organizing, and Stop stays", (reason, sentence) => {
     expect(holdStandaloneDoor(door(reason, "refused", true))).toBe(true);

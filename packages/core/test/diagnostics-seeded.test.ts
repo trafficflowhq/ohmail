@@ -170,7 +170,7 @@ describe("the diagnostic file carries none of a mailbox's words", () => {
      support reads the file for. The ordinary unreadable lease beside it keeps its own. */
   it.each([
     ["meta_folder_full", "meta_folder_full"], ["lease_unreadable", "unreadable"], ["clock_off", "clock_off"],
-    ["meta_undeletable", "meta_undeletable"],
+    ["meta_undeletable", "meta_undeletable"], ["mailbox_full", "mailbox_full"],
   ] as const)("a mailbox blocked %s reads lease %s and keeps its block reason", (reason, lease) => {
     const input = fixture();
     input.mailboxes = [{ id: MAILBOX_ID, status: "connected", syncBlockedReason: reason, organizerRole: "organizer" }];

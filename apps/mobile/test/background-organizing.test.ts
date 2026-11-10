@@ -121,7 +121,7 @@ interface EngineLog {
   stopOrganizing: StopOrganizingOutcome;
   stopOrganizingThrows: boolean;
   /** What `claimHere()` answers, next call first; the last one repeats. */
-  claimHere: ("claimed" | "held" | "refused")[];
+  claimHere: ("claimed" | "held" | "refused" | "mailbox_full")[];
   claimHereThrows: boolean;
   /** Who each `claimHere` said was asking — the watch must never ask as a person. */
   claimBy: string[];
@@ -1903,14 +1903,15 @@ describe("the holder left, and the phone in front of the person takes its mailbo
    * second factor on it), but the SHAPE is what these two cases hold: a refusal that stands costs
    * ticks and is said once, and a refusal that lifts is still answered.
    */
-  it("a standing refusal backs the watch off and is said ONCE", async () => {
+  /* A full mailbox is a standing refusal too: the person must make room on the server. */
+  it.each(["refused", "mailbox_full"] as const)("a standing refusal (%s) backs the watch off and is said ONCE", async (answer) => {
     vi.useFakeTimers();
     try {
       const w = wire("android", {
         checkEveryMs: 1000,
         engine: {
           organizing: [{ mailboxId: "mb1", organizing: false, standDown: true, claimed: false }],
-          claimHere: ["refused"],
+          claimHere: [answer],
         },
       });
       await vi.advanceTimersByTimeAsync(30_000);

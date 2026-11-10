@@ -115,3 +115,39 @@ describe("the sweep's refusal aims the probe at our own claim or nothing", () =>
     expect(peekMemo(ID)?.memo.undeletableUid).toBe(ours);
   });
 });
+
+/* A MAILBOX AT ITS QUOTA (mailbox_full): the claim APPEND is refused for room, `_meta` is left as
+   it was, and the first round with room organizes with no press and one claim of ours. */
+describe("a mailbox at its quota refuses the claim for room", () => {
+  const ours = (server: MemoryImapServer): number => server.tree.get(META)!.messages
+    .filter((m) => m.raw.includes(`X-Ohmail-Install-Id: ${ID.installId}`)).length;
+  const fullAt = (code?: string | null): MemoryImapServer => {
+    const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", META] });
+    const hb = new Date(t0.getTime() - 60_000);
+    server.seed(META, formatClaim({ installId: ID.installId, kind: "cloud", displayName: "Cloud", heartbeat: hb,
+      claimedAt: hb, nonce: "ours", authorizedAt: null, capabilities: [] }), hb);
+    server.seed("INBOX", `Subject: a letter\r\n\r\n${"x".repeat(8_192)}`, hb);
+    server.misbehave({ quota: { limit: server.usage(), ...(code === undefined ? {} : { code }) } });
+    return server;
+  };
+
+  it.each([
+    ["OVERQUOTA", undefined], ["a bare NO read against the quota", null],
+  ] as const)("%s: three rounds read mailbox_full, and 1 KB freed organizes", async (_label, code) => {
+    const server = fullAt(code);
+    const before = server.tree.get(META)!.messages.map((m) => [m.uid, m.raw]);
+    const ops: string[] = [];
+    for (let i = 0; i < 3; i++) ops.push(await round(server, new Date(t0.getTime() + i * 10_000)));
+    expect(ops).toEqual(Array(3).fill("mailbox_full"));
+    expect(server.tree.get(META)!.messages.map((m) => [m.uid, m.raw]), "_meta changed while full").toEqual(before);
+    server.misbehave({ quota: { limit: server.usage() + 1_024 } });
+    expect(await round(server, new Date(t0.getTime() + 30_000))).toBe("organize");
+    expect(ours(server)).toBe(1);
+  }, 60_000);
+
+  it("CONTROL: a bare NO on a server without QUOTA still reads renew_claim", async () => {
+    const server = fullAt(null);
+    server.misbehave({ quota: { limit: server.usage(), code: null, announce: false } });
+    expect(await round(server, t0)).toBe("renew_claim");
+  }, 60_000);
+});

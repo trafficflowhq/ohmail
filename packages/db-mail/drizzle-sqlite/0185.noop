@@ -1,0 +1,6 @@
+0185_sync_blocked_reason_mailbox_full — NOT CARRIED AS A STEP: THE DEVICE STORE HAS NO CHECK HERE.
+
+The shared entry widens the `mailboxes_sync_blocked_reason_closed` CHECK by one member,
+`mailbox_full`. On this store `sync_blocked_reason` is a plain `text` column with no CHECK
+(`0001_baseline.sql`; `closed-sets.ts` classes the set WIDENABLE, refused at the write door), so
+there is nothing to rebuild or change.

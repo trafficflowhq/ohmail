@@ -156,8 +156,14 @@ describe("what an unreadable lease is called on the mailbox row", () => {
     expect(isMailboxSyncBlockReason("meta_undeletable")).toBe(true);
   });
 
+  it("a claim refused for room says the mailbox is full; a plain refused renew still reads unreadable", () => {
+    expect(leaseBlockReason(new LeaseUnavailableError("no room", { op: "mailbox_full" }))).toBe("mailbox_full");
+    expect(isMailboxSyncBlockReason("mailbox_full")).toBe(true);
+    expect(leaseBlockReason(new LeaseUnavailableError("refused", { op: "renew_claim" }))).toBe("lease_unreadable");
+  });
+
   it("a named block is the server answering; only an unreadable lease may be the connection", () => {
-    for (const op of ["meta_folder_full", "meta_undeletable", "clock_skew"] as const) {
+    for (const op of ["meta_folder_full", "meta_undeletable", "clock_skew", "mailbox_full"] as const) {
       expect(leaseRefusalIsNamed(new LeaseUnavailableError(op, { op })), op).toBe(true);
     }
     expect(leaseRefusalIsNamed(new LeaseUnavailableError("socket", { op: "list_claims" }))).toBe(false);

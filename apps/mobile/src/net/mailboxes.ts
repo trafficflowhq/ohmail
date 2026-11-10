@@ -521,6 +521,7 @@ export async function organizeHere(
     /* The gate refused for a reason fixed on the server or the phone's clock: the desktop row's words. */
     if (code === "meta_folder_full") return { kind: "refused", reason: refuse("phoneStateMetaFolderFull") };
     if (code === "meta_undeletable") return { kind: "refused", reason: refuse("phoneStateMetaUndeletable") };
+    if (code === "mailbox_full") return { kind: "refused", reason: refuse("phoneStateMailboxFull") };
     if (code === "clock_off") return { kind: "refused", reason: refuse("phoneStateClockOff") };
   }
   /* EVERY OTHER STATUS IS A REFUSAL WITH ITS NUMBER IN IT. 400 is a screening answer the door

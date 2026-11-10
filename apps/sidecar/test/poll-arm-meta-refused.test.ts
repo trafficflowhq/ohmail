@@ -9,7 +9,7 @@ import {
 import { memoryImapServer, type MemoryImapServer } from "../../../packages/core/test/adapters/_metaworld.js";
 import { freshDataDir } from "./_datadir.js";
 import { grantOrganizeConsent } from "./_consent.js";
-import { createSidecar } from "../src/engine.js";
+import { LOCAL_CONNECTION_DEAD_AFTER_CYCLES, createSidecar } from "../src/engine.js";
 
 /**
  * AN ORGANIZING PHONE WHOSE POLL GATE STARTS REFUSING (HIGH-1, its probe kept):
@@ -75,5 +75,43 @@ describe("the poll arm over a folder that fills while this install organizes", (
     const healed = Date.now() + 20_000;
     while (Date.now() < healed && state().unreadableReason !== null) await new Promise((r) => setTimeout(r, 50));
     expect([state().organizing, state().unreadableReason], "a healthy pass left the reason standing").toEqual([true, null]);
+  }, 60_000);
+
+  /* A MAILBOX THAT FILLS TO ITS QUOTA while this install organizes: the renew is refused for room,
+     a named block, so past the dead-connection bound's cycle arm nothing re-dials and the row keeps
+     the reason; room returned clears it. */
+  it("a mailbox at its quota stays mailbox_full past the dead-connection bound, and room clears it", async () => {
+    const server = memoryImapServer({ prefix: "INBOX.", folders: ["INBOX.ohmail", META] });
+    const lines: Array<{ event: string; detail: Record<string, unknown> }> = [];
+    const dataDir = await freshDataDir("ohmail-poll-arm-full-");
+    const sidecar = await createSidecar({
+      dataDir, installId: INSTALL,
+      imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: "owner@trafficflow.test", pass: "mailbox-unreached-password" } },
+      address: "owner@trafficflow.test", machineName: "the laptop",
+      pollIntervalMs: 200, idlePollCeilingMs: 200, leaseStaleAfterMs: 600_000,
+      adapterFactory: adapterOver(server), log: (event, detail) => { lines.push({ event, detail }); },
+    });
+    cleanups.push(async () => { await sidecar.stop(); rmSync(dataDir, { recursive: true, force: true }); });
+    await grantOrganizeConsent(sidecar);
+    await sidecar.start();
+    const state = () => Object.values(sidecar.organizerStates())[0]!;
+    expect(state().organizing, "the fixture never organized").toBe(true);
+    server.seed("INBOX", `Subject: a letter\r\n\r\n${"x".repeat(8_192)}`);
+    server.misbehave({ quota: { limit: server.usage() } });
+    const refused = (): number => lines.filter((l) => l.event === "sync_cycle_failed").length;
+    const end = Date.now() + 30_000;
+    while (Date.now() < end && refused() < LOCAL_CONNECTION_DEAD_AFTER_CYCLES + 2) await new Promise((r) => setTimeout(r, 50));
+    expect(refused(), "the polls never passed the cycle bound").toBeGreaterThanOrEqual(LOCAL_CONNECTION_DEAD_AFTER_CYCLES + 2);
+    expect(state().unreadableReason).toBe("mailbox_full");
+    expect(lines.map((l) => l.event), "a full mailbox was read as a dead connection").not.toContain("mailbox_connection_unavailable");
+    const res = await sidecar.handle(new Request("http://engine.invalid/mailboxes", {
+      headers: { authorization: `Bearer ${sidecar.sessionToken}` },
+    }));
+    const row = ((await res.json()) as { items: Array<Record<string, unknown>> }).items[0]!;
+    expect([row.status, row.syncBlockedReason, row.errorCode ?? null]).toEqual(["connected", "mailbox_full", null]);
+    server.misbehave({ quota: { limit: server.usage() + 4_096 } });
+    const healed = Date.now() + 20_000;
+    while (Date.now() < healed && state().unreadableReason !== null) await new Promise((r) => setTimeout(r, 50));
+    expect([state().organizing, state().unreadableReason], "room returned left the reason standing").toEqual([true, null]);
   }, 60_000);
 });

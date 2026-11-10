@@ -824,6 +824,8 @@ describe("mail 0029 becomes visible", () => {
       ["meta_folder_full", "Move mail that was filed into it to another folder"],
       // mail 0143 — a `_meta` that takes no delete: the cure is a PERMISSION, never a deletion.
       ["meta_undeletable", "Give that folder delete permission"],
+      // mail 0185 — the mailbox at its own quota at the provider refused the claim for room.
+      ["mailbox_full", "is full"],
     ] as const) {
       facts = [blockedMailbox(reason, { status: "connected", errorCode: null })];
       const c = await shell();

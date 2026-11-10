@@ -2433,6 +2433,7 @@ describe("the consent the door already took", () => {
   it.each([
     ["meta_folder_full", "phoneStateMetaFolderFull", "ohmail/_meta"],
     ["meta_undeletable", "phoneStateMetaUndeletable", "ohmail/_meta"],
+    ["mailbox_full", "phoneStateMailboxFull", "is full"],
     ["clock_off", "phoneStateClockOff", "this phone's clock"],
   ] as const)("a 503 %s says the desktop row's sentence", async (code, say, words) => {
     const log = doorLog();

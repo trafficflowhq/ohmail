@@ -49,6 +49,7 @@ export const SYNC_BLOCK_REASONS = [
   "provider_unavailable",
   "meta_folder_full",
   "meta_undeletable",
+  "mailbox_full",
 ] as const;
 export type SyncBlockReason = (typeof SYNC_BLOCK_REASONS)[number];
 

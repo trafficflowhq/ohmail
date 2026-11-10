@@ -86,3 +86,20 @@ describe("the undeletable meta folder's sentence", () => {
     expect(`${await strip("meta_undeletable", "de")} Lösche die Nachrichten.`).toMatch(DELETE_ASKED);
   });
 });
+
+/* A mailbox at its quota refused the claim for room (mail 0185): the sentence names the full
+   mailbox and where to make room, never the folder ohmail could not read. */
+describe("the full mailbox's sentence", () => {
+  it.each([
+    ["en", "full", "Free up space", ["cannot read its own folder"]],
+    ["de", "voll", "Schaffe Platz", ["kann seinen eigenen Ordner"]],
+  ] as const)("%s says the mailbox is full and where to make room", async (locale, full, room, never) => {
+    const text = await strip("mailbox_full", locale);
+    expect(text).toContain(full);
+    expect(text).toContain(room);
+    for (const n of never) expect(text).not.toContain(n);
+    expect(text).not.toContain("_meta");
+    expect(text).not.toContain("blocked_mailbox_full");
+    expect(text, "the cure asks the person to delete mail").not.toMatch(DELETE_ASKED);
+  });
+});

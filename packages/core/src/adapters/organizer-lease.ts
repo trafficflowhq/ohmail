@@ -2022,6 +2022,37 @@ function metaFullOp(err: unknown): "meta_folder_full" | null {
   return null;
 }
 
+/**
+ * A claim APPEND the server refused for lack of room, proved by a quota reading the claim cannot fit
+ * (the refusal itself named no cause). `cause` is the server's refusal.
+ */
+export class MetaRoomRefusedError extends Error {
+  constructor(options: { cause: unknown }) {
+    super(`the mailbox has no room for the organizer claim in ${META_FOLDER}`, options);
+    this.name = "MetaRoomRefusedError";
+  }
+}
+
+/**
+ * Was the claim APPEND refused for room? Dovecot's `NO [OVERQUOTA]`, or a {@link MetaRoomRefusedError}.
+ * Structure only: the server's text is never read.
+ */
+export function claimRefusedForRoom(err: unknown): boolean {
+  if (err instanceof MetaRoomRefusedError) return true;
+  if (typeof err !== "object" || err === null) return false;
+  const { responseStatus, serverResponseCode } = err as { responseStatus?: unknown; serverResponseCode?: unknown };
+  return responseStatus === "NO" && typeof serverResponseCode === "string" && serverResponseCode.toUpperCase() === "OVERQUOTA";
+}
+
+/** A tagged NO naming no cause, or only `ALERT`/`LIMIT`: the refusals a quota reading may explain. */
+function refusalMayBeRoom(err: unknown): boolean {
+  if (typeof err !== "object" || err === null) return false;
+  const e = err as { responseStatus?: unknown; serverResponseCode?: unknown; code?: unknown; authenticationFailed?: unknown };
+  if (e.responseStatus !== "NO" || e.code === "ETHROTTLE" || e.authenticationFailed === true) return false;
+  const code = typeof e.serverResponseCode === "string" ? e.serverResponseCode.toUpperCase() : undefined;
+  return code === undefined || code === "ALERT" || code === "LIMIT";
+}
+
 /** A size refusal's message is the person's sentence; any other enumeration refusal keeps its own. */
 function enumRefusalMessage(err: MetaEnumRefusedError): string {
   return metaFullOp(err) === null ? err.message
@@ -2207,6 +2238,9 @@ export type LeaseOp =
    * renew cleanups in a row were proved not carried out, and the probe of one own claim found it
    * still standing. No claim is written while it holds. Same class, for the reason above. */
   | "meta_undeletable"
+  /* The claim APPEND was refused for room: the mailbox is at its own quota at the provider
+     ({@link claimRefusedForRoom}). Same class, for the reason above. */
+  | "mailbox_full"
   /** STORE `\Deleted` + EXPUNGE the acknowledgements past their life — see {@link RequestOp}. */
   | "sweep_acks"
   /** COPY + EXPUNGE the records deeper than {@link SEARCH_WALK_SPAN} — see {@link RequestOp}. */
@@ -2450,6 +2484,13 @@ export interface LeaseImapClient extends MetaFolderClient {
     options?: { uid?: boolean },
   ): AsyncIterableIterator<{ uid: number; seq?: number; headers?: Buffer; internalDate?: Date; flags?: Set<string> }>;
   append(path: string, content: string | Buffer, flags?: string[]): Promise<unknown>;
+  /**
+   * GETQUOTAROOT, imapflow's shape: `false` where the server has no QUOTA, usage and limit in bytes
+   * (`storage`) or messages (`message`) otherwise. Optional; asked only after a refused claim APPEND.
+   */
+  getQuota?(path: string): Promise<{
+    storage?: { usage?: number; limit?: number }; message?: { usage?: number; limit?: number };
+  } | false | undefined>;
   /**
    * COPY `ohmail/_meta` INTO ITSELF, so its records get fresh uids at the top of its uid space —
    * one caller, {@link RequestOrganizerIo.compactMeta}.
@@ -3256,6 +3297,23 @@ export function makeLeaseIo(
   // `_meta`" differently is exactly how each ends up renewing a claim the other cannot see.
   const meta = makeMetaFolderRef(client, toServerPath);
 
+  /* One GETQUOTAROOT after a refused claim APPEND: does the mailbox lack room for it? Any failure
+     to say is "no evidence"; the numbers are compared here and never kept or logged. */
+  const claimDoesNotFit = async (path: string, bytes: number): Promise<boolean> => {
+    if (client.getQuota === undefined) return false;
+    try {
+      const q = await metaReadBudget(now).race(client.getQuota(path), path);
+      if (typeof q !== "object" || q === null) return false;
+      const left = (r: { usage?: number; limit?: number } | undefined): number | null =>
+        typeof r?.usage === "number" && typeof r.limit === "number" ? r.limit - r.usage : null;
+      const bytesLeft = left(q.storage);
+      const messagesLeft = left(q.message);
+      return (bytesLeft !== null && bytesLeft < bytes) || (messagesLeft !== null && messagesLeft < 1);
+    } catch {
+      return false;
+    }
+  };
+
   /**
    * THE UID GENERATION AS OF THE LAST READ, SAMPLED UNDER THAT READ'S OWN LOCK.
    *
@@ -3369,7 +3427,16 @@ export function makeLeaseIo(
     },
 
     async appendClaim(raw: string): Promise<void> {
-      const reply = await client.append(await meta.path(), raw, ["\\Seen"]);
+      const path = await meta.path();
+      let reply: unknown;
+      try {
+        reply = await client.append(path, raw, ["\\Seen"]);
+      } catch (err) {
+        if (refusalMayBeRoom(err) && await claimDoesNotFit(path, Buffer.byteLength(raw, "utf8"))) {
+          throw new MetaRoomRefusedError({ cause: err });
+        }
+        throw err;
+      }
       /* UIDPLUS reports the uid the appended message was given. Servers that do not support it
        * say nothing, and then the read below simply works the way it did before this existed —
        * which is why nothing may be concluded from the absence of a uid here. */
@@ -4043,7 +4110,7 @@ export async function runLeaseGate(input: LeaseGateInput): Promise<LeaseGateResu
   } catch (err) {
     throw new LeaseUnavailableError(
       `the organizer claim in ${META_FOLDER} could not be renewed`,
-      { op: "renew_claim", cause: err },
+      { op: claimRefusedForRoom(err) ? "mailbox_full" : "renew_claim", cause: err },
     );
   }
 

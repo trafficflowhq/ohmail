@@ -136,6 +136,12 @@ export const MAILBOX_SYNC_BLOCK_REASONS = [
    * delete permission on that folder, never a deletion of the person's mail.
    */
   "meta_undeletable",
+  /**
+   * The server refused the lease's claim for room (mail 0185): the mailbox is at its own quota at
+   * the provider. Same exempt class; the cure is room in that mailbox. Never ohmail Cloud's own
+   * storage (the storage card, `account_storage`), which fills on its own terms.
+   */
+  "mailbox_full",
 ] as const;
 
 export type MailboxSyncBlockReason = (typeof MAILBOX_SYNC_BLOCK_REASONS)[number];
