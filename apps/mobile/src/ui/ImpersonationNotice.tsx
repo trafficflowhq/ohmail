@@ -1,7 +1,7 @@
 /**
  * THE LETTERS OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY, on the phone's Screener tab — the web
- * header's one line (`impersonation-notice.ts` decides what it counts). Read when the tab mounts and
- * after a Put back; Review lists each with the claim's sentence and Put back, OK records the newest
+ * header's one line (`impersonation-notice.ts` decides what it counts). Read when the tab mounts, after
+ * a Put back and whenever Spam's letters change (`spamMark`: the organizer filed one); Review lists each with the claim's sentence and Put back, OK records the newest
  * as seen on this phone. Absent while unread, unanswered, or with nothing new. No toast.
  */
 import { useEffect, useReducer, useRef, useState } from "react";
@@ -14,7 +14,7 @@ import { Button, Panel, Txt } from "./base";
 import { autoFiledSaid, type AutoFiledSaid } from "./auto-filed-said";
 import { impersonationWhy, newestSeen, unseenImpersonations } from "./impersonation-notice";
 
-export function ImpersonationNotice({ session }: { session: ConnectedSession }) {
+export function ImpersonationNotice({ session, spamMark }: { session: ConnectedSession; spamMark: string }) {
   const prefs = usePrefs();
   const seen = prefs.impersonationSeen ?? "";
   const [items, setItems] = useState<AutoFiledItem[] | null>(null);
@@ -23,12 +23,30 @@ export function ImpersonationNotice({ session }: { session: ConnectedSession }) 
   const [said, setSaid] = useState<AutoFiledSaid>(null);
   const [asked, ask] = useReducer((n: number) => n + 1, 0);
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
   useEffect(() => {
-    let live = true;
-    void readAutoFiled(session).then((page) => { if (live) setItems(page === null ? null : page.items); });
-    return () => { live = false; };
-  }, [session, asked]);
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
+  // One read in the air; changes meanwhile coalesce into one more after it.
+  const reading = useRef({ session, busy: false, again: false });
+  useEffect(() => {
+    const r = reading.current;
+    r.session = session;
+    if (r.busy) { r.again = true; return; }
+    const read = (): void => {
+      const from = r.session;
+      r.busy = true;
+      r.again = false;
+      void readAutoFiled(from).then((page) => {
+        // A read that cannot say leaves the last good list (and its Put back) in place.
+        if (alive.current && page !== null && r.session === from) setItems(page.items);
+      }).finally(() => {
+        r.busy = false;
+        if (r.again && alive.current) read();
+      });
+    };
+    read();
+  }, [session, asked, spamMark]);
 
   if (items === null) return null;
   const unseen = unseenImpersonations(items, seen);

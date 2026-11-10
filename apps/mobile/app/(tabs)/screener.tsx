@@ -8,7 +8,7 @@
  * classifier runs client-side, and a row without a suggestion honestly has
  * none. The shelf's rows go through `MailList`, which mounts a window of them.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
 import { Copy } from "../../src/copy";
@@ -33,6 +33,7 @@ import { firstPassWithholds } from "../../src/state/seed-offer";
 import { standaloneHereFor } from "../../src/engine/organizer-session";
 import { useConnection } from "../../src/net/connection";
 import { ImpersonationNotice } from "../../src/ui/ImpersonationNotice";
+import { spamLettersMark } from "../../src/ui/impersonation-notice";
 
 /**
  * The three empty states, READ WHEN THE SCREEN RENDERS rather than when this module is imported.
@@ -93,6 +94,8 @@ function ScreenerBody() {
     ? { title: say.title, hint: say.hint, action: { label: say.press, onPress: () => router.push("/settings") } }
     : emptyFor(seg);
   const { waiting, screened, spam, meta, waitingPending } = w.screener;
+  // What the Spam count follows: a filing moves it, and the impersonation line asks again.
+  const spamMark = useMemo(() => spamLettersMark(spam), [spam]);
   // Unknown ≠ empty, per SEGMENT: the active shelf's own count against the one settled fact.
   const shelves: Record<ScreenerSeg, ScreenerRow[]> = { waiting, screened, spam };
   // "Nobody is waiting" over a first import the gate has not judged yet is a claim nobody made.
@@ -185,7 +188,7 @@ function ScreenerBody() {
             />
             {seg === "waiting" ? <FailedLetters letters={w.screener.failedAtGate} onFile={w.actions.fileFailed} /> : null}
             {/* What ohmail filed to Spam for claiming a company: one line, Review, Put back and OK. */}
-            {seg === "waiting" && session !== null ? <ImpersonationNotice session={session} /> : null}
+            {seg === "waiting" && session !== null ? <ImpersonationNotice session={session} spamMark={spamMark} /> : null}
           </>
         }
         empty={shelfEmpty}
