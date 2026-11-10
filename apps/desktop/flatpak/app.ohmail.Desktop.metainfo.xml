@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.4" date="2026-11-10">
+      <description>
+        <ul>
+          <li>A wide newsletter is fitted to the fold's cover screen on every open</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.3" date="2026-11-10">
       <description>
         <ul>
@@ -117,13 +124,6 @@
           <li>A refused first Connect on the phone leaves no mailbox behind</li>
           <li>ohmail.app/support and ohmail.app/delete-account open the website's pages</li>
           <li>The phone links its privacy policy, imprint and support pages, and offers Delete account</li>
-        </ul>
-      </description>
-    </release>
-    <release version="0.30.50" date="2026-11-08">
-      <description>
-        <ul>
-          <li>Cloud shows the storage estimate for very large mailboxes, never below what is kept</li>
         </ul>
       </description>
     </release>
