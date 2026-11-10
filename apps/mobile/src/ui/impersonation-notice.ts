@@ -26,3 +26,20 @@ export function impersonationWhy(i: AutoFiledItem): string {
     ? Copy.senderCheckImpersonationShared(brand, domain)
     : Copy.senderCheckImpersonation(brand, domain);
 }
+
+/**
+ * A mark of the letters on the Spam shelf, the fact its count follows: a filing changes it, so the
+ * line asks again. Order-sensitive, which at worst asks once more than needed.
+ */
+export function spamLettersMark(rows: readonly { held: readonly { id: string }[] }[]): string {
+  let n = 0;
+  let h = 0x811c9dc5;
+  for (const r of rows) {
+    for (const m of r.held) {
+      n++;
+      for (let i = 0; i < m.id.length; i++) h = Math.imul(h ^ m.id.charCodeAt(i), 0x01000193);
+      h = Math.imul(h ^ 0x2c, 0x01000193);
+    }
+  }
+  return `${n}:${(h >>> 0).toString(36)}`;
+}

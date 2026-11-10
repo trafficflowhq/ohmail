@@ -91,7 +91,7 @@ import { useAppLocale } from "./LocaleContext";
 import type { UndoToastFn } from "./undo-door";
 import type { ReleasePressInput } from "./routing-undo";
 import { givenUpRowIds } from "./screener-given-up";
-import { useImpersonationFiled, type ImpersonationFiledNotice } from "./impersonation-filed";
+import { spamLettersMark, useImpersonationFiled, type ImpersonationFiledNotice } from "./impersonation-filed";
 
 /**
  * ONE SUBSCRIBER PER ENGINE for the abandoned list ({@link givenUpRowIds}): a module-level closure
@@ -2423,8 +2423,9 @@ export function useScreenerState(
       ? { total: unscreenedTotal, atLeast: unscreenedAtLeast, groups: unscreenedRows, screening, screen: pressUnscreened }
       : null;
 
-  /* WHAT OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY — asked once per mount, as the offers above. */
-  const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked");
+  /* WHAT OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY — asked at mount and again when Spam's letters change. */
+  const spamMark = useMemo(() => spamLettersMark(segments.spam), [segments]);
+  const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked", spamMark);
 
   return {
     heldRelease,

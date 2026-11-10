@@ -2,8 +2,8 @@
 
 /**
  * THE LETTERS OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY — the Screener's one quiet line (owner,
- * 2026-11-09). Read through the engine (`GET /screener/auto-filed`) once per mount and after a Put
- * back, never mirrored; only `impersonation` filings newer than this device's mark count. OK records
+ * 2026-11-09). Read through the engine (`GET /screener/auto-filed`) at mount, after a Put back and
+ * whenever Spam's letters change (the organizer filed one), never mirrored; only `impersonation` filings newer than this device's mark count. OK records
  * the newest as seen on this device, and a refused storage keeps it for the session. Put back returns
  * letters to the Screener for good. One line per batch, no toast.
  */
@@ -50,8 +50,28 @@ export function unseenImpersonations(items: readonly AutoFiledItemWire[], seen: 
   return items.filter((i) => i.why === "impersonation" && i.filedAt > seen);
 }
 
-/** The notice, or `null` while unread, unanswerable, acknowledged, or where a press is walled (`blocked`). */
-export function useImpersonationFiled(engine: OhmailEngine, blocked: boolean): ImpersonationFiledNotice | null {
+/**
+ * A mark of the letters on the Spam shelf, the fact its count follows: a filing changes it, so the
+ * line asks again. Order-sensitive, which at worst asks once more than needed.
+ */
+export function spamLettersMark(rows: readonly { held: readonly { id: string }[] }[]): string {
+  let n = 0;
+  let h = 0x811c9dc5;
+  for (const r of rows) {
+    for (const m of r.held) {
+      n++;
+      for (let i = 0; i < m.id.length; i++) h = Math.imul(h ^ m.id.charCodeAt(i), 0x01000193);
+      h = Math.imul(h ^ 0x2c, 0x01000193);
+    }
+  }
+  return `${n}:${(h >>> 0).toString(36)}`;
+}
+
+/**
+ * The notice, or `null` while unread, unanswerable, acknowledged, or where a press is walled (`blocked`).
+ * `spamMark` is {@link spamLettersMark} of the Spam shelf.
+ */
+export function useImpersonationFiled(engine: OhmailEngine, blocked: boolean, spamMark: string): ImpersonationFiledNotice | null {
   const [items, setItems] = useState<AutoFiledItemWire[] | null>(null);
   const [seen, setSeen] = useState<string>(readImpersonationSeen);
   const [open, setOpen] = useState(false);
@@ -62,14 +82,28 @@ export function useImpersonationFiled(engine: OhmailEngine, blocked: boolean): I
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
-  // Asked once per mount and again after each Put back; no memoized closure holds this frame.
+  // Asked at mount, after each Put back and on each Spam change; no memoized closure holds this frame.
   const [asked, ask] = useReducer((n: number) => n + 1, 0);
+  // One read in the air; changes meanwhile coalesce into one more after it.
+  const reading = useRef({ engine, busy: false, again: false });
   useEffect(() => {
-    let live = true;
-    // A door that cannot say leaves the state alone: no render for an answer that changes nothing.
-    void engine.autoFiled().then((page) => { if (live && page !== null) setItems(page.items); });
-    return () => { live = false; };
-  }, [engine, asked]);
+    const r = reading.current;
+    r.engine = engine;
+    if (r.busy) { r.again = true; return; }
+    const read = (): void => {
+      const from = r.engine;
+      r.busy = true;
+      r.again = false;
+      // A door that cannot say leaves the state alone: no render for an answer that changes nothing.
+      void from.autoFiled().then((page) => {
+        if (alive.current && page !== null && r.engine === from) setItems(page.items);
+      }).finally(() => {
+        r.busy = false;
+        if (r.again && alive.current) read();
+      });
+    };
+    read();
+  }, [engine, asked, spamMark]);
 
   if (items === null || blocked) return null;
   const unseen = unseenImpersonations(items, seen);
