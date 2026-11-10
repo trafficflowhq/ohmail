@@ -84,7 +84,7 @@ const filingsApi: MailboxFilingsApi = {
   read: mailboxApi.filings, retry: mailboxApi.retryFilings, leave: mailboxApi.leaveFilings,
 };
 
-/** The account this tab is for, confirmed or pending: the revoke door's when the jar names nobody. */
+/** The account this tab is for, confirmed or pending: the doors' when the jar names nobody. */
 function tabAccount(): string | null {
   const b = apiOwnerBinding();
   return b.kind === "bound" || b.kind === "pending" ? b.owner : null;
@@ -173,15 +173,15 @@ export function CloudShell({ demo }: { demo: boolean }) {
   }, []);
 
   /**
-   * HAS THIS ACCOUNT BEEN ERASED ELSEWHERE? The erased door (`erased-door.ts`, registered by the
-   * import above) latches on the server's `410 account_erased` and drops this browser's copy; the
+   * HAS THIS ACCOUNT BEEN ERASED ELSEWHERE? The erased door (`erased-door.ts`, registered by every
+   * product page) latches on the server's `410 account_erased` and drops this browser's copy; the
    * wall outranks the 402 lock — a deleted account has nothing left to pay for. Every other tab
    * hears it through the door's cross-tab word. Not on the demo: no account to erase.
    */
   const erased = useErasedWall();
   useEffect(() => {
     if (resolvedDemo) return;
-    return watchErasedElsewhere();
+    return watchErasedElsewhere(tabAccount);
   }, [resolvedDemo]);
 
   const userInvites = useUserInvites(resolvedDemo);

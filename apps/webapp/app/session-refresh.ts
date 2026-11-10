@@ -832,7 +832,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       // can mint a session for an account that is gone (`shell/account-erased.ts`).
       const erased = await erasedAnswerOf(res);
       if (erased !== null) {
-        // This 410 cleared the jar whatever the erased door makes of it (the splash and /login register none).
+        // This 410 cleared the jar whatever the erased door makes of it.
         purgeSiteCache();
         const heard = hearAccountErased(erased.named, erasedBefore) === "erased";
         if (heard) await settleAttempt();

@@ -203,7 +203,7 @@ describe("a death between the reconnect's read of it and its listener's subscrip
     const body = text.slice(at, text.indexOf("}) ?? null;", at));
     expect(body).toContain("teardown(session)");
     expect(body).toContain('enter({ k: "ended", reason: deathRefusal(why) })');
-    expect(body).toContain("forgetProfile(env, session.profile.id, { closed, revoke: async () => true })");
+    expect(body).toContain('forgetProfile(env, session.profile.id, { closed, revoke: async () => true, erased: why === "erased" })');
     expect(text.indexOf('enter({ k: "live", session })', at), "and paints `live` after subscribing").toBeGreaterThan(at);
   });
 });

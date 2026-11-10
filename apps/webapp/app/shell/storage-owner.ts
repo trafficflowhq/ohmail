@@ -147,6 +147,24 @@ export function storageOwnerState(): StorageOwnerState {
   return { owner: null, source: "unowned", marker: marker.kind };
 }
 
+/**
+ * DOES THIS KEY NAME `owner`, as the key builders spell one: after a `.` or `:`, then the key's end or a `:`
+ * (`<prefix><owner>`, `<prefix><owner>:<lane>`); `within` also takes a `.` after it, for the tab's notes that carry
+ * the owner mid-key. Never a substring: `mbx-10`'s keys and `mbx-1.x`'s belong to other mailboxes. `local` and a
+ * malformed owner name nobody.
+ */
+export function namesOwner(key: string, owner: string, within = false): boolean {
+  if (owner === "local" || !isOwnerShaped(owner)) return false;
+  for (let at = key.indexOf(owner); at !== -1; at = key.indexOf(owner, at + 1)) {
+    const before = key[at - 1];
+    const after = key[at + owner.length];
+    if ((before === "." || before === ":") && (after === undefined || after === ":" || (within && after === "."))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Test seam: forget the host's answer and the demo latch. Never called by product code. */
 export function resetStorageOwnerForTest(): void {
   hostOwner = null;

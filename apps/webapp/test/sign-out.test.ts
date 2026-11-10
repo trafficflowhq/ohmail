@@ -301,7 +301,7 @@ describe("the sign-out CONTROL is wired", () => {
     // the person will ever see for that account. The receipt still shows — refusing to show a
     // completed, irreversible act would be worse — and the sentence sits next to it.
     // The erased door's scope: this account's copy, never another account's in the browser.
-    expect(account).toMatch(/const local = await forgetThisBrowser\(owner, \{ only: true \}\)/);
+    expect(account).toMatch(/const local = await forgetThisBrowser\(owner, \{ only: true, erased: true \}\)/);
     expect(account).toContain("setEraseMirrorBlocked(unclean)");
     // …and the verdict DEFAULTS to unclean. Initialising it clean made every exception before or
     // during the wipe read as a verified clean browser, on the one screen nobody can come back to.
@@ -677,8 +677,33 @@ describe("a one-account wipe takes only what its reach allows", () => {
     const { forgetThisBrowser } = await import("../app/sign-out");
     await forgetThisBrowser(A, { only: true, revokeWake: false });
     expect(left(records), "a one-account wipe took the door's records").toEqual(records);
+    await forgetThisBrowser(A, { only: true, erased: true, revokeWake: false });
+    expect(left(records), "an erasure took the door's records").toEqual(records);
     await forgetThisBrowser(undefined, { revokeWake: false });
     expect(left(records), "a sign-out left a revoke's record").toEqual([]);
+  });
+
+  it("each account's preferences outlive a whole sign-out and a revoke; an erasure takes its own", async () => {
+    const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui");
+    const { seedNotNowKey } = await import("../app/shell/seed-offer");
+    const { readAfterVerb, writeAfterVerb } = await import("../app/shell/after-verb");
+    const prefs = (owner: string): string[] =>
+      [searchSortKey(owner), seedNotNowKey(owner), foldersOpenedKey(owner), mailOriginalKey(owner)];
+    for (const owner of [A, B]) {
+      for (const key of prefs(owner)) localStorage.setItem(key, "a preference");
+      writeAfterVerb("stay", owner);
+    }
+    // The sets an earlier build kept device-wide: every account's folder paths and message ids in one value.
+    const retired = [...RETIRED_ID_SETS];
+    for (const key of retired) localStorage.setItem(key, "[]");
+    const kept = (owner: string) => [left(prefs(owner)).length, readAfterVerb(owner)];
+    const { forgetThisBrowser } = await import("../app/sign-out");
+    await forgetThisBrowser(undefined, { revokeWake: false });
+    await forgetThisBrowser(A, { only: true, reach: () => "account" });
+    expect([kept(A), left(retired)], "a sign-out or a revoke took A's preferences").toEqual([[4, "stay"], retired]);
+    await forgetThisBrowser(A, { only: true, erased: true, revokeWake: false });
+    expect([kept(A), kept(B), left(retired)], "an erasure kept A's preferences or the device-wide sets, or took B's")
+      .toEqual([[0, "advance"], [4, "stay"], []]);
   });
 
   /* The jar's items that name an account: reply text under its owner, the face mirror and the push id beside one. */

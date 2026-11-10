@@ -26,6 +26,7 @@ import {
   holdStandaloneDoor, releaseStandaloneLaunch, takeStandaloneLaunch, type SettingsKeptHere,
 } from "../engine/organizer-session";
 import type { ReopenOutcome, StandaloneEngine } from "../engine/standalone-door";
+import { accountRows } from "../state/account-rows";
 import { ServerProfileStore, type PendingSignOut, type ServerProfile } from "../state/servers";
 import type { BearerManagerRN, FetchLike, RefreshVault, SessionDeath, SignOutOutcome } from "./bearer";
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
@@ -1061,11 +1062,11 @@ export async function forgetProfile(
   /**
    * `revoke` answers `true` (told), `false` (not told), or what became of the sign-out. `settingsKept`: what
    * the removal's hand-back left only in this phone's store (`endStandaloneForRemoval`); `anyway` is the
-   * person's answer to it.
+   * person's answer to it. `erased`: the account was erased, so its own keystore rows go too (`account-rows.ts`).
    */
   opts: {
     closed?: Promise<void>; revoke?: (() => Promise<boolean | SignOutOutcome>) | null;
-    settingsKept?: SettingsKeptHere | null; anyway?: boolean;
+    settingsKept?: SettingsKeptHere | null; anyway?: boolean; erased?: boolean;
   } = {},
 ): Promise<ForgetOutcome> {
   /* ── THE STORE STAYS WHILE IT SAYS WHAT THE MAILBOX DOES NOT ─────────────────────────────────
@@ -1093,6 +1094,13 @@ export async function forgetProfile(
     ? (await env.profiles.pendingWipes()).find((w) => w.id === profileId) ?? null
     : null;
   const ownerKey = row !== null ? mirrorOwnerKey(row.origin, row.accountId) : owed?.owner ?? null;
+  if (opts.erased === true && ownerKey !== null) {
+    try {
+      await env.profiles.forgetRows(accountRows(ownerKey));
+    } catch {
+      /* best-effort: a leftover preference holds no mail and opens nothing, so the Forget is not partial */
+    }
+  }
   // The intent names BOTH stores. An owner key alone made this crash boundary RESURRECT the
   // pairing: a kill here left the profile standing and still active, and the next launch
   // deleted the mirror, cleared the debt, then reconnected and drained the mailbox back.

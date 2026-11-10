@@ -19,6 +19,7 @@ import { mirrorOwnerKey, type MobileEngineDeps } from "../src/engine/boot";
 import { BearerManagerRN, type SessionDeath } from "../src/net/bearer";
 import { forgetProfile, type ConnectedSession, type PairingEnv } from "../src/net/pairing";
 import { deathRefusal, noteSessionDeath } from "../src/net/session-death";
+import { bindSeedOfferKV, relaunchSeedOfferForTests, seedLater, seedNotNowKey } from "../src/state/seed-offer";
 import { ServerProfileStore, type SecureKV } from "../src/state/servers";
 import { listen, pairServer, pairThroughConfirm, sqlWorld } from "./helpers/pair-server";
 /* @reads: apps/mobile/src/net/connection.tsx */
@@ -40,8 +41,17 @@ function testEnv() {
   const deps: MobileEngineDeps = {
     openExecutor: world.open, deleteDatabase: world.drop, uuid: () => "00000000-0000-4000-8000-000000000000",
   };
-  const env: PairingEnv = { profiles: new ServerProfileStore(memoryKV()), engineDeps: deps };
-  return { env, world };
+  const kv = memoryKV();
+  const env: PairingEnv = { profiles: new ServerProfileStore(kv), engineDeps: deps };
+  return { env, world, kv };
+}
+
+/** "Not now" on the sent-mail review, pressed for each owner into the keystore; answers which rows it still holds. */
+async function notNowOf(kv: SecureKV, owners: string[]): Promise<() => Promise<boolean[]>> {
+  bindSeedOfferKV(kv);
+  for (const owner of owners) await seedLater(owner);
+  relaunchSeedOfferForTests();
+  return () => Promise.all(owners.map(async (o) => (await kv.get(seedNotNowKey(o))) !== null));
 }
 
 /** One account on its own server, paired, drained once so its mirror holds mail. */
@@ -64,11 +74,12 @@ const holds = (world: ReturnType<typeof sqlWorld>, origin: string, account: stri
 
 describe("the paired phone of an erased account", () => {
   it("dies as ERASED on the read path, before the engine sees the 410, and the door forgets only it", async () => {
-    const { env, world } = testEnv();
+    const { env, world, kv } = testEnv();
     const x = await paired(env, "acct-x");
     const y = await paired(env, "acct-y");
     try {
       expect(holds(world, x.origin, "acct-x") && holds(world, y.origin, "acct-y")).toBe(true);
+      const notNow = await notNowOf(kv, [x.session.ownerKey, y.session.ownerKey]);
       const deaths: SessionDeath[] = [];
       x.session.bearer!.onSessionDead((why) => deaths.push(why));
       const before = x.fake.seen.length;
@@ -83,13 +94,14 @@ describe("the paired phone of an erased account", () => {
       // What `connection.tsx`'s erased arm runs: the Forget ceremony, nothing to tell the server.
       const profilesBefore = (await env.profiles.list()).map((p) => p.accountId).sort();
       const outcome = await forgetProfile(env, x.session.profile.id, {
-        closed: Promise.resolve().then(() => x.session.store.close()), revoke: async () => true,
+        closed: Promise.resolve().then(() => x.session.store.close()), revoke: async () => true, erased: true,
       });
       expect(outcome.kind).toBe("forgotten");
       expect(profilesBefore).toEqual(["acct-x", "acct-y"]);
       expect((await env.profiles.list()).map((p) => p.accountId), "the other pairing went too").toEqual(["acct-y"]);
       expect(holds(world, x.origin, "acct-x"), "the erased account's mirror is still on the phone").toBe(false);
       expect(holds(world, y.origin, "acct-y"), "account Y's mirror was taken").toBe(true);
+      expect(await notNow(), "the erased account's keystore row stayed, or account Y's went").toEqual([false, true]);
     } finally {
       x.fake.server.close();
       y.fake.server.close();
@@ -97,10 +109,11 @@ describe("the paired phone of an erased account", () => {
   }, 30_000);
 
   it("a session revoked at its server by code: its copy is owed before the credential goes, and only it goes", async () => {
-    const { env, world } = testEnv();
+    const { env, world, kv } = testEnv();
     const x = await paired(env, "acct-x");
     const y = await paired(env, "acct-y");
     try {
+      const notNow = await notNowOf(kv, [x.session.ownerKey]);
       const deaths: SessionDeath[] = [];
       x.session.bearer!.onSessionDead((why) => deaths.push(why));
       x.fake.revoke("refresh_revoked");
@@ -119,6 +132,8 @@ describe("the paired phone of an erased account", () => {
       expect((await env.profiles.list()).map((p) => p.accountId), "the other pairing went too").toEqual(["acct-y"]);
       expect(holds(world, x.origin, "acct-x"), "the revoked account's mirror is still on the phone").toBe(false);
       expect(holds(world, y.origin, "acct-y"), "account Y's mirror was taken").toBe(true);
+      // A revoke is not an erasure: the account's own rows stay for its next pairing, as Forget keeps them.
+      expect(await notNow(), "a revoke took the account's keystore row").toEqual([true]);
     } finally {
       x.fake.server.close();
       y.fake.server.close();
@@ -233,6 +248,6 @@ describe("the sentence and the door", () => {
     const arm = src.slice(src.indexOf("onSessionDead((why) =>"), src.indexOf("}) ?? null;", src.indexOf("onSessionDead((why) =>")));
     expect(arm).toMatch(/const closed = teardown\(session\);/);
     expect(arm).toMatch(/if \(session\.bearer\?\.removesCopy !== true\) \{/);
-    expect(arm).toMatch(/forgetProfile\(env, session\.profile\.id, \{ closed, revoke: async \(\) => true \}\)/);
+    expect(arm).toMatch(/forgetProfile\(env, session\.profile\.id, \{ closed, revoke: async \(\) => true, erased: why === "erased" \}\)/);
   });
 });

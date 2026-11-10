@@ -32,8 +32,9 @@ import {
   type TableCellNode,
   type TableRowNode,
 } from "../shell/BodyText";
-import { UI_KEYS, usePersistedIdSet } from "../shell/persisted-ui";
+import { mailOriginalKey, usePersistedIdSet } from "../shell/persisted-ui";
 import { linkHref, useRenderedLinks } from "../shell/rendered-links";
+import { storageOwner } from "../shell/storage-owner";
 import { externalLinksEnabled } from "../shell/open-external";
 import "./message-body.css";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
@@ -4417,12 +4418,12 @@ export function MessageBody({
    * same default the provider itself starts from. The transform only ever engages in a dark theme. A message can be
    * dropped back to its original light rendering — a dark-mode invert is a lightness transform, and some mail (a
    * poster, a logo-heavy newsletter) is worse for it. That decision is per message and remembered:
-   * `usePersistedIdSet` holds the ids the reader chose to keep original, in one capped key. Without a `messageId` the
-   * override is session-only, which is the right amount for a surface that cannot name the message.
+   * `usePersistedIdSet` holds the ids the reader chose to keep original, in one capped key per account. Without a
+   * `messageId` the override is session-only, which is the right amount for a surface that cannot name the message.
    */
   const theme = useOptionalTheme();
   const themeDark = theme?.resolved === "dark";
-  const overrides = usePersistedIdSet(UI_KEYS.mailOriginal);
+  const overrides = usePersistedIdSet(mailOriginalKey(storageOwner()));
   const [sessionOriginal, setSessionOriginal] = useState(false);
   const original = messageId ? overrides.has(messageId) : sessionOriginal;
   const setOriginal = useCallback(
