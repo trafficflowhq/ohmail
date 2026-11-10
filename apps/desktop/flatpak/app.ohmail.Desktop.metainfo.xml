@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.8" date="2026-11-10">
+      <description>
+        <ul>
+          <li>A full mailbox now says it is full</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.7" date="2026-11-10">
       <description>
         <ul>
@@ -104,13 +111,6 @@
       <description>
         <ul>
           <li>A wide newsletter is fitted to the fold's cover screen on every open</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.3" date="2026-11-10">
-      <description>
-        <ul>
-          <li>The desktop app says why a Sent copy is missing</li>
         </ul>
       </description>
     </release>

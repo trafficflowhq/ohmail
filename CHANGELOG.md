@@ -21,6 +21,18 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.8] — 2026-11-10
+
+### A full mailbox now says it is full
+
+When a mailbox reaches its storage limit at the mail provider, the server refuses the small note ohmail
+keeps there to organize it. ohmail used to say it could not read its own folder on that server. It now
+says the mailbox is full and that ohmail needs a little room there, on the desktop app, the web app, your
+own server and the phone. While the mailbox is full, ohmail sorts no new mail and the Screener waits.
+Mail you already have can still be read and searched, and sending still works. Free up space in your
+provider's webmail or another mail app, and ohmail starts again on its own. The desktop app also no longer
+reports a full mailbox as a lost connection.
+
 ## [1.0.7] — 2026-11-10
 
 ### The Screener's line for letters that claimed to be a company follows a filing at once
@@ -17445,7 +17457,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.7...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.8...HEAD
+[1.0.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.8
 [1.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.7
 [1.0.6]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.6
 [1.0.5]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.5
