@@ -74,7 +74,7 @@ describe("erase doors", () => {
     const body = code.slice(s.start, s.end);
     const request = body.indexOf("await account.erase()");
     // `only`: the erased door's scope — this account's copy, never another account's in the browser.
-    const wipe = body.indexOf("forgetThisBrowser(owner, { only: true })");
+    const wipe = body.indexOf("forgetThisBrowser(owner, { only: true, erased: true })");
     expect(request).toBeGreaterThan(-1);
     expect(wipe, "the wipe runs after the answer, with the account owner captured before it").toBeGreaterThan(request);
     // After the answer nobody is left to ask: no owner read between the request and the wipe.

@@ -471,7 +471,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
            owner's mirror, pin, wake registration — through the Forget verb's own ceremony, once the
            store handle is closed. Nothing to tell the server: the session is already gone there.
            Another profile on this phone is not touched. */
-        void forgetProfile(env, session.profile.id, { closed, revoke: async () => true })
+        void forgetProfile(env, session.profile.id, { closed, revoke: async () => true, erased: why === "erased" })
           .catch(() => undefined)
           .then(() => refreshProfiles());
       }) ?? null;
@@ -572,7 +572,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
            death that removes the copy, its Forget — no store was opened, so there is nothing to close. */
         enter({ k: "ended", reason: outcome.reason });
         if (outcome.removesCopy === true) {
-          void forgetProfile(env, id, { revoke: async () => true })
+          void forgetProfile(env, id, { revoke: async () => true, erased: outcome.died === "erased" })
             .catch(() => undefined)
             .then(() => refreshProfiles());
         }

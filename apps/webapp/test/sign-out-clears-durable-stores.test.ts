@@ -102,9 +102,9 @@ const SURVIVES_SIGN_OUT = new Set([
   "ohmail.junkSweepDismissedAt", // a dismissal timestamp, no mail in it
   "ohmail.ui.seed.notNow.", // "Not now" on the sent-mail review, owner-keyed, no mail in it
   "ohmail.reply.panelHeight", // a pane size
-  "ohmail.ui.mail.original", // "show original" toggle
+  "ohmail.ui.mail.original.", // "show original" toggle, per account: an erasure takes it
   "ohmail.ui.rail.foldersOpen", // rail disclosure state
-  "ohmail.ui.rail.foldersOpened",
+  "ohmail.ui.rail.foldersOpened.", // the opened folder branches, per account: an erasure takes them
   "ohmail.ui.rail.tagsOpen",
   "ohmail.ui.columns", // the three columns' widths — a fact about the screen, not the mailbox
   "ohmail.ui.search.sort.", // a sort preference, owner-keyed but not content

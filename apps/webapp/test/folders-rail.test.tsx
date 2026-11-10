@@ -129,6 +129,32 @@ describe("first level only, and the opened-set", () => {
     expect(rowLabels(again.el)).toEqual(["Invoices", "Projects", "Acme"]);
   });
 
+  it("the opened set is each account's own, and a device-wide set an earlier build kept is dropped unread", async () => {
+    const tree = [folder("Projects"), folder("Projects/Acme"), folder("Invoices")];
+    const rail = (): React.ReactElement => h(NextIntlClientProvider, {
+      locale: "en", messages, timeZone: "Europe/Zurich",
+      children: h(FoldersRailGroup, { folders: tree, unread: new Map(), onNavigate: () => {} }),
+    });
+    // Every account's folder paths, in one value no erasure could find by its key.
+    window.localStorage.setItem("ohmail.ui.rail.foldersOpened", JSON.stringify(["mb1|Projects"]));
+    document.cookie = "tf_owner=acct_A; Path=/";
+    try {
+      const { el } = await mount(tree);
+      expect(rowLabels(el), "the device-wide set was read").toEqual(["Invoices", "Projects"]);
+      expect(window.localStorage.getItem("ohmail.ui.rail.foldersOpened"), "the device-wide set is still here").toBeNull();
+      await click(el.querySelector("button.ftw"));
+      const as = async (owner: string): Promise<string[]> => {
+        document.cookie = `tf_owner=${owner}; Path=/`;
+        await act(() => root!.render(rail()));
+        return rowLabels(el);
+      };
+      expect(await as("acct_B"), "another account opened on A's branch").toEqual(["Invoices", "Projects"]);
+      expect(await as("acct_A"), "A's opened branch was lost").toEqual(["Invoices", "Projects", "Acme"]);
+    } finally {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+    }
+  });
+
   it("navigating to a nested folder opens its ancestors", async () => {
     const deep = folder("Projects/Acme/2026");
     const { el } = await mount(

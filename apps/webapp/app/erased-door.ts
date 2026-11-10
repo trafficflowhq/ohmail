@@ -2,8 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { holdsMirrorOf } from "@ohmail/client-engine";
-import { apiOwnerBinding } from "./api-client";
-import { forgetThisBrowser } from "./sign-out";
+import { SETTLE_DEADLINE_MS } from "./session-refresh";
 import {
   ERASED_KEY, accountErasedOwner, markAccountErased, registerErasedDoor, subscribeAccountErased,
   type ErasedVerdict,
@@ -13,9 +12,10 @@ import { isOwnerShaped, readOwnerMarker, type OwnerMarker } from "./shell/owner-
 /**
  * THE WEB'S ONE DOOR FOR AN ACCOUNT ERASED ELSEWHERE. The server named the account in its 410;
  * this decides whether the copy it names is this browser's to drop, latches the tab, drops that
- * account's copy and nothing else (`forgetThisBrowser(named, { only })`), and tells every other
+ * account's copy and nothing else (`forgetThisBrowser(named, { only, erased })`), and tells every other
  * tab through {@link ERASED_KEY}. The mailbox on the mail server is not touched: nothing here
- * reaches it. Registered on import; `CloudShell` imports it.
+ * reaches it. Registered on import by every product page (`providers.tsx`): past the access window
+ * a returning browser hears the erasure at the resume splash or the sign-in page, never in a mailbox.
  */
 
 interface Capture { marker: OwnerMarker }
@@ -43,12 +43,6 @@ function setOutcome(next: WipeOutcome): void {
   for (const l of [...outcomeListeners]) l();
 }
 
-/** The account a tab is FOR: its confirmed or pending binding, `null` on a cold, unnamed load. */
-function tabOwner(): string | null {
-  const b = apiOwnerBinding();
-  return b.kind === "bound" || b.kind === "pending" ? b.owner : null;
-}
-
 /**
  * Drop `named`'s copy, once per account per page, and latch this tab when it is for `named`.
  * Idempotent: every transport and every tab may arrive here for the same erasure.
@@ -63,7 +57,9 @@ export function eraseHere(named: string, latch: boolean): Promise<void> {
   const work = (async () => {
     let remaining: string[] = [];
     try {
-      remaining = (await forgetThisBrowser(named, { only: true })).remaining;
+      // Loaded here, not with the page: the wipe and the engine behind it are not the splash's to carry.
+      const { forgetThisBrowser } = await import("./sign-out");
+      remaining = (await forgetThisBrowser(named, { only: true, erased: true })).remaining;
     } catch {
       remaining = [named];
     }
@@ -91,21 +87,34 @@ registerErasedDoor({
   },
 });
 
+/** Every wipe this page started, ended or out of time ({@link SETTLE_DEADLINE_MS}); at once when none runs. */
+export function erasedWipeSettled(): Promise<void> {
+  if (running.size === 0) return Promise.resolve();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    Promise.all([...running.values()]).then(() => undefined),
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, SETTLE_DEADLINE_MS); }),
+  ]).finally(() => { if (timer !== undefined) clearTimeout(timer); });
+}
+
 /**
  * ANOTHER TAB'S VERDICT, or one this page finds on load. Trusted — a door wrote it after deciding —
  * so the copy goes; the tab walls only when it is for that account (or for nobody yet).
  */
-function heardFromAnotherTab(named: string | null): void {
+function heardFromAnotherTab(named: string | null, forTab: () => string | null): void {
   if (named === null || !isOwnerShaped(named)) return;
-  const mine = tabOwner();
+  const mine = forTab();
   void eraseHere(named, mine === null || mine === named);
 }
 
-/** Listen for other tabs, and read the word once now. Returns the unsubscribe. */
-export function watchErasedElsewhere(): () => void {
+/**
+ * Listen for other tabs, and read the word once now. `forTab` names the account the mounted mailbox is
+ * for (its confirmed or pending binding), `null` on a cold, unnamed load. Returns the unsubscribe.
+ */
+export function watchErasedElsewhere(forTab: () => string | null): () => void {
   if (typeof window === "undefined") return () => undefined;
   const onStorage = (e: StorageEvent): void => {
-    if (e.key === ERASED_KEY) heardFromAnotherTab(e.newValue);
+    if (e.key === ERASED_KEY) heardFromAnotherTab(e.newValue, forTab);
   };
   window.addEventListener("storage", onStorage);
   let now: string | null = null;
@@ -114,7 +123,7 @@ export function watchErasedElsewhere(): () => void {
   } catch {
     /* unreadable: nothing to act on */
   }
-  heardFromAnotherTab(now);
+  heardFromAnotherTab(now, forTab);
   return () => window.removeEventListener("storage", onStorage);
 }
 

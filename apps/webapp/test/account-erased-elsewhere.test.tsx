@@ -72,6 +72,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  // A wipe a case started ends inside it: run late, it would sweep the keys the next case plants.
+  await (await import("../app/erased-door.js")).erasedWipeSettled();
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
   document.body.innerHTML = "";
@@ -95,8 +97,11 @@ async function signedIn(owner: string | null) {
   };
 }
 
-/** An account's copy in this browser: its mirror (closed, as a reload leaves it) and its keys. */
-async function holdCopyOf(owner: string): Promise<string[]> {
+/**
+ * An account's copy in this browser: its mirror (closed, as a reload leaves it) and its keys; and its
+ * preferences and a tab note, which only an erasure takes (a revoke keeps them, as a sign-out does).
+ */
+async function holdCopyOf(owner: string): Promise<{ keys: string[]; prefs: string[] }> {
   const engine = await import("@ohmail/client-engine");
   const store = new engine.IndexedDbMirrorStore({ owner });
   await store.load();
@@ -109,8 +114,27 @@ async function holdCopyOf(owner: string): Promise<string[]> {
     `${SEND_LOCKS_PREFIX}${owner}`, `${SENT_COPY_NOTES_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
   ];
   for (const k of keys) localStorage.setItem(k, "account data");
-  return keys;
+  const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui.js");
+  const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
+  const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
+  // The impersonation mark is the Screener's (#777), by name until its builder is on main.
+  const prefs = [
+    searchSortKey(owner), seedNotNowKey(owner), imageQualityKeyFor(owner), `ohmail.screener.impersonationSeen.${owner}`,
+    foldersOpenedKey(owner), mailOriginalKey(owner),
+  ];
+  for (const k of prefs) localStorage.setItem(k, "a preference");
+  const note = `ohmail.lifecycle.${owner}.caughtUp`;
+  sessionStorage.setItem(note, "2026-09-20T00:00:00.000Z");
+  return { keys, prefs: [...prefs, note] };
 }
+
+const held = (key: string): boolean => localStorage.getItem(key) !== null || sessionStorage.getItem(key) !== null;
+
+/** The account a mailbox tab is for, read off its client as `CloudShell` reads it. */
+const tabOf = (client: typeof import("../app/api-client.js")) => (): string | null => {
+  const b = client.apiOwnerBinding();
+  return b.kind === "bound" || b.kind === "pending" ? b.owner : null;
+};
 
 async function mirrors(): Promise<string[]> {
   const all = await (indexedDB as IDBFactory & { databases: () => Promise<IDBDatabaseInfo[]> }).databases();
@@ -132,7 +156,7 @@ async function codeOfThrow(p: Promise<unknown>): Promise<string> {
 describe("the erased answer wipes this browser's copy of that account", () => {
   it("a declared read answering 410 naming the account: latched, mirror and keys gone, other tabs told", async () => {
     const { client, erased, truth } = await signedIn(X);
-    const keys = await holdCopyOf(X);
+    const { keys, prefs } = await holdCopyOf(X);
     rig.read = () => envelope(410, "account_erased", X);
 
     expect(await codeOfThrow(client.api("/sync?limit=50"))).toBe("410 account_erased");
@@ -141,7 +165,8 @@ describe("the erased answer wipes this browser's copy of that account", () => {
     expect(truth.sessionMayAsk(), "an erased tab went on asking").toBe(false);
     await settle(() => localStorage.getItem(erased.ERASED_KEY) === X, "the cross-tab word");
     expect(await mirrors(), "the erased account's mirror is still in this browser").toEqual([]);
-    expect(keys.filter((k) => localStorage.getItem(k) !== null)).toEqual([]);
+    expect(keys.filter(held)).toEqual([]);
+    expect(prefs.filter(held), "the erased account's preferences or this tab's note survived").toEqual([]);
     expect(rig.asked.map((a) => a.what), "a 410 is not recoverable: no refresh").toEqual(["GET /api/sync?limit=50"]);
   });
 
@@ -163,14 +188,15 @@ describe("the erased answer wipes this browser's copy of that account", () => {
   });
 
   it("account Y's copy in the same browser is untouched by X's erasure", async () => {
-    const { client } = await signedIn(X);
-    const yKeys = await holdCopyOf(Y);
+    const { client, erased } = await signedIn(X);
+    const y = await holdCopyOf(Y);
     await holdCopyOf(X);
     rig.read = () => envelope(410, "account_erased", X);
     await codeOfThrow(client.api("/sync?limit=50"));
-    await settle(async () => (await mirrors()).length === 1, "X's mirror gone");
+    // Written after the wipe ends, so what it kept is read after the whole sweep.
+    await settle(() => localStorage.getItem(erased.ERASED_KEY) === X, "the cross-tab word");
     expect(await mirrors()).toEqual([`ohmail-mirror:${Y}`]);
-    expect(yKeys.filter((k) => localStorage.getItem(k) === null), "Y's keys were swept").toEqual([]);
+    expect([...y.keys, ...y.prefs].filter((k) => !held(k)), "Y's keys were swept").toEqual([]);
   });
 
   it("the engine's transport: the adapter is handed a dead session, not a cursor expiry to re-bootstrap on", async () => {
@@ -272,19 +298,21 @@ describe("the latch never arms a refresh", () => {
 describe("every tab, and the wall", () => {
   it("another tab's word: a tab for X walls and wipes; a tab for Y wipes X's copy and stays", async () => {
     const forX = await signedIn(X);
-    await holdCopyOf(X);
-    const off = forX.door.watchErasedElsewhere();
+    const inX = await holdCopyOf(X);
+    const off = forX.door.watchErasedElsewhere(tabOf(forX.client));
     window.dispatchEvent(new StorageEvent("storage", { key: forX.erased.ERASED_KEY, newValue: X }));
     expect(forX.erased.accountErasedOwner()).toBe(X);
     await settle(async () => (await mirrors()).length === 0, "the mirror gone");
+    await settle(() => !inX.prefs.some(held), "X's preferences and this tab's note gone");
     off();
 
     vi.resetModules();
     const forY = await signedIn(Y);
-    await holdCopyOf(X);
-    const offY = forY.door.watchErasedElsewhere();
+    const inY = await holdCopyOf(X);
+    const offY = forY.door.watchErasedElsewhere(tabOf(forY.client));
     window.dispatchEvent(new StorageEvent("storage", { key: forY.erased.ERASED_KEY, newValue: X }));
     await settle(async () => (await mirrors()).length === 0, "X's mirror gone");
+    await settle(() => !inY.prefs.some(held), "X's preferences and this tab's note gone, in Y's tab");
     expect(forY.erased.accountErasedOwner(), "a tab for Y walled on X's erasure").toBeNull();
     offY();
   });
@@ -349,8 +377,8 @@ describe("a session revoked elsewhere", () => {
 
   it("refresh_revoked: the tab drops its mail, this account's copy goes, another's stays, and the reason waits", async () => {
     const { client, truth } = await signedIn(X);
-    const xKeys = await holdCopyOf(X);
-    const yKeys = await holdCopyOf(Y);
+    const x = await holdCopyOf(X);
+    const y = await holdCopyOf(Y);
     const t = await tab();
     rig.refresh = () => { expireJar(); return refusal("refresh_revoked"); };
     await renewalRefused(client, t.door);
@@ -359,8 +387,10 @@ describe("a session revoked elsewhere", () => {
     const left = await mirrors();
     expect(left, "the revoked account's mirror is still in this browser").not.toContain(`ohmail-mirror:${X}`);
     expect(left, "another account's mirror went with it").toEqual([`ohmail-mirror:${Y}`]);
-    expect(xKeys.filter((k) => localStorage.getItem(k) !== null)).toEqual([]);
-    expect(yKeys.filter((k) => localStorage.getItem(k) === null), "another account's keys were swept").toEqual([]);
+    expect(x.keys.filter(held)).toEqual([]);
+    // A revoke is not an erasure: the account's preferences stay for its next sign-in, as a sign-out keeps them.
+    expect(x.prefs.filter((k) => !held(k)), "a revoke took the account's preferences").toEqual([]);
+    expect([...y.keys, ...y.prefs].filter((k) => !held(k)), "another account's keys were swept").toEqual([]);
     expect(t.note(), "the sign-in page is not told why").toBe("revoked");
     await settle(() => t.leaves() === 1, "the tab's leave");
   });
@@ -377,7 +407,7 @@ describe("a session revoked elsewhere", () => {
 
   it.each(["refresh_expired", "refresh_missing"])("CONTROL — %s is a lapse: the session ends, the mailbox and the copy stay", async (code) => {
     const { client, truth } = await signedIn(X);
-    const keys = await holdCopyOf(X);
+    const { keys } = await holdCopyOf(X);
     const t = await tab();
     rig.refresh = () => { expireJar(); return refusal(code); };
     await renewalRefused(client, t.door);

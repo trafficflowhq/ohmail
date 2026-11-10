@@ -238,6 +238,28 @@ describe("dark viewing is offered for light mail and withheld from dark mail", (
     expect(flipped!.getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("the colours kept for a message are its account's own, and a device-wide set an earlier build kept is dropped unread", async () => {
+    const { COPY } = await mod();
+    const props = { text: "fallback", html: LIGHT_TABLE, messageId: "m-1" };
+    // Every account's message ids, in one value no erasure could find by its key.
+    localStorage.setItem("ohmail.ui.mail.original", JSON.stringify(["m-1"]));
+    const as = async (owner: string): Promise<string[]> => {
+      document.cookie = `tf_owner=${owner}; Path=/`;
+      await renderIn("dark", props);
+      return buttons();
+    };
+    try {
+      expect(await as("acct_A"), "the device-wide set was read").toContain(COPY.darkOriginal);
+      expect(localStorage.getItem("ohmail.ui.mail.original"), "the device-wide set is still here").toBeNull();
+      await act(async () => { [...host!.querySelectorAll("button")].find((b) => b.textContent === COPY.darkOriginal)!.click(); });
+      expect(await as("acct_B"), "another account opened the message in A's colours").toContain(COPY.darkOriginal);
+      expect(await as("acct_A"), "A's choice was lost").toContain(COPY.darkAdapt);
+    } finally {
+      document.cookie = "tf_owner=; Path=/; Max-Age=0";
+      localStorage.clear();
+    }
+  });
+
   it("a mail left uninverted sits on ITS OWN paper, not on the frame's white sheet", async () => {
     // ── FOUND BY LOOKING AT IT, NOT BY A TEST ─────────────────────────────────────────
     //

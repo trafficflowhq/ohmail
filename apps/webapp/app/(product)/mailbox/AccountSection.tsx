@@ -204,7 +204,7 @@ export function AccountSection() {
       // tab holds the database open, and a localStorage removal can refuse, both without throwing.
       let unclean = true;
       try {
-        const local = await forgetThisBrowser(owner, { only: true });
+        const local = await forgetThisBrowser(owner, { only: true, erased: true });
         unclean = local.remaining.length > 0 || !local.inventoryComplete;
       } catch {
         /* the same race `sign-out.ts` already accepts — and `unclean` stays true */

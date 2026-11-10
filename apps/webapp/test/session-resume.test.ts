@@ -591,7 +591,7 @@ describe("a refusal heard sends one cache purge, which nothing waits for", () =>
     ["the erased door took", "erased", "acct_A", "refused"],
     ["naming another account than the jar's", "not-ours", "acct_A", "unavailable"],
     ["for an account this browser holds no copy of", "nothing-here", "acct_A", "unavailable"],
-    ["on a page with no erased door (the resume splash, /login)", null, "acct_A", "unavailable"],
+    ["where no erased door is registered", null, "acct_A", "unavailable"],
     ["naming no account", "erased", null, "unavailable"],
   ] as Array<[string, ErasedVerdict | null, string | null, string]>)(
     "an erased account's 410 %s: one purge",

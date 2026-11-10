@@ -60,15 +60,20 @@ export function usePersistedIdSet(
   // Read AFTER mount — the hydration note above. Runs once per key.
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(key);
-      if (!raw) return;
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        setIds(parsed.filter((x): x is string => typeof x === "string").slice(-cap));
-      }
+      // Every account's ids in one value, which no erasure could find by its key: dropped, never adopted.
+      for (const old of RETIRED_ID_SETS) window.localStorage.removeItem(old);
+    } catch {
+      /* storage blocked — nothing of it is read either */
+    }
+    let read: string[] = [];
+    try {
+      const parsed: unknown = JSON.parse(window.localStorage.getItem(key) ?? "[]");
+      if (Array.isArray(parsed)) read = parsed.filter((x): x is string => typeof x === "string").slice(-cap);
     } catch {
       /* storage blocked, or a malformed value — the empty set stands */
     }
+    // Another account's key starts from its own set, never from the one this hook held before.
+    setIds((prev) => (read.length === 0 && prev.length === 0 ? prev : read));
   }, [key, cap]);
 
   const set = useCallback(
@@ -142,15 +147,6 @@ export const UI_KEYS = {
   /** The rail's Folders group — `tagsOpen`'s sibling, one flag for the whole group. */
   foldersOpen: "ohmail.ui.rail.foldersOpen",
   /**
-   * The OPENED branches of the folder tree (FOLDERS-SPEC.md §15): keys are `mailboxId|path`,
-   * stored through {@link usePersistedIdSet} so the default needs no seeding — a branch never
-   * touched has no entry anywhere, and one the user opens stays open across sessions. Keys
-   * carry the mailbox id, so two accounts sharing a browser cannot collide.
-   */
-  foldersOpened: "ohmail.ui.rail.foldersOpened",
-  /** Ids the reader chose to view in their ORIGINAL (light) rendering, despite a dark theme. */
-  mailOriginal: "ohmail.ui.mail.original",
-  /**
    * The three columns' widths — `{"v":1,"rail":<px>,"list":<px>}`, a field absent meaning the
    * default and the key removed when both are. Named here so everything this app stores stays
    * greppable from one prefix, but read and written by `column-store.ts`: the two widths are ONE
@@ -175,6 +171,24 @@ export const UI_KEYS = {
 export function searchSortKey(owner: string | null): string {
   return `ohmail.ui.search.sort.${owner ?? "local"}`;
 }
+
+/**
+ * The OPENED branches of the folder tree (FOLDERS-SPEC.md §15), as `mailboxId|path`, stored through
+ * {@link usePersistedIdSet} so the default needs no seeding — a branch never touched has no entry
+ * anywhere, and one the user opens stays open across sessions. Per account, `owner` as in
+ * {@link searchSortKey}: the paths are the account's folder names, and its erasure finds them by the key.
+ */
+export function foldersOpenedKey(owner: string | null): string {
+  return `ohmail.ui.rail.foldersOpened.${owner ?? "local"}`;
+}
+
+/** Ids the reader chose to view in their ORIGINAL (light) rendering despite a dark theme; per account, as above. */
+export function mailOriginalKey(owner: string | null): string {
+  return `ohmail.ui.mail.original.${owner ?? "local"}`;
+}
+
+/** The two sets as earlier builds kept them, every account's ids in one device-wide value: never read again. */
+export const RETIRED_ID_SETS: readonly string[] = ["ohmail.ui.rail.foldersOpened", "ohmail.ui.mail.original"];
 
 /*
  * `ohmail.ui.readingAlong.<owner>` — which mailboxes this install is reading along on purpose.

@@ -18,6 +18,8 @@ import { useTranslations } from "next-intl";
 import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
 import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
 import { revokedWipeSettled } from "../../revoked-door";
+import { erasedWipeSettled } from "../../erased-door";
+import { ACCOUNT_ERASED } from "../../shell/account-erased";
 import { readOwnerCookie, readOwnerMarker } from "../../shell/owner-cookie";
 import { storageOwner } from "../../shell/storage-owner";
 import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
@@ -185,6 +187,8 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
    * reads it at its grant. Not under another account's jar, and an empty jar never overwrites a reason.
    */
   const tellOtherTabs = useCallback((report: RefreshReport): void => {
+    // An erasure is the erased door's to tell (`ERASED_KEY`); a revoke's sentence would misname it.
+    if (report.code === ACCOUNT_ERASED) return;
     const owner = readOwnerCookie();
     if (owner !== null && owner !== initialOwner) return;
     const heard = answerOf(false, report);
@@ -202,8 +206,9 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
   const attempt = useCallback(async (n: number): Promise<void> => {
     const before = lastRefreshReport();
     const ok = await resumeSession({ mayProceed: stillMine, landing: true, staleJar, onRefused: tellOtherTabs }) === "resumed";
-    // A revoke's copy is gone before this tab goes anywhere.
+    // A revoke's copy and an erased account's are gone before this tab goes anywhere.
     await revokedWipeSettled();
+    await erasedWipeSettled();
     const report = lastRefreshReport();
     // The door's own refusal clears the jar, tf_owner with it: that is this splash's answer.
     const owner = readOwnerCookie();
@@ -222,7 +227,8 @@ export function ResumeScreen({ initialOwner = null, staleJar }: { initialOwner?:
       // The server cleared the jar (or held none). No `?next=`: nothing to pass that is not
       // already in the fragment, and a redirect parameter is an open-redirect surface.
       writeStamp(answer);
-      leaveSignedOutNote(answer);
+      // An account the erased door took: the sign-in form alone, no sentence about a session.
+      if (report?.code !== ACCOUNT_ERASED) leaveSignedOutNote(answer);
       window.location.replace("/login");
       return;
     }
