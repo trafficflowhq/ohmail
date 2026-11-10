@@ -17,7 +17,7 @@ import { Copy } from "../copy";
 import { useTheme } from "../theme";
 import { letterInDark, paletteOf } from "../theme/palette";
 import { useWorld, useWorldToast, type WorldMail } from "../state/world";
-import { buildPhoneMailDocument } from "../mail/mail-document";
+import { buildPhoneMailDocument, documentZoom } from "../mail/mail-document";
 import {
   armFrameTimer,
   FRAME_UNANSWERED_MS,
@@ -319,6 +319,8 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
   const canLoad = !imagesWanted && pictureUrls.length > 0;
   // The document drawn: this state's once its own count fits; otherwise the last that fitted for this html.
   const doc = shows.show === "frame" ? shows.doc : null;
+  // The zoom the drawn document carries: its readings are read at it, and a new zoom is a new view.
+  const zoom = doc === null ? 1 : documentZoom(doc);
   const { frame: height, spacer } = frameLayout(sized);
   const flip = adaptable ? (
     <Txt
@@ -374,8 +376,9 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
           {doc !== null ? (
             <WebView
               // ONE document, rebuilt when the maps move; never a URL. `key` on the id keeps a
-              // recycled frame from showing the previous message during the swap.
-              key={frameId}
+              // recycled frame from showing the previous message during the swap; on the zoom, no
+              // reading of a document drawn at another zoom reaches this one, and a new view reports.
+              key={`${frameId}@${zoom}`}
               source={{ html: doc }}
               originWhitelist={ALL_ORIGINS}
               javaScriptEnabled={false}
@@ -394,7 +397,7 @@ export function MailBodyFrame({ m, onShowAsText, onFinal, historyOpen = false, o
                 const reported = e.nativeEvent.contentSize.height;
                 const view = e.nativeEvent.layoutMeasurement.height;
                 const at = Date.now();
-                const widths = { doc: e.nativeEvent.contentSize.width, frame: e.nativeEvent.layoutMeasurement.width };
+                const widths = { doc: e.nativeEvent.contentSize.width, frame: e.nativeEvent.layoutMeasurement.width, zoom };
                 update((s) => nextFrameHeight(s, reported, view, at, widths));
               }}
               onLoadEnd={() => setLoadedFor(frameId)}

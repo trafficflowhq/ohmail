@@ -264,8 +264,11 @@ describe("a document wider than its frame is fitted to it, not grown", () => {
     const grown = nextFrameHeight(s, 1_140, FRAME_SEED_DP, 0, fitted);
     expect(grown.dp).toBe(1_140);
     expect(frameFit(grown)).toBe(frameFit(s));
-    // Fitted but still a little wide (a picture the zoom did not reach): drawn, and its height counts.
-    expect(nextFrameHeight(grown, 1_300, 1_140, 0, { doc: 380, frame: 371 }).dp).toBe(1_300);
+    // Fitted but still wider than the frame: fitted again from what it read, never drawn cut.
+    const again = nextFrameHeight(grown, 1_300, 1_140, 0, { doc: 380, frame: 371, zoom: frameFit(grown) });
+    expect(again.dp).toBe(1_140);
+    expect(frameFit(again) * 618).toBeLessThanOrEqual(371 * 371 / 380 + 1);
+    expect(frameFinal(again, false)).toBe(false);
     // A wider reading of the document as written fits again, to the wider width.
     expect(frameFit(nextFrameHeight(grown, 1_900, 1_140, 0, { doc: 700, frame: 371 }))).toBeCloseTo(371 / 700, 6);
   });
@@ -274,15 +277,17 @@ describe("a document wider than its frame is fitted to it, not grown", () => {
     expect(frameFit(nextFrameHeight(frameHeightFor(null, "m1", W), 300, FRAME_SEED_DP, 0, { doc: 372, frame: 371 }))).toBe(1);
   });
 
-  it("re-measuring at a new width: a wide reading no taller than the seed arms the settle, a taller one waits for the fitted reading", () => {
+  it("re-measuring at a new width: a wide reading at any height waits for the fitted reading", () => {
     vi.useFakeTimers();
     try {
       const remeasure = frameHeightFor(feed([7_880]), "m1", 360);
       const s = nextFrameHeight(remeasure, FRAME_SEED_DP, FRAME_SEED_DP, 0, { doc: 618, frame: 320 });
-      expect(settleDelayMs(s, 0)).toBe(FRAME_SETTLE_MS);
+      expect(settleDelayMs(s, 0), "no settle on a reading of the unfitted document").toBeNull();
       expect(frameFit(s)).toBeCloseTo(320 / 618, 6);
-      expect(settleFrameHeight(s).dp).toBe(FRAME_SEED_DP);
-      expect(frameFit(frameHeightFor(settleFrameHeight(s), "m1", 411)), "a new width reads the width again").toBe(1);
+      const short = nextFrameHeight(s, FRAME_SEED_DP, FRAME_SEED_DP, 10, { doc: 320, frame: 320, zoom: frameFit(s) });
+      expect(settleFrameHeight(short).dp).toBe(FRAME_SEED_DP);
+      expect(frameFinal(settleFrameHeight(short), false)).toBe(true);
+      expect(frameFit(frameHeightFor(settleFrameHeight(short), "m1", 411)), "a new width reads the width again").toBe(1);
       const tall = nextFrameHeight(remeasure, 900, FRAME_SEED_DP, 0, { doc: 618, frame: 320 });
       expect(settleDelayMs(tall, 0), "the seed is not this letter's height").toBeNull();
       const fitted = nextFrameHeight(tall, 470, FRAME_SEED_DP, 10, { doc: 320, frame: 320 });
@@ -329,10 +334,98 @@ describe("a document wider than its frame is fitted to it, not grown", () => {
     expect(unansweredFrameHeight(drawn)).toBe(drawn);
   });
 
-  it("a wide letter no taller than its frame is final at once: its fitted document is shorter still", () => {
+  it("a wide letter no taller than its frame is not final until its fitted document reads, and then at once", () => {
     const s = nextFrameHeight(frameHeightFor(null, "m1", W), FRAME_SEED_DP, FRAME_SEED_DP, 0, { doc: 618, frame: 371 });
+    expect(frameFinal(s, false)).toBe(false);
+    expect(unansweredFrameHeight(s).text, "no fitted reading: text, never cut at the seed").toBe("wide");
+    const drawn = nextFrameHeight(s, FRAME_SEED_DP, FRAME_SEED_DP, 0, { doc: 371, frame: 371, zoom: frameFit(s) });
+    expect(frameFinal(drawn, false)).toBe(true);
+    expect(drawn.dp).toBe(FRAME_SEED_DP);
+  });
+
+  it("a sender's width that the fit cannot narrow reads as text once its fitted reading is as wide", () => {
+    const s = nextFrameHeight(frameHeightFor(null, "m1", W), 700, FRAME_SEED_DP, 0, { doc: 640, frame: 371 });
+    const t = nextFrameHeight(s, 449, FRAME_SEED_DP, 0, { doc: 640, frame: 371, zoom: frameFit(s) });
+    expect(t.text).toBe("wide");
+  });
+});
+
+describe("a wide reading is never final unfitted, in whatever order the readings come", () => {
+  // The fold's cover pane (332 dp) and the phone's (379 dp); the skeleton is 632 dp as written.
+  const COVER = 332;
+  const PHONE = 379;
+  const AS_WRITTEN = 632;
+  type R = { name: string; dp: number; doc: number; zoom: number };
+  const asWritten = (dp: number): R => ({ name: `as written ${dp}`, dp, doc: AS_WRITTEN, zoom: 1 });
+  const atZoom = (zoom: number, dp: number, name: string): R => ({ name, dp, doc: Math.round(AS_WRITTEN * zoom), zoom });
+  const coverFit = COVER / AS_WRITTEN;
+  const phoneFit = PHONE / AS_WRITTEN;
+  const fitted = atZoom(coverFit, 330, "fitted");
+  const stale = atZoom(phoneFit, 380, "fitted for the phone");
+  const apply = (s: FrameHeight, r: R): FrameHeight =>
+    nextFrameHeight(s, Math.max(r.dp, frameLayout(s).frame), frameLayout(s).frame, 0, { doc: r.doc, frame: COVER, zoom: r.zoom });
+  const orders = (xs: R[]): R[][] => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => orders([...xs.slice(0, i), ...xs.slice(i + 1)]).map((o) => [x, ...o])));
+  /** Once a reading was wide, final only with the cover's fit drawn: never wider than the pane. */
+  const holds = (s: FrameHeight, label: string) => {
+    if (s.text === null && s.wide !== null && frameFinal(s, false)) expect(AS_WRITTEN * frameFit(s), label).toBeLessThanOrEqual(COVER + 1);
+  };
+  const remembered = (): FrameHeight => {
+    const at = frameHeightFor(null, "card", PHONE);
+    const phone = nextFrameHeight(nextFrameHeight(at, 380, FRAME_SEED_DP, 0, { doc: AS_WRITTEN, frame: PHONE }), 380, FRAME_SEED_DP, 0, { doc: PHONE, frame: PHONE, zoom: phoneFit });
+    expect(frameFinal(phone, false)).toBe(true);
+    return phone;
+  };
+  /** Where the replay starts, and the zooms already drawn (a reading comes only from a drawn document). */
+  const STARTS: [string, () => FrameHeight, number[]][] = [
+    ["a first open at the cover pane", () => frameHeightFor(null, "card", COVER), [1]],
+    ["a reopen whose fit was the phone's, read before the pane's width", remembered, [phoneFit]],
+    ["a reopen whose fit was the phone's, re-measured at the cover pane", () => frameHeightFor(remembered(), "card", COVER), [phoneFit, 1]],
+  ];
+  const READINGS: R[][] = [
+    [asWritten(FRAME_SEED_DP), fitted],
+    [asWritten(236), fitted],
+    [asWritten(900), fitted],
+    [stale, asWritten(236), fitted],
+    [stale, fitted],
+  ];
+  it.each(STARTS)("%s: every order of the readings ends fitted to the pane, or not final", (_, start, zooms) => {
+    let replayed = 0;
+    for (const set of READINGS) {
+      next: for (const order of orders(set)) {
+        let s = start();
+        const drawn = new Set(zooms.map((z) => z.toFixed(3)));
+        const label = order.map((r) => r.name).join(" > ");
+        for (const r of order) {
+          if (!drawn.has(r.zoom.toFixed(3))) continue next;
+          s = apply(s, r);
+          drawn.add(frameFit(s).toFixed(3));
+          holds(s, label);
+        }
+        replayed++;
+        s = settleFrameHeight(s);
+        holds(s, `${label}, settled`);
+        // The fitted document read last is the drawn one: final, at its own height.
+        if (order.at(-1) === fitted) {
+          expect(frameFinal(s, false), label).toBe(true);
+          expect(AS_WRITTEN * frameFit(s), label).toBeLessThanOrEqual(COVER + 1);
+        }
+      }
+    }
+    expect(replayed).toBeGreaterThan(0);
+  });
+
+  it("the phone's fit read on the cover pane is fitted again to the pane, not drawn cut", () => {
+    const s = apply(remembered(), stale);
+    expect(frameFinal(s, false)).toBe(false);
+    expect(frameFit(s)).toBeCloseTo(COVER / AS_WRITTEN, 2);
+    expect(unansweredFrameHeight(s).text).toBe("wide");
+  });
+
+  it("a less fitted document read after the fitted one changes nothing", () => {
+    const s = apply(apply(frameHeightFor(null, "card", COVER), asWritten(900)), fitted);
     expect(frameFinal(s, false)).toBe(true);
-    expect(unansweredFrameHeight(s)).toBe(s);
+    expect(apply(s, asWritten(900))).toBe(s);
+    expect(apply(s, stale)).toBe(s);
   });
 });
 

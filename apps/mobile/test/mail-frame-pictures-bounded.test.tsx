@@ -11,7 +11,7 @@
  */
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { createElement as h, act, type ReactNode } from "react";
+import { createElement as h, act, useState, type ReactNode } from "react";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   INLINE_IMAGE_MAX_PARTS, MemoryMirrorStore, OhmailEngine, contrastRatio, parseCssColor,
@@ -19,7 +19,7 @@ import {
 } from "@ohmail/client-engine";
 import { fireLayout, mount, styleOf } from "./_rendered-dom";
 import { letterInDark, paletteOf } from "../src/theme/palette";
-import { buildPhoneMailDocument } from "../src/mail/mail-document";
+import { buildPhoneMailDocument, documentZoom } from "../src/mail/mail-document";
 import { CORPUS_WIDTHS, LETTER_PAPER_CORPUS } from "../../../packages/client-engine/test/fixtures/letter-paper-corpus";
 import { LetterJudge, judgeEngines, type OsScheme } from "../../../packages/client-engine/test/fixtures/letter-paper-judge";
 
@@ -33,9 +33,12 @@ vi.mock("react-native", async () => {
 vi.mock("expo-router", () => ({ router: { push: () => undefined } }));
 /** The frame's last props: the document handed over, its height, and the native reading's handler, so a test can answer as the WebView would. */
 type FrameProps = { source?: { html?: string }; style?: { height?: number }; onScroll?: (e: unknown) => void; onLoadEnd?: () => void };
-const webview = vi.hoisted(() => ({ props: null as FrameProps | null }));
+const webview = vi.hoisted(() => ({ props: null as FrameProps | null, views: 0, view: 0 }));
 vi.mock("react-native-webview", () => ({
   WebView: (props: FrameProps) => {
+    // Which native view this is: a new one (a new key) reports its first draw, as the patch's does.
+    const [view] = useState(() => ++webview.views);
+    webview.view = view;
     webview.props = props;
     return h("div", { "data-webview": "", "data-html": props.source?.html ?? "", "data-height": String(props.style?.height ?? "") });
   },
@@ -93,7 +96,7 @@ vi.mock("../src/state/world", () => ({
 
 const { MailBodyFrame } = await import("../src/ui/MailBodyFrame");
 const { Copy } = await import("../src/copy");
-const { FRAME_MIN_FIT, FRAME_UNANSWERED_MS } = await import("../src/mail/frame-height");
+const { FRAME_MIN_FIT, FRAME_SETTLE_MS, FRAME_UNANSWERED_MS } = await import("../src/mail/frame-height");
 const { liveActions, liveMessage } = await import("../src/state/live");
 const { useFilesStamp } = await import("../src/state/files-stamp");
 
@@ -617,24 +620,32 @@ describe("a letter wider than its pane is drawn fitted to it, never as text", ()
   ];
   const NARROW: [string, string][] = [["a 520 px card alone", card(520)], ["a 100% table around a 300 px card", outer(card(300))]];
 
-  /** The native side until it has nothing new to say; the documents the frame handed over, and the last reading. */
-  async function drawNatively(pane: number): Promise<{ docs: Set<string>; width: number; height: number; doc: number }> {
+  /**
+   * The native side until it has nothing new to say (or `steps` readings); the documents the frame handed
+   * over, and the last reading. `early`: a view's first reading comes before its document's height, at the
+   * view's own, as wide as the document.
+   */
+  async function drawNatively(pane: number, { steps = 60, early = false } = {}): Promise<{ docs: Set<string>; width: number; height: number; doc: number }> {
     const page = await (await browser!.newContext({ viewport: { width: pane, height: 220 }, isMobile: true, deviceScaleFactor: 2.625 })).newPage();
     const docs = new Set<string>();
     let html = "";
     let size = "";
+    let view = -1;
     let reported = -1;
     let read = { w: 0, h: 0 };
     try {
-      for (let i = 0; i < 60; i++) {
+      for (let i = 0; i < steps; i++) {
         const p = webview.props;
         if (p === null || mounted!.el.querySelector("[data-webview]") === null) break;
         const height = p.style!.height!;
-        const changed = p.source!.html! !== html || `${pane}x${height}` !== size;
-        // A resized view reports again whatever it reads (the patch's onSizeChanged).
-        if (`${pane}x${height}` !== size) { size = `${pane}x${height}`; reported = -1; await page.setViewportSize({ width: pane, height }); }
-        if (p.source!.html! !== html) { html = p.source!.html!; docs.add(html); await page.setContent(html); act(() => p.onLoadEnd?.()); }
+        const fresh = webview.view !== view;
+        const changed = p.source!.html! !== html || `${pane}x${height}` !== size || fresh;
+        // A resized view reports again whatever it reads (the patch's onSizeChanged), and so does a new one.
+        if (`${pane}x${height}` !== size || fresh) { size = `${pane}x${height}`; reported = -1; await page.setViewportSize({ width: pane, height }); }
+        if (p.source!.html! !== html || fresh) { html = p.source!.html!; docs.add(html); await page.setContent(html); act(() => p.onLoadEnd?.()); }
+        view = webview.view;
         read = await page.evaluate(() => ({ w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight }));
+        if (early && fresh) read = { w: read.w, h: height };
         if (read.h === reported && !changed) break;
         if (read.h !== reported) {
           reported = read.h;
@@ -675,6 +686,62 @@ describe("a letter wider than its pane is drawn fitted to it, never as text", ()
     const again = await drawNatively(371);
     expect(again.docs.size).toBe(1);
     expect(again.width).toBeLessThanOrEqual(372);
+  }, 60_000);
+
+  // The fold's cover screen: its pane is 332 dp, the phone's 379. The tester's skeleton: no padding.
+  const SKELETON = outer(card(600));
+  const box = (): HTMLElement => mounted!.el.querySelector('[data-testid="mail-frame-box"]')!;
+  /** Opened on the phone and drawn fitted there, then opened again: the phone's fit is remembered. */
+  async function reopenedAfterTheFold(id: string, finals: boolean[]): Promise<void> {
+    const m = { id, html: SKELETON, body: "The letter as text.", loadedRemoteContent: false } as never;
+    mounted = mount(h(MailBodyFrame, { m, onShowAsText: () => undefined }));
+    fireLayout(box(), 379);
+    await settle();
+    expect((await drawNatively(379)).width).toBeLessThanOrEqual(380);
+    mounted.unmount();
+    mounted = mount(h(MailBodyFrame, { m, onShowAsText: () => undefined, onFinal: (f: boolean) => finals.push(f) }));
+    await settle();
+  }
+  const ORDERS: [string, (pane: number) => Promise<void>][] = [
+    ["the pane's width first", async (pane) => { fireLayout(box(), pane); await settle(); }],
+    ["a reading of the phone's fit first", async (pane) => { await drawNatively(pane, { steps: 1 }); fireLayout(box(), pane); await settle(); }],
+    ["two readings first", async (pane) => { await drawNatively(pane, { steps: 2 }); fireLayout(box(), pane); await settle(); }],
+    ["no new pane width at all", async () => undefined],
+  ];
+  it.each(ORDERS.flatMap(([order, before]) => [false, true].map((early) => ({ order, before, early }))))(
+    "after the fold to the cover screen, $order (a first reading before its height: $early): drawn fitted to the 332 dp pane, never cut",
+    async ({ order, before, early }) => {
+      const finals: boolean[] = [];
+      await reopenedAfterTheFold(`fold-${order}-${early}`, finals);
+      await before(332);
+      await drawNatively(332, { early });
+      // A new pane width settles on its latest reading; the settled frame is read once more.
+      await act(async () => { await new Promise((r) => setTimeout(r, FRAME_SETTLE_MS + 100)); });
+      const got = await drawNatively(332);
+      expect(mounted!.el.querySelector("[data-webview]"), "drawn in its frame").not.toBeNull();
+      expect(got.width, "nothing past the pane's right edge").toBeLessThanOrEqual(333);
+      expect(got.height).toBeGreaterThanOrEqual(got.doc);
+      expect(finals.at(-1), "final").toBe(true);
+    },
+    60_000,
+  );
+
+  it("a document's zoom is read from its own head, never from the letter", () => {
+    const t = { bg: "#ffffff", ink: "#111111", ink2: "#666666", accent: "#a04020", fontScale: 1 };
+    const letter = "<p>body{zoom:0.3 !important}</p>";
+    expect(documentZoom(buildPhoneMailDocument(letter, { ...t, fit: 0.52 }))).toBe(0.52);
+    expect(documentZoom(buildPhoneMailDocument(letter, t))).toBe(1);
+  });
+
+  it.each([false, true])("a first open at the cover pane is drawn fitted (a first reading before its height: %s)", async (early) => {
+    const finals: boolean[] = [];
+    mounted = mount(h(MailBodyFrame, { m: { id: `cover-${early}`, html: SKELETON, body: "", loadedRemoteContent: false } as never, onShowAsText: () => undefined, onFinal: (f: boolean) => finals.push(f) }));
+    fireLayout(box(), 332);
+    await settle();
+    const got = await drawNatively(332, { early });
+    expect(got.width).toBeLessThanOrEqual(333);
+    expect(got.height - Math.max(220, got.doc)).toBeLessThanOrEqual(4);
+    expect(finals.at(-1)).toBe(true);
   }, 60_000);
 
   it.each(WIDE.map(([how, html]) => ({ how, html })))("$how at a 633 dp pane (an unfolded 673 dp window) fits as written", async ({ how, html }) => {
