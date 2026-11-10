@@ -8,7 +8,7 @@ import {
   type CallFault, type ContractFault, type EntitlementsFetch, type EntitlementsPath, type UsageUnrecorded,
 } from "../src/entitlements-client.js";
 import {
-  UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, pricingOf, aiUsageLineOf, type AiUsageLine,
+  UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, parkedAccountsOf, pricingOf, aiUsageLineOf, type AiUsageLine,
 } from "../src/entitlements-port.js";
 import { DEFAULT_ALERT_THRESHOLDS } from "../src/alerts.js";
 
@@ -1562,6 +1562,50 @@ describe("access — askedAfter answers only from a call begun since that instan
     await c.port.access(ACC);
     t = 1_500;
     await expect(c.port.access(ACC, { askedAfter: 1_200 })).resolves.toEqual(UNMETERED_ACCESS);
+  });
+});
+
+/**
+ * A CLOSURE THE ROWS STORED (2026-11-10): while the plane answered 429, a worker that had just started
+ * held no answer and unparked a closed account. An allow the program never gave is no reopening.
+ */
+describe("parkedAccountsOf — a stored closure stands while the plane does not answer", () => {
+  const closed = () => {
+    const b = wire("access-200-active") as { entitlements: Record<string, unknown> };
+    b.entitlements.syncEnabled = false;
+    b.entitlements.reason = "canceled";
+    return b;
+  };
+  const PAY = "22222222-2222-4222-8222-222222222222";
+  const limited = { status: 429, body: { error: "rate_limited" } };
+
+  it("a fresh process during a 429 parks the stored account and serves the one with no closure", async () => {
+    const c = client([limited]);
+    const read = parkedAccountsOf(c.port)!;
+    expect(await read([ACC, PAY], new Date(), undefined, new Set([ACC]))).toEqual(new Set([ACC]));
+    expect(c.paths, "both asked, neither answered").toEqual(["/v1/access", "/v1/access"]);
+  });
+
+  it("a held refusal rechecked into a 429 stays parked; the account the door cleared is served", async () => {
+    let t = 1_000_000;
+    const c = client([{ status: 200, body: closed() }, limited], { now: () => t });
+    const read = parkedAccountsOf(c.port)!;
+    expect(await read([ACC], new Date())).toEqual(new Set([ACC]));
+    t += 10_000;
+    const kicked = { accounts: new Set([ACC]), since: t };
+    expect(await read([ACC], new Date(), kicked, new Set([ACC])), "the rows still say closed")
+      .toEqual(new Set([ACC]));
+    expect(await read([ACC], new Date(), kicked), "the door cleared the rows").toEqual(new Set());
+  });
+
+  it("a held allow still wins over the stored closure", async () => {
+    let t = 1_000_000;
+    const c = client([{ status: 200, body: wire("access-200-active") }, limited], { now: () => t });
+    const read = parkedAccountsOf(c.port)!;
+    expect(await read([ACC], new Date())).toEqual(new Set());
+    t += 70_000;
+    expect(await read([ACC], new Date(), undefined, new Set([ACC]))).toEqual(new Set());
+    expect(c.paths, "the second read asked and faulted").toHaveLength(2);
   });
 });
 

@@ -12,10 +12,11 @@ import { reindexMessageSearch } from "@trafficflow/core/mail";
 import {
   formatClaim, isMalformed, parseClaim, type OrganizerClaim,
 } from "@trafficflow/core/adapters/organizer-lease";
+import { ImapBoundExceeded } from "@trafficflow/core/adapters/imap";
 import { runWorkerSupervised } from "../src/supervisor.js";
 import { DEFAULT_SYNC_BLOCK_GRACE_MS, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
-import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { FakeAdapterFleet, type FakeControl } from "./_fakeadapter.js";
 // The door the first client read after a reopening goes through, driven against the rows this
 // worker left: the catch-up is the two halves meeting, so it is measured where they meet.
 import { reopenedCatchUp } from "../../../packages/api/src/account-reopen.js";
@@ -49,15 +50,24 @@ function fakePlane(): {
   answered: Array<{ accountId: string; closed: boolean; at: number }>;
   /** Called right after an answer is written — where a case acts at the plane's own instant. */
   onAnswer: { fn: ((accountId: string, closed: boolean) => void) | null };
+  /** While `on`, every call is answered 429 (the plane's limiter, 2026-11-10), counted per account. */
+  limited: { on: boolean; count: Map<string, number> };
 } {
   const parked = new Set<string>();
   const answered: Array<{ accountId: string; closed: boolean; at: number }> = [];
   const onAnswer: { fn: ((accountId: string, closed: boolean) => void) | null } = { fn: null };
+  const limited = { on: false, count: new Map<string, number>() };
   const server = createServer((req, res) => {
     let raw = "";
     req.on("data", (c) => { raw += c; });
     req.on("end", () => {
       const accountId = (JSON.parse(raw || "{}") as { accountId?: string }).accountId ?? "";
+      if (limited.on) {
+        limited.count.set(accountId, (limited.count.get(accountId) ?? 0) + 1);
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "rate_limited" }));
+        return;
+      }
       const closed = parked.has(accountId);
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({
@@ -88,6 +98,7 @@ function fakePlane(): {
     parked,
     answered,
     onAnswer,
+    limited,
     url: () => {
       const a = server.address();
       if (a === null || typeof a === "string") throw new Error("the fake plane has no port");
@@ -97,13 +108,15 @@ function fakePlane(): {
   };
 }
 
-/** One consented organizer mailbox + credential + a push row — the product's own shape. */
-async function seedAccount(db: Db): Promise<{ accountId: string; mailboxId: string }> {
+/** One consented organizer mailbox + credential + a push row — the product's own shape; `row` overrides it. */
+async function seedAccount(
+  db: Db, row: Partial<typeof mailboxes.$inferInsert> = {},
+): Promise<{ accountId: string; mailboxId: string }> {
   const accountId = randomUUID();
   await db.insert(accounts).values({ id: accountId, name: "wall" });
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`,
-    organizerRole: "organizer", organizeConsentedAt: new Date(Date.now() - 3_600_000),
+    organizerRole: "organizer", organizeConsentedAt: new Date(Date.now() - 3_600_000), ...row,
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
@@ -173,6 +186,8 @@ const rowOf = async (db: Db, mailboxId: string) => {
 };
 const pushCount = async (db: Db, accountId: string): Promise<number> =>
   (await db.select().from(pushSubscriptions).where(eq(pushSubscriptions.accountId, accountId))).length;
+const reopenedRows = async (db: Db, accountId: string) => db.select().from(accountLifecycleNotices)
+  .where(and(eq(accountLifecycleNotices.accountId, accountId), eq(accountLifecycleNotices.kind, "reopened")));
 
 const WHOLE = {
   from: ["Anna <anna@example.test>"], to: ["me@example.test"], subject: ["harbour ledger"], "message-id": ["<old@example.test>"],
@@ -493,6 +508,150 @@ describe("a parked account leaves the roster and its organizer stands down (mail
     expect((await rowOf(db, B.mailboxId)).organizerRole).toBe("reader");
   }, 60_000);
 
+  /* THE PLANE ANSWERING 429 (2026-11-10): a worker that started inside it held no answer, allowed,
+     and unparked a closed account: its block cleared, its mailbox signed in to. The stored block is
+     the plane's last answer, so it stands until the plane answers again. */
+  const walledAt = (at: Date) => ({
+    organizerRole: "reader", organizerParkedAt: at, syncBlockedReason: "account_closed", syncBlockedSince: at,
+  }) as const;
+  /** A row's closure facts, sampled on every poll, so a clear a later pass undid is still seen. */
+  const watchRow = async (db: Db, mailboxId: string) => {
+    const iso = (d: Date | null) => d?.toISOString() ?? null;
+    const facts = async () => {
+      const r = await rowOf(db, mailboxId);
+      return {
+        block: r.syncBlockedReason, blockSince: iso(r.syncBlockedSince), role: r.organizerRole,
+        parkedAt: iso(r.organizerParkedAt), takeover: iso(r.takeoverAuthorizedAt), kick: iso(r.syncRequestedAt),
+      };
+    };
+    const seeded = await facts();
+    const seen = new Map([[JSON.stringify(seeded), seeded]]);
+    return {
+      seeded, seen: () => [...seen.values()],
+      sample: async () => { const f = await facts(); seen.set(JSON.stringify(f), f); },
+    };
+  };
+  /** What the stored closure keeps through the fault, read once the worker drained its last pass. */
+  const expectStillClosed = async (
+    db: Db, fleet: FakeAdapterFleet, B: { accountId: string; mailboxId: string },
+    watch: Awaited<ReturnType<typeof watchRow>>,
+  ) => {
+    await watch.sample();
+    expect(watch.seen(), "B's row on every poll: never cleared, never resumed").toEqual([watch.seeded]);
+    expect(fleet.indicesOf(B.mailboxId, "connect_start"), "no sign-in to the closed account's mailbox").toEqual([]);
+    expect(await fleet.metaFor(B.mailboxId).listClaims()).toEqual([]);
+    expect(await reopenedRows(db, B.accountId), "no reopening noted").toEqual([]);
+  };
+
+  it("a worker that STARTS while the plane answers 429 keeps a stored closure — no sign-in, the block kept — " +
+     "while a paying account and one the door reopened sync", async () => {
+    const db = makeDb(DB);
+    const plane = fakePlane();
+    await new Promise<void>((r) => plane.server.listen(0, "127.0.0.1", () => { r(); }));
+    closers.push(plane.close);
+    plane.limited.on = true;
+    const parkedAt = new Date(Date.now() - 86_400_000);
+    const doorAt = new Date(Date.now() - 60_000);
+    const A = await seedAccount(db);   // paying, no block
+    const B = await seedAccount(db, walledAt(parkedAt));   // closed, its block stored
+    const C = await seedAccount(db, {   // what the door leaves: no block, a join stamp and the kick
+      organizerRole: "reader", organizerParkedAt: parkedAt,
+      takeoverAuthorizedAt: doorAt, takeoverIntent: "join", syncRequestedAt: doorAt,
+    });
+    const watch = await watchRow(db, B.mailboxId);
+    const fleet = new FakeAdapterFleet();
+    const w = await runWorkerSupervised(cfgFor(fleet, plane.url()));
+    closers.push(() => w.stop());
+    // Counted work: A and C synced, and B asked twice, the second past the client's 5 s fault hold.
+    await waitFor(async () => {
+      await watch.sample();
+      return [A, C].every((m) => fleet.indicesOf(m.mailboxId, "sync_end").length > 0)
+        && (plane.limited.count.get(B.accountId) ?? 0) >= 2;
+    }, 20_000, "A and C to sync and the plane to answer B 429 twice");
+    await w.stop();
+    await expectStillClosed(db, fleet, B, watch);
+  }, 60_000);
+
+  it("…and a running worker holding the refusal keeps it when the kicked row's recheck meets the 429", async () => {
+    const db = makeDb(DB);
+    const plane = fakePlane();
+    await new Promise<void>((r) => plane.server.listen(0, "127.0.0.1", () => { r(); }));
+    closers.push(plane.close);
+    const B = await seedAccount(db, {   // closed, and kicked: every pass asks its refusal again
+      ...walledAt(new Date(Date.now() - 86_400_000)), syncRequestedAt: new Date(Date.now() - 60_000),
+    });
+    plane.parked.add(B.accountId);
+    const watch = await watchRow(db, B.mailboxId);
+    const fleet = new FakeAdapterFleet();
+    const w = await runWorkerSupervised(cfgFor(fleet, plane.url()));
+    closers.push(() => w.stop());
+    await waitFor(async () => {
+      await watch.sample();
+      return plane.answered.filter((a) => a.accountId === B.accountId && a.closed).length >= 2;
+    }, 20_000, "the plane to refuse B twice");
+    plane.limited.on = true;
+    // A paying account added now: only a roster pass begun inside the fault attaches it.
+    const D = await seedAccount(db);
+    await waitFor(async () => {
+      await watch.sample();
+      return (plane.limited.count.get(B.accountId) ?? 0) >= 2 && fleet.indicesOf(D.mailboxId, "sync_end").length > 0;
+    }, 20_000, "two 429s for B, and D to sync");
+    await w.stop();
+    await expectStillClosed(db, fleet, B, watch);
+  }, 60_000);
+
+  it("a mailbox held back by our ceiling or a throttled sign-in stores account_closed once parked, " +
+     "so a worker that starts inside the 429 keeps it closed", async () => {
+    const db = makeDb(DB);
+    const plane = fakePlane();
+    await new Promise<void>((r) => plane.server.listen(0, "127.0.0.1", () => { r(); }));
+    closers.push(plane.close);
+    const A = await seedAccount(db);   // paying: served under both workers
+    const soft: Array<{
+      reason: "read_limited" | "provider_unavailable"; at: { accountId: string; mailboxId: string }; fault: FakeControl;
+    }> = [
+      { reason: "read_limited", at: await seedAccount(db),
+        fault: { syncError: new ImapBoundExceeded("enumerate_uids", 500_000, 500_001, "INBOX") } },
+      { reason: "provider_unavailable", at: await seedAccount(db),
+        fault: { connectError: Object.assign(new Error("throttled"), { code: "ETHROTTLE" }) } },
+    ];
+    const fleet = new FakeAdapterFleet();
+    for (const s of soft) fleet.behave(s.at.mailboxId, s.fault);
+    // A backoff longer than the case: neither is mid-attach or mid-cycle when the park lands.
+    const w1 = await runWorkerSupervised(cfgFor(fleet, plane.url(), { maxSyncFailures: 1, mailboxRetryMs: 60_000 }));
+    closers.push(() => w1.stop());
+    const rows = () => Promise.all(soft.map((s) => rowOf(db, s.at.mailboxId)));
+    await waitFor(async () => (await rows()).every((r, i) => r.syncBlockedReason === soft[i]!.reason),
+      20_000, "each soft block on its row");
+    for (const s of soft) plane.parked.add(s.at.accountId);
+    await waitFor(async () => (await rows()).every((r) => r.organizerParkedAt !== null), 20_000, "both parks");
+    const parkedFrom = plane.answered.length;
+    await waitFor(() => soft.every((s) => plane.answered.slice(parkedFrom)
+      .filter((a) => a.accountId === s.at.accountId && a.closed).length >= 2), 20_000, "two refusals each after the park");
+    expect((await rows()).map((r) => r.syncBlockedReason), "the park outranks the soft block on the row")
+      .toEqual(["account_closed", "account_closed"]);
+    expect(await Promise.all(soft.map((s) => pushCount(db, s.at.accountId))), "and takes the push rows").toEqual([0, 0]);
+    await w1.stop();
+
+    // A new process (a deploy, a failover) once that backoff has run out, while the plane answers
+    // 429: it holds no answer.
+    for (const s of soft) {
+      await db.update(mailboxes).set({ retryAfter: new Date(Date.now() - 1_000) }).where(eq(mailboxes.id, s.at.mailboxId));
+    }
+    plane.limited.on = true;
+    const watches = await Promise.all(soft.map((s) => watchRow(db, s.at.mailboxId)));
+    const fleet2 = new FakeAdapterFleet();
+    const w2 = await runWorkerSupervised(cfgFor(fleet2, plane.url()));
+    closers.push(() => w2.stop());
+    await waitFor(async () => {
+      for (const w of watches) await w.sample();
+      return fleet2.indicesOf(A.mailboxId, "sync_end").length > 0
+        && soft.every((s) => (plane.limited.count.get(s.at.accountId) ?? 0) >= 2);
+    }, 20_000, "A to sync and the plane to answer each closed account 429 twice");
+    await w2.stop();
+    for (const [i, s] of soft.entries()) await expectStillClosed(db, fleet2, s.at, watches[i]!);
+  }, 60_000);
+
   it("the CYCLE-TAIL site: a parked account's pending workflow run is NOT drained while an " +
      "open account's is — the DB passes skip what the roster parked", async () => {
     const db = makeDb(DB);
@@ -599,8 +758,6 @@ describe("the catch-up a reopening pass records before it spends it", () => {
     }));
     return { accountId, mailboxId: mb!.id };
   }
-  const reopenedRows = async (db: Db, accountId: string) => db.select().from(accountLifecycleNotices)
-    .where(and(eq(accountLifecycleNotices.accountId, accountId), eq(accountLifecycleNotices.kind, "reopened")));
   const firstClientRead = (db: Db, accountId: string) => {
     const now = (): Date => new Date();
     return reopenedCatchUp({ db, now } as never, { accountId, db, now } as never);

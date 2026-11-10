@@ -9,7 +9,9 @@ import {
   UNMETERED, accountStorage, mailboxFolders, mailboxes, messages,
   type AccessReadOpts, type AccessVerdict, type EntitlementsPort,
 } from "@trafficflow/db";
-import { accountLifecycleNotices, accountStoragePrefs, mailboxStorageStats } from "@trafficflow/db/cloud";
+import {
+  accountLifecycleNotices, accountStoragePrefs, mailboxStorageStats, makeEntitlementsClient,
+} from "@trafficflow/db/cloud";
 import {
   spendOf, entitlementsPort as entitlementsPortOf,
 } from "../src/routes/shared.js";
@@ -704,6 +706,41 @@ describe("GET /account/access reopens what the wall closed", () => {
     const walled = await rowOf(db, w.walled);
     expect(walled.syncBlockedReason).toBe("account_closed");
     expect(walled.takeoverAuthorizedAt).toBeNull();
+  });
+
+  it("a read the plane answers 429 opens the app and reopens nothing; its next open answer does", async () => {
+    let status = 429;
+    const open = {
+      entitlements: {
+        mailboxLimit: null, canAddMailbox: true, aiEnabled: true, syncEnabled: true, storageBytesLimit: null,
+      },
+      lifecycle: openLifecycle,
+    };
+    const client = makeEntitlementsClient({
+      baseUrl: "https://plane.invalid", secret: "x".repeat(24), onCallFault: "unrecorded",
+      fetchImpl: async () => ({ status, json: async () => (status === 200 ? open : { error: "rate_limited" }) }),
+    });
+    const quiet = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const { db, deps } = await depsWith(client);
+      const w = await seedClosedAccount(db);
+      const res = await H(req("GET", "/account/access", { bearer: w.s.token }), deps);
+      expect([res.status, (await res.json()).access]).toEqual([200, "open"]);
+      const kept = await rowOf(db, w.walled);
+      expect([kept.syncBlockedReason, kept.syncRequestedAt, kept.takeoverAuthorizedAt], "no clear, no kick, no join")
+        .toEqual(["account_closed", null, null]);
+      const notices = await db.select().from(accountLifecycleNotices)
+        .where(eq(accountLifecycleNotices.accountId, w.s.accountId));
+      expect(notices, "no reopening noted").toEqual([]);
+
+      status = 200;
+      await H(req("GET", "/account/access", { bearer: w.s.token }), deps);
+      const reopened = await rowOf(db, w.walled);
+      expect([reopened.syncBlockedReason, reopened.syncRequestedAt?.toISOString(), reopened.takeoverIntent])
+        .toEqual([null, FIXED_NOW.toISOString(), "join"]);
+    } finally {
+      quiet.mockRestore();
+    }
   });
 
   it("the banner anchors on the PARK, and the reopening it answered starts no second one", async () => {
