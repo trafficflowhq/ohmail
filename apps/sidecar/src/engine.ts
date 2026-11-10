@@ -224,6 +224,9 @@ import { threadJoinHealPass, type ThreadJoinHealCursor } from "@trafficflow/work
    the authority nothing else will ever check, and one fact function decides every row. */
 import { senderCheckBackfillPass } from "@trafficflow/worker/sender-check-backfill";
 import { listAddressBackfillPass } from "@trafficflow/worker/list-address-backfill";
+import {
+  screenerImpersonationPass, type ImpersonationCutlineSettings, type ImpersonationWalk,
+} from "@trafficflow/worker/screener-impersonation";
 import { retireActAdmissionsPass } from "@trafficflow/worker/act-admission-retire";
 import { inboundQuietPass } from "@trafficflow/worker/inbound-quiet";
 import { GONE_LETTER_TIDY_BATCH, goneLetterTidyPass } from "@trafficflow/worker/gone-letter-tidy";
@@ -2910,7 +2913,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
      * would demote a real person's mail. The event name is the hosted worker's.
      */
     const screeningNow = async (): Promise<Pick<SyncDeps, "ohboxPolicy" | "ohboxBar" | "screeningCutoff" | "signatures">
-      & { actSettings?: ScreenerAutoActSettings }> => {
+      & { actSettings?: ScreenerAutoActSettings; impersonation?: { on: boolean } & ImpersonationCutlineSettings }> => {
       /* A one-click letter's sender is worth confirming while a screen-out may unsubscribe. */
       const signaturesFor = (listLetters: boolean): SyncDeps["signatures"] =>
         signatureCheck === null ? null : { ...signatureCheck, listLetters };
@@ -2932,6 +2935,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           scope: accountSettings.screeningScope,
           autoActAt: accountSettings.screenerAutoActAt,
           blockAutoUnsubscribeAt: accountSettings.blockAutoUnsubscribeAt,
+          impersonationOffAt: accountSettings.impersonationFilingOffAt,
         }).from(accountSettings).where(eq(accountSettings.accountId, world.accountId)).limit(1);
         const cutoff = resolveScreeningCutoff(row?.baselineAt, row?.dormancyDays, row?.scope);
         return {
@@ -2948,6 +2952,12 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             screeningBaselineAt: row?.baselineAt ?? null,
             dormancyDays: row?.dormancyDays ?? null, screeningScope: row?.scope ?? null,
             screenerAutoActAt: row?.autoActAt ?? null,
+          },
+          // The impersonation filing's switch off the same row: NULL is on, the default.
+          impersonation: {
+            on: (row?.impersonationOffAt ?? null) === null,
+            screeningBaselineAt: row?.baselineAt ?? null,
+            dormancyDays: row?.dormancyDays ?? null, screeningScope: row?.scope ?? null,
           },
         };
       } catch (err) {
@@ -3211,6 +3221,48 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
           err,
           reason: "some older held or Ohbox messages carry no identity sentence yet; nothing is marked " +
             "and no position is kept, so the next drain asks the store again",
+        });
+      }
+    };
+    /**
+     * THE IMPERSONATION FILING IS OWED: the first drain of a launch, a drain that took mail in, the
+     * switch turned on, a run that left senders waiting, and a settings question opened or answered
+     * on a mailbox. Anything else costs the drain nothing, so an idle drain asks the store no more
+     * than before.
+     */
+    let impersonationOwed = true;
+    /** The switch as the last drain read it; `null` before the first read of this launch. */
+    let impersonationLastOn: boolean | null = null;
+    /** The mailboxes the last run that owed nothing more went over. */
+    let impersonationSettledOver: string | null = null;
+    /** The walk of the waiting senders, kept between drains. */
+    const impersonationWalk: ImpersonationWalk = {};
+    /** The organized mailboxes whose settings question the last evaluation found answered; no IO. */
+    const settledMailboxIds = (): string[] => runtimes.all()
+      .filter((rt) => rt.organizer.organizing && rt.profileSync.gapClearance().kind === "clear")
+      .map((rt) => rt.mailboxId).sort();
+    /**
+     * A HELD LETTER THAT IMPERSONATES A COMPANY, FILED TO SPAM ON ITS OWN — the worker's pass on this
+     * store, the mailboxes this install organizes whose settings question is answered, the switch and
+     * the cutline off the drain's own settings read. No model, no rule, one letter at a time with its
+     * undo. Contained like the backfills.
+     */
+    const fileImpersonations = async (
+      settings: { on: boolean } & ImpersonationCutlineSettings, mailboxIds: string[],
+    ): Promise<void> => {
+      if (stopping) return;
+      try {
+        const r = await screenerImpersonationPass(db as unknown as Tx, {
+          accountId: world.accountId, mailboxIds, settings, now, walk: impersonationWalk,
+        });
+        // Not run (no mailbox organized and answered yet, as in a launch drain), cut, or failed: still owed.
+        impersonationOwed = !r.ran || r.capped || r.failed > 0;
+        if (!impersonationOwed) impersonationSettledOver = mailboxIds.join(" ");
+        if (r.filed > 0 || r.failed > 0) log("screener_impersonation", { moved: r.filed, failed: r.failed, capped: r.capped });
+      } catch (err) {
+        log("screener_impersonation_failed", {
+          err,
+          reason: "no held letter was filed and nothing is marked; the filing stays owed, so the next drain asks again",
         });
       }
     };
@@ -6895,7 +6947,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
         // let a mailbox change its mind halfway through its own backlog. It is NOT hoisted into
         // `syncDeps` above, which is built once per process — that would freeze the posture for the
         // life of the engine, so an edit in Settings would need a relaunch to take effect.
-        const { actSettings, ...screening } = await screeningNow();
+        const { actSettings, impersonation, ...screening } = await screeningNow();
         /* WHEN THIS DRAIN BEGAN, for the first-import clock. A drain is up to a hundred cycles, and
            the one that finds a first import open lands a large mailbox's first pages before it
            reports — 13.7 minutes of a 47.4-minute import on the reference rig, which the reported
@@ -7150,6 +7202,22 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
              claim, so on the first drain after an update they are read before it runs. */
           tail.phase("list-address-backfill");
           await upkeep(() => onceForTheAccount(backfillListAddresses));
+          /* A HELD IMPERSONATION FILED TO SPAM, ONLY WHEN OWED and behind the organizer gate: it writes the
+             mailbox's desired state. After the list addresses, which keep a list's claims held. A failed
+             settings read reads as off, and a mailbox whose settings question is open or unread waits:
+             an Import may bring a tie or the off choice. */
+          tail.phase("screener-impersonation");
+          if (census.observed > 0) impersonationOwed = true;
+          const impersonationOn = impersonation?.on === true;
+          if (impersonationOn && impersonationLastOn === false) impersonationOwed = true;
+          impersonationLastOn = impersonationOn;
+          const impersonationOver = settledMailboxIds();
+          if (impersonationOver.join(" ") !== impersonationSettledOver) impersonationOwed = true;
+          const impersonationDue = async (): Promise<void> => {
+            if (!impersonationOwed || impersonation === undefined || !impersonation.on) return;
+            await upkeep(() => fileImpersonations(impersonation, impersonationOver));
+          };
+          if (organizing) await onceForTheAccount(impersonationDue);
           tail.phase("correspondent-retro");
           const correspondentRetroDue = async (): Promise<void> => {
             if (!passDue(lastCorrespondentRetroAt, CORRESPONDENT_RETRO_EVERY_MS)) return;

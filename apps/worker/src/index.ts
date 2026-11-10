@@ -117,6 +117,7 @@ import { alertDrillPass } from "./alert-drill-pass.js";
 import { retentionPrunePass, signInRetentionPass } from "./retention-prune.js";
 import { ohboxTidyPass } from "./ohbox-tidy.js";
 import { screenerActConsentFrom, screenerAutoActPass } from "./screener-auto-act.js";
+import { screenerImpersonationPass, type ImpersonationWalk } from "./screener-impersonation.js";
 import { retireActAdmissionsPass } from "./act-admission-retire.js";
 import {
   CORRESPONDENT_RETRO_EVERY_MS, screenerCorrespondentRetroPass,
@@ -953,6 +954,16 @@ export async function startWorkerWithLock(
      */
     const suggestOwedHints = new Set<string>();
     /**
+     * ACCOUNTS THE IMPERSONATION PASS OWES NOTHING, in this process, with the mailboxes its last run
+     * went over: that run read the switch on, ended uncut and failed nowhere. Anything else is owed — an
+     * account not yet visited, one ingest held a sender for since (`noteScreenerHold` removes it), one
+     * whose switch read off, so the next tail sees it turned on, and one whose mailboxes' settings
+     * questions opened or closed since.
+     */
+    const impersonationSettled = new Map<string, string>();
+    /** Each account's walk of its waiting senders, kept between tails. */
+    const impersonationWalks = new Map<string, ImpersonationWalk>();
+    /**
      * The mark writer's per-account pacing — one durable upsert per account per
      * {@link SUGGEST_OWED_MARK_GAP_MS}, so a first import holding hundreds of senders costs a
      * handful of writes rather than one per message. A paced-away write is covered twice over:
@@ -968,6 +979,7 @@ export async function startWorkerWithLock(
      */
     const noteScreenerHold = (accountId: string): void => {
       suggestOwedHints.add(accountId);
+      impersonationSettled.delete(accountId);
       const last = suggestOwedMarkedAt.get(accountId) ?? 0;
       if (Date.now() - last < SUGGEST_OWED_MARK_GAP_MS) return;
       suggestOwedMarkedAt.set(accountId, Date.now());
@@ -5331,6 +5343,34 @@ export async function startWorkerWithLock(
                   "what was recorded stays, and new mail records its own list addresses at ingest",
               });
             });
+        },
+      },
+      screener_impersonation: {
+        // A held letter that impersonates a company, filed to Spam on its own when owed: no model,
+        // no rule, one letter at a time, each listed with its undo. Only the mailboxes this process
+        // organizes; the door reads each mailbox's role under lock again. After the list addresses
+        // above, which keep a list's claims held.
+        run: async (accountId, walk) => {
+          // A mailbox whose settings question is open or unread waits: an Import may bring a tie or the off choice.
+          const mailboxIds = organizedMailboxIdsOf(walk.mailboxes, accountId)
+            .filter((id) => gapClearances.get(id)?.kind === "clear").sort();
+          const over = mailboxIds.join(" ");
+          if (impersonationSettled.get(accountId) === over) return;
+          let senders = impersonationWalks.get(accountId);
+          if (senders === undefined) impersonationWalks.set(accountId, senders = {});
+          await runTailStage("cycle.screenerImpersonationPass", "database", async () => {
+            const r = await screenerImpersonationPass(db as unknown as Tx, {
+              accountId, mailboxIds, log, until: sliceUntil(), walk: senders,
+              noteFault: tailFaultNote("cycle.screenerImpersonationPass"),
+            });
+            if (r.ran && !r.capped && r.failed === 0) impersonationSettled.set(accountId, over);
+          }, (err) => {
+            log.error("screener_impersonation_failed", {
+              accountId, err,
+              reason: "no held letter was filed past the failure and nothing is marked; the account stays owed, "
+                + "so the next tail asks again",
+            });
+          });
         },
       },
       act_admission_retire: {

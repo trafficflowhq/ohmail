@@ -713,5 +713,11 @@ export const SQLITE_JOURNAL: readonly SqliteJournalEntry[] = [
       "ALTER TABLE \"outbound_sent_copies\" ADD COLUMN \"files_until\" integer;",
       "ALTER TABLE \"outbound_sent_copies\" ADD COLUMN \"files_next_attempt_at\" integer;"
     ]
+  },
+  {
+    "name": "0184_account_settings_impersonation_filing.sql",
+    "statements": [
+      "ALTER TABLE \"account_settings\" ADD COLUMN \"impersonation_filing_off_at\" integer;"
+    ]
   }
 ] as const;

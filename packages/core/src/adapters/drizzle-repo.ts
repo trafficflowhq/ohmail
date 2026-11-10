@@ -746,7 +746,8 @@ export interface WorkerRepo extends RepoPort, RoutingPort {
    * 0065) — a graduated pattern's per-message act, not a user's press and not a rule. The
    * amended product rule allows only USER-COMMANDED writes into the provider's \Junk, so the
    * reconciler's junk mapping excludes these: they file to `ohmail/Quarantine` exactly as
-   * before, the conservative direction. OPTIONAL; a repo without it excludes nothing, which is
+   * before, the conservative direction. The organizer's impersonation filings are excluded the same
+   * way. OPTIONAL; a repo without it excludes nothing, which is
    * wrong ONLY toward the narrower action (fakes never junk-file at all unless they opt in).
    */
   listAiAutoAppliedQuarantine?(accountId: string, messageIds: readonly string[]): Promise<string[]>;
@@ -1862,6 +1863,60 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     if (input !== null) await upsertMessageSearch(this.db as unknown as Tx, messageId, input);
   }
 
+  /** The pile placements no hand commanded: an AI auto-apply's, and the impersonation pass's. */
+  async listAiAutoAppliedQuarantine(accountId: string, messageIds: readonly string[]): Promise<string[]> {
+    if (messageIds.length === 0) return [];
+    const filed = await this.impersonationFiledToPile(accountId, messageIds);
+    const ai = await this.aiAutoAppliedToPile(accountId, messageIds);
+    return [...new Set([...filed, ...ai])];
+  }
+
+  /**
+   * THE ORGANIZER'S IMPERSONATION FILINGS STAY ON THE PILE: a held claim the pass filed with no hand
+   * on it is no user-commanded verdict, so it never reaches the provider's Junk, where the body would
+   * be husked and the provider may delete the letter. Its newest automatic filing must say so
+   * (`why: "impersonation"`, to the pile), it must not have been put back, and no move to the pile
+   * may postdate it (a person's own Spam files to Junk as commanded). Only claim letters are asked
+   * of the audit trail, so an ordinary Spam move costs one keyed read here.
+   */
+  private async impersonationFiledToPile(accountId: string, messageIds: readonly string[]): Promise<string[]> {
+    const claims = await this.db.select({ id: messages.id }).from(messages)
+      .innerJoin(folderState, eq(folderState.messageId, messages.id))
+      .where(and(
+        eq(messages.accountId, accountId), inArray(messages.id, [...messageIds]),
+        eq(messages.senderCheck, "impersonation"), isNull(folderState.autoFilingUndoneAt),
+      ));
+    if (claims.length === 0) return [];
+    const ids = claims.map((c) => c.id);
+    const named = sql<string>`${auditLog.payload}->>'messageId'`;
+    const filings = await this.db.select({
+      messageId: named, why: sql<string | null>`${auditLog.payload}->>'why'`,
+      to: sql<string | null>`${auditLog.payload}->>'to'`, at: auditLog.createdAt, id: auditLog.id,
+    }).from(auditLog).where(and(
+      eq(auditLog.accountId, accountId), eq(auditLog.action, auditAction("screener_auto_apply_move")),
+      inArray(named, ids),
+    ));
+    const newest = new Map<string, (typeof filings)[number]>();
+    for (const f of filings) {
+      const prior = newest.get(f.messageId);
+      const at = new Date(f.at as unknown as Date).getTime();
+      const priorAt = prior === undefined ? -Infinity : new Date(prior.at as unknown as Date).getTime();
+      if (prior === undefined || at > priorAt || (at === priorAt && f.id > prior.id)) newest.set(f.messageId, f);
+    }
+    const kept = [...newest.values()].filter((f) => f.why === "impersonation" && f.to === "ohmail/Quarantine");
+    if (kept.length === 0) return [];
+    const later = await this.db.select({ id: changeLog.entityId, at: changeLog.createdAt }).from(changeLog).where(and(
+      eq(changeLog.accountId, accountId), eq(changeLog.entityType, "message"), eq(changeLog.op, "move"),
+      inArray(changeLog.entityId, kept.map((f) => f.messageId)),
+      sql`${changeLog.meta} ->> 'to' = 'ohmail/Quarantine'`,
+    ));
+    const movedSince = new Set(later.filter((l) => {
+      const f = newest.get(l.id);
+      return f !== undefined && new Date(l.at as unknown as Date).getTime() > new Date(f.at as unknown as Date).getTime();
+    }).map((l) => l.id));
+    return kept.map((f) => f.messageId).filter((id) => !movedSince.has(id));
+  }
+
   /**
    * Mail 0065: the AI-auto-applied Quarantine placements to exclude. Account-scoped because the
    * only index is `(account_id, message_id)` — a bare `message_id IN (…)` cannot seek its leading
@@ -1871,8 +1926,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    * auto-apply arm records only the message `create` — and the verdict then files to native Junk
    * as the user commanded.
    */
-  async listAiAutoAppliedQuarantine(accountId: string, messageIds: readonly string[]): Promise<string[]> {
-    if (messageIds.length === 0) return [];
+  private async aiAutoAppliedToPile(accountId: string, messageIds: readonly string[]): Promise<string[]> {
     const rows = await this.db.select({ messageId: routingDecisions.messageId })
       .from(routingDecisions)
       .where(and(

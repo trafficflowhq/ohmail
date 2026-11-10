@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { contacts } from "@trafficflow/db";
+import { accountSettings, contacts } from "@trafficflow/db";
 import { carryDialect } from "@trafficflow/db/dialect";
 import { makeProfileDoc, profileFingerprint, type OrganizerProfilePayload } from "@trafficflow/core/adapters/organizer-profile";
 import { applyOrganizerProfile, serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
@@ -79,6 +79,27 @@ describe("the profile round trip and who made a contact", () => {
       screener: [{ address: X }], rules: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,
     });
     expect(await sourceOf(w, X)).toBe("inferred");
+  });
+
+  it("the impersonation filing's off choice travels with the copy; a copy that says nothing changes nothing", async () => {
+    const offAt = async (w: World) => (await w.db.select({ at: accountSettings.impersonationFilingOffAt }).from(accountSettings)
+      .where(eq(accountSettings.accountId, w.accountId)))[0]?.at ?? null;
+    const a = await makeCtx(NOW);
+    await a.db.insert(accountSettings).values({ accountId: a.accountId, impersonationFilingOffAt: NOW })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { impersonationFilingOffAt: NOW } });
+    const payload = await serializeOrganizerProfile(a.db as never, a.accountId, a.mailboxId);
+    expect(payload.impersonationFiling).toBe(false);
+    const b = await makeCtx(NOW);
+    await apply(b, payload);
+    expect(await offAt(b), "the next organizer keeps the person's off").not.toBeNull();
+    const { impersonationFiling: _off, ...unstated } = payload;
+    await apply(b, unstated);
+    expect(await offAt(b), "a copy without the key never turns it back on").not.toBeNull();
+    const c = await makeCtx(NOW);
+    await apply(c, unstated);
+    expect(await offAt(c), "nor turns it off").toBeNull();
+    const on = await serializeOrganizerProfile(c.db as never, c.accountId, c.mailboxId);
+    expect(Object.hasOwn(on, "impersonationFiling"), "on is never stated").toBe(false);
   });
 
   it("a document never upgrades an inferred contact this install holds", async () => {

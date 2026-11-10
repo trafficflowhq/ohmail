@@ -91,6 +91,7 @@ import { useAppLocale } from "./LocaleContext";
 import type { UndoToastFn } from "./undo-door";
 import type { ReleasePressInput } from "./routing-undo";
 import { givenUpRowIds } from "./screener-given-up";
+import { useImpersonationFiled, type ImpersonationFiledNotice } from "./impersonation-filed";
 
 /**
  * ONE SUBSCRIBER PER ENGINE for the abandoned list ({@link givenUpRowIds}): a module-level closure
@@ -313,6 +314,11 @@ export interface ScreenerState {
    * so a derivation here would put one number on screen and release another.
    */
   heldRelease: HeldReleaseOffer | null;
+  /**
+   * THE LETTERS OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY, newer than this device's mark — the
+   * waiting header's one line (`impersonation-filed.ts`). `null` with none to say; absent reads as none.
+   */
+  impersonationFiled?: ImpersonationFiledNotice | null;
   /**
    * The screening offer, or `null`. Read off the mirror for {@link heldRelease}'s reason: the fact
    * that decides this set is what the ARRIVAL GATE would answer, and `/sync` does not carry it, so
@@ -2417,8 +2423,12 @@ export function useScreenerState(
       ? { total: unscreenedTotal, atLeast: unscreenedAtLeast, groups: unscreenedRows, screening, screen: pressUnscreened }
       : null;
 
+  /* WHAT OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY — asked once per mount, as the offers above. */
+  const impersonationFiled = useImpersonationFiled(engine, role.mode === "blocked");
+
   return {
     heldRelease,
+    impersonationFiled,
     unscreened,
     failedAtGate: segments.failedAtGate,
     fileFailed: guardMove((id: string, to: "spam" | "ohbox") => { void fileFailed(id, to); }),

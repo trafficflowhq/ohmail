@@ -905,6 +905,9 @@ export const MAIL_SCHEMA_MARKERS: ReadonlyArray<SchemaMarker> = [
   // and when next (`files_until`, `files_next_attempt_at`, the same migration's twins). LOUD: the send door
   // writes all three and the late pass reads them on every claim. Deploy order migration → API → worker.
   ["outbound_sent_copies", "staged_parts"],
+  // mail 0184_account_settings_impersonation_filing — the switch for filing a held impersonation to Spam.
+  // LOUD: the export and the settings reads select the row whole. Deploy order migration → API → worker.
+  ["account_settings", "impersonation_filing_off_at"],
 ] as const;
 
 /**
@@ -1344,7 +1347,7 @@ export const MAIL_EXPECTED_MARKERS =
 // decision left owed) is two UPDATEs and adds no object: no marker.
 // mail 0165_account_storage_recount (one recount of the accounts with an erased mailbox) adds no
 // object: no marker.
-export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0183_outbound_sent_copies_staged_parts";
+export const MAIL_SCHEMA_MARKER_JOURNAL_TAG = "0184_account_settings_impersonation_filing";
 
 /** The whole mail tier, in one frozen record: what a mail-tier Postgres host is probed against. */
 export interface MailTier {

@@ -80,6 +80,7 @@ import {
   readerHolder, sharedNotOrganizedWhy, type NotOrganizingYet, type ReaderHolding, type ScreenerRole,
 } from "../shell/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
+import type { ImpersonationFiledNotice } from "../shell/impersonation-filed";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
   noSuggestionKey, noSuggestionReason, stripStandingKey, type SuggestStanding,
@@ -1780,6 +1781,11 @@ export function ScreenerView({
                 ) : null}
               </div>
             ) : null}
+            {/* LETTERS OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY (owner, 2026-11-09): one quiet line
+                per batch, with Review and OK; each letter with the claim's own sentence and Put back. */}
+            {segment === "waiting" && state.impersonationFiled ? (
+              <ImpersonationFiledLine notice={state.impersonationFiled} />
+            ) : null}
             {/* INBOX MAIL ON THE SERVER FROM SENDERS NOBODY EVER DECIDED ABOUT (never in the Ohbox).
                 A second row in this header, beside the release one and for its reasons: the mail
                 is not in this list, the whole of the decision is one press, and the row is absent
@@ -2132,6 +2138,63 @@ function firstOf(state: ScreenerState, seg: ScreenerSegmentId): ScreenerSenderDT
  * outside every listbox, skipped by every shell query (`visible-dom.ts`), and no body is drawn, so
  * nothing is hydrated, held or read for it.
  */
+/**
+ * WHAT OHMAIL FILED TO SPAM FOR CLAIMING A COMPANY, newer than this device's mark: one line, Review
+ * opens the letters with the claim's own sentence and Put back, OK lets the line go until the next.
+ */
+function ImpersonationFiledLine({ notice }: { notice: ImpersonationFiledNotice }) {
+  const t = useTranslations("screener");
+  const count = notice.items.length;
+  const why = (from: string | null, brand: string | null): string => {
+    const at = (from ?? "").lastIndexOf("@");
+    const domain = at < 0 ? "" : (from ?? "").slice(at + 1).toLowerCase();
+    const values = { brand: brand ?? "", domain };
+    return isSharedProviderDomain(domain) ? t("senderCheck.impersonationShared", values) : t("senderCheck.impersonation", values);
+  };
+  return (
+    <div className="scn-held scn-impersonated" role="note">
+      <p className="scn-held-lead">{t("impersonationFiled", { count })}</p>
+      <div className="scn-ask-acts">
+        <Button variant="ghost" aria-expanded={notice.open} onClick={notice.toggle}>
+          {t(notice.open ? "impersonationHide" : "impersonationReview")}
+        </Button>
+        <Button variant="ghost" disabled={notice.busy} onClick={notice.acknowledge}>{t("impersonationOk")}</Button>
+      </div>
+      {notice.open ? (
+        <div className="scn-autofiled">
+          <ul>
+            {notice.items.map((i) => (
+              <li key={i.messageId} className="scn-autofiled-row">
+                <span className="scn-impersonated-letter">
+                  <span className="scn-autofiled-what">
+                    {t("impersonationRow", { from: i.from ?? "", subject: i.subject ?? "" })}
+                  </span>
+                  <span className="scn-impersonated-why">{why(i.from, i.brand)}</span>
+                </span>
+                <Button variant="ghost" disabled={notice.busy} onClick={() => notice.putBack([i.messageId])}>
+                  {t("impersonationPutBack")}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <Button
+            disabled={notice.busy}
+            aria-busy={notice.busy || undefined}
+            onClick={() => notice.putBack(notice.items.map((i) => i.messageId))}
+          >
+            {t("impersonationPutBackAll", { count })}
+          </Button>
+        </div>
+      ) : null}
+      {notice.said ? (
+        <p className="scn-held-lead scn-held-sender">
+          {t(notice.said === "failed" ? "impersonationFailed" : "impersonationRequested")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 export function ScreenerPrimer({ state, segments, half }: {
   state: ScreenerState;
   segments: readonly ScreenerSegmentId[];

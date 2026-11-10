@@ -3503,6 +3503,7 @@
       "apps/worker/test/roster-serialization.pg.test.ts",
       "apps/worker/test/rule-retro-stamp-delta.pg.test.ts",
       "apps/worker/test/screener-auto-act.test.ts",
+      "apps/worker/test/screener-impersonation.test.ts",
       "apps/worker/test/sensitive-backfill.pg.test.ts",
       "apps/worker/test/shared-db-fault.pg.test.ts",
       "apps/worker/test/sign-in-retention-pass.e2e.test.ts",

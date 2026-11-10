@@ -42,10 +42,11 @@ interface Wire {
   ohboxBar: string | null;
   defaultBar: string;
   screenerAutoApply: boolean;
+  impersonationFiling?: boolean;
 }
 
 let stored: Wire;
-let patchBodies: Array<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown }>;
+let patchBodies: Array<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown }>;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -59,12 +60,13 @@ function installFetch(): void {
     if (path === "/account/screening") {
       if ((init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(init!.body as string) as {
-          ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown;
+          ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown;
         };
         patchBodies.push(body);
         if ("ohboxBar" in body) stored = { ...stored, ohboxBar: body.ohboxBar as string | null };
         if ("ohboxPolicy" in body) stored = { ...stored, ohboxPolicy: body.ohboxPolicy as Wire["ohboxPolicy"] };
         if ("screenerAutoApply" in body) stored = { ...stored, screenerAutoApply: body.screenerAutoApply as boolean };
+        if ("impersonationFiling" in body) stored = { ...stored, impersonationFiling: body.impersonationFiling as boolean };
         return json(stored);
       }
       return json(stored);
@@ -159,18 +161,44 @@ describe("the editable Ohbox bar", () => {
   });
 });
 
-/* NO SWITCH FILES A FIRST-TIME SENDER (owner report 2026-11-02): "File obvious bulk out of my
+/* NO SWITCH LETS A FIRST-TIME SENDER IN (owner report 2026-11-02): "File obvious bulk out of my
    Screener for me" let a stranger's letter into News on headers the sender writes. It is gone; a
-   stored value from before draws nothing, and the pane's one switch is the posture. */
-describe("no switch files a first-time sender out of the Screener", () => {
+   stored value from before draws nothing. The pane's switches are the posture and filing a held
+   impersonation to Spam, which never lets anyone in. */
+describe("no switch lets a first-time sender in", () => {
   it("draws no bulk-filing switch, whatever the stored value, and writes nothing on load", async () => {
     stored.screenerAutoApply = true;
+    stored.impersonationFiling = true;
     await mount();
     const text = host!.textContent ?? "";
     expect(text).not.toContain("File obvious bulk out of my Screener");
     expect(text).not.toContain("Deterministic rules only");
     const switches = [...host!.querySelectorAll('button[role="switch"]')].map((b) => b.getAttribute("aria-label"));
-    expect(switches).toEqual([messages.settings.screening.postureTitle]);
+    expect(switches).toEqual([messages.settings.screening.postureTitle, messages.settings.screening.impersonationTitle]);
     expect(patchBodies).toEqual([]);
+  });
+});
+
+/* FILE IMPERSONATIONS TO SPAM (owner, 2026-11-09): on by default, turned off and on in place, and
+   absent against a server that does not know it. */
+describe("the impersonation filing switch", () => {
+  const sw = (): HTMLButtonElement | undefined => [...host!.querySelectorAll<HTMLButtonElement>('button[role="switch"]')]
+    .find((b) => b.getAttribute("aria-label") === messages.settings.screening.impersonationTitle);
+
+  it("shows the stored value, writes only its own key, and says what off means", async () => {
+    stored.impersonationFiling = true;
+    await mount();
+    expect(sw()!.getAttribute("aria-checked")).toBe("true");
+    expect(host!.textContent).toContain(messages.settings.screening.impersonationOn);
+    await act(async () => { sw()!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    await flush();
+    expect(patchBodies).toEqual([{ impersonationFiling: false }]);
+    expect(sw()!.getAttribute("aria-checked")).toBe("false");
+    expect(host!.textContent).toContain(messages.settings.screening.impersonationOff);
+  });
+
+  it("is absent against a server that does not send it", async () => {
+    await mount();
+    expect(sw()).toBeUndefined();
   });
 });

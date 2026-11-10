@@ -66,6 +66,11 @@ export interface ScreeningPreferenceUpdate {
    * it. See {@link ScreeningPreference.screenerAutoApply} for what turning it on does.
    */
   screenerAutoApply?: boolean;
+  /**
+   * FILING A HELD IMPERSONATION TO SPAM ON ITS OWN (mail 0184). `false` stamps
+   * `impersonation_filing_off_at = now()` (off); `true` NULLs it (on, the default).
+   */
+  impersonationFiling?: boolean;
 }
 
 /**
@@ -91,6 +96,12 @@ export interface ScreeningPreference {
    * paid suggestions), and off means the queue is a human's to triage as it has always been.
    */
   screenerAutoApply: boolean;
+  /**
+   * Whether ohmail files a held letter that impersonates a company to Spam on its own — the
+   * resolved boolean, from `impersonation_filing_off_at IS NULL`. An absent row and a NULL column
+   * read as on, the default; the organizer's pass reads a failed read as off.
+   */
+  impersonationFiling: boolean;
 }
 
 /**
@@ -126,6 +137,7 @@ export async function readScreeningPane(ctx: ServiceContext): Promise<ScreeningP
     ...(p === null || p === "people_only" || p === "people_and_replied" ? { ohboxPolicy: p } : {}),
     ...(applied.ohboxBar === null || typeof applied.ohboxBar === "string" ? { ohboxBar: applied.ohboxBar } : {}),
     ...(typeof applied.screenerAutoApply === "boolean" ? { screenerAutoApply: applied.screenerAutoApply } : {}),
+    ...(typeof applied.impersonationFiling === "boolean" ? { impersonationFiling: applied.impersonationFiling } : {}),
     ...(change === null ? {} : { change }),
   };
 }
@@ -135,6 +147,7 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
     ohboxPolicy: accountSettings.ohboxPolicy,
     ohboxBar: accountSettings.ohboxBar,
     screenerAutoApplyAt: accountSettings.screenerAutoApplyAt,
+    impersonationFilingOffAt: accountSettings.impersonationFilingOffAt,
     // The cutline's three stored answers, on the read the Screener page already makes. A second
     // read would let the queue and the count beside it be measured from different fetches.
     screeningBaselineAt: accountSettings.screeningBaselineAt,
@@ -150,6 +163,8 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
     // `IS NOT NULL`, never the timestamp itself — the flag is a predicate, and an absent row reads
     // as OFF like every other unset field here.
     screenerAutoApply: row?.screenerAutoApplyAt != null,
+    // On unless turned off: NULL and an absent row are the default.
+    impersonationFiling: row?.impersonationFilingOffAt == null,
     // RAW, all three: `resolveCutline` owns every default and every rejection, and a value
     // normalised here would be a second opinion about the same columns.
     screeningBaselineAt: row?.screeningBaselineAt ?? null,
@@ -236,6 +251,16 @@ export async function setScreeningPreference(
     set.screenerAutoApplyAt = on ? ctx.now() : null;
   }
 
+  if ("impersonationFiling" in update) {
+    const on = update.impersonationFiling;
+    if (typeof on !== "boolean") {
+      throw new ServiceError("validation_failed", 400, "impersonationFiling must be a boolean");
+    }
+    // A boolean in, a timestamp stored: when it was turned off, NULL for on.
+    values.impersonationFilingOffAt = on ? null : ctx.now();
+    set.impersonationFilingOffAt = on ? null : ctx.now();
+  }
+
   /* ── THE SCREENING POSTURE IS APPLIED BY THE INSTALL THAT ORGANIZES (mail 0094) ──────────
    *
    * This door had no organizer gate either. `ohbox_policy` decides where NEW mail is filed and
@@ -263,6 +288,7 @@ export async function setScreeningPreference(
       ...("ohboxPolicy" in update ? { ohboxPolicy: (update.ohboxPolicy ?? null) as string | null } : {}),
       ...("ohboxBar" in update ? { ohboxBar: (update.ohboxBar ?? null) as string | null } : {}),
       ...("screenerAutoApply" in update ? { screenerAutoApply: update.screenerAutoApply as boolean } : {}),
+      ...("impersonationFiling" in update ? { impersonationFiling: update.impersonationFiling as boolean } : {}),
     };
     const travelling = { screeningPreference: screening };
     // An empty object names no setting and the holder refuses it, so nothing travels for it.

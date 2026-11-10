@@ -171,6 +171,10 @@ const CLASSIFIED: Record<string, Row> = {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate over the held mail's references before buying advice",
   },
+  "apps/worker/src/screener-impersonation.ts": {
+    terms: ["references"], classes: ["threading-corroborated"],
+    why: "asks the correspondent predicate over the held mail's references, and whether held mail answers the account's own, before filing a claim; an answer keeps the letter",
+  },
   "apps/worker/src/act-admission-retire.ts": {
     terms: ["references"], classes: ["threading-corroborated"],
     why: "asks the correspondent predicate, with no references of its own, before retiring what the act wrote for a sender",
@@ -380,6 +384,8 @@ const CALL_SITES: Record<string, Record<string, number>> = {
   sendersAnsweringOwnWriting: {
     "apps/worker/src/screener-auto-act.ts#screenerAutoActPass": 1,
     "apps/worker/src/screener-correspondent-retro.ts#screenerCorrespondentRetroPass": 1,
+    // The impersonation filing's ties, read once per page: an answer to the account's mail keeps a claim held.
+    "apps/worker/src/screener-impersonation.ts#readTies": 1,
   },
   ownSentCopies: {
     "packages/core/src/adapters/drizzle-repo.ts#citesOwnWriting": 1,
@@ -406,6 +412,8 @@ const CALL_SITES: Record<string, Record<string, number>> = {
     "apps/worker/src/screener-correspondent-retro.ts#retireAutoActRules": 1,
     "apps/worker/src/act-admission-retire.ts#retireActAdmissionsPass": 1,
     "packages/services/src/screener-service.ts#markCorrespondents": 1,
+    // The impersonation filing's ties, read once per page: a sender the account wrote to keeps its claims held.
+    "apps/worker/src/screener-impersonation.ts#readTies": 1,
   },
 };
 

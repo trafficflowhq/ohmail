@@ -16,6 +16,7 @@ import { appearanceStore, DEFAULT_APPEARANCE, type StoredAppearance } from "./ap
 import { DEFAULT_IMAGE_QUALITY_LEVEL, type ImageQualityLevel } from "../compose/attach";
 import { pictureQualityStore } from "./picture-quality-store";
 import { faceMirrorStore, type FaceMirror } from "./face-scope";
+import { impersonationSeenStore } from "./impersonation-seen-store";
 
 export interface Prefs {
   themePref: ThemePref;
@@ -34,6 +35,9 @@ export interface Prefs {
   /** How much a picked picture is shrunk before it is attached — the web's dial, kept here. */
   pictureQuality: ImageQualityLevel;
   setPictureQuality: (level: ImageQualityLevel) => void;
+  /** The newest impersonation filing this phone acknowledged in the Screener, ISO; `""` for none. */
+  impersonationSeen: string;
+  setImpersonationSeen: (iso: string) => void;
 }
 
 const PrefsContext = createContext<Prefs | null>(null);
@@ -53,13 +57,17 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
   const pictures = useMemo(() => pictureQualityStore(kv, setPictureQualityState), []);
   const [faceMirror, setFaceMirrorState] = useState<FaceMirror | null>(null);
   const mirror = useMemo(() => faceMirrorStore(kv, setFaceMirrorState), []);
+  const [impersonationSeen, setImpersonationSeenState] = useState("");
+  const seenMark = useMemo(() => impersonationSeenStore(kv, setImpersonationSeenState), []);
 
   useEffect(() => {
     void store.boot();
     void pictures.boot();
     void mirror.boot();
-    return () => { store.dispose(); pictures.dispose(); mirror.dispose(); };
-  }, [store, pictures, mirror]);
+    void seenMark.boot();
+    return () => { store.dispose(); pictures.dispose(); mirror.dispose(); seenMark.dispose(); };
+  }, [store, pictures, mirror, seenMark]);
+  const setImpersonationSeen = useCallback((iso: string) => seenMark.set(iso), [seenMark]);
   const setFaceMirror = useCallback((m: FaceMirror | null) => mirror.set(m), [mirror]);
   const setPictureQuality = useCallback((level: ImageQualityLevel) => pictures.set(level), [pictures]);
 
@@ -71,9 +79,9 @@ export function PrefsProvider({ kv, children }: { kv?: SecureKV; children: React
   const value = useMemo<Prefs>(
     () => ({
       themePref: state.themePref, setTheme, facePin: state.facePin, setFacePin, faceMirror, setFaceMirror,
-      pictureQuality, setPictureQuality,
+      pictureQuality, setPictureQuality, impersonationSeen, setImpersonationSeen,
     }),
-    [state, setTheme, setFacePin, faceMirror, setFaceMirror, pictureQuality, setPictureQuality],
+    [state, setTheme, setFacePin, faceMirror, setFaceMirror, pictureQuality, setPictureQuality, impersonationSeen, setImpersonationSeen],
   );
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }

@@ -57,6 +57,7 @@ export const exportRoutes: Route[] = [
         ohboxBar: s?.ohboxBar ?? null,
         autoSuggest: (s?.autoSuggestAt ?? null) !== null,
         screenerAutoApply: (s?.screenerAutoApplyAt ?? null) !== null,
+        impersonationFiling: (s?.impersonationFilingOffAt ?? null) === null,
         foldersEnabled: (s?.foldersEnabledAt ?? null) !== null,
         blockRemoteImages: (s?.blockRemoteImagesAt ?? null) !== null,
         loadTrackingPixels: (s?.loadTrackingPixelsAt ?? null) !== null,

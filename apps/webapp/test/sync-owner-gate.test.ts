@@ -105,6 +105,8 @@ const NOT_A_READ: readonly string[] = [
   // A Cancel's question decides a send key on whichever account the session holds: `mutate`'s
   // rule, and refused it ANSWERS `unreachable` (the Cancel stays owed) rather than throwing.
   "withdrawSend",
+  // Put back moves the caller's own filed mail back to the Screener: the press's rule, as above.
+  "undoAutoFiled",
 ];
 
 const emptyPage = (): SyncResponse => ({
@@ -849,6 +851,8 @@ describe("a CONTRADICTED browser reads nothing either", () => {
     screenUnscreened: async () => { reads.push("screenUnscreened"); return { screened: [], total: 0 }; },
     screenerWaiting: async () => { reads.push("screenerWaiting"); return { items: [], nextCursor: null, total: 0, inFlight: [] }; },
     organizerRequests: async () => { reads.push("organizerRequests"); return []; },
+    autoFiled: async () => { reads.push("autoFiled"); return { items: [], more: false }; },
+    undoAutoFiled: async () => { reads.push("undoAutoFiled"); return { putBack: [], requested: [] }; },
     timeline: async () => { reads.push("timeline"); return { total: 0, months: [], undated: 0 }; },
     getMessage: async () => { reads.push("getMessage"); return null; },
     withdrawSend: async () => { reads.push("withdrawSend"); return { outcome: "withdrawn" }; },

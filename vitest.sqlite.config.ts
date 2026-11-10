@@ -561,6 +561,9 @@ export default defineConfig({
       // is `applyScreenerDecision`, whose mark-read upsert bound a JavaScript boolean raw — this
       // driver refuses one, and the two denying cases failed here while the other store passed.
       "apps/worker/test/screener-auto-act.test.ts",
+      // The held impersonation the organizer files to Spam on its own, over the store the
+      // standalone desktop and phone keep: the same pass, its door and its ties.
+      "apps/worker/test/screener-impersonation.test.ts",
       // Only a person lets a sender in: the decision door refuses a pass's yes, and the act's past
       // admissions are retired once, both on the store the standalone desktop and phone keep.
       "packages/db/test/screener-apply.test.ts",

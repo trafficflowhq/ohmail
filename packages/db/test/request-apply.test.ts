@@ -734,6 +734,9 @@ describe("the screening preference, validated at the boundary", () => {
       .screeningPreference).toEqual({ ohboxPolicy: "people_only", ohboxBar: "people", screenerAutoApply: true });
     expect(screening({ ohboxBar: null })!.screeningPreference).toEqual({ ohboxBar: null });
     expect(screening({ screenerAutoApply: false })!.screeningPreference).toEqual({ screenerAutoApply: false });
+    expect(screening({ impersonationFiling: false })!.screeningPreference).toEqual({ impersonationFiling: false });
+    expect(screening({ impersonationFiling: true, ohboxBar: null })!.screeningPreference)
+      .toEqual({ impersonationFiling: true, ohboxBar: null });
     expect(screening({ ohboxPolicy: null })!.screeningPreference).toEqual({ ohboxPolicy: null });
   });
 
@@ -752,6 +755,7 @@ describe("the screening preference, validated at the boundary", () => {
     ["a bar one byte past the ceiling", { ohboxBar: "x".repeat(TRAVELLING_OHBOX_BAR_MAX_BYTES + 1) }],
     ["a bar holding a NUL", { ohboxBar: "a\u0000b" }],
     ["a switch that is not a boolean", { screenerAutoApply: "yes" }],
+    ["an impersonation switch that is not a boolean", { impersonationFiling: "off" }],
   ])("%s refuses the record", (_label, v) => {
     expect(screening(v)).toBeNull();
   });

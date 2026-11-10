@@ -44,7 +44,9 @@ export const screeningRoutes: Route[] = [
     cost: "work",
     replay: "state",
     handler: async (req, deps) => {
-      const body = await readBody<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown }>(req);
+      const body = await readBody<{
+        ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown;
+      }>(req);
       // Only the axes the caller ACTUALLY sent are forwarded: a body that names just `ohboxBar` must
       // not reset `ohboxPolicy` to its default. Presence is `in`, never a truthiness or `!==
       // undefined` test — the whole point is that an explicit `null` (revert to default) is a real,
@@ -56,6 +58,10 @@ export const screeningRoutes: Route[] = [
       // there), so this forwards the raw value rather than coercing — the same no-guessing rule the
       // other two axes follow on this consent surface.
       if ("screenerAutoApply" in body) update.screenerAutoApply = body.screenerAutoApply as ScreeningPreferenceUpdate["screenerAutoApply"];
+      // Filing a held impersonation to Spam: a boolean, checked by the service like the opt-in above.
+      if ("impersonationFiling" in body) {
+        update.impersonationFiling = body.impersonationFiling as ScreeningPreferenceUpdate["impersonationFiling"];
+      }
       const pref = await setScreeningPreference(serviceContext(deps, req), update);
       return jsonResponse({ ...pref, defaultBar: DEFAULT_OHBOX_BAR });
     },

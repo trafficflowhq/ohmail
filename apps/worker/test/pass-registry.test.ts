@@ -110,6 +110,7 @@ const IN_WORKER_PASSES: readonly string[] = [
   "rule-retro.ts::ruleRetroPass",
   "gap-catchup.ts::gapCatchupPass",
   "screener-auto-act.ts::screenerAutoActPass",
+  "screener-impersonation.ts::screenerImpersonationPass",
   "screener-correspondent-retro.ts::screenerCorrespondentRetroPass",
   "screener-auto-suggest.ts::screenerAutoSuggestPass",
   "sender-name-backfill.ts::runSenderNameBackfill",

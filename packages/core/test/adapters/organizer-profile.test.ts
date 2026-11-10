@@ -327,6 +327,33 @@ describe("the profile document format", () => {
     expect(Object.hasOwn(oddBack.doc!, "signatureHtml")).toBe(false);
   });
 
+  it("the impersonation filing's off switch travels as `false` only, and absence keeps every older fingerprint", () => {
+    const base = richPayload();
+    const off: OrganizerProfilePayload = { ...base, impersonationFiling: false };
+    // Absent is unstated: an older document's fingerprint stands, and an empty store stays silent.
+    expect(profileFingerprint(off)).not.toBe(profileFingerprint(base));
+    expect(Object.hasOwn(canonicalizeProfilePayload(base), "impersonationFiling")).toBe(false);
+    const empty: OrganizerProfilePayload = { screener: [], rules: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null };
+    expect(isEmptyProfilePayload(empty)).toBe(true);
+    expect(isEmptyProfilePayload({ ...empty, impersonationFiling: false }), "an off switch alone is published").toBe(false);
+
+    const doc = makeProfileDoc(off, { updatedAt: AT, producer: PRODUCER });
+    expect((doc as unknown as Record<string, unknown>).impersonationFiling).toBe(false);
+    const back = parseProfileMessage(formatProfileMessage(doc, { installId: "i-1" }));
+    if (back === null || isMalformedProfile(back)) throw new Error("the document with the switch did not parse");
+    expect(back.doc!.impersonationFiling).toBe(false);
+    expect(profileFingerprint(back.doc!)).toBe(profileFingerprint(off));
+
+    // Any value but `false` reads as unstated, never as on.
+    for (const odd of [true, "false", 0, null]) {
+      const raw = makeProfileDoc(base, { updatedAt: AT, producer: PRODUCER }) as unknown as Record<string, unknown>;
+      raw.impersonationFiling = odd;
+      const read = parseProfileMessage(formatProfileMessage(raw as never, { installId: "i-1" }));
+      if (read === null || isMalformedProfile(read)) throw new Error("an odd switch value made the document unreadable");
+      expect(Object.hasOwn(read.doc!, "impersonationFiling"), String(odd)).toBe(false);
+    }
+  });
+
   it("a v1 reader tolerates a v1 document decorated with unknown fields at every level", () => {
     const doc = makeProfileDoc(richPayload(), { updatedAt: AT, producer: PRODUCER }) as Record<string, unknown>;
     doc.futureSection = { anything: true };

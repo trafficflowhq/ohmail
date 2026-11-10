@@ -4,9 +4,11 @@
  * a brand sends its OWN mail from, from the brand's own site, never a guess; a shared provider's
  * domain owns nothing whichever row lists it (`rule-order.ts#isSharedProviderDomain`). An
  * INCOMPLETE row is the failure mode worth naming: the brand's own mail from a domain absent here
- * waits at the Screener with a sentence and is let through with one press. Nothing is filed to
- * Quarantine and no rule is written. Kept by hand and never learned: a row lands with its own
- * domains, its case and a false-positive control for every gate needle that is also a word.
+ * waits at the Screener with a sentence and is let through with one press, unless it presents itself
+ * as the brand alone from a domain carrying none of the brand's names: the organizer's impersonation
+ * filing (`sender-check.ts#impersonationFiling`) then files that letter to Spam, alone, with no rule,
+ * listed with Put back. Kept by hand and never learned: a row lands with its own domains, its case
+ * and a false-positive control for every gate needle that is also a word.
  */
 
 export interface Brand {

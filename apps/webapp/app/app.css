@@ -2819,6 +2819,20 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   font-size: calc(12px + var(--type-up));
   color: var(--ink2);
 }
+/* A letter ohmail filed to Spam for claiming a company: what it was over why it went, its Put back beside. */
+.scn-impersonated-letter {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.scn-impersonated-why {
+  font-size: calc(11.5px + var(--type-up));
+  line-height: 1.45;
+  color: var(--ink3);
+  overflow-wrap: anywhere;
+}
 .scn-relay {
   margin: 0;
   font-size:calc(11.5px + var(--type-up));
