@@ -78,6 +78,14 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.5" date="2026-11-10">
+      <description>
+        <ul>
+          <li>Letters that pretend to be a company go to Spam on their own</li>
+          <li>Sent copies waiting on a full mailbox are saved within minutes once it has room</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.4" date="2026-11-10">
       <description>
         <ul>
@@ -114,16 +122,6 @@
           <li>The phone no longer says "Handed back" when you return to it</li>
           <li>The phone keeps the composer on screen while you type in landscape</li>
           <li>Dark letters read on the web and desktop</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.0" date="2026-11-09">
-      <description>
-        <ul>
-          <li>Phone: background organizing stops cleanly at Android's time limit</li>
-          <li>A refused first Connect on the phone leaves no mailbox behind</li>
-          <li>ohmail.app/support and ohmail.app/delete-account open the website's pages</li>
-          <li>The phone links its privacy policy, imprint and support pages, and offers Delete account</li>
         </ul>
       </description>
     </release>
