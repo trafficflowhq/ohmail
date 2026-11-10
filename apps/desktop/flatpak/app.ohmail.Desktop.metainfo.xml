@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.9" date="2026-11-10">
+      <description>
+        <ul>
+          <li>Cloud keeps a closed account closed while the billing service does not answer</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.8" date="2026-11-10">
       <description>
         <ul>
@@ -104,13 +111,6 @@
         <ul>
           <li>Letters that pretend to be a company go to Spam on their own</li>
           <li>Sent copies waiting on a full mailbox are saved within minutes once it has room</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.4" date="2026-11-10">
-      <description>
-        <ul>
-          <li>A wide newsletter is fitted to the fold's cover screen on every open</li>
         </ul>
       </description>
     </release>
