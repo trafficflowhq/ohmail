@@ -32,24 +32,20 @@ export interface LineRow { kind: SendLineItem["state"]; items: SendLineItem[] }
  * each counted when it holds several. #185's rule stands within the endings: only refusals that left
  * their row are counted "weren't sent"; an unverified send (it may have gone), a duplicate or a
  * refusal with no row says its own line, the latest one, on a row above the count. A sent letter
- * whose Sent copy has a note stands on its own row.
+ * whose Sent copy has a note stands on its own row, above all of them, the oldest on top (`line()`
+ * lists them newest first): the line rests on its end, so a cap cuts the oldest note, never a live row.
  */
 export function lineRows(items: readonly SendLineItem[]): LineRow[] {
-  const rows: LineRow[] = [];
+  const noted = (i: SendLineItem): boolean => i.state === "sent" && i.copy !== undefined;
+  const rows: LineRow[] = items.filter(noted).reverse().map((i) => ({ kind: "sent", items: [i] }));
   for (const kind of ["ended", "queued", "sending", "sent"] as const) {
-    const of = items.filter((i) => i.state === kind);
+    const of = items.filter((i) => i.state === kind && !noted(i));
     if (of.length === 0) continue;
     if (kind === "ended") {
       const kept = (i: SendLineItem): boolean => i.ended?.phase === "failed" && i.left !== undefined;
       const own = of.filter((i) => !kept(i));
       if (own.length > 0) rows.push({ kind, items: [own[own.length - 1]!] });
       if (of.some(kept)) rows.push({ kind, items: of.filter(kept) });
-      continue;
-    }
-    if (kind === "sent") {
-      for (const i of of.filter((x) => x.copy !== undefined)) rows.push({ kind, items: [i] });
-      const plain = of.filter((x) => x.copy === undefined);
-      if (plain.length > 0) rows.push({ kind, items: plain });
       continue;
     }
     rows.push({ kind, items: of });
@@ -171,14 +167,17 @@ export function SendingLine({ api, variant, onOpen, onOpenMany }: {
   }
   return (
     <div className="sync-bar busy sending-pill" role="status" aria-live="polite">
-      {said.map((s) => (
-        <div className="sl-row" key={`${s.row.kind}:${s.row.items.map((i) => i.id).join(",")}`}>
-          {mark(s.row.kind)}
-          <b>{s.title}</b>
-          {s.detail !== null ? <span className="sl-say">{s.detail}</span> : null}
-          {actions(s)}
-        </div>
-      ))}
+      {/* One stack, so the capped pill rests on its end (`app.css`) in reading order. */}
+      <div className="sl-stack">
+        {said.map((s) => (
+          <div className="sl-row" key={`${s.row.kind}:${s.row.items.map((i) => i.id).join(",")}`}>
+            {mark(s.row.kind)}
+            <b>{s.title}</b>
+            {s.detail !== null ? <span className="sl-say">{s.detail}</span> : null}
+            {actions(s)}
+          </div>
+        ))}
+      </div>
       <SendPillReserve />
     </div>
   );

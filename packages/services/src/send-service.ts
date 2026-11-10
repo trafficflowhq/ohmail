@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, sql } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import {
   attachments, CERT_CODES, contacts, drafts, isSafeMailboxErrorDetail, mailboxes, messageBodies, messages, outboundSends,
@@ -248,6 +248,11 @@ export const SEND_COPY_TIMING: SendCopyTiming = {
 export const SEND_COPY_OWED_BATCH = 2;
 /** The wait after the n-th failed late filing (the last repeats): 1 min, 10 min, 1 h, 6 h, 24 h. */
 export const SEND_COPY_OWED_WAITS_MS: readonly number[] = [60_000, 600_000, 3_600_000, 21_600_000, 86_400_000];
+/**
+ * A FULL MAILBOX IS ASKED AGAIN WITHIN THIS, however far its ladder has climbed: a person who frees
+ * space there finds the copies in Sent minutes later, not a day later.
+ */
+export const SEND_COPY_OWED_FULL_WAIT_MS = 10 * 60 * 1000;
 /** Refused late filings, each the copy's own, before an owed copy is given up: about three days. */
 export const SEND_COPY_OWED_MAX_ATTEMPTS = 8;
 /**
@@ -256,6 +261,8 @@ export const SEND_COPY_OWED_MAX_ATTEMPTS = 8;
  * refusals of every copy, the ladder, and above it the copy's turn. The local engine writes only the first.
  */
 export const SEND_COPY_OWED_MAILBOX_UNIT = 100;
+/** The mailbox's run of refusals stays below this, in `attempts`' hundreds; the copy's turn sits above it. */
+export const SEND_COPY_OWED_RUN_SPAN = 100;
 /** The copy's own refused filings, out of an owed row's `attempts`. */
 export function ownAttempts(attempts: number): number {
   return attempts % SEND_COPY_OWED_MAILBOX_UNIT;
@@ -326,10 +333,64 @@ export interface OwedCopiesResult { filed: number; dropped: number; failed: numb
 /**
  * One owed copy's filing ({@link SendService.fileOwedCopy}). `refused` is charged to nobody yet: the
  * caller tells whose refusal it was, and charges the copy's own ({@link SendService.chargeOwedCopy}).
+ * `files`: the copy carries files, which makes a `LIMIT` a size verdict ({@link sentCopyRefusalOf}).
  */
 export type OwedCopyFiling =
   | { readonly step: "filed" } | { readonly step: "dropped" } | { readonly step: "skipped" }
-  | { readonly step: "refused"; readonly err: unknown; readonly bytes?: number } | { readonly step: "unreachable"; readonly err: unknown };
+  | { readonly step: "refused"; readonly err: unknown; readonly bytes?: number; readonly files: boolean }
+  | { readonly step: "unreachable"; readonly err: unknown };
+
+const OWED_UNIT = sql.raw(String(SEND_COPY_OWED_MAILBOX_UNIT));
+const OWED_RUN_SPAN = sql.raw(String(SEND_COPY_OWED_RUN_SPAN));
+const OWED_TURN = sql.raw(String(SEND_COPY_OWED_MAILBOX_UNIT * SEND_COPY_OWED_RUN_SPAN));
+/** `attempts` without its mailbox's run of refusals: the copy's own attempts and its turn. */
+export const OWED_ATTEMPTS_WITHOUT_RUN =
+  sql`${outboundSentCopies.attempts} - ${OWED_UNIT} * ((${outboundSentCopies.attempts} / ${OWED_UNIT}) % ${OWED_RUN_SPAN})`;
+
+/**
+ * A COPY FILED IN SENT SAYS ITS MAILBOX HAS ROOM: the whole copies it still owes that wait longer than
+ * a lease and a settle are due now, and its run of refusals starts over. A wait inside that bound
+ * stands: another pass may be filing the copy under its lease, on a clock a little behind, and a copy
+ * filed by two passes is appended twice. A copy kept without its files moves on its own clock only; its
+ * `next_attempt_at` keeps the placeholder a build before mail 0183 reads. One read when nothing is owed.
+ */
+export async function owedCopiesDueNow(ctx: ServiceContext, mailboxId: string): Promise<void> {
+  const db = asTx(ctx);
+  const [owed] = await db.select({ sendId: outboundSentCopies.sendId }).from(outboundSentCopies)
+    .where(and(eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId))).limit(1);
+  if (owed === undefined) return;
+  const at = ctx.now();
+  const bound = new Date(at.getTime() + SEND_COPY_OWED_CLAIM_MS + SEND_COPY_OWED_SETTLE_MS);
+  await db.transaction(async (tx) => {
+    await tx.update(outboundSentCopies).set({ nextAttemptAt: at }).where(and(
+      eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId), eq(outboundSentCopies.seq, 0),
+      isNull(outboundSentCopies.filesUntil), gt(outboundSentCopies.nextAttemptAt, bound),
+    ));
+    await tx.update(outboundSentCopies).set({ filesNextAttemptAt: at }).where(and(
+      eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId), eq(outboundSentCopies.seq, 0),
+      isNotNull(outboundSentCopies.filesUntil), gt(outboundSentCopies.filesNextAttemptAt, bound),
+    ));
+    await tx.update(outboundSentCopies).set({ attempts: OWED_ATTEMPTS_WITHOUT_RUN }).where(and(
+      eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId), eq(outboundSentCopies.seq, 0),
+      sql`${outboundSentCopies.attempts} % ${OWED_TURN} >= ${OWED_UNIT}`,
+    ));
+  });
+}
+
+/** The server's `LIMIT` (RFC 5530), which {@link sentCopyRefusalOf} reads as a size verdict only on a letter with files. */
+function limitAnswer(err: unknown): boolean {
+  const said = (err as { serverResponseCode?: unknown } | null)?.serverResponseCode;
+  return typeof said === "string" && said.toUpperCase() === "LIMIT";
+}
+
+/** Whether an owed copy's bytes carry a file; bytes that will not parse are read as none. */
+async function bytesCarryFiles(raw: Buffer): Promise<boolean> {
+  try {
+    return (await normalizeMime(raw)).attachments.length > 0;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * WHERE STAGED ATTACHMENT BYTES COME FROM, in two phases — the split is the point. `declare` is
@@ -2205,6 +2266,12 @@ export class SendService {
               await this.dropOwedCopy(ctx, sendId)
                 .then(() => (policy === true ? this.reclaimOwedSpace(ctx) : undefined), () => { /* the late pass looks first and finds it */ });
             }
+            // Its mailbox has room: the copies it still owes go at the next pass, not at their ladder's step.
+            if (policy !== undefined && policy !== false) {
+              await owedCopiesDueNow(ctx, mailboxId).catch((err: unknown) => {
+                log.warn("send_sent_copy_due_failed", { draftId, accountId: ctx.accountId, mailboxId, err });
+              });
+            }
             if (attempt > 0) log.info("send_sent_copy_filed_on_retry", { draftId, accountId: ctx.accountId, attempt });
             return { state: "filed" };
           } catch (err) {
@@ -2343,7 +2410,8 @@ export class SendService {
    * copies, oldest first, on one dial that can only file: each looks in Sent first, is filed only for
    * a send recorded `sent` under this account, and its row is deleted only once the copy is there. A
    * copy still being filed in this process is left alone. Never submits mail. A failed dial costs no
-   * attempt; a failed filing waits out {@link SEND_COPY_OWED_WAITS_MS} and ends the call.
+   * attempt; a failed filing waits out {@link SEND_COPY_OWED_WAITS_MS} and ends the call, a full
+   * mailbox's as its mailbox's ({@link waitFullMailbox}). A filed copy makes the others due now.
    */
   async fileOwedCopies(
     ctx: ServiceContext, mailboxId: string, deps: Pick<SendDeps, "openSendAdapter" | "resolveStorageCap" | "log" | "stagedAttachments">,
@@ -2351,7 +2419,9 @@ export class SendService {
     const log = deps.log ?? defaultLog;
     const out: OwedCopiesResult = { filed: 0, dropped: 0, failed: 0 };
     const db = asTx(ctx);
-    const due = await db.select({ sendId: outboundSentCopies.sendId, attempts: outboundSentCopies.attempts })
+    const due = await db.select({
+      sendId: outboundSentCopies.sendId, attempts: outboundSentCopies.attempts, createdAt: outboundSentCopies.createdAt,
+    })
       .from(outboundSentCopies)
       .where(and(
         eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId),
@@ -2367,11 +2437,21 @@ export class SendService {
       for (const row of rows) {
         const filing = await this.fileOwedCopy(ctx, { ...row, mailboxId }, connect, deps);
         if (filing.step === "filed" || filing.step === "dropped") freed = true;
-        if (filing.step === "filed") out.filed += 1;
-        else if (filing.step === "dropped") out.dropped += 1;
+        if (filing.step === "filed") {
+          if (out.filed === 0) {
+            await owedCopiesDueNow(ctx, mailboxId).catch((err: unknown) => {
+              log.warn("send_sent_copy_due_failed", { accountId: ctx.accountId, mailboxId, err });
+            });
+          }
+          out.filed += 1;
+        } else if (filing.step === "dropped") out.dropped += 1;
         else if (filing.step === "unreachable") return out;
         else if (filing.step === "refused") {
-          if (await this.chargeOwedCopy(ctx, { ...row, ...(filing.bytes !== undefined ? { bytes: filing.bytes } : {}) }, filing.err, deps) === "gaveUp") freed = true;
+          const bytes = filing.bytes !== undefined ? { bytes: filing.bytes } : {};
+          const fate = sentCopyRefusalOf(filing.err, filing.files) === "full"
+            ? await this.waitFullMailbox(ctx, mailboxId, { ...row, ...bytes }, filing.err, log)
+            : await this.chargeOwedCopy(ctx, { ...row, ...bytes, files: filing.files }, filing.err, deps);
+          if (fate === "gaveUp") freed = true;
           out.failed += 1;
           return out;
         }
@@ -2381,6 +2461,33 @@ export class SendService {
       if (adapter !== null) await (adapter as SendAdapter).close().catch(() => { /* the connection is already broken */ });
       if (freed) await this.reclaimOwedSpace(ctx);
     }
+  }
+
+  /**
+   * THE LOCAL ENGINE'S FULL MAILBOX: its refusal is the mailbox's, so the copy spends no attempt, and
+   * every whole copy the mailbox owes waits as one, {@link SEND_COPY_OWED_FULL_WAIT_MS} at least. A copy
+   * refused full past {@link SEND_COPY_OWED_HOLD_MS} is given up, as a server gives it up.
+   */
+  private async waitFullMailbox(
+    ctx: ServiceContext, mailboxId: string, row: { sendId: string; createdAt: Date; bytes?: number }, err: unknown, log: Logger,
+  ): Promise<"failed" | "gaveUp"> {
+    const t = ctx.now().getTime();
+    const until = new Date(t + SEND_COPY_OWED_FULL_WAIT_MS);
+    await asTx(ctx).update(outboundSentCopies)
+      .set({ nextAttemptAt: until })
+      .where(and(
+        eq(outboundSentCopies.accountId, ctx.accountId), eq(outboundSentCopies.mailboxId, mailboxId), eq(outboundSentCopies.seq, 0),
+        isNull(outboundSentCopies.filesUntil), lt(outboundSentCopies.nextAttemptAt, until),
+      ));
+    if (row.createdAt.getTime() < t - SEND_COPY_OWED_HOLD_MS) {
+      await this.dropOwedCopy(ctx, row.sendId);
+      log.warn("send_sent_copy_missing", {
+        accountId: ctx.accountId, sendId: row.sendId, reason: "held_too_long", err, ...copyFailureFields(err, false, row.bytes ?? null),
+      });
+      return "gaveUp";
+    }
+    log.warn("send_sent_copy_mailbox_waits", { accountId: ctx.accountId, mailboxId, kind: "full" });
+    return "failed";
   }
 
   /**
@@ -2453,7 +2560,9 @@ export class SendService {
         log.info("send_sent_copy_filed_late", { accountId: ctx.accountId, sendId: row.sendId, attempts: ownAttempts(row.attempts) });
         return { step: "filed" };
       } catch (err) {
-        return { step: "refused", err, bytes: raw.length };
+        // A copy kept without its files carries them; a whole one is read for them only when the answer is LIMIT.
+        const files = head.stagedParts !== null || (limitAnswer(err) && await bytesCarryFiles(raw));
+        return { step: "refused", err, bytes: raw.length, files };
       }
     } finally {
       this.filingCopies.delete(row.sendId);
@@ -2483,20 +2592,21 @@ export class SendService {
   /**
    * A REFUSAL THAT WAS THE COPY'S OWN: one of its {@link SEND_COPY_OWED_MAX_ATTEMPTS}, then its own
    * wait ({@link SEND_COPY_OWED_WAITS_MS}); the last one gives the copy up. Its mailbox's run of
-   * refusals ({@link SEND_COPY_OWED_MAILBOX_UNIT}) is left as it is. A copy kept without its files
-   * (`staged`) refused for its size is given up at once, as its request gives it up, and its wait ends
-   * by its `lastTry` while that is more than the first wait away.
+   * refusals ({@link SEND_COPY_OWED_MAILBOX_UNIT}) is left as it is. A copy refused for its size is
+   * given up at once, as its request gives it up: `TOOBIG`, or `LIMIT` on a copy that carries files
+   * (`files`, or one kept without them, `staged`). A copy kept without its files waits until at most
+   * its `lastTry` while that is more than the first wait away.
    */
   async chargeOwedCopy(
-    ctx: ServiceContext, row: { sendId: string; attempts: number; bytes?: number }, err: unknown, deps: Pick<SendDeps, "log">,
-    o: { staged?: { lastTry: Date } } = {},
+    ctx: ServiceContext, row: { sendId: string; attempts: number; bytes?: number; files?: boolean }, err: unknown,
+    deps: Pick<SendDeps, "log">, o: { staged?: { lastTry: Date } } = {},
   ): Promise<"failed" | "gaveUp"> {
     const log = deps.log ?? defaultLog;
     const attempts = ownAttempts(row.attempts) + 1;
     const staged = o.staged;
-    // A whole owed row on Cloud carries no files; LIMIT stays ambiguous there.
-    const said = copyFailureFields(err, staged !== undefined, row.bytes ?? null);
-    if (attempts >= SEND_COPY_OWED_MAX_ATTEMPTS || (staged !== undefined && sentCopyRefusalOf(err, true) === "too_big")) {
+    const files = staged !== undefined || row.files === true;
+    const said = copyFailureFields(err, files, row.bytes ?? null);
+    if (attempts >= SEND_COPY_OWED_MAX_ATTEMPTS || sentCopyRefusalOf(err, files) === "too_big") {
       await this.dropOwedCopy(ctx, row.sendId);
       log.warn("send_sent_copy_missing", { accountId: ctx.accountId, sendId: row.sendId, attempts, err, ...said });
       return "gaveUp";
