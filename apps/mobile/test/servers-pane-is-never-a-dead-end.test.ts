@@ -22,6 +22,8 @@ const scene = vi.hoisted(() => ({
   store: null as unknown,
   deps: null as unknown,
   connects: [] as string[],
+  /* A case's own connect; without one the launch's connect is held open. */
+  connect: null as null | ((id: string) => Promise<unknown>),
   /* The system Back's listeners, newest first answering, as React Native runs them. */
   backs: [] as (() => boolean)[],
   focused: true,
@@ -65,7 +67,10 @@ vi.mock("../src/engine/native", () => ({ nativeEngineDeps: () => scene.deps }));
 vi.mock("../src/net/pairing", async (original) => ({
   ...((await original()) as object),
   /* The launch's connect is recorded and held open: what is asserted is which row the launch opens. */
-  connectProfileById: (_env: unknown, id: string) => { scene.connects.push(id); return new Promise(() => undefined); },
+  connectProfileById: (_env: unknown, id: string) => {
+    scene.connects.push(id);
+    return scene.connect?.(id) ?? new Promise(() => undefined);
+  },
 }));
 /* The pane reads the connection it is handed; the cold start reads the real provider's. */
 vi.mock("../src/net/connection", async (original) => {
@@ -111,9 +116,16 @@ import { NavRail } from "../src/ui/nav-rail";
 import { NavDrawnContext } from "../src/ui/nav-drawn";
 import { EN } from "../src/copy.en";
 import { LOCAL_ENGINE_ORIGIN, type MobileEngineDeps } from "../src/engine/boot";
-import { ConnectionProvider, useConnection, type ConnectionState } from "../src/net/connection";
-import { forgetProfile, type PairingEnv } from "../src/net/pairing";
+import {
+  armConsentPress, endStandaloneHere, forgetOrganizerSessionForTests, holdStandaloneDoor, organizerDoor,
+  releaseStandaloneLaunch, takeStandaloneLaunch,
+} from "../src/engine/organizer-session";
+import { openStandaloneMailbox, type StandaloneEngine } from "../src/engine/standalone-door";
+import { ConnectionProvider, useConnection, type Connection, type ConnectionState } from "../src/net/connection";
+import { connectProfile, forgetProfile, type PairingEnv } from "../src/net/pairing";
 import { deathRefusal } from "../src/net/session-death";
+import { refuse } from "../src/refusal";
+import { EMPTY_STANDALONE } from "../src/ui/standalone-form";
 import { gateFor } from "../src/state/gate";
 import { settleInstallGeneration } from "../src/state/install-marker";
 import { ServerProfileStore, type SecureKV, type ServerProfile } from "../src/state/servers";
@@ -208,7 +220,8 @@ async function systemBack(): Promise<boolean> {
 }
 
 afterEach(() => {
-  scene.conn = null; scene.stack.splice(0); scene.connects.splice(0); scene.backs.splice(0);
+  forgetOrganizerSessionForTests();
+  scene.conn = null; scene.connect = null; scene.stack.splice(0); scene.connects.splice(0); scene.backs.splice(0);
   scene.focused = true; scene.options = null; scene.nav = "dock";
   document.body.innerHTML = "";
 });
@@ -418,5 +431,105 @@ describe("the cold start after a pairing ended", () => {
   it("CONTROL: nothing left on the phone is the first-run door", async () => {
     const phone = await phoneAfterThePairingEnded({ ownMailbox: false, remove: REVOKE.remove });
     expect(await coldStart(phone)).toEqual({ gate: "welcome", active: null, connects: [] });
+  });
+});
+
+describe("the way back to the kept mailbox after a Connect refused for another one", () => {
+  /** The kept mailbox, reopened from its seal as a reader; every organize request it is sent is counted. */
+  function keptMailbox(organized: string[]): StandaloneEngine {
+    const json = (status: number, body: unknown): Response =>
+      new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    return {
+      accountId: "engine-account", address: "q@example.test",
+      get sessionToken() { return "engine-launch-token"; },
+      async handle(req: Request): Promise<Response> {
+        const path = new URL(req.url).pathname;
+        if (path === "/mailboxes") return json(200, { items: [{ id: "m1", address: "q@example.test" }] });
+        if (!path.endsWith("/organize")) return json(404, { error: { code: "not_found", message: path } });
+        organized.push(path);
+        return json(200, { outcome: "authorized", previousReason: null });
+      },
+      async stop() {}, log() {}, leave() {},
+      async handBack() { return [{ mailboxId: "m1", released: 1 }]; },
+      async forgetStoredLogin() { return true; },
+      async serverSettings() { return null; },
+      async resume() { return [{ mailboxId: "m1", served: 1 }]; },
+      async claimHere() { return "claimed" as const; },
+      async heldElsewhere() { return null; },
+      async stopOrganizing() { return "not_organizing" as const; },
+      runtimes: () => ({
+        organizer: { m1: { organizing: false, heldBy: null, reason: null, releaseRequestedAt: null, claimed: false } },
+        connection: { m1: { reachable: true, unreachableSince: null, signInRefused: false, firstSync: "finished" } },
+      }),
+    } as unknown as StandaloneEngine;
+  }
+
+  /**
+   * A run that starts with nothing open over the kept store (the pairing's connect is refused), then the door
+   * screen's press in `app/standalone.tsx`'s order (the slot, the finger, the door, the slot back on every exit),
+   * then the switch to the kept row that the pane's Back, a row tap and Keep each make. Real provider and door.
+   */
+  async function switchBack(press: "none" | "another" | "same"): Promise<string[]> {
+    forgetOrganizerSessionForTests();
+    const phone = await phoneAfterThePairingEnded({ ownMailbox: true, remove: null });
+    const profiles = new ServerProfileStore(phone.kv);
+    scene.store = profiles;
+    scene.deps = phone.deps;
+    const organized: string[] = [];
+    const door = keptMailbox(organized);
+    const env: PairingEnv = {
+      profiles, engineDeps: phone.deps,
+      standalone: {
+        door: organizerDoor,
+        reopen: async () => ({ ok: true as const, door }),
+        standDownAway: async () => { await endStandaloneHere(); },
+        removeEngine: async () => { throw new Error("nothing is removed here"); },
+      },
+    };
+    scene.connect = async (id) => id === phone.here!.id
+      ? connectProfile(env, (await profiles.list()).find((p) => p.id === id)!)
+      : { kind: "refused", reason: refuse("pairEnded") };
+    let conn: Connection | null = null;
+    function Probe() { conn = useConnection(); return null; }
+    const view = mount(h(ConnectionProvider, null, h(Probe)));
+    const drain = () => act(async () => { for (let i = 0; i < 12; i++) await new Promise((r) => setTimeout(r, 0)); });
+    await drain();
+    if (press !== "none") {
+      expect(takeStandaloneLaunch(), "premise: nothing is open").toBe("open");
+      try {
+        armConsentPress();
+        await act(async () => {
+          const outcome = await openStandaloneMailbox({
+            ...EMPTY_STANDALONE, address: press === "same" ? "q@example.test" : "j@example.test",
+            password: "pw", imapHost: "imap.example.test", imapPort: "993",
+          }, {
+            startEngine: async () => {
+              if (press === "same") return door;
+              throw Object.assign(new Error("held"), { anotherMailboxHeld: true, heldAccountId: "engine-account" });
+            },
+            platform: async () => ({ kind: "ready", exec: {}, keks: {} }),
+            machineName: () => "ohmail on a phone",
+            installId: async () => "install-1",
+            listHeld: (id: string) => conn!.listHeldStandalone(id),
+          } as never);
+          if (outcome.ok) { holdStandaloneDoor(outcome.door); await conn!.openStandalone(outcome.door); }
+        });
+      } finally {
+        releaseStandaloneLaunch();
+      }
+    }
+    if (press !== "same") await act(async () => { await conn!.switchTo(phone.here!.id); });
+    await drain();
+    view.unmount();
+    return organized;
+  }
+
+  it("records no consent for the kept mailbox: the refused press left no finger behind", async () => {
+    expect(await switchBack("another")).toEqual([]);
+  });
+
+  it("CONTROLS: a switch back with no press records none; a press that opens its mailbox records one", async () => {
+    expect(await switchBack("none")).toEqual([]);
+    expect(await switchBack("same")).toEqual(["/local/mailboxes/m1/organize"]);
   });
 });

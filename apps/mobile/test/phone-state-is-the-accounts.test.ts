@@ -27,11 +27,14 @@ import {
   holdStandaloneDoor,
   organizerDoor,
   organizerInstruction,
+  organizerSettingsLeftOnlyHere,
   pressOrganizeHere,
+  releaseStandaloneLaunch,
   standaloneHere,
   standaloneHereFor,
+  takeStandaloneLaunch,
 } from "../src/engine/organizer-session";
-import type { StandaloneEngine, StopOrganizingOutcome } from "../src/engine/standalone-door";
+import { organizesHere, type StandaloneEngine, type StopOrganizingOutcome } from "../src/engine/standalone-door";
 import {
   createBackgroundOrganizing,
   STOP_ATTEMPTS,
@@ -41,9 +44,9 @@ import {
   type ServiceNotice,
 } from "../src/engine/background";
 import {
-  claimChipLabel, claimHere, claimNoteLine, mayStopHere, pressSaidLine,
+  claimChipLabel, claimHere, claimNoteLine, mayStopHere, pressSaidLine, stopAndRemoveAsks,
 } from "../src/ui/standalone-form";
-import { connectProfile, type PairingEnv } from "../src/net/pairing";
+import { connectProfile, forgetProfile, listHeldStandalone, type PairingEnv } from "../src/net/pairing";
 import { connectionSaid, connectionSay } from "../src/state/live";
 import { ServerProfileStore, type SecureKV } from "../src/state/servers";
 import { readFoldersEnabled } from "../src/net/consent";
@@ -287,6 +290,42 @@ describe("A — a mailbox somebody switched away from is not the account on scre
     expect(standaloneHere(), "the door did not come back").not.toBeNull();
     /* AND NO EXTRA STAND-DOWN: a relaunch of this very door is not a switch away from it. */
     expect(standDowns.n).toBe(1);
+  });
+
+  it("a pairing and its forget leave the slot open over the kept store, so the engine's store must refuse", async () => {
+    /* The row's sequence up to the press: the slot reads only this process, and opens here. */
+    const door = fakeDoor(doorLog());
+    const env = testEnv(heldPort(door, { n: 0 }));
+    holdStandaloneDoor(door);
+    await env.profiles.addStandalone({ origin: LOCAL_ENGINE_ORIGIN, flavor: "local", accountId: door.accountId });
+    const paired = await env.profiles.add({
+      origin: "https://srv.example", flavor: "managed", accountId: "a1", refreshToken: "r1",
+    });
+    await connectProfile(env, (await env.profiles.list()).find((p) => p.id === paired.id)!);
+    expect(await forgetProfile(env, paired.id, { revoke: async () => true })).toEqual({ kind: "forgotten" });
+    expect(organizerDoor()).toBeNull();
+    expect(stopAndRemoveAsks(null, await organizerSettingsLeftOnlyHere()), "Stop and remove asks").not.toBeNull();
+    expect(takeStandaloneLaunch()).toBe("open");
+    releaseStandaloneLaunch();
+  });
+
+  it("lists the mailbox a refused Connect found, once and never as the active one", async () => {
+    const env = testEnv();
+    const paired = await env.profiles.add({
+      origin: "https://srv.example", flavor: "managed", accountId: "a1", refreshToken: "r1",
+    });
+    await listHeldStandalone(env, "");
+    expect((await env.profiles.list()).filter(organizesHere), "an empty id listed a row").toEqual([]);
+    await listHeldStandalone(env, "engine-account");
+    await listHeldStandalone(env, "engine-account");
+    expect((await env.profiles.list()).filter(organizesHere).map((p) => p.accountId)).toEqual(["engine-account"]);
+    expect((await env.profiles.active())?.id, "the listing took the active row").toBe(paired.id);
+
+    /* A local row already listed is the way out; nothing is added beside it. */
+    const own = testEnv();
+    const row = await own.profiles.addStandalone({ origin: LOCAL_ENGINE_ORIGIN, flavor: "local", accountId: "engine-account" });
+    await listHeldStandalone(own, "another-account");
+    expect(await own.profiles.list()).toEqual([row]);
   });
 
   it("the world asks for the door of the session it is rendering, never the module's", () => {

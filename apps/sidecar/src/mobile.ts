@@ -18,11 +18,11 @@
  */
 import * as socketModule from "net";
 
-import { and, asc, eq, isNotNull } from "drizzle-orm";
+import { and, asc, eq, isNotNull, ne, or } from "drizzle-orm";
 import { drizzle as drizzleSqliteProxy } from "drizzle-orm/sqlite-proxy";
 /* The tables a relaunch reads to find out where this mailbox lives and whether mail is here. The
    barrel, like `engine.ts` — the device twin is substituted at the module the barrel itself reaches. */
-import { mailboxCredentials, mailboxes, messages, organizerDisplayName } from "@trafficflow/db";
+import { accounts, drafts, mailboxCredentials, mailboxes, messages, organizerDisplayName } from "@trafficflow/db";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, deliverLocalNotifyAtCommit,
   dialect, type LogMark,
@@ -321,6 +321,12 @@ const LOCAL_ORGANIZE_PATH = (id: string): string =>
  * this phone" a fact about the door instead of a sentence about the app.
  */
 const TAKEOVER_ROUTE = "/local/organizer/takeover";
+
+/**
+ * ADDING A MAILBOX, in both spellings — not on this door either. A phone store holds one mailbox, and
+ * a second one added in-process would be attached beside it with no launch to refuse it.
+ */
+const ADD_MAILBOX_ROUTE = /^(?:\/local)?\/mailboxes$/;
 
 /** `POST /mailboxes/:id/release` — the person's stop, as the row records it. */
 const RELEASE_PATH = (id: string): string => `/mailboxes/${encodeURIComponent(id)}/release`;
@@ -1089,6 +1095,21 @@ class IncomingUnreachableError extends Error {
 }
 
 /**
+ * THE STORE HOLDS ANOTHER MAILBOX — a Connect refused before anything was written, sealed or dialled,
+ * with an `anotherMailboxHeld` property the app reads. `heldAccountId` is the store's own account, so
+ * the app can list the store its Stop and remove takes; never an address.
+ */
+class AnotherMailboxHeldError extends Error {
+  readonly anotherMailboxHeld = true;
+  readonly heldAccountId: string;
+  constructor(heldAccountId: string) {
+    super("this phone's store holds another mailbox, so nothing was opened");
+    this.name = "AnotherMailboxHeldError";
+    this.heldAccountId = heldAccountId;
+  }
+}
+
+/**
  * WHICH SUBMISSION ANSWERS REFUSE A CONNECT. A server that answered and said no (sign-in,
  * encryption) always does. Not reaching it refuses only where the INCOMING server answered this
  * launch: the network was up, so the address or port is wrong. Where the incoming server could not
@@ -1133,10 +1154,10 @@ export const PHONE_DATE_READ_COMMAND_SIZE = 500;
 
 export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngine> {
   const started = await composePhoneEngine(deps, deps.imap);
-  /* Unreachable on this arm: the sealed read is the only thing that answers `no-credential`, and
-     it is not consulted when a caller supplies a config. Stated rather than cast away. */
-  if (started.kind === "no-credential") {
-    throw new Error("a configured start cannot answer no-credential; the sealed read was not asked");
+  /* Unreachable on this arm: only the sealed read answers a state, and a configured start refuses
+     another mailbox by throwing. Stated rather than cast away. */
+  if (started.kind !== "started") {
+    throw new Error(`a configured start cannot answer ${started.kind}; the sealed read was not asked`);
   }
   return started.engine;
 }
@@ -1145,7 +1166,9 @@ export async function startPhoneEngine(deps: PhoneEngineDeps): Promise<PhoneEngi
 export type SealedStart =
   | { kind: "started"; engine: PhoneEngine }
   /** Nothing on this store says where this mailbox lives, so there is nothing to open. */
-  | { kind: "no-credential" };
+  | { kind: "no-credential" }
+  /** The store holds more than one mailbox (an earlier build seeded a second): none is opened, none removed. */
+  | { kind: "several-mailboxes" };
 
 /** A sealed start's deps: every one of {@link PhoneEngineDeps} except the mailbox's own config. */
 export type SealedPhoneDeps = Omit<PhoneEngineDeps, "imap" | "address">;
@@ -1240,6 +1263,39 @@ async function composePhoneEngine(
   (socketModule as { setSocketLog?: (l: Diagnostic) => void }).setSocketLog?.(log);
 
   const store = await openPhoneStore(deps.exec, TRANSACTION_WAIT_MS, deps.onMigrating, deps.journal, log);
+  /**
+   * ══ ONE MAILBOX PER PHONE STORE, AND THE STORE'S ROWS DECIDE ════════════════════════════════
+   *
+   * Before anything is written, sealed or dialled, on both entries. The app's launch slot reads only
+   * its own process, so a pairing, a switch or a removal that kept the store left it open over a
+   * kept mailbox, and a second mailbox's Connect attached beside it: one account, both runtimes, and
+   * the first one's letters listed and counted under the second. The same mailbox (any case or
+   * spacing) and an empty store open as before; nothing here deletes anything.
+   */
+  const held = await heldMailboxes(store.db).catch(async (err: unknown) => {
+    await store.close().catch(() => undefined);
+    throw err;
+  });
+  if (imap !== null) {
+    const wanted = (deps.address ?? imap.auth.user).trim().toLowerCase();
+    if (held.addresses.some((a) => a !== wanted)) {
+      await store.close().catch(() => undefined);
+      log("mailbox_open_another_held", {
+        count: held.addresses.length,
+        reason: "this phone's store holds another mailbox, so this Connect opened, wrote and dialled "
+          + "nothing; the store's own Stop and remove is the way to open a different one",
+      });
+      throw new AnotherMailboxHeldError(held.accountId);
+    }
+  } else if (held.addresses.length > 1) {
+    await store.close().catch(() => undefined);
+    log("mailbox_reopen_several_held", {
+      count: held.addresses.length,
+      reason: "this phone's store holds more than one mailbox, so none was opened as its one mailbox "
+        + "and none was removed",
+    });
+    return { kind: "several-mailboxes" };
+  }
   const arrivalFloor = await arrivalBackfillFloor(deps.exec);
   /**
    * THE DIAL, AND WHO SUPPLIES IT. A configured start uses what it was given; a sealed start reads
@@ -2027,6 +2083,16 @@ async function composePhoneEngine(
           { status: 404, headers: { "content-type": "application/json" } },
         );
       }
+      if (req.method === "POST" && ADD_MAILBOX_ROUTE.test(new URL(req.url).pathname)) {
+        log("mailbox_add_route_absent", {
+          reason: "a phone store holds one mailbox, so the route that adds another is not served here "
+            + "and nothing was written",
+        });
+        return new Response(
+          JSON.stringify({ error: { code: "not_found", message: "this phone adds no second mailbox" } }),
+          { status: 404, headers: { "content-type": "application/json" } },
+        );
+      }
       /* THE SHARED CONSENT SPELLING IS ABSENT HERE, not discouraged: on a standalone install it
          carries a second factor this build can never produce. The local door records consent. */
       if (req.method === "POST" && SHARED_ORGANIZE_ROUTE.test(new URL(req.url).pathname)) {
@@ -2377,6 +2443,30 @@ async function composePhoneEngine(
       return sidecar.stop();
     },
   } };
+}
+
+/**
+ * THE MAILBOXES THIS STORE HOLDS, by trimmed lower-cased address, under `ensureLocalWorld`'s own
+ * predicate (a paused row counts, a removed one does not), and the account its next launch reuses. A row
+ * counts only where it holds something of a mailbox: the empty row an earlier version's refused first
+ * Connect left beside the mailbox holds nothing, and counting it locked the phone out of its own.
+ */
+async function heldMailboxes(db: LocalDb): Promise<{ accountId: string; addresses: string[] }> {
+  const [account] = await db.select({ id: accounts.id }).from(accounts).limit(1);
+  const rows = await db.select({ id: mailboxes.id, address: mailboxes.address }).from(mailboxes)
+    .where(or(ne(mailboxes.status, "disabled"), isNotNull(mailboxes.disabledReason)));
+  const held = new Set<string>();
+  for (const row of rows) if (await holdsMailbox(db, row.id)) held.add(row.address.trim().toLowerCase());
+  return { accountId: account?.id ?? "", addresses: [...held] };
+}
+
+/** Its sealed password, a draft (an unsent one is this phone's only copy), or its mail (`mirrorRowsRemain`). */
+async function holdsMailbox(db: LocalDb, mailboxId: string): Promise<boolean> {
+  const sealed = await db.select({ id: mailboxCredentials.mailboxId }).from(mailboxCredentials)
+    .where(eq(mailboxCredentials.mailboxId, mailboxId)).limit(1);
+  if (sealed.length > 0) return true;
+  const draft = await db.select({ id: drafts.id }).from(drafts).where(eq(drafts.mailboxId, mailboxId)).limit(1);
+  return draft.length > 0 || mirrorRowsRemain(db, mailboxId);
 }
 
 /** Has this store taken this mailbox's mail in before — a message row, or a pass that finished. */
