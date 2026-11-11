@@ -1,11 +1,12 @@
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   makeEntitlementsClient, ENTITLEMENTS_CALL_BUDGET_MS, PRICE_PROBE_ACCOUNT, PRICE_PROBE_BUDGET_MS,
-  ACCESS_FAULT_HOLD_MS, ACCESS_REFUSED_TTL_MS, ACCESS_STALE_ALLOW_MS, ACCESS_TTL_MS,
-  type CallFault, type ContractFault, type EntitlementsFetch, type EntitlementsPath, type UsageUnrecorded,
+  ACCESS_FAULT_HOLD_MS, ACCESS_REFUSED_TTL_MS, ACCESS_STALE_ALLOW_MS, ACCESS_TTL_MS, EDGE_THROTTLE_RETRY,
+  type CallFault, type ContractFault, type EntitlementsClient, type EntitlementsFetch, type EntitlementsPath,
+  type UsageUnrecorded,
 } from "../src/entitlements-client.js";
 import {
   UNMETERED, UNMETERED_ACCESS, accessOf, isMetered, parkedAccountsOf, pricingOf, aiUsageLineOf, type AiUsageLine,
@@ -51,6 +52,7 @@ const client = (
   answers: Array<{ status: number; body?: unknown; throws?: boolean }>,
   over: {
     ttlMs?: number; now?: () => number; budgetsMs?: Partial<Record<EntitlementsPath, number>>;
+    random?: () => number;
   } = {},
 ) => {
   const f = fakeFetch(answers);
@@ -1566,8 +1568,9 @@ describe("access — askedAfter answers only from a call begun since that instan
 });
 
 /**
- * A CLOSURE THE ROWS STORED (2026-11-10): while the plane answered 429, a worker that had just started
- * held no answer and unparked a closed account. An allow the program never gave is no reopening.
+ * A CLOSURE THE ROWS STORED (2026-11-10): while the edge in front of the plane answered 429, a worker
+ * that had just started held no answer and unparked a closed account. An allow the program never
+ * gave is no reopening. Each read here is a 429 and its one retry, at the shortest pause.
  */
 describe("parkedAccountsOf — a stored closure stands while the plane does not answer", () => {
   const closed = () => {
@@ -1580,15 +1583,15 @@ describe("parkedAccountsOf — a stored closure stands while the plane does not 
   const limited = { status: 429, body: { error: "rate_limited" } };
 
   it("a fresh process during a 429 parks the stored account and serves the one with no closure", async () => {
-    const c = client([limited]);
+    const c = client([limited], { random: () => 0 });
     const read = parkedAccountsOf(c.port)!;
     expect(await read([ACC, PAY], new Date(), undefined, new Set([ACC]))).toEqual(new Set([ACC]));
-    expect(c.paths, "both asked, neither answered").toEqual(["/v1/access", "/v1/access"]);
+    expect(c.paths, "both asked twice, neither answered").toEqual(Array.from({ length: 4 }, () => "/v1/access"));
   });
 
   it("a held refusal rechecked into a 429 stays parked; the account the door cleared is served", async () => {
     let t = 1_000_000;
-    const c = client([{ status: 200, body: closed() }, limited], { now: () => t });
+    const c = client([{ status: 200, body: closed() }, limited], { now: () => t, random: () => 0 });
     const read = parkedAccountsOf(c.port)!;
     expect(await read([ACC], new Date())).toEqual(new Set([ACC]));
     t += 10_000;
@@ -1600,12 +1603,12 @@ describe("parkedAccountsOf — a stored closure stands while the plane does not 
 
   it("a held allow still wins over the stored closure", async () => {
     let t = 1_000_000;
-    const c = client([{ status: 200, body: wire("access-200-active") }, limited], { now: () => t });
+    const c = client([{ status: 200, body: wire("access-200-active") }, limited], { now: () => t, random: () => 0 });
     const read = parkedAccountsOf(c.port)!;
     expect(await read([ACC], new Date())).toEqual(new Set());
     t += 70_000;
     expect(await read([ACC], new Date(), undefined, new Set([ACC]))).toEqual(new Set());
-    expect(c.paths, "the second read asked and faulted").toHaveLength(2);
+    expect(c.paths, "the second read asked twice and faulted").toHaveLength(3);
   });
 });
 
@@ -1818,6 +1821,213 @@ describe("accessOrFault — the read that says when it could not ask (the erasur
     expect(plane.accounts, "inside the hold it still asks, once for both").toHaveLength(3);
     expect(a).toMatchObject({ ok: true });
     expect(b).toEqual(a);
+  });
+});
+
+/**
+ * AN EDGE 429 (2026-11-10). The program's contract never answers 429, so a refusal with it came from
+ * a hop in front that never passed the call on. A read (`/v1/access`, `/v1/ops`) is asked once more
+ * after a short random pause, inside the call's one budget; a call that spends, records usage or
+ * writes is sent once. When the retry is refused too, every fault arm answers as it did.
+ */
+describe("an edge 429: a read is asked once more inside its budget, a write never", () => {
+  beforeEach(() => { fakeClock(); });
+  const throttled = { status: 429, body: { error: "rate_limited" } };
+  const active = { status: 200, body: wire("access-200-active") };
+  /** The fake clock moved past any pause the random source can pick, then the answer. */
+  const after = async <T>(read: Promise<T>): Promise<T> => {
+    await vi.advanceTimersByTimeAsync(EDGE_THROTTLE_RETRY.maxDelayMs);
+    return read;
+  };
+
+  it("a 429 then a 200 answers the program's verdict after one retry: no fault, and cached", async () => {
+    let t = 1_000;
+    const c = client([throttled, active], { now: () => t, random: () => 0 });
+    const v = await after(c.port.access(ACC));
+    expect(v).not.toBe(UNMETERED_ACCESS);
+    expect(v).toMatchObject({ ok: true, prices: { screener: 1 } });
+    expect(c.paths).toEqual(["/v1/access", "/v1/access"]);
+    expect(c.calls, "a recovered retry is no call fault").toEqual([]);
+    expect(c.port.accessFaults!()).toBe(0);
+    t += 1;
+    await expect(c.port.access(ACC)).resolves.toEqual(v);
+    expect(c.paths, "the answer was cached").toHaveLength(2);
+  });
+
+  it("two 429s fault once, with the status received and both attempts; the hold then answers", async () => {
+    let t = 1_000;
+    const c = client([throttled, throttled, active], { now: () => t, random: () => 0 });
+    await expect(after(c.port.access(ACC))).resolves.toBe(UNMETERED_ACCESS);
+    expect(c.paths).toHaveLength(2);
+    expect(c.calls).toEqual([expect.objectContaining({ path: "/v1/access", status: 429, attempts: 2 })]);
+    expect(c.port.accessFaults!(), "one failed exchange is one fault, not one per attempt").toBe(1);
+    expect(c.faults, "a 429 is no drift").toEqual([]);
+    t += ACCESS_FAULT_HOLD_MS - 1;
+    await expect(after(c.port.access(ACC))).resolves.toBe(UNMETERED_ACCESS);
+    expect(c.paths, "nothing is dialled inside the hold").toHaveLength(2);
+  });
+
+  it("when the retry is refused too, the fault arms answer as before", async () => {
+    let t = 1_000;
+    const c = client([{ status: 200, body: refusedBody() }, throttled], { now: () => t, random: () => 0 });
+    await expect(c.port.access(ACC)).resolves.toMatchObject({ ok: false });
+    t += ACCESS_REFUSED_TTL_MS;
+    await expect(after(c.port.access(ACC)), "the held refusal").resolves.toMatchObject({ ok: false, reason: "payment_required" });
+    await expect(after(c.port.access(ACC, { askedAfter: t })), "nothing answered since").resolves.toBe(UNMETERED_ACCESS);
+    await expect(after(c.port.accessOrFault(ACC))).resolves.toBe("fault");
+    expect(c.paths, "each failed read is a 429 and its retry").toHaveLength(7);
+    const none = client([throttled], { random: () => 0 });
+    await expect(after(none.port.access(ACC)), "nothing held: allow itself").resolves.toBe(UNMETERED_ACCESS);
+  });
+
+  it("a 500, a 503, a throw and a timeout are not asked again", async () => {
+    for (const a of [{ status: 500 }, { status: 503 }, { status: 0, throws: true }]) {
+      const c = client([a, active], { random: () => 0 });
+      await expect(after(c.port.access(ACC))).resolves.toBe(UNMETERED_ACCESS);
+      expect(c.paths, JSON.stringify(a)).toHaveLength(1);
+      expect(c.calls.map((f) => f.attempts)).toEqual([1]);
+    }
+    let dials = 0;
+    const seen: CallFault[] = [];
+    const slow = slowPlane(2 * ENTITLEMENTS_CALL_BUDGET_MS, 200, wire("access-200-active"));
+    const port = makeEntitlementsClient({
+      baseUrl: "https://e.example", secret: "x".repeat(24), random: () => 0, onCallFault: (f) => { seen.push(f); },
+      fetchImpl: (url, init) => { dials += 1; return slow(url, init); },
+    });
+    const read = port.access(ACC);
+    await vi.advanceTimersByTimeAsync(ENTITLEMENTS_CALL_BUDGET_MS);
+    await expect(read).resolves.toBe(UNMETERED_ACCESS);
+    expect([dials, seen.map((f) => [f.status, f.attempts])]).toEqual([1, [[null, 1]]]);
+  });
+
+  it("a call that spends, records usage or writes is sent once on a 429, with today's answer", async () => {
+    const usage: AiUsageLine = {
+      accountId: ACC, action: "screener", host: "worker", model: "m", at: "2026-11-10T14:18:00.000Z", ok: true,
+      attempts: 1, inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0, thinkingTokens: null,
+    };
+    // The second answer is what a resend would read, so a resend shows in the answer as well.
+    const writes: Array<[EntitlementsPath, (p: EntitlementsClient) => Promise<unknown>, unknown, unknown]> = [
+      ["/v1/spend", (p) => p.spend(ACC, "screener", "m1"), wire("spend-200-ok"), { verdict: "fault" }],
+      ["/v1/spend/release", (p) => p.release(ACC, { action: "draft", attemptKey: "d1", attempt: "draft:d1", refund: true }),
+        wire("spend-release-200"), "unreachable"],
+      ["/v1/usage", (p) => p.recordUsage!([usage]), { usageRecorded: 1 }, "refused"],
+      ["/v1/manage-link", (p) => p.manageLink(ACC), wire("manage-link-200"), null],
+      ["/v1/account/release", (p) => p.releaseAccount(ACC), wire("account-release-200-cancelled"), "cancel_failed"],
+      ["/v1/checkout/confirm", (p) => p.confirmReturn!(ACC, "cs_1"), { state: "confirmed" }, "fault"],
+    ];
+    for (const [path, call, resent, today] of writes) {
+      const c = client([throttled, { status: 200, body: resent }], { random: () => 0 });
+      await expect(after(call(c.port)), path).resolves.toEqual(today);
+      expect(c.paths, path).toEqual([path]);
+      expect(c.calls.map((f) => [f.path, f.status, f.attempts]), path).toEqual([[path, 429, 1]]);
+    }
+  });
+
+  it("the pause is jittered and bounded: 250 ms up to 999 ms, whatever the random source answers", async () => {
+    const pauses: number[] = [];
+    for (const r of [0, 0.5, 0.999_999, 5, -1, Number.NaN]) {
+      const dials: number[] = [];
+      const port = makeEntitlementsClient({
+        baseUrl: "https://e.example", secret: "x".repeat(24), onCallFault: () => {}, random: () => r,
+        fetchImpl: async () => {
+          dials.push(Date.now());
+          return dials.length === 1
+            ? { status: 429, json: async () => ({}) }
+            : { status: 200, json: async () => wire("access-200-active") };
+        },
+      });
+      await expect(after(port.access(ACC))).resolves.toMatchObject({ ok: true });
+      pauses.push(dials[1]! - dials[0]!);
+    }
+    expect(pauses.slice(0, 3), "0, a half and nearly 1").toEqual([250, 625, 999]);
+    for (const p of pauses.slice(3)) {
+      expect(p, "out of range or NaN").toBeGreaterThanOrEqual(EDGE_THROTTLE_RETRY.minDelayMs);
+      expect(p).toBeLessThan(EDGE_THROTTLE_RETRY.maxDelayMs);
+    }
+  });
+
+  it("the retry shares the call's one budget: a retry that hangs ends the exchange at the budget", async () => {
+    let dials = 0;
+    const seen: CallFault[] = [];
+    const port = makeEntitlementsClient({
+      baseUrl: "https://e.example", secret: "x".repeat(24), random: () => 0, onCallFault: (f) => { seen.push(f); },
+      fetchImpl: (_url, init) => {
+        dials += 1;
+        if (dials === 1) return Promise.resolve({ status: 429, json: async () => ({}) });
+        return new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => { reject(new Error("aborted")); }, { once: true });
+        });
+      },
+    });
+    const began = Date.now();
+    let ended = -1;
+    const read = port.access(ACC).then((v) => { ended = Date.now() - began; return v; });
+    await vi.advanceTimersByTimeAsync(ENTITLEMENTS_CALL_BUDGET_MS - 1);
+    expect(ended).toBe(-1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect([ended, dials], "the retry was given a budget of its own").toEqual([ENTITLEMENTS_CALL_BUDGET_MS, 2]);
+    await expect(read).resolves.toBe(UNMETERED_ACCESS);
+    expect(seen).toEqual([expect.objectContaining({ status: null, attempts: 2, elapsedMs: ENTITLEMENTS_CALL_BUDGET_MS })]);
+  });
+
+  it("a 429 too late for the pause and the room after it is not asked again", async () => {
+    // From 3 750 ms the shortest pause leaves exactly the room; from 3 800 ms it does not.
+    const late = async (at: number) => {
+      let dials = 0;
+      const seen: CallFault[] = [];
+      const port = makeEntitlementsClient({
+        baseUrl: "https://e.example", secret: "x".repeat(24), random: () => 0, onCallFault: (f) => { seen.push(f); },
+        fetchImpl: () => new Promise((resolve) => {
+          dials += 1;
+          const status = dials === 1 ? 429 : 200;
+          setTimeout(() => {
+            resolve({ status, json: async () => (status === 200 ? wire("access-200-active") : {}) });
+          }, dials === 1 ? at : 0);
+        }),
+      });
+      const read = port.access(ACC);
+      await vi.advanceTimersByTimeAsync(ENTITLEMENTS_CALL_BUDGET_MS);
+      return { answered: (await read) !== UNMETERED_ACCESS, dials, faults: seen.map((f) => [f.status, f.attempts]) };
+    };
+    expect(await late(3_750)).toEqual({ answered: true, dials: 2, faults: [] });
+    expect(await late(3_800)).toEqual({ answered: false, dials: 1, faults: [[429, 1]] });
+  });
+
+  it("/v1/ops reads the answer its retry got; two 429s read refused, and neither is a call fault", async () => {
+    const OBSERVED = Date.parse("2026-10-19T12:00:00.000Z");
+    const ok = client([throttled, { status: 200, body: wire("ops-200") }], { now: () => OBSERVED, random: () => 0 });
+    await expect(after(ok.port.readOps!())).resolves.toEqual({ state: "read", answer: wire("ops-200") });
+    const refused = client([throttled], { now: () => OBSERVED, random: () => 0 });
+    await expect(after(refused.port.readOps!())).resolves.toEqual({ state: "refused", status: 429 });
+    expect([ok.paths, refused.paths]).toEqual([["/v1/ops", "/v1/ops"], ["/v1/ops", "/v1/ops"]]);
+    expect([...ok.calls, ...refused.calls]).toEqual([]);
+  });
+
+  it("80 parallel reads share the one exchange through its pause: two dials, every read the verdict", async () => {
+    const c = client([throttled, active], { random: () => 0 });
+    const seen = await after(burst(80, () => c.port.access(ACC)));
+    expect(c.paths).toHaveLength(2);
+    for (const v of seen) expect(v).toMatchObject({ ok: true, prices: { screener: 1 } });
+  });
+
+  it("the default line says which hop answered and how many attempts it took", async () => {
+    const lines: string[] = [];
+    const warn = console.warn;
+    console.warn = (...a: unknown[]) => { lines.push(a.map(String).join(" ")); };
+    try {
+      for (const status of [429, 503]) {
+        const port = makeEntitlementsClient({
+          onCallFault: "unrecorded", baseUrl: "https://e.example", secret: "x".repeat(24), random: () => 0,
+          fetchImpl: async () => ({ status, json: async () => ({}) }),
+        });
+        await after(port.access(ACC));
+      }
+    } finally { console.warn = warn; }
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/answered 429 after 2 attempts/);
+    expect(lines[0]).toMatch(/in front of the program/);
+    expect(lines[1]).toMatch(/answered 503 in/);
+    expect(lines[1]).not.toMatch(/attempts|in front of/);
   });
 });
 

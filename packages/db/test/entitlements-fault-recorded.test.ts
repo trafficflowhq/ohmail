@@ -27,7 +27,7 @@ function capture(): { rows: ApiFaultInput[]; handle: () => Tx } {
 }
 
 const fault = (over: Partial<CallFault> = {}): CallFault => ({
-  path: "/v1/access", status: null, elapsedMs: 5_000, budgetMs: 5_000, outlivedRequest: false, ...over,
+  path: "/v1/access", status: null, elapsedMs: 5_000, budgetMs: 5_000, outlivedRequest: false, attempts: 1, ...over,
 });
 
 describe("onCallFault is required, and the opt-out has a name", () => {
@@ -64,6 +64,46 @@ describe("onCallFault is required, and the opt-out has a name", () => {
     expect(rows[0]).toMatchObject({
       route: "entitlements:/v1/access", status: 503, errorClass: "EntitlementsCallRefused", arm: "worker",
     });
+  });
+});
+
+describe("the worker's record of an edge 429: what the caller received, and only once the retry failed too", () => {
+  const open = { entitlements: {
+    syncEnabled: true, canAddMailbox: true, aiEnabled: true, mailboxLimit: null, storageBytesLimit: null,
+  } };
+  /** The worker's composition over a program whose n-th call answers `statuses[n]`, the last repeating. */
+  const worker = (statuses: number[]) => {
+    let n = 0;
+    const { rows, handle } = capture();
+    const lines: Array<{ event: string; fields?: Record<string, unknown> }> = [];
+    const port = makeEntitlementsClient({
+      baseUrl: "https://e.example", secret: "x".repeat(24), random: () => 0,
+      fetchImpl: async () => {
+        const status = statuses[Math.min(n++, statuses.length - 1)]!;
+        return { status, json: async () => (status === 200 ? open : { error: "rate_limited" }) };
+      },
+      onCallFault: entitlementsFaultRecorder(handle, "worker", {
+        now: () => NOW, log: { warn: (event, fields) => { lines.push({ event, fields }); } },
+      }),
+    });
+    return { port, rows, lines };
+  };
+
+  it("two 429s: one row at 502 under the edge class, one line with the status received and both attempts", async () => {
+    const w = worker([429, 429]);
+    await w.port.access("acct-1");
+    expect(w.rows).toHaveLength(1);
+    expect(w.rows[0]).toMatchObject({
+      route: "entitlements:/v1/access", status: 502, errorClass: "EntitlementsEdgeThrottled", arm: "worker",
+    });
+    expect(w.lines.map((l) => l.event)).toEqual(["entitlements_call_fault"]);
+    expect(w.lines[0]!.fields).toMatchObject({ status: 429, errorClass: "EntitlementsEdgeThrottled", attempts: 2 });
+  });
+
+  it("a 429 the retry recovers writes no row and no line", async () => {
+    const w = worker([429, 200]);
+    await expect(w.port.access("acct-1")).resolves.toMatchObject({ ok: true });
+    expect([w.rows, w.lines]).toEqual([[], []]);
   });
 });
 
