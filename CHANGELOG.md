@@ -21,6 +21,16 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.10] — 2026-11-11
+
+### Cloud asks the billing service again after a brief refusal in front of it
+
+On ohmail Cloud, the network edge in front of the billing service sometimes refused a request for a moment,
+before the billing service saw it, and the check then went unanswered. A check of an account's access, or of
+the billing service's own state, is now asked again once after a short random pause, inside the same time
+limit, so a brief refusal costs a little time instead. Charges and usage reports are never sent twice. A
+refusal that persists is recorded as the edge's, so the record says which hop refused.
+
 ## [1.0.9] — 2026-11-10
 
 ### Cloud keeps a closed account closed while the billing service does not answer
@@ -17469,7 +17479,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.9...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.10...HEAD
+[1.0.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.10
 [1.0.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.9
 [1.0.8]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.8
 [1.0.7]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.7

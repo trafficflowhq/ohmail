@@ -78,6 +78,13 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.10" date="2026-11-11">
+      <description>
+        <ul>
+          <li>Cloud asks the billing service again after a brief refusal in front of it</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.9" date="2026-11-10">
       <description>
         <ul>
@@ -103,14 +110,6 @@
       <description>
         <ul>
           <li>Deleting your account removes its preferences too, and a returning browser drops its copy</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.5" date="2026-11-10">
-      <description>
-        <ul>
-          <li>Letters that pretend to be a company go to Spam on their own</li>
-          <li>Sent copies waiting on a full mailbox are saved within minutes once it has room</li>
         </ul>
       </description>
     </release>
