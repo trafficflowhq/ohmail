@@ -464,6 +464,10 @@ const TABLE = {
     + "nothing was kept — try Connect once more.",
   standaloneAlreadyOpen:
     "This phone already has a mailbox open. Forget it in Servers before opening another one.",
+  /* A relaunch over a store an earlier version filled with two mailboxes' mail: neither is opened as this one. */
+  standaloneSeveralMailboxes:
+    "This phone holds the mail of more than one mailbox, so nothing was opened and nothing was deleted. "
+    + "Use Stop and remove in Servers, then open your mailbox again.",
   /* The removal belt's two. A removal that was interrupted is finished before anything opens,
      and neither sentence names the mailbox that was removed — the record carries an id only. */
   standaloneMailboxRemoved:

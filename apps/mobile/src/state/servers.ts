@@ -445,9 +445,12 @@ export class ServerProfileStore {
    * ring (see {@link ServerProfile.refreshToken}). Everything else is `add`'s ceremony
    * verbatim: same `(origin, accountId)` identity, index before value, the read-back that
    * refuses an unrecorded row. `add` is not reused with a nullable token — widening it would
-   * let any caller store a pairing that can never connect.
+   * let any caller store a pairing that can never connect. `activate: false` lists the row and leaves
+   * the active one alone: a store a refused Connect found is listed, not opened.
    */
-  addStandalone(input: { origin: string; flavor: string; accountId: string }): Promise<ServerProfile> {
+  addStandalone(
+    input: { origin: string; flavor: string; accountId: string }, opts: { activate?: boolean } = {},
+  ): Promise<ServerProfile> {
     return this.enqueue(async () => {
       if (input.origin !== input.origin.trim().replace(/\/+$/, "").toLowerCase()) {
         throw new StoreFault("origin_not_normalized", `profile origin must arrive normalized: "${input.origin}"`);
@@ -473,7 +476,7 @@ export class ServerProfileStore {
       };
       await this.writeIndex({
         ...idx,
-        active: profile.id,
+        active: opts.activate === false ? idx.active : profile.id,
         ids: existing ? idx.ids : [...idx.ids, profile.id],
       });
       if (!(await this.readIndex()).ids.includes(profile.id)) {

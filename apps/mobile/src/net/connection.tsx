@@ -50,6 +50,7 @@ import {
   drainPendingWakeDrops,
   drainPendingWipes,
   forgetProfile,
+  listHeldStandalone,
   mobileDeviceKind,
   negotiate,
   pairWithServer,
@@ -127,6 +128,12 @@ export interface Connection {
    * on a mailbox the next launch cannot find.
    */
   openStandalone(door: StandaloneEngine): Promise<Attempt>;
+  /**
+   * LIST THE STORE A REFUSED CONNECT FOUND, by the engine's account id, where no row names this
+   * phone's mailbox (`pairing.ts#listHeldStandalone`). Outside the gate: it opens nothing and must not
+   * supersede a connect in flight.
+   */
+  listHeldStandalone(accountId: string): Promise<void>;
   /** Switch the live session to a stored profile — BY ID; the row is re-read in the gate. */
   switchTo(profileId: string): Promise<Attempt>;
   /**
@@ -770,6 +777,10 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
           await refreshProfiles();
           return runConnect(row.id, stillCurrent);
         }),
+      listHeldStandalone: async (accountId) => {
+        await listHeldStandalone(env, accountId);
+        await refreshProfiles();
+      },
       switchTo: (profileId) =>
         gate.run(async (stillCurrent) => {
           try {

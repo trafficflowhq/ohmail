@@ -159,7 +159,8 @@ function Credentials() {
        * every arrival — which made a plain relaunch beside a laptop holding the claim a takeover
        * (measured: stood down at +2 s, claimed at +19 s). It now spends an arm, and this press is
        * one: a person typed a mailbox's password and pressed Connect. Armed BEFORE the engine is
-       * opened, because `openStandalone` below adopts the session and that is what spends it. */
+       * opened, because `openStandalone` below adopts the session and that is what spends it; a press
+       * that adopts nothing loses it when the slot is given back below. */
       armConsentPress();
       const outcome = await openStandaloneMailbox(fields, {
         startEngine: start,
@@ -186,6 +187,8 @@ function Credentials() {
            not. Without it a dial that authenticated and then filed nothing wrote no line anywhere,
            which is how three device-only defects had to be diagnosed off a mail server's wire. */
         logSink: engineLogSink(),
+        /* A STORE HOLDING ANOTHER MAILBOX IS LISTED, so the refusal's "in Servers" names a row. */
+        listHeld: (accountId) => conn.listHeldStandalone(accountId),
       });
       if (outcome.ok) {
         /* The app goes live through the path a paired connect takes:

@@ -299,7 +299,9 @@ export type StartPhoneEngineFromSealed = (deps: {
   onMigrating?: (progress: StoreMigrating) => void;
   buildCommit?: string;
 } & StartPhoneEngineLogging) => Promise<
-  { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
+  | { kind: "started"; engine: StandaloneEngine } | { kind: "no-credential" }
+  /** The store holds more than one mailbox: none was opened, none removed. */
+  | { kind: "several-mailboxes" }
 >;
 
 /**
@@ -342,6 +344,11 @@ export interface StandaloneDeps {
   buildCommit?: string;
   /** The platform's network reading (`net/network-door.ts#networkNow`): an offline phone is told so. */
   network?: () => "online" | "offline" | "unknown";
+  /**
+   * LIST THE STORE A REFUSED CONNECT FOUND HOLDING ANOTHER MAILBOX, under its account, where no row
+   * names it — so the refusal's "in Servers" is true. Listed, never opened and never deleted.
+   */
+  listHeld?: (accountId: string) => Promise<void>;
 }
 
 /**
@@ -519,6 +526,19 @@ export function incomingUnreachable(err: unknown): "unreachable" | "timeout" | n
 }
 
 /**
+ * THIS PHONE'S STORE HOLDS ANOTHER MAILBOX — the engine's `anotherMailboxHeld` property, read like the
+ * flags (cause walk, hop bound), with the store's account id; `null` where the engine said no such thing.
+ */
+export function anotherMailboxHeld(err: unknown): { heldAccountId: string } | null {
+  for (let e: unknown = err, hops = 0; e !== null && e !== undefined && hops < 8; hops++) {
+    const r = e as Record<string, unknown>;
+    if (r.anotherMailboxHeld === true) return { heldAccountId: typeof r.heldAccountId === "string" ? r.heldAccountId : "" };
+    e = r.cause;
+  }
+  return null;
+}
+
+/**
  * THE OUTGOING SERVER'S REFUSED CERTIFICATE — the engine's `submissionCertificate` property (the
  * probe's certificate kind, or `refused` where it read none), cause walk and hop bound as above.
  */
@@ -603,6 +623,12 @@ export async function openStandaloneMailbox(
      * message inside a German screen is the defect `refusal.ts` exists for, and the sentence a
      * person needs here is about their password or their port, not about STARTTLS. So each becomes
      * a KEYED refusal with no arguments — which also means neither can carry the password. */
+    /* NOT A SERVER'S ANSWER AND FIRST OF ALL: the store holds another mailbox, nothing was dialled. */
+    const held = anotherMailboxHeld(err);
+    if (held !== null) {
+      await deps.listHeld?.(held.heldAccountId).catch(() => undefined);
+      return { ok: false, reason: refuse("standaloneAlreadyOpen") };
+    }
     /* The outgoing server FIRST: its refusal is its own error, and each answer names that field. */
     const outgoing = submissionRefused(err);
     if (outgoing === "auth") return { ok: false, reason: refuse("standaloneSmtpSignInRefused") };
@@ -692,6 +718,9 @@ export async function reopenStandaloneMailbox(deps: ReopenDeps): Promise<ReopenO
     });
     if (started.kind === "no-credential") {
       return { ok: false, reason: refuse("standaloneNoSealedCredential") };
+    }
+    if (started.kind === "several-mailboxes") {
+      return { ok: false, reason: refuse("standaloneSeveralMailboxes") };
     }
     return { ok: true, door: started.engine };
   } catch (err) {
