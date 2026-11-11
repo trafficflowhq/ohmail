@@ -144,6 +144,10 @@ export function takeStandaloneLaunch(): "open" | "standing" {
 /** Give it back — on EVERY exit of a launch, or the next press is refused for the run of the app. */
 export function releaseStandaloneLaunch(): void {
   launching = false;
+  /* AND THE PRESS'S ARM WITH IT. A press that adopted its session spent the arm before this runs; one
+     that adopted nothing (refused, superseded, a store holding another mailbox) left it set, and the
+     next switch to this phone's kept mailbox recorded a consent nobody gave for it. */
+  consentArmed = false;
 }
 
 /**
@@ -191,7 +195,8 @@ export function notifyOrganizerState(): void {
  * licence is a finger: the door screen's Connect and the panel's start verb. It is MODULE state and
  * deliberately not persisted — "in this run of the app" is the bound, and a persisted one would
  * license the next launch too. It is TAKEN rather than read: one arm, one press, or a switch away
- * and back would spend the same finger twice.
+ * and back would spend the same finger twice. And it lasts no longer than the press's launch slot
+ * ({@link releaseStandaloneLaunch}).
  */
 let consentArmed = false;
 

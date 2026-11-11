@@ -49,6 +49,7 @@
  * if the expectation is unset — rather than quietly reporting nothing. A file that can silently
  * contribute nothing to a run is how a suite ends up green with the thing it tests unexercised.
  */
+import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -689,6 +690,27 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
       expect(typeof row?.id).toBe("string");
       expect(row?.address).toBe("roster@b.test");
     }, 120_000);
+
+    it("refuses adding a mailbox on this door, in both spellings, and the roster stays at one", async () => {
+      const events: string[] = [];
+      live = await startPhoneEngine(deps(nodeExecutor(recorder()), { log: (event: string) => { events.push(event); } }));
+      const auth = { authorization: `Bearer ${live.sessionToken}` };
+      for (const path of ["/local/mailboxes", "/mailboxes"]) {
+        const res = await live.handle(new Request(`http://sidecar${path}`, {
+          method: "POST",
+          headers: { ...auth, "content-type": "application/json" },
+          body: JSON.stringify({
+            provider: "imap", address: "added@b.test",
+            imap: { host: "127.0.0.1", port: 1, secure: false, user: "added@b.test", pass: "pw" },
+          }),
+        }));
+        expect(res.status, path).toBe(404);
+        expect(((await res.json()) as { error?: { code?: string } }).error?.code, path).toBe("not_found");
+      }
+      expect(events.filter((e) => e === "mailbox_add_route_absent")).toHaveLength(2);
+      const roster = await live.handle(new Request("http://sidecar/mailboxes", { headers: auth }));
+      expect(((await roster.json()) as { items: unknown[] }).items).toHaveLength(1);
+    }, 120_000);
   });
 
   describe("the credential the engine seals for itself", () => {
@@ -1026,6 +1048,129 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
       expect(good.connects, "the press after the refusal never dialled").toBeGreaterThan(0);
       expect(good.configs[0]?.host).toBe("second.invalid");
       expect(good.configs[0]?.auth).toMatchObject({ user: ADDRESS, pass: TYPED });
+    }, 120_000);
+
+    /**
+     * ONE MAILBOX PER PHONE STORE, AND THE STORE'S ROWS DECIDE. A second mailbox's Connect over a
+     * kept store attached both, and its Screener listed the first one's letters.
+     */
+    const OTHER = "other@b.test";
+    const openQ = async (file: string): Promise<PhoneEngine> => {
+      const q = await startPhoneEngine(deps(nodeExecutor(recorder(), file), {
+        adapterFactory: dialRecorder({ configs: [], connects: 0 }),
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: TYPED } },
+        address: ADDRESS,
+        keks: RING,
+      }));
+      await settle();
+      return q;
+    };
+    const storeRows = async (file: string): Promise<unknown[]> => {
+      const read = nodeExecutor(recorder(), file);
+      const out = [];
+      for (const t of ["mailboxes", "mailbox_credentials", "accounts"]) out.push((await read.all(`select * from ${t}`, [])).rows);
+      await read.close();
+      return out;
+    };
+    /** A configured start for {@link OTHER} on `file`, as the form's Connect makes it. */
+    const pressOther = async (file: string, rec = recorder(), dial: Dialled = { configs: [], connects: 0 }) =>
+      startPhoneEngine(deps(nodeExecutor(rec, file), {
+        adapterFactory: dialRecorder(dial),
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: OTHER, pass: TYPED } },
+        address: OTHER,
+        keks: RING,
+      })).then((e) => { live = e; return null; }, (e: unknown) => e);
+    /** A folder (the least a mailbox that ever synced keeps) or an unsent draft under `address`'s row. */
+    const plantUnder = async (file: string, address: string, what: "folder" | "draft"): Promise<void> => {
+      const planting = nodeExecutor(recorder(), file);
+      await planting.run(what === "folder"
+        ? "insert into mailbox_folders (mailbox_id, folder) select id, 'INBOX' from mailboxes where address = ?"
+        : "insert into drafts (account_id, mailbox_id) select account_id, id from mailboxes where address = ?", [address]);
+      await planting.close();
+    };
+
+    it("REFUSES another mailbox's Connect over a store that holds one, writing and dialling nothing", async () => {
+      /* WHAT THE STORE HOLDS DECIDES, NOT THE SEAL: the same refusal where the password is gone and the
+         mailbox's mail or an unsent draft stays. */
+      for (const kept of ["seal", "folder", "draft"] as const) {
+        const file = onDisk();
+        const q = await openQ(file);
+        const heldAccount = q.accountId;
+        if (kept !== "seal") expect(await q.forgetStoredLogin(), "premise: a seal to discard").toBe(true);
+        await q.stop();
+        if (kept !== "seal") await plantUnder(file, ADDRESS, kept);
+        const before = await storeRows(file);
+        const rec = recorder();
+        const dial: Dialled = { configs: [], connects: 0 };
+        const err = await pressOther(file, rec, dial);
+        expect(err, `kept: ${kept}`).toMatchObject({ anotherMailboxHeld: true, heldAccountId: heldAccount });
+        expect(dial.connects, "the refused press dialled").toBe(0);
+        expect(rec.closed, "the refused press kept the store open").toBe(1);
+        expect(await storeRows(file), "the refused press wrote to the store").toEqual(before);
+      }
+    }, 120_000);
+
+    it("ADMITS the same mailbox again, and another mailbox on a store that holds none — the controls", async () => {
+      const file = onDisk();
+      await (await openQ(file)).stop();
+      const dial: Dialled = { configs: [], connects: 0 };
+      /* In another case: the same mailbox, as the store's own lookup reads it. */
+      live = await startPhoneEngine(deps(nodeExecutor(recorder(), file), {
+        adapterFactory: dialRecorder(dial),
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS.toUpperCase(), pass: TYPED } },
+        address: ADDRESS.toUpperCase(),
+        keks: RING,
+      }));
+      await settle();
+      expect(dial.connects, "the mailbox this phone holds did not open again").toBeGreaterThan(0);
+      await live.stop();
+      live = null;
+      expect(await pressOther(onDisk()), "a fresh store refused a mailbox").toBeNull();
+    }, 120_000);
+
+    it("opens NO mailbox from a store holding two, dials nothing, and removes neither; an empty leftover row is none", async () => {
+      const file = onDisk();
+      await (await openQ(file)).stop();
+      const sealed =(rec = recorder(), dial: Dialled = { configs: [], connects: 0 }) => startPhoneEngineFromSealed({
+        exec: nodeExecutor(rec, file), machineName: "Pixel 9", installId: "install-marker-abc", keks: RING,
+        adapterFactory: dialRecorder(dial),
+      } as Parameters<typeof startPhoneEngineFromSealed>[0]);
+      /* What an earlier version's refused first Connect left beside the mailbox: the seed's columns, signed
+         out, nothing under it. */
+      const planting = nodeExecutor(recorder(), file);
+      await planting.run(
+        "insert into mailboxes (id, account_id, provider, address, status, organizer_role, signed_out_at) "
+          + "select ?, account_id, 'imap', ?, 'connected', 'reader', ? from mailboxes limit 1",
+        [randomUUID(), OTHER, Date.now()],
+      );
+      await planting.close();
+      /* CONTROLS: that row locks neither the relaunch nor the same mailbox's Connect out. */
+      const kept: Dialled = { configs: [], connects: 0 };
+      const control = await sealed(recorder(), kept);
+      await settle();
+      if (control.kind === "started") await control.engine.stop();
+      expect(control.kind, "an empty leftover row refused the relaunch").toBe("started");
+      expect(kept.connects, "the relaunch over the leftover did not dial").toBeGreaterThan(0);
+      live = await startPhoneEngine(deps(nodeExecutor(recorder(), file), {
+        adapterFactory: dialRecorder({ configs: [], connects: 0 }),
+        imap: { host: "imap.invalid", port: 993, secure: true, auth: { user: ADDRESS, pass: TYPED } },
+        address: ADDRESS,
+        keks: RING,
+      }));
+      await settle();
+      await live.stop();
+      live = null;
+      /* The same row once it holds mail: the second mailbox an earlier version attached beside the first. */
+      await plantUnder(file, OTHER, "folder");
+      const rec = recorder();
+      const dial: Dialled = { configs: [], connects: 0 };
+      const started = await sealed(rec, dial);
+      if (started.kind === "started") live = started.engine;
+      expect(started.kind).toBe("several-mailboxes");
+      expect(dial.connects, "a mixed store dialled").toBe(0);
+      expect(rec.closed, "the store was left open behind the refusal").toBe(1);
+      const left = await nodeExecutor(recorder(), file).all("select address from mailboxes order by address", []);
+      expect(left.rows, "a mailbox was removed").toEqual([[OTHER], [ADDRESS]]);
     }, 120_000);
   });
 

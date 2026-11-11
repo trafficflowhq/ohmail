@@ -317,6 +317,9 @@ export const DE: Deck = {
   standaloneAlreadyOpen:
     "Dieses Handy hat schon ein Postfach geöffnet. Entferne es unter Server, bevor du ein "
     + "anderes öffnest.",
+  standaloneSeveralMailboxes:
+    "Auf diesem Handy liegen die Mails von mehr als einem Postfach, deshalb wurde nichts geöffnet "
+    + "und nichts gelöscht. Tippe unter Server auf „Beenden und entfernen“ und öffne dann dein Postfach erneut.",
   /* Die zwei des Entfernungsgurts. Keine nennt das entfernte Postfach — der Vermerk trägt nur eine Kennung. */
   standaloneMailboxRemoved:
     "Dieses Postfach wurde von diesem Handy entfernt, und der Rest davon wurde soeben gelöscht. Öffne wieder ein Postfach, um zu beginnen.",

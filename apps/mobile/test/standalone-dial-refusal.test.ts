@@ -28,9 +28,10 @@
  * the device produced against `10.0.2.2` — the first divergence between the two runs was the host
  * string and nothing else.
  */
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { createServer, type Server, type Socket } from "node:net";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer as createTlsServer } from "node:tls";
@@ -39,7 +40,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ensureLanIdentity } from "../../sidecar/src/host-lan-tls.js";
 
 import { BUNDLE, buildPhoneEngine } from "../scripts/bundle-engine.mjs";
-import { openStandaloneMailbox } from "../src/engine/standalone-door";
+import { openStandaloneMailbox, reopenStandaloneMailbox } from "../src/engine/standalone-door";
 import { EMPTY_STANDALONE, type StandaloneFields } from "../src/ui/standalone-form";
 import { sayRefusal } from "../src/refusal";
 
@@ -74,8 +75,8 @@ function loadArtifact(): Record<string, unknown> {
 interface Store { exec: Record<string, unknown>; closed(): number }
 
 /** `node:sqlite` behind the statement-runner contract, counting its own closes — see the stop assertion. */
-function store(): Store {
-  const raw = new sqlite.DatabaseSync(":memory:");
+function store(path = ":memory:"): Store {
+  const raw = new sqlite.DatabaseSync(path);
   let closed = 0;
   let tail: Promise<unknown> = Promise.resolve();
   const serial = <T,>(job: () => Promise<T> | T): Promise<T> => {
@@ -188,19 +189,22 @@ afterEach(async () => {
   for (const c of closers.splice(0)) await c();
 });
 
-function fields(host: string, port: number): StandaloneFields {
-  return { ...EMPTY_STANDALONE, address: "someone@example.test", password: PASSWORD,
+const HELD = "someone@example.test";
+
+function fields(host: string, port: number, address = HELD): StandaloneFields {
+  return { ...EMPTY_STANDALONE, address, password: PASSWORD,
            imapHost: host, imapPort: String(port), imapTls: false };
 }
 
 /** The door, driven exactly as `app/standalone.tsx` drives it. `lines` collects the engine's log. */
 async function press(
-  host: string, port: number, s: Store, o: { implicitTls?: boolean; lines?: string[] } = {},
+  host: string, port: number, s: Store,
+  o: { implicitTls?: boolean; lines?: string[]; address?: string; listHeld?: (id: string) => Promise<void> } = {},
 ): ReturnType<typeof openStandaloneMailbox> {
   await buildPhoneEngine();
   const mod = loadArtifact();
   const start = mod.startPhoneEngine as (cfg: { imap: Record<string, unknown> }) => Promise<unknown>;
-  return openStandaloneMailbox(fields(host, port), {
+  return openStandaloneMailbox(fields(host, port, o.address), {
     /* A random port cannot say "implicit TLS" the way 993 does, so the case asks for it. */
     startEngine: (o.implicitTls
       ? (cfg: { imap: Record<string, unknown> }) => start({ ...cfg, imap: { ...cfg.imap, secure: true } })
@@ -209,7 +213,25 @@ async function press(
     machineName: () => "ohmail on a phone",
     installId: async () => "refusal-case",
     ...(o.lines !== undefined ? { logSink: (line: string) => { o.lines!.push(line); } } : {}),
+    ...(o.listHeld !== undefined ? { listHeld: o.listHeld } : {}),
   });
+}
+
+/** A store on disk, so a second press reads what the first one kept; removed after the case. */
+function onDisk(): string {
+  const dir = mkdtempSync(join(tmpdir(), "ohmail-one-mailbox-"));
+  closers.push(async () => { rmSync(dir, { recursive: true, force: true }); });
+  return join(dir, "engine.db");
+}
+
+/** The mailbox addresses `file` holds, read through a handle of its own. */
+function addressesIn(file: string): string[] {
+  const raw = new sqlite.DatabaseSync(file);
+  try {
+    return (raw.prepare("select address from mailboxes order by address").all() as { address: string }[]).map((r) => r.address);
+  } finally {
+    raw.close();
+  }
 }
 
 describe("the fourth door, when the mail server says no", () => {
@@ -312,5 +334,75 @@ describe("the fourth door, when the mail server says no", () => {
     expect(lines.some((l) => l.includes("mailbox_open_seal_discarded")), "the password it sealed was kept").toBe(true);
     expect(lines.join("\n"), "the password reached the log").not.toContain(PASSWORD);
     expect(s.closed(), "the refused launch let go of the store").toBeGreaterThan(0);
+  }, 60_000);
+});
+
+describe("the fourth door, over the store this phone already holds", () => {
+  it("REFUSES another mailbox, lists the one it holds, and dials nothing; the same mailbox opens again", async () => {
+    const fake = await fakeImap({ acceptLogin: true });
+    closers.push(fake.close);
+    const file = onDisk();
+    const first = await press("127.0.0.1", fake.port, store(file));
+    expect(first.ok, "premise: the first mailbox opens").toBe(true);
+    if (!first.ok) return;
+    const heldAccount = first.door.accountId;
+    await first.door.stop();
+    const dialled = fake.connections();
+
+    const listed: string[] = [];
+    const s = store(file);
+    const other = await press("127.0.0.1", fake.port, s, {
+      address: "other@example.test", listHeld: async (id) => { listed.push(id); },
+    });
+    if (other.ok) live = other.door as unknown as { stop(): Promise<void> };
+    expect(other.ok, "another mailbox opened over the one this phone holds").toBe(false);
+    if (other.ok) return;
+    expect(other.reason.say).toBe("standaloneAlreadyOpen");
+    expect(sayRefusal(other.reason)).not.toContain(PASSWORD);
+    expect(listed, "the mailbox this phone holds was not listed").toEqual([heldAccount]);
+    expect(fake.connections(), "the refused press dialled").toBe(dialled);
+    expect(s.closed(), "the refused press kept the store").toBeGreaterThan(0);
+    expect(addressesIn(file)).toEqual([HELD]);
+
+    const again = await press("127.0.0.1", fake.port, store(file));
+    if (again.ok) live = again.door as unknown as { stop(): Promise<void> };
+    expect(again.ok, "the mailbox this phone holds no longer opens").toBe(true);
+  }, 60_000);
+
+  it("opens no mailbox from a store holding two, and deletes neither; an empty leftover row is none", async () => {
+    const fake = await fakeImap({ acceptLogin: true });
+    closers.push(fake.close);
+    const file = onDisk();
+    const first = await press("127.0.0.1", fake.port, store(file));
+    if (!first.ok) throw new Error("premise: the first mailbox opens");
+    await first.door.stop();
+    const plant = (sql: string, ...params: string[]): void => {
+      const raw = new sqlite.DatabaseSync(file);
+      try { raw.prepare(sql).run(...params); } finally { raw.close(); }
+    };
+    /* What an earlier version's refused first Connect left beside it: a signed-out row holding nothing. */
+    plant("insert into mailboxes (id, account_id, provider, address, status, organizer_role, signed_out_at) "
+      + "select ?, account_id, 'imap', ?, 'connected', 'reader', 1 from mailboxes limit 1", randomUUID(), "other@example.test");
+
+    const mod = loadArtifact();
+    const reopen = (s: Store) => reopenStandaloneMailbox({
+      startFromSealed: mod.startPhoneEngineFromSealed as never,
+      platform: async () => ({ kind: "ready" as const, exec: s.exec, keks: { 1: "a".repeat(64) } }),
+      machineName: () => "ohmail on a phone",
+      installId: async () => "refusal-case",
+    });
+    const kept = await reopen(store(file));
+    if (kept.ok) await kept.door.stop();
+    expect(kept.ok, "an empty leftover row locked the mailbox out").toBe(true);
+    /* The same row once it holds mail: two mailboxes. */
+    plant("insert into mailbox_folders (mailbox_id, folder) select id, 'INBOX' from mailboxes where address = ?", "other@example.test");
+    const s = store(file);
+    const outcome = await reopen(s);
+    if (outcome.ok) live = outcome.door as unknown as { stop(): Promise<void> };
+    expect(outcome.ok, "a store holding two mailboxes opened as one").toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.reason.say).toBe("standaloneSeveralMailboxes");
+    expect(s.closed(), "the refused reopen kept the store").toBeGreaterThan(0);
+    expect(addressesIn(file)).toEqual(["other@example.test", HELD]);
   }, 60_000);
 });

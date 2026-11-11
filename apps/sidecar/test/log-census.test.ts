@@ -1353,6 +1353,12 @@ const EXPECTED_LEVEL: Record<string, "info" | "error"> = {
      `mailbox_open_refused`'s rule — the consequence; the dial's failure is `mailbox_start_failed`.
      The verdict word and the error's class, nothing else. */
   mailbox_open_unreachable: "info",
+  /* ONE MAILBOX PER PHONE STORE (`mobile.ts`): a Connect for another mailbox over a store that holds
+     one, a relaunch over a store holding several, and the add route this door does not serve. `info`:
+     each is a refusal decided before anything was written. The count and the reason, never an address. */
+  mailbox_open_another_held: "info",
+  mailbox_reopen_several_held: "info",
+  mailbox_add_route_absent: "info",
   /* AND THE CLEARING ITSELF COULD NOT BE DONE. `error` by its name and rightly: the next press
      dials the refused credential again, which is a mailbox that cannot be opened until the person
      enters the password once more. `err` + `reason`, no host and no mailbox. */

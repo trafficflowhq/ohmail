@@ -1733,3 +1733,14 @@ async function buildLocalSession(env: PairingEnv, profile: ServerProfile): Promi
     },
   };
 }
+
+/**
+ * LIST THE STORE A REFUSED CONNECT FOUND HOLDING ANOTHER MAILBOX, where no row names this phone's
+ * mailbox: the person's own Stop and remove is then the way out. Never made active, never opened,
+ * never deleted; nothing for an empty id or beside a local row already listed.
+ */
+export async function listHeldStandalone(env: Pick<PairingEnv, "profiles">, accountId: string): Promise<void> {
+  const id = accountId.trim();
+  if (id === "" || (await env.profiles.list()).some((p) => p.origin === LOCAL_ENGINE_ORIGIN)) return;
+  await env.profiles.addStandalone({ origin: LOCAL_ENGINE_ORIGIN, flavor: "local", accountId: id }, { activate: false });
+}
