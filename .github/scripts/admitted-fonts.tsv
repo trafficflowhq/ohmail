@@ -1,0 +1,7 @@
+path	sha256	licence
+packages/tokens/fonts/bricolage-latin-ext.woff2	e1a04c169c022f63ad24fc1b6fbd932dee1ded62ac08734eeb1d5d51afee38dd	packages/tokens/fonts/OFL-BricolageGrotesque.txt
+packages/tokens/fonts/bricolage-latin.woff2	a756882d8a7802ebd4663b4544a62ebedafc7227c1c159ab95eea61393af3f8e	packages/tokens/fonts/OFL-BricolageGrotesque.txt
+packages/tokens/fonts/hanken-latin-ext.woff2	768af2923e0ab1549f1dfba0a5c8ea749c4c01f01d8e77ffaf7fcd12f57a0a24	packages/tokens/fonts/OFL-HankenGrotesk.txt
+packages/tokens/fonts/hanken-latin.woff2	e9201eddf1d41d0b62253295d869ce3cf65768f7102b797f02c7f8c876b4a9d5	packages/tokens/fonts/OFL-HankenGrotesk.txt
+packages/tokens/fonts/jetbrains-latin-ext.woff2	79bfdab9ba467e26eea4122e6f2567e188dd8a09a8c730d501fc487c4ab99c6e	packages/tokens/fonts/OFL-JetBrainsMono.txt
+packages/tokens/fonts/jetbrains-latin.woff2	18be452724bfdc236c074ca94a249a7f41a86752c7d04ab258ce9ed5651f6a7e	packages/tokens/fonts/OFL-JetBrainsMono.txt

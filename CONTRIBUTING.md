@@ -39,8 +39,9 @@ happened, what you expected. If it is visual, a screenshot beats a description.
 ## Pull requests
 
 - Fork, branch, open a PR against `main`, one change per pull request. PRs are
-  reviewed by a human.
-- Every change reaches `main` as a pull request, ours included.
+  reviewed by a human. Work for the next major version goes against `next`
+  instead ([below](#the-next-major-version-next)).
+- Every change reaches `main` or `next` as a pull request, ours included.
 - CI runs four jobs — macOS, Windows, Linux and the engine. Each platform job
   runs `tsc`, builds the UI bundle, smokes it, runs `cargo test` in both
   configurations, builds the engine and its runtime, packages the app, and then
@@ -71,6 +72,10 @@ happened, what you expected. If it is visual, a screenshot beats a description.
   **guard** check fails a pull request from a fork that changes them. If you
   need a change there, describe it in an issue or in your pull request and we
   will carry it.
+- Add no font file. The guard check fails any pull request, ours too, that
+  carries a file of a font kind which `.github/scripts/admitted-fonts.tsv` on
+  the base branch does not name by path and SHA-256. A maintainer adds the row
+  first, in a pull request of its own; the file follows, with its licence text.
 - Keep the existing invariants: colours and shadows come from `packages/tokens`,
   never hand-written in a view; no message is ever replaced by a "N more"
   placeholder. The test suite enforces both, and it is meant to.
@@ -94,6 +99,48 @@ the merged journal applies one of them out of order. Before you cut a migration,
 `node scripts/migration-numbers.mjs --open-prs` (it reads the open pull requests with `gh`): it
 prints the next number no open pull request holds, and any number two of them already share.
 `test/migration-number-census.test.ts` refuses two entries with one number on a journal.
+
+### The next major version (`next`)
+
+`main` is the released version; `next` is where the next major version is built. A pull request
+for the next major version targets `next`, and a fix for the released version targets `main`. We
+merge `main` into `next` whenever `main` moves, so a fix is made once, on `main`. Releases come
+from `main`. `next` takes pull requests only, under the same required checks as `main`.
+
+A change on `next` keeps the rules below. Code that came over from `main` does not meet all of
+them yet: a change never adds to what breaks one.
+
+- **Borders.** A package's `src` imports only the packages its row names, each declared in its
+  `package.json`:
+
+  | Package | Its `src` may import |
+  |---|---|
+  | `packages/tokens` | nothing |
+  | `packages/ui` | `tokens` |
+  | `packages/db-mail`, `packages/fixtures` | nothing |
+  | `packages/db` | `db-mail` |
+  | `packages/core` | `db` |
+  | `packages/client-engine` | `core`, `fixtures` |
+  | `packages/services` | `core`, `db` |
+  | `packages/api` | `services`, `core`, `db` |
+
+  A row only loses entries; it gains one in a pull request that says why, and a new package
+  brings its row. No change adds an import from one app (`apps/*`) into another, or from a
+  package into an app.
+- **Tests.** A new test asserts behaviour through what the code exports or what a person can do:
+  it renders or calls, and checks the outcome. It does not read product source (`apps/`,
+  `packages/`) as text, assert a class name, or pin the wording of an English sentence unless the
+  wording is what it guards. It finds a control by its role and accessible name, never by class,
+  position or test id.
+- **Values.** Every colour, shadow, size, weight, gap, radius and duration in a view comes from
+  `packages/tokens`. A value missing there is added there, not written into the view.
+- **Words.** Every sentence a person sees is a key in `apps/webapp/messages/en.json` and
+  `de.json` (the phone app: `apps/mobile/src/copy.en.ts` and `copy.de.ts`), English and German in
+  the same change. A sentence stands whole in the catalogue and is never glued from parts in code.
+- **Never changed.** The shape of a record a device already stores; a name a device or a mailbox
+  already carries (the app identifier, credential and keychain names, mailbox folder names); a
+  setting name an operator's file already reads. Another install, a device or a mailbox still
+  reads them; what is new gets a new name.
 
 ## Running the tests
 
