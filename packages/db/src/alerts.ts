@@ -4531,7 +4531,9 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
            and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz > ${workerHeartbeats.aiCircuitOpenSince}
             then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
           else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
-        lastCycleAt: input.lastCycleAt,
+        // The last FINISHED pass is the shard's, not the process's: a leader that has not finished
+        // one yet keeps its predecessor's, so "nothing fetched since" stays true across a restart.
+        lastCycleAt: sql`coalesce(${input.lastCycleAt ? input.lastCycleAt.toISOString() : null}::timestamptz, ${workerHeartbeats.lastCycleAt})`,
         startedAt: input.startedAt,
         beatAt: now,
       },
@@ -4587,7 +4589,7 @@ export async function refreshHeartbeat(
          and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz > ${workerHeartbeats.aiCircuitOpenSince}
           then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
         else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
-      lastCycleAt: input.lastCycleAt,
+      lastCycleAt: sql`coalesce(${input.lastCycleAt ? input.lastCycleAt.toISOString() : null}::timestamptz, ${workerHeartbeats.lastCycleAt})`,
       beatAt: now,
     })
     .where(and(

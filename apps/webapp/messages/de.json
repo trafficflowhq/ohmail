@@ -3716,6 +3716,7 @@
     "pullAria": "Neue Mails abrufen — den Mailserver jetzt prüfen",
     "pullQuiet": "Geprüft — nichts Neues.",
     "pullSlow": "Wird noch geprüft. Neue Mails kommen von selbst an.",
+    "pullBehind": "{hasSince, select, yes {Seit {since} wurden keine neuen Mails abgerufen.} other {Zurzeit werden keine neuen Mails abgerufen.}} Deine Anfrage bleibt bestehen und wird ausgeführt, sobald der Abruf wieder läuft.",
     "unreachable": "Der Mailserver ist nicht erreichbar.",
     "pullUnreachable": "Der Mailserver ist nicht erreichbar, darum ließ sich nichts Neues prüfen.",
     "unsavedCount": "{count, plural, one {# \u00c4nderung konnte nicht gespeichert werden} other {# \u00c4nderungen konnten nicht gespeichert werden}}",

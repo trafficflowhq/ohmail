@@ -54,8 +54,14 @@ export interface LeaderLock {
  * close is OBSERVED: `onclose` resolves `lost`, and `verify()` re-checks both the backend PID
  * and `pg_locks` so a silent postgres.js reconnect can never be mistaken for continued
  * leadership.
+ *
+ * `signal` is the caller's deadline on the ATTEMPT, never on a lock that was handed back: aborted
+ * while this is still acquiring, the session is ended at once, so a statement the server never
+ * answers rejects and a lock it granted unseen goes with the session.
  */
-export async function acquireLeaderLock(url: string, key: bigint = LEADER_LOCK_KEY): Promise<LeaderLock | null> {
+export async function acquireLeaderLock(
+  url: string, key: bigint = LEADER_LOCK_KEY, opts: { signal?: AbortSignal } = {},
+): Promise<LeaderLock | null> {
   // postgres.js supports bigint params at runtime; its published types omit bigint, so cast the
   // interpolated key to keep the 64-bit advisory-lock key exact while satisfying the compiler.
   const k = key as unknown as number;
@@ -83,6 +89,8 @@ export async function acquireLeaderLock(url: string, key: bigint = LEADER_LOCK_K
     onnotice: onNotice,
   });
 
+  const abandon = (): void => { released = true; void sql.end({ timeout: 0 }); };
+  opts.signal?.addEventListener("abort", abandon, { once: true });
   let backendPid = 0;
   try {
     const rows = await sql`SELECT pg_try_advisory_lock(${k}) AS locked`;
@@ -93,6 +101,8 @@ export async function acquireLeaderLock(url: string, key: bigint = LEADER_LOCK_K
     released = true;
     await sql.end({ timeout: 5 });
     throw err;
+  } finally {
+    opts.signal?.removeEventListener("abort", abandon);
   }
 
   return {

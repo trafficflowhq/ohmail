@@ -5,10 +5,11 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "../src/dialect/index.js";
 import { runMigrations } from "../src/admin.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
-import { schema, alertState, alertPassRuns } from "../src/schema.js";
+import { schema, alertState, alertPassRuns, workerHeartbeats } from "../src/schema.js";
 import {
-  runAlertPass, writeHeartbeat, alertDriverStatuses, listOpenAlerts, type Alert, type AlertSink,
+  runAlertPass, writeHeartbeat, refreshHeartbeat, alertDriverStatuses, listOpenAlerts, type Alert, type AlertSink,
 } from "../src/alerts.js";
+import { readOrganizerStanding } from "../src/organizer-cycle.js";
 
 /**
  * THE EXTERNAL DEAD-MAN'S SWITCH — the pass driven by something that is not the worker.
@@ -149,6 +150,57 @@ describe.skipIf(!AVAILABLE)("the external dead-man's switch, on real Postgres", 
     // execution order.
     expect((await listOpenAlerts(db)).map((a) => a.alertKey), "and this key is not open")
       .not.toContain(KEY);
+  });
+
+  /**
+   * WHAT A SIGNED-IN APP IS TOLD, FROM THE SAME ROW AND THE SAME TWO CLOCKS AS THE PAGER. On 12
+   * November 2026 the worker was gone for 26 hours; this alert fired and every app still read
+   * "Connected · Synced". True in both directions: behind when the pulse or the passes stop, and back
+   * only once a pass has finished again.
+   */
+  it("the apps' signal: behind when the pulse or the passes stop, since the last finished pass, and back when one finishes", async () => {
+    const HOUR = 60 * MIN;
+    const iso = (d: Date): string => d.toISOString();
+    const pulse = { shardIndex: SHARD, shards: 1, mailboxes: 2, expected: 2, accounts: 1, quarantined: 0, degraded: false, aiCircuitOpenSince: null };
+    // The read is the newest across shards: nothing else may stand beside this shard's row.
+    await db.delete(workerHeartbeats);
+    expect(await readOrganizerStanding(db, NOW)).toEqual({ lastCycleAt: null, behind: true, since: null });
+
+    // A leader's first start: no pass yet, measured from its start, so it is given its first passes.
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: null, startedAt: ago(MIN) }, NOW);
+    expect(await readOrganizerStanding(db, NOW)).toEqual({ lastCycleAt: null, behind: false, since: null });
+    // …then a pass finishes, and passes keep finishing.
+    const lastPass = plus(MIN);
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass, startedAt: ago(MIN) }, lastPass);
+    expect(await readOrganizerStanding(db, plus(2 * MIN))).toEqual({ lastCycleAt: iso(lastPass), behind: false, since: iso(lastPass) });
+
+    // The pulse stops (the worker is gone, or waits for its database): two minutes of grace, then behind.
+    expect((await readOrganizerStanding(db, plus(3 * MIN))).behind).toBe(false);
+    expect(await readOrganizerStanding(db, plus(3 * MIN + 1))).toEqual({ lastCycleAt: iso(lastPass), behind: true, since: iso(lastPass) });
+
+    // A long pass in flight is not a stall: the pulse is fresh and the last pass finished 16 minutes
+    // ago (a pass gives every mailbox a turn, and a backlog makes it long while new mail still lands).
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass }, plus(17 * MIN));
+    expect(await readOrganizerStanding(db, plus(17 * MIN))).toEqual({ lastCycleAt: iso(lastPass), behind: false, since: iso(lastPass) });
+    // Alive and doing no work: the pulse is fresh and no pass has finished for half an hour, the
+    // age at which the pager calls a mailbox lagging.
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass }, plus(31 * MIN));
+    expect((await readOrganizerStanding(db, plus(31 * MIN))).behind).toBe(false);
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-first", lastCycleAt: lastPass }, plus(31 * MIN + 1));
+    expect(await readOrganizerStanding(db, plus(31 * MIN + 1))).toEqual({ lastCycleAt: iso(lastPass), behind: true, since: iso(lastPass) });
+
+    // The worker returns 26 hours later. Its first pulses know no pass of their own; the row keeps the
+    // last one that finished, so "nothing fetched since" stays true while it catches up.
+    const back = plus(26 * HOUR);
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: null, startedAt: back }, back);
+    await refreshHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: null }, new Date(back.getTime() + 10_000));
+    expect(await readOrganizerStanding(db, new Date(back.getTime() + 10_000)))
+      .toEqual({ lastCycleAt: iso(lastPass), behind: true, since: iso(lastPass) });
+
+    // …and back: its first finished pass.
+    const firstPass = new Date(back.getTime() + MIN);
+    await writeHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: firstPass, startedAt: back }, firstPass);
+    expect(await readOrganizerStanding(db, firstPass)).toEqual({ lastCycleAt: iso(firstPass), behind: false, since: iso(firstPass) });
   });
 
   it("TWO DRIVERS, ONE PAGE — a pass cannot notify while another is still delivering", async () => {

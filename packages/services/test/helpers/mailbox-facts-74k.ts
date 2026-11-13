@@ -85,7 +85,7 @@ export async function seed74k(db: Db, sqlite: boolean): Promise<void> {
   else await db.execute(sql`analyze mailboxes, messages, folder_state`);
 }
 
-export const svc = makeMailboxService({ installId: "i", lastOrganizerCycleAt: async () => null });
+export const svc = makeMailboxService({ installId: "i", organizerStanding: async () => ({ lastCycleAt: null, behind: false, since: null }) });
 export const ctxOf = (db: Db): ServiceContext => ({ db, accountId: MINE, userId: null, now: () => NOW, requestId: "r" });
 
 /** What the strip must say about the caller's two mailboxes, whatever the store. */
