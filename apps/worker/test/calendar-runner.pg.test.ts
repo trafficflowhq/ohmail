@@ -12,8 +12,8 @@ import { createServer, type Server, type Socket } from "node:net";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { Secret, type StoredCredential } from "@ohmail/cal-providers";
 import { StaticKeyProvider, silentLogger } from "@trafficflow/core";
-import { calConnections } from "@trafficflow/db";
-import { ROSTER_LIMIT, calendarPool, loadDueConnections } from "../src/calendar/index.js";
+import { calCalendars, calConnections, calWrites } from "@trafficflow/db";
+import { CALENDAR_RING_GAP_MS, CALENDAR_TICK_MS, ROSTER_LIMIT, calendarPool, loadDueConnections } from "../src/calendar/index.js";
 import { calendarSyncPass, calendarTurnFailed } from "../src/calendar/sync-pass.js";
 import { calendarSection, startCalendarRunner } from "../src/start/calendar.js";
 import { queueSection } from "../src/start/queue.js";
@@ -21,8 +21,8 @@ import type { WorkerScope } from "../src/start/scope.js";
 import type { WorkerCalendarConfig } from "../src/config.js";
 import { startCalDavStandIn, type StandIn } from "../../../packages/cal-providers/test/caldav-stand-in.js";
 import {
-  AVAILABLE, capturedLog, depsFor, eventsOf, openWorld, providersOf, scriptedReader, sealCredential, seedConnection, silentHttp, single, upsert,
-  type World,
+  AVAILABLE, capturedLog, depsFor, eventsOf, openWorld, providersOf, recordWrite, scriptedReader, sealCredential, seedConnection, silentHttp, single,
+  upsert, type World,
 } from "./_calendar-world.js";
 
 const SHARDS = 1_000_003;
@@ -164,6 +164,56 @@ describe.skipIf(!AVAILABLE)("the calendar's passes in the worker", () => {
     expect(held.broken.every((r) => r.nextPollAt!.getTime() < Date.now())).toBe(true);
     expect({ moved: moved.thrown, held: held.thrown }).toEqual({ moved: ROSTER_LIMIT, held: ROSTER_LIMIT });
   }, 120_000);
+
+  it("drains a recorded write in the worker's own composition at once: rung once as the door rings, it is carried out before the floor's next tick, and says it composed the drain", async () => {
+    const dav: StandIn = await startCalDavStandIn();
+    try {
+      dav.addCalendar("drain-calendar", { name: "Studio" });
+      const t = await seedConnection(w, {
+        provider: "caldav", credential: { kind: "basic", user: dav.options.user, password: new Secret(dav.options.password) },
+        serverUrl: `http://127.0.0.1:${dav.port}${dav.paths.start}`,
+      });
+      const { log, lines } = capturedLog();
+      const scope = await scopeFor(t.accountId, OWN_NETWORK, log);
+      const startedAt = Date.now();
+      calendarSection(scope);
+      const calendar = async () => (await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, t.accountId)))[0];
+      // The connection's first turn, rung once, and over: a press during a turn is the turn's close's to keep.
+      const rungAt = Date.now();
+      scope.calendar!.ring();
+      await until(async () => (await calendar()) !== undefined && scope.calendar!.load().running + scope.calendar!.load().queued === 0);
+      // The bell idle, as a quiet server's is: the gap since its last read long passed, so a ring is read at once.
+      await new Promise((r) => setTimeout(r, Math.max(0, rungAt + CALENDAR_RING_GAP_MS + 500 - Date.now())));
+      // The floor reads the roster every CALENDAR_TICK_MS from the section's start. The press is made at least five
+      // seconds before its next tick and must be carried out before it: only the press's own ring can do that.
+      const untilTick = () => CALENDAR_TICK_MS - ((Date.now() - startedAt) % CALENDAR_TICK_MS);
+      if (untilTick() < 5_000) await new Promise((r) => setTimeout(r, untilTick() + 200));
+      const floorTick = Date.now() + untilTick();
+      await recordWrite(w, { accountId: t.accountId, key: "press-in-the-worker", act: {
+        kind: "calendar_event_create", eventId: crypto.randomUUID(), calendarId: (await calendar())!.id,
+        event: {
+          title: "Glaze firing", start: { kind: "instant", value: "20261117T090000Z" }, end: { kind: "instant", value: "20261117T100000Z" },
+          notes: null, place: null, callLink: null, busy: true, private: false, repeat: null, invitees: [], alarms: [],
+        },
+      } });
+      // As the door does it: the act's commit rings the bell once (the change log's signal), and the connection is
+      // woken to now in a transaction of its own a few milliseconds after that commit.
+      scope.calendar!.ring();
+      await new Promise((r) => setTimeout(r, 20));
+      await w.db.update(calConnections).set({ nextPollAt: sql`now()` }).where(eq(calConnections.accountId, t.accountId));
+      const state = async () => (await w.db.select({ state: calWrites.state, refusal: calWrites.refusal }).from(calWrites).where(eq(calWrites.accountId, t.accountId)))[0];
+      await until(async () => (await state())?.state !== "pending", floorTick - 200 - Date.now());
+      expect(await state()).toEqual({ state: "applied", refusal: null });
+      // The server holds one new member, made with the precondition that it be new.
+      expect(dav.seen.filter((s) => s.method === "PUT").map((s) => s.headers["if-none-match"])).toEqual(["*"]);
+      expect(lines.some((l) => l.includes("calendar_started") && l.includes('"phase":"writes"'))).toBe(true);
+      scope.stopped = true;
+      scope.calendar!.stop();
+      await scope.calendar!.settled();
+    } finally {
+      await dav.close();
+    }
+  }, 60_000);
 
   it("no log line of a running worker carries a password, a server's address, a provider's id, a title or a token", async () => {
     const dav: StandIn = await startCalDavStandIn();

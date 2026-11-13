@@ -18,11 +18,12 @@ import type { Tx } from "@trafficflow/db";
 import { calendarSyncPass, calendarTurnFailed } from "../calendar/sync-pass.js";
 import {
   calendarPool, loadDueConnections, newCalendarSyncMemory, parkConnection, CALENDAR_LANES, CALENDAR_RING_GAP_MS,
-  CALENDAR_TICK_MS, CalendarTurnOverdue, OFF_RECHECK_MS, RETRY_CEILING_MS, ROSTER_EXCEPT_MAX, ROSTER_LIMIT, TURN_HARD_MS, TURN_MS,
-  doublingWait,
+  CALENDAR_RING_SETTLE_MS, CALENDAR_TICK_MS, CalendarTurnOverdue, OFF_RECHECK_MS, RETRY_CEILING_MS, ROSTER_EXCEPT_MAX, ROSTER_LIMIT,
+  TURN_HARD_MS, TURN_MS, doublingWait,
   type CalendarSyncDeps, type CalendarSyncOutcome, type DueConnection,
 } from "../calendar/index.js";
 import { calendarNoticesPass } from "../calendar-notices.js";
+import { calendarWriteDrain } from "../calendar/write-drain.js";
 import type { WorkerCalendarConfig } from "../config.js";
 import { accountShardFilter } from "../mailboxes.js";
 import { startSyncKickBell, type SyncKickBell } from "../sync-kick.js";
@@ -43,6 +44,11 @@ export interface CalendarRunnerDeps {
   readonly lanes: number;
   readonly floorMs: number;
   readonly gapMs: number;
+  /**
+   * A read a ring starts waits this long before it reads the roster (`CALENDAR_RING_SETTLE_MS` as the
+   * worker composes it): a press rings at its act's commit, and its wake commits just after. Not said: at once.
+   */
+  readonly settleMs?: number;
   /** No turn outlasts this (`TURN_HARD_MS` where it is not said). */
   readonly turnHardMs?: number;
   /** A turn with more to read that took longer than this waits as long before it queues again (`TURN_MS`). */
@@ -159,8 +165,12 @@ export function startCalendarRunner(deps: CalendarRunnerDeps): CalendarRunner {
     return [...ids].slice(0, ROSTER_EXCEPT_MAX);
   };
 
-  const scan = async (): Promise<void> => {
+  const scan = async (by: "signal" | "floor"): Promise<void> => {
     if (off()) return;
+    if (by === "signal" && (deps.settleMs ?? 0) > 0) {
+      await new Promise((r) => setTimeout(r, deps.settleMs));
+      if (off()) return;
+    }
     const at = deps.now();
     const due = (await deps.roster(new Date(at), notNow(at)))
       .filter((c) => !held.has(c.id) && (cooling.get(c.id)?.until ?? 0) <= at);
@@ -235,6 +245,8 @@ export function calendarSection(scope: WorkerScope): void {
   const providers = makeCalendarProviders({
     clock, zones, resolver: nodeHostResolver, policy: { kind: cfg.policy }, enabled,
     microsoft: cfg.microsoft === null ? null : { graphBase: cfg.microsoft.graphBase ?? MS_GRAPH_BASE },
+    // The worker is where a person's writes reach their provider; nothing else composes a writer.
+    writes: true,
   });
   const pool = calendarPool(scope.db as unknown as Tx);
   const noticeDeps = { origin: cfg.noticeOrigin, log: scope.log };
@@ -249,6 +261,8 @@ export function calendarSection(scope: WorkerScope): void {
     memory: newCalendarSyncMemory(),
     halted: () => scope.stopped,
     log: scope.log,
+    // A person's writes reach their provider in the turn that reads it, before the reading.
+    drainWrites: calendarWriteDrain({ clock, zones, log: scope.log }),
     ...(cfg.noticeOrigin === null ? {} : { notices: (input) => calendarNoticesPass(noticeDeps, input) }),
   };
   scope.calendar = startCalendarRunner({
@@ -262,6 +276,7 @@ export function calendarSection(scope: WorkerScope): void {
     lanes: CALENDAR_LANES,
     floorMs: CALENDAR_TICK_MS,
     gapMs: CALENDAR_RING_GAP_MS,
+    settleMs: CALENDAR_RING_SETTLE_MS,
     ...(scope.wakeHub ? { source: scope.wakeHub } : {}),
     isStopped: () => scope.stopped,
     now: () => Date.now(),
@@ -269,5 +284,6 @@ export function calendarSection(scope: WorkerScope): void {
   });
   scope.log.info("calendar_started", {
     mode: cfg.policy, kind: [...enabled].sort().join(","), state: cfg.noticeOrigin === null ? "polling" : "notices_unbuilt",
+    phase: syncDeps.drainWrites === undefined ? "reads" : "writes",
   });
 }

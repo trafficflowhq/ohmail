@@ -30,7 +30,7 @@ describe("Google's calendar, live on the bench's test account", () => {
   it("opens the sign-in, lists the calendars, reads the planted set whole and keeps the token for the next reading", async () => {
     const accounts = readCalendarTestAccounts(process.env);
     const clock = { now: () => Date.now() };
-    const providers = makeCalendarProviders({ clock, zones: intlZones(), resolver: nodeHostResolver, policy: { kind: "cloud" }, enabled: new Set<ProviderWord>(["google"]), microsoft: null });
+    const providers = makeCalendarProviders({ clock, zones: intlZones(), resolver: nodeHostResolver, policy: { kind: "cloud" }, enabled: new Set<ProviderWord>(["google"]), microsoft: null, writes: false });
     const { reader, http } = providers.get("google")!;
     // The one place this file reveals the account's values: where the package's own holder takes them over.
     const signIn: GoogleSignIn = { client: { id: accounts.GOOGLE_OAUTH_CLIENT_ID.reveal(), secret: new Secret(accounts.GOOGLE_OAUTH_CLIENT_SECRET.reveal()) }, refreshToken: new Secret(accounts.GOOGLE_TEST_REFRESH_TOKEN.reveal()) };

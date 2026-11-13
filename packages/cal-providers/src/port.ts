@@ -1,18 +1,19 @@
 /**
  * The one port every provider stands behind: the same three requests for Google, CalDAV, Microsoft
- * and a subscription by address, answered in the calendar core's types. Types only.
+ * and a subscription by address, answered in the calendar core's types, and beside the reader the
+ * writer of the three that take writes. Types only.
  *
  * A reader answers; it does not throw. A provider's refusal, a network's and an address the gate
  * refuses are all an `Answer` with a word of the closed list. A throw out of a reader is a fault of
- * this program.
+ * this program. A writer is held to the same.
  *
- * Reading is all there is. What a writer will need is already carried: an `upsert`'s `version` is
- * the precondition of a change, its `text` the object a one-line change is written back from, a
- * calendar says whether it is `writable`, and a checked sign-in names the `principal` a new
- * calendar is made under.
+ * A writer is handed what a reading handed out (an object's `id`, its `version`, its `text`) and a
+ * typed draft; it is never handed an address, a header or a query. An `upsert`'s `version` is the
+ * precondition of a change, its `text` the object a change is written back from, a calendar says
+ * whether it is `writable`, and a checked sign-in names the `principal`.
  */
-import type { CalEvent, CalendarRefusal, EventTime, Instant, ReadRefusal } from "@ohmail/cal-core";
-import type { ProviderRefusal } from "./refusals.js";
+import type { CalEvent, CalendarRefusal, EventTime, Instant, ReadRefusal, RRule } from "@ohmail/cal-core";
+import type { ProviderRefusal, WriteRefusal } from "./refusals.js";
 
 /** The provider's word, as a connection is stored with it. */
 export type ProviderWord = "google" | "caldav" | "microsoft" | "ics";
@@ -123,4 +124,89 @@ export interface CalendarReader {
   listCalendars(c: Connection, signal: AbortSignal): Promise<Answer<readonly CalendarInfo[]>>;
   /** One page of what changed since `since`, or from the beginning when it is `null`. */
   readChanges(c: Connection, cal: CalendarRef, since: ChangeToken | null, page: PageRequest, signal: AbortSignal): Promise<Answer<ChangePage>>;
+}
+
+// ── writing ──────────────────────────────────────────────────────────────────
+
+/**
+ * The name a write is made under: the queue row's own id as 32 lower-case hex. Every id a writer
+ * makes for a new object (Google's event id, a CalDAV member's name and its UID, Graph's
+ * `transactionId`) is made from it and from nothing a person or a letter wrote, so every attempt of
+ * one write names the same object, and two writes never name one.
+ */
+export interface WriteKey {
+  readonly hex: string;
+}
+
+/** One invitee as a person wrote it: a mail address, the name shown, and whether the presence is optional. */
+export interface EventInvitee {
+  readonly email: string;
+  readonly name: string | null;
+  readonly optional: boolean;
+}
+
+/** An event as a person wrote it. An end always, never a length; a whole day ends at the next day's start. */
+export interface EventDraft {
+  readonly start: EventTime;
+  readonly end: EventTime;
+  readonly summary: string;
+  readonly description: string | null;
+  readonly location: string | null;
+  /** The call's link, https only. */
+  readonly url: string | null;
+  readonly busy: boolean;
+  readonly private: boolean;
+  readonly rule: RRule | null;
+  /** The account's own address where the event has invitees: the writer never takes it from what a person typed. */
+  readonly organizer: string | null;
+  readonly attendees: readonly EventInvitee[];
+  /** Reminders, each in minutes before the start. */
+  readonly alarms: readonly number[];
+}
+
+/** A change to a stored object: a field present is written, a field absent stays as the provider holds it. */
+export type EventChange = Partial<EventDraft>;
+
+/** The stored object a write is made on, as a reading handed it out. */
+export interface WriteTarget {
+  /** `upsert.id` as a reading handed it. */
+  readonly id: string;
+  /** `upsert.version` as stored; never empty. A writer that cannot send it as a precondition reads the object first. */
+  readonly version: string;
+  /** CalDAV: the stored object as the server sent it. `null` for the others. */
+  readonly text: string | null;
+  /** One day of the series `id` names, by its original start; `null` for the object whole. */
+  readonly occurrence: EventTime | null;
+}
+
+/**
+ * What a write came to. `items` are what a reading would hand for the object after the write: an
+ * `upsert`, a `gone`, or a `cancelled_occurrence`, so the store and the provider meet through the
+ * reading's own mapper. A writer answers; it does not throw.
+ */
+export type WriteAnswer =
+  | { readonly ok: true; readonly items: readonly ChangeItem[] }
+  | { readonly ok: false; readonly reason: ProviderRefusal | WriteRefusal; readonly retryAfterMs: number | null };
+
+/** An invitee's own answer, as the calendar format words it. */
+export type WriteReply = "ACCEPTED" | "TENTATIVE" | "DECLINED";
+
+/**
+ * The writing half of a provider. No method sends a change without a precondition: a change and a
+ * removal go against the target's version, a new object under a name that is new. No method takes
+ * a setting that could stop invitees from hearing of a change: a provider that sends invitations
+ * always sends them.
+ */
+export interface CalendarWriter {
+  readonly provider: ProviderWord;
+  create(c: Connection, cal: CalendarRef, req: { readonly key: WriteKey; readonly event: EventDraft }, signal: AbortSignal): Promise<WriteAnswer>;
+  change(c: Connection, cal: CalendarRef, target: WriteTarget, change: EventChange, signal: AbortSignal): Promise<WriteAnswer>;
+  remove(c: Connection, cal: CalendarRef, target: WriteTarget, signal: AbortSignal): Promise<WriteAnswer>;
+  /** The account's own answer as an invitee (`as`: its address on the event). */
+  answer(c: Connection, cal: CalendarRef, target: WriteTarget, req: { readonly as: string; readonly reply: WriteReply }, signal: AbortSignal): Promise<WriteAnswer>;
+  /**
+   * A provider's own move of an event between two calendars of one connection; `null` where it has
+   * none and a move is a create and a removal. Named apart from a mailbox's moves on purpose.
+   */
+  readonly moveEvent: ((c: Connection, from: CalendarRef, to: CalendarRef, target: WriteTarget, signal: AbortSignal) => Promise<WriteAnswer>) | null;
 }

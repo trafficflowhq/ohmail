@@ -47,6 +47,7 @@ import {
   calEvents,
   calSettings,
   calSuggestions,
+  calWrites,
   accountPass,
   mailboxPass,
   writePassProgress,
@@ -681,6 +682,11 @@ export async function seedFullAccount(db: Db, name = "Mila Brunner"): Promise<Se
   await db.insert(calSuggestions).values({
     accountId, messageId, mailboxId, evidence: "dates",
     proposed: { title: "Follow-up", start: { kind: "date", value: "20260810" }, end: null, place: null },
+  });
+  // A change she made that the provider has not taken yet: her words ride in it.
+  await db.insert(calWrites).values({
+    accountId, calendarId: cal!.id, eventId: ev!.id, op: "update", baseVersionTag: '"3"', idempotencyKey: `press-${u}`,
+    payload: { v: 1, act: { title: "Oncologist, moved" } },
   });
   // And the account's calendar settings: the switch on, a second zone, new events into the clinic.
   await db.insert(calSettings).values({

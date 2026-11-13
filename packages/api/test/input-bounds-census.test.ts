@@ -1584,6 +1584,21 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   },
   // The switch's check of the calendar new events go to: the two access words that take them.
   "calendar/settings-service.ts :: [\"owner\", \"writer\"]": { origin: "constant", count: 1 },
+  // The calendar's write door: the two states a write still shows in, and the writes that wait on one write.
+  "calendar/write-marks.ts :: [\"pending\", \"refused\"]": { origin: "constant", count: 1 },
+  "calendar/write-marks.ts :: [...eventIds]": {
+    origin: { bounded: "the events one feed page's builder found, never more than the ids it was asked for" },
+    count: 1,
+  },
+  "calendar/writes.ts :: [\"pending\", \"refused\"]": { origin: "constant", count: 3 },
+  "calendar/writes.ts :: followers": {
+    origin: { bounded: "the open writes of one event, at most `CALENDAR_WRITE_LIMITS.openPerEvent` (8)" },
+    count: 1,
+  },
+  "calendar/writes.ts :: going": {
+    origin: { bounded: "one write and the open writes of its event that wait on it, at most `openPerEvent` (8)" },
+    count: 1,
+  },
   // ── CLOSED 2026-09-01. All four were `unbounded` and are now subqueries. ────────────────────
   // The messageIds entry was the critical one and its old disposition is worth keeping in view:
   // "EVERY message uuid the account holds, selected into memory and reused in three deletes. Past

@@ -15,9 +15,9 @@ import { instant, MS_PER_SECOND, wallFromSeconds, type EventTime } from "@ohmail
 import { addressOf, bearerOf, filled, isRecord, jsonOf, leftOut, MAX_PROVIDER_ID_CHARS, pathSegment, refuse, type Json, type Left, type Refused } from "../json-answers.js";
 import { CURSOR_MAX_CHARS, MAX_CALENDAR_NAME_CHARS, MAX_MASTERS_PER_ROUND, MAX_PAGES_PER_CALL, MAX_PAGE_LIMIT, MAX_URL_CHARS, TOKEN_MAX_CHARS } from "../limits.js";
 import type { Answer, CalendarInfo, CalendarReader, ChangeItem, ChangePage, Connection } from "../port.js";
-import { retryAfterMs, type AdapterDeps, type HttpResponse } from "../request/index.js";
+import { retryAfterMs, type AdapterDeps, type Authorization, type HttpResponse } from "../request/index.js";
 import { dayOfSeries, recordOf, seriesOfRecord, type SeriesClock } from "./convert.js";
-import { graphBaseOf, insideBase } from "./graph.js";
+import { graphBaseOf, insideBase, type GraphBase } from "./graph.js";
 
 export interface MicrosoftDeps extends AdapterDeps {
   /** The base of Graph, named by the composing program: `MS_GRAPH_BASE` for Microsoft itself. No default. */
@@ -94,6 +94,15 @@ function refusalOf(answer: HttpResponse, wait: number | null, continued: boolean
 type Asked = { readonly ok: true; readonly json: Json } | (Refused & { readonly status: number | null });
 const present = (v: unknown): boolean => v !== undefined && v !== null;
 
+/**
+ * The sign-in of one request to Graph: a short bearer, for the base's host alone, with TLS wherever
+ * the base is named with it (Microsoft's own is; a double on this machine is named without). The
+ * reader and the writer both make it here.
+ */
+export function graphAuthorization(token: string, base: GraphBase): Authorization {
+  return { credential: { kind: "bearer", token }, admits: (host) => host === base.host, tlsOnly: base.origin.startsWith("https:") };
+}
+
 export function makeReader(deps: MicrosoftDeps): CalendarReader {
   // A base that is no address is a fault of the composing program: loud, and before any request.
   const base = graphBaseOf(deps.graphBase);
@@ -103,8 +112,7 @@ export function makeReader(deps: MicrosoftDeps): CalendarReader {
       method: "GET",
       headers: { accept: "application/json", ...(prefer === null ? {} : { prefer }) },
       body: null,
-      // With TLS wherever the base is named with it, which Microsoft's own is; a double on this machine is named without.
-      auth: { credential: { kind: "bearer", token }, admits: (host) => host === base.host, tlsOnly: base.origin.startsWith("https:") },
+      auth: graphAuthorization(token, base),
       validators: null,
       signal,
     });

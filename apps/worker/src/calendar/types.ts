@@ -58,6 +58,8 @@ export interface CalendarOAuth {
  * sign-in and before the calendars are read, on the turn's own bound handle and sign-in, so that a
  * write a person made reaches the provider before the reading that would otherwise undo it.
  * `nextAttemptAt` is the earliest owed write it left for later; the connection is due again by then.
+ * `wait`, where the provider answered a write with a wait of its own: the turn ends there, and the
+ * connection waits it out under that word, its readings too.
  */
 export interface CalendarWriteDrainInput {
   readonly db: ConnectionDb;
@@ -67,7 +69,12 @@ export interface CalendarWriteDrainInput {
   readonly connection: Connection;
   readonly signal: AbortSignal;
 }
-export type CalendarWriteDrain = (input: CalendarWriteDrainInput) => Promise<{ readonly nextAttemptAt: Date | null }>;
+/** A provider's own wish to be left alone, as it answered a write: its word, and how long. */
+export interface CalendarWriteWait {
+  readonly word: CalendarSyncFault;
+  readonly retryAfterMs: number;
+}
+export type CalendarWriteDrain = (input: CalendarWriteDrainInput) => Promise<{ readonly nextAttemptAt: Date | null; readonly wait?: CalendarWriteWait }>;
 
 /**
  * THE PROVIDER'S NOTICES, `notices`' to fill: after a turn that ended well, open or renew the

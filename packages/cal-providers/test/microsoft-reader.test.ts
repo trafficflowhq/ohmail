@@ -40,7 +40,7 @@ const sent: { method: string; path: string; tokenGoesTo: Record<string, boolean>
 beforeAll(async () => {
   double = await startMsDouble({ port: 0 });
   ms = new MsDoubleClient({ base: double.base, token: new Secret(double.token) });
-  const real = fixedHostRequest(microsoftHosts(double.base), { resolver: NOBODY, policy: { kind: "own-network" } });
+  const real = fixedHostRequest(microsoftHosts(double.base), { writes: false, resolver: NOBODY, policy: { kind: "own-network" } });
   const seeing: HttpPort = {
     request(url, o) {
       const { pathname, search } = new URL(url);

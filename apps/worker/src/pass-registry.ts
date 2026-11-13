@@ -505,6 +505,19 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
       + "ids in every transaction; no provider call inside a transaction",
   },
   {
+    name: "calendar_writes",
+    module: `${W}/calendar/write-drain.ts`, entry: "calendarWriteDrain",
+    triggers: ["wake-driven", "interval"],
+    cadence: "inside each calendar turn (`calendar_sync`), after the sign-in and before the reading; a recorded write pulls its "
+      + "connection's `next_poll_at` to now, so it runs at the next roster read",
+    budget: "TURN_MS of its own time, then it ends and asks to be due again as long after; one write at a time, in the "
+      + "order recorded; WRITE_MAX_ATTEMPTS a write, waits doubling from WRITE_RETRY_FLOOR_MS to WRITE_RETRY_CEILING_MS",
+    owns: "a person's act on an event reaches the provider once, under a name made from its row, never over a version the "
+      + "provider moved past; the store meets the provider's answer through the reading's planner",
+    fence: "leader lock; rides the calendar turn's binding and sign-in; claims and closes by row, account and attempt; no "
+      + "provider call inside a transaction",
+  },
+  {
     name: "calendar_notices",
     module: `${W}/calendar-notices.ts`, entry: "calendarNoticesPass",
     triggers: ["wake-driven", "interval"],

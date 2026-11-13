@@ -112,6 +112,30 @@ describe("the CalDAV test client", () => {
     assert.deepEqual([all412.found, all412.faults.length], [undefined, 3]);
   });
 
+  it("hands a provider's real account no invitee and no organizer, folded or not, by any method; the bench's own server, which sends no mail, takes them", async () => {
+    const { client, sent } = clientAt("https://caldav.icloud.com/", () => new Response(null, { status: 201 }));
+    const member = "https://p01-caldav.icloud.com/1/calendars/studio/new.ics";
+    const event = (...lines: string[]) => ["BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:new@ohmail-bench.example", ...lines, "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+    const invitation = event("ORGANIZER:mailto:potter@ohmail-bench.example", "ATTENDEE;CN=Giulia:mailto:giulia@ohmail-bench.example");
+    for (const text of [
+      invitation,
+      event("ATTEN", " DEE;PARTSTAT=NEEDS-ACTION:mailto:giulia@ohmail-bench.example"),
+      event("attendee:mailto:giulia@ohmail-bench.example"),
+      event("ORGANIZER;CN=Potter:mailto:potter@ohmail-bench.example"),
+    ]) {
+      await assert.rejects(() => client.put(member, text, { onlyIfNew: true }), /refused: an invitee or an organizer/);
+      await assert.rejects(() => client.put(member, text.replace(/\r\n/g, "\n"), { ifMatch: '"e1"' }), /refused: an invitee or an organizer/);
+    }
+    await assert.rejects(() => client.request("POST", "https://p01-caldav.icloud.com/1/outbox/", { body: invitation }), /refused: an invitee or an organizer/);
+    assert.equal(sent.length, 0);
+    // A plain event still goes; a calendar query that names the property is no invitee.
+    assert.equal((await client.put(member, event("SUMMARY:Glaze firing"), { onlyIfNew: true })).status, 201);
+    await client.request("REPORT", "https://p01-caldav.icloud.com/1/calendars/studio/", { depth: "1", body: '<c:calendar-query><c:filter><c:prop-filter name="ATTENDEE"/></c:filter></c:calendar-query>' });
+    assert.equal(sent.length, 2);
+    const bench = clientAt("http://127.0.0.1:8821/", () => new Response(null, { status: 201 }));
+    assert.equal((await bench.client.put("/bench/studio/new.ics", invitation, { onlyIfNew: true })).status, 201);
+  });
+
   it("writes only-if-new and only-if-unchanged by the standard's headers", async () => {
     const { client, sent } = clientAt("http://127.0.0.1:8821/", () => new Response(null, { status: 201, headers: { etag: '"new"' } }));
     assert.deepEqual(await client.put("/bench/studio/a.ics", "BEGIN:VCALENDAR", { onlyIfNew: true }), { status: 201, etag: '"new"', text: "" });

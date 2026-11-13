@@ -143,17 +143,22 @@ function take(member: Listed, found: FoundMembers, items: ChangeItem[], left: Le
   }
 }
 
+/**
+ * What a call asks with: the typed address read, and the sign-in for the typed host and its
+ * siblings. The one builder of a CalDAV sign-in: the reader and the writer both make it here.
+ */
+export function caldavSession(deps: AdapterDeps, c: Connection, signal: AbortSignal): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
+  if (c.credential.kind !== "basic") return refuse("sign_in_refused");
+  const typed = c.start === null ? null : typedAddress(c.start);
+  if (typed === null) return refuse("address_invalid");
+  // Typed with TLS (`secured` is the TLS form of an address typed without): the password then never travels without it,
+  // whatever address a server's answer or a caller's stored calendar names.
+  const auth = { credential: c.credential, admits: credentialHostsFor(typed.host), tlsOnly: typed.secured === null };
+  return { ok: true, typed, session: { deps, signal, auth } };
+}
+
 export function makeReader(deps: AdapterDeps): CalendarReader {
-  /** What a call asks with: the typed address read, and the sign-in for the typed host and its siblings. */
-  function open(c: Connection, signal: AbortSignal): { readonly ok: true; readonly session: Session; readonly typed: Typed } | Refused {
-    if (c.credential.kind !== "basic") return refuse("sign_in_refused");
-    const typed = c.start === null ? null : typedAddress(c.start);
-    if (typed === null) return refuse("address_invalid");
-    // Typed with TLS (`secured` is the TLS form of an address typed without): the password then never travels without it,
-    // whatever address a server's answer or a caller's stored calendar names.
-    const auth = { credential: c.credential, admits: credentialHostsFor(typed.host), tlsOnly: typed.secured === null };
-    return { ok: true, typed, session: { deps, signal, auth } };
-  }
+  const open = (c: Connection, signal: AbortSignal) => caldavSession(deps, c, signal);
 
   async function homesOf(c: Connection, signal: AbortSignal) {
     const opened = open(c, signal);

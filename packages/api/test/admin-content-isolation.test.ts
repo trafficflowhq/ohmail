@@ -70,6 +70,7 @@ import {
   calAlarms,
   calSettings,
   calSuggestions,
+  calWrites,
 } from "@trafficflow/db";
 import {
   accountLifecycleNotices,
@@ -1730,6 +1731,12 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   await db.insert(calSuggestions).values({
     accountId, messageId: message.id, mailboxId, evidence: "dates",
     proposed: { title: `Lunch ${tag}` }, sourceWords: `lunch on Saturday ${tag}`,
+  });
+  // A write the person made, owed to the provider: the act holds their words (a title), so no staff
+  // role reads the table, and the sweep taints every text column of it.
+  await db.insert(calWrites).values({
+    accountId, calendarId: calCal!.id, eventId: calEv!.id, op: "update", baseVersionTag: `"etag-${tag}"`,
+    idempotencyKey: `press-${tag}`, payload: { v: 1, act: { title: `Appointment ${tag}` } },
   });
   // The account's calendar settings (the switch): no staff role reads the table, and the sweep
   // taints its one text column, the second zone.
