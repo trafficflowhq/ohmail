@@ -476,6 +476,30 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     fence: "leader lock; wakes attached runtimes, and asks the roster for a stamped mailbox none is",
   },
   {
+    name: "calendar_sync",
+    module: `${W}/calendar/sync-pass.ts`, entry: "calendarSyncPass",
+    triggers: ["wake-driven", "interval"],
+    cadence: "with OHMAIL_CALENDAR=1 only: a bell of its own (`start/calendar.ts`) on the change log's signal, at most one "
+      + "roster read per CALENDAR_RING_GAP_MS, and every CALENDAR_TICK_MS as the floor; a connection is due by its "
+      + "`next_poll_at` (TOKEN_POLL_MS, a subscription's own wish or six hours, a word's wait)",
+    budget: "CALENDAR_LANES turn at a time, off the serialized queue; a turn ends at TURN_PAGES pages or TURN_MS, at a page "
+      + "boundary; each page written in transactions of at most CALENDAR_CHANGES_PER_TRANSACTION changes; MAX_READING_PAGES a reading",
+    owns: "each calendar of a connection reaches the store as the provider holds it, a first read in pages that never hold "
+      + "the account's mail, the token kept only once the reading's last page committed",
+    fence: "leader lock; one account's binding per turn (`passDb`), the account's erasure fence and the connection row by both "
+      + "ids in every transaction; no provider call inside a transaction",
+  },
+  {
+    name: "calendar_notices",
+    module: `${W}/calendar-notices.ts`, entry: "calendarNoticesPass",
+    triggers: ["wake-driven", "interval"],
+    cadence: "after a calendar turn that ended well, where OHCAL_NOTICE_ORIGIN names a public address; opens nothing "
+      + "until the channel table and the notice route are on this line",
+    budget: "one channel request per calendar whose channel is missing or in its last day",
+    owns: "a provider's notice channel is open before the last one ends, so a change rings instead of waiting for the poll",
+    fence: "leader lock; rides the calendar turn's binding and sign-in",
+  },
+  {
     name: "alerts",
     module: `${DB}/alerts.ts`, entry: "runAlertPass",
     triggers: ["interval"],

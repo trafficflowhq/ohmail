@@ -41,6 +41,7 @@ import {
   createLogger, silentLogger, resolveOhboxPolicy, resolveScreeningCutoff, DEFAULT_OHBOX_POLICY, type Logger,
   providerAuthservIds,
   MicrosoftTokenProvider, type OAuthTokenProvider, type UpdateSecretPort, type FetchLike,
+  type MicrosoftClientCredentials, type MicrosoftClientKind,
   type ClassifierPort,
 } from "@trafficflow/core";
 import { agreeSweepRun, makeDrizzleRepo, mailboxProviderAuthservIds, recordSpecialFolders, storedFoldersOf, type AgreeSweepCursor } from "@trafficflow/core/adapters/drizzle-repo";
@@ -127,6 +128,7 @@ import { screenerAutoSuggestPass } from "./screener-auto-suggest.js";
 import { refundObligationDrainPass } from "./refund-obligation-drain.js";
 import { mailboxErasurePass } from "./mailbox-erasure-pass.js";
 import { SYNC_KICK_SIGNAL_GAP_MS, startSyncKickBell, syncKickPass, type SyncKickBell } from "./sync-kick.js";
+import { calendarSection, type CalendarRunner } from "./start/calendar.js";
 import { sensitiveBackfillPass } from "./sensitive-backfill.js";
 import { SEARCH_INDEX_ACCOUNTS_PER_TAIL, searchIndexBackfillPass, searchIndexOwedAccounts } from "@trafficflow/core/mail";
 import { HTML_WORDS_ACCOUNTS_PER_TAIL, htmlWordsBackfillPass, htmlWordsOwedAccounts } from "./html-words-backfill.js";
@@ -704,51 +706,53 @@ export async function startWorkerWithLock(
      * API uses. `enabled` is NOT consulted — it is the ONBOARDING switch, and refusing to refresh an
      * already-connected mailbox because onboarding is off would take working mailboxes down.
      */
+    const msRegistration = async (want: MicrosoftClientKind): Promise<MicrosoftClientCredentials> => {
+      /*
+       * The public door is a different registration and it is NOT in the config store. A mailbox
+       * connected through the device-code flow holds a refresh token issued by the PUBLIC
+       * application, and only that application can renew it — and this process is the organizer on a
+       * self-hosted install, so it must do so for ever. It resolves the public client from the
+       * environment alone: there is no `oauth_provider_config` arm for it, because that table's
+       * content is the confidential registration an operator manages, and this composition has no
+       * admin console. `kind: "public"` is STATED — unlabelled, the token client defaults it to
+       * `confidential` and demands a secret a public registration lacks.
+       */
+      if (want === "public") {
+        return {
+          clientId: config.msDevice?.clientId ?? "",
+          clientSecret: "",
+          defaultTenant: config.msDevice?.tenant || "common",
+          kind: "public",
+        };
+      }
+      const resolved = await resolveOAuthProviderConfig({
+        tx: db,
+        decrypt: (ct, kv) => keyProvider.decrypt(ct, kv),
+        bootstrap: {
+          clientId: config.msOAuth?.clientId ?? "",
+          clientSecret: config.msOAuth?.clientSecret ?? "",
+          tenant: config.msOAuth?.tenant ?? "",
+          redirectUri: config.msOAuth?.redirectUri ?? "",
+        },
+        provider: MICROSOFT_PROVIDER,
+      });
+      return {
+        clientId: resolved.clientId,
+        clientSecret: resolved.clientSecret,
+        defaultTenant: resolved.tenant || (config.msOAuth?.tenant ?? "common"),
+        // Stated for the same reason the public arm states its own: this is the confidential
+        // registration, and the token client re-checks that the door it asked for is the door
+        // that answered. An unlabelled return would pass by defaulting, which is exactly the
+        // kind of agreement-by-coincidence the explicit kind exists to remove.
+        kind: "confidential",
+      };
+    };
     const oauthTokenProvider: OAuthTokenProvider = new MicrosoftTokenProvider({
       clientId: config.msOAuth?.clientId ?? "",
       clientSecret: config.msOAuth?.clientSecret ?? "",
       defaultTenant: config.msOAuth?.tenant ?? "common",
-      resolveClient: async (want) => {
-        /*
-         * The public door is a different registration and it is NOT in the config store. A mailbox
-         * connected through the device-code flow holds a refresh token issued by the PUBLIC
-         * application, and only that application can renew it — and this process is the organizer on a
-         * self-hosted install, so it must do so for ever. It resolves the public client from the
-         * environment alone: there is no `oauth_provider_config` arm for it, because that table's
-         * content is the confidential registration an operator manages, and this composition has no
-         * admin console. `kind: "public"` is STATED — unlabelled, the token client defaults it to
-         * `confidential` and demands a secret a public registration lacks.
-         */
-        if (want === "public") {
-          return {
-            clientId: config.msDevice?.clientId ?? "",
-            clientSecret: "",
-            defaultTenant: config.msDevice?.tenant || "common",
-            kind: "public",
-          };
-        }
-        const resolved = await resolveOAuthProviderConfig({
-          tx: db,
-          decrypt: (ct, kv) => keyProvider.decrypt(ct, kv),
-          bootstrap: {
-            clientId: config.msOAuth?.clientId ?? "",
-            clientSecret: config.msOAuth?.clientSecret ?? "",
-            tenant: config.msOAuth?.tenant ?? "",
-            redirectUri: config.msOAuth?.redirectUri ?? "",
-          },
-          provider: MICROSOFT_PROVIDER,
-        });
-        return {
-          clientId: resolved.clientId,
-          clientSecret: resolved.clientSecret,
-          defaultTenant: resolved.tenant || (config.msOAuth?.tenant ?? "common"),
-          // Stated for the same reason the public arm states its own: this is the confidential
-          // registration, and the token client re-checks that the door it asked for is the door
-          // that answered. An unlabelled return would pass by defaulting, which is exactly the
-          // kind of agreement-by-coincidence the explicit kind exists to remove.
-          kind: "confidential",
-        };
-      },
+      // The calendar's Microsoft trade asks the same resolver (`scope.msRegistration`): one reader of the registration.
+      resolveClient: msRegistration,
       keyProvider,
       updateSecret,
       // Node's global fetch. Cast because `FetchLike` is the narrow slice this client uses; the
@@ -1124,7 +1128,7 @@ export async function startWorkerWithLock(
      */
     const closureDropped = new Set<string>();
     Object.assign(scope, {
-      config, lock, db, runtimes, gapClearances, repo, keyProvider, oauthTokenProvider, shards, shardIndex,
+      config, lock, db, runtimes, gapClearances, repo, keyProvider, oauthTokenProvider, msRegistration, shards, shardIndex,
       maxMailboxes, cycleLanes, heavyLanes, heavyTurnMs, sharedAccountTurnMs, rosterIntervalMs, retryBaseMs,
       retryMaxMs, maxSyncFailures, syncBlockGraceMs, leaseUnavailableDetachMs, selection, makeAdapter, dialHostGuard,
       environment, startedAt, log, leaderToken, fence, alertSinks, alertDeliveryStreak, alertLastResort,
@@ -1373,6 +1377,8 @@ export async function startWorkerWithLock(
     scope.apiCron = null as ApiCronHandle | null;
     /** The 5xx poll (`platform-signal-poll.ts`): shard 0's leader only, stopped with the rest. */
     scope.signalPoll = null as PlatformSignalPollHandle | null;
+    /** The calendar's passes: stopped with the rest, their turns awaited by the stop below. */
+    scope.calendar = null as CalendarRunner | null;
     function clearTimers(): void {
       if (scope.pollTimer) clearInterval(scope.pollTimer);
       if (scope.rosterTimer) clearInterval(scope.rosterTimer);
@@ -1386,6 +1392,8 @@ export async function startWorkerWithLock(
       scope.apiCron = null;
       scope.signalPoll?.stop();
       scope.signalPoll = null;
+      // Kept on the scope: the stop awaits its turns once they have unwound.
+      scope.calendar?.stop();
       scope.pushWake?.stop();
       scope.pushWake = null;
       const hub = scope.wakeHub;
@@ -1620,6 +1628,8 @@ export async function startWorkerWithLock(
       log,
     });
     log.info("sync_doorbell_started", { everyMs: syncKickFloorMs, ms: SYNC_KICK_SIGNAL_GAP_MS });
+    // The calendar's passes: a bell of their own on the same signal, off the serialized queue.
+    calendarSection(scope);
 
     /**
      * The UnifiedPush wake sender. Here rather than the API for the reason `push_subscriptions` had no
@@ -1753,6 +1763,7 @@ export async function startWorkerWithLock(
           await usageBuffer?.flush();
           await scope.drain();                   // let the in-flight cycle/roster pass finish
           await scope.attachPool.settled();      // and every attach, which unwinds without a row write
+          await scope.calendar?.settled();       // and every calendar turn, which ends at its next step
           await usageBuffer?.flush();
           usageBuffer?.stop();
           try {

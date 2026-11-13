@@ -527,6 +527,29 @@ const ALLOWLIST: Record<string, string> = {
     "written by `stampScreeningBaseline` / `writeScreeningAnswer` on the fenced transaction " +
     "`organizeHere` opens — asserted, not assumed, by the call-site case in this file",
 
+  // ── The calendar sync's turn (apps/worker/src/calendar) ─────────────────────────────────────
+  // Each write runs on the transaction of one turn, which `inConnection` alone opens, through the
+  // store's `fencedConnectionWrite`: `fencedAccountWrite` first, then the connection's mailbox and
+  // row FOR SHARE. The four tables hang on composite `foreignKey({ … })` keys, which
+  // `foreignKeys()` does not read, so they are class (c) here and not (b1). The calendar call-site
+  // case below asserts every link of the reason.
+  "apps/worker/src/calendar/apply.ts insert calEvents":
+    "an event row, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "apps/worker/src/calendar/apply.ts insert calAttendees":
+    "an event's invitees, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "apps/worker/src/calendar/apply.ts insert calAlarms":
+    "an event's reminders, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+  "apps/worker/src/calendar/calendars.ts insert calCalendars":
+    "a listed calendar, written on the turn's transaction that only `inConnection` opens, through the store's " +
+    "`fencedConnectionWrite`, which opens it with `fencedAccountWrite`, the account's erasure fence — asserted by " +
+    "the calendar call-site case",
+
   // ── db-layer primitives: they write inside the CALLER's transaction ────────────────────────
   // Each takes a handle it did not open. The fence belongs to the door that opened it, which is
   // what `withAccountTx` now is; putting a second fence here would read the account row twice.
@@ -1197,6 +1220,132 @@ describe("the erasure fence census", () => {
     const loose = calls.filter(([at]) => !doors.some(([a, b]) => at > a && at < b))
       .map(([at, m]) => `${file}:${lineOf(src, at)} ${m[0]}`);
     expect(loose, "a rule written outside the fenced door").toEqual([]);
+  });
+
+  it("the calendar sync writes only on a turn's transaction, and only the erasure fence opens one", () => {
+    /**
+     * The four calendar rows in ALLOWLIST are claims about OTHER code: the write sits in a helper
+     * or a callback on a transaction the turn's door opened. Checked as the consent and the
+     * ceremony helpers are, link by link: (i) `inConnection` opens its transaction through
+     * `fencedConnectionWrite` and nothing else, and runs the caller inside it; (ii)
+     * `fencedConnectionWrite` opens through the seam, `fencedAccountWrite`, whose fence the seam
+     * case above reads; (iii) nothing else under the folder opens a transaction or holds a handle
+     * one could be opened on, and every insert there into a table the sweep empties is reached
+     * only from inside an `inConnection` call. A later writer in the folder that goes around the
+     * door is red here by file and line, whatever its table's row says.
+     */
+    const FOLDER = "apps/worker/src/calendar/";
+    const CONNECTION = `${FOLDER}connection.ts`;
+    const FENCE = "packages/db/src/calendar/fence.ts";
+    const OPENERS = String.raw`\.transaction\s*\(|\b(?:withAccountTx|fencedAccountWrite|fencedConnectionWrite)\s*\(`;
+    const declared = (src: string, i: number) => /\bfunction\s+$/.test(src.slice(Math.max(0, i - 24), i));
+    const bodyOf = (src: string, head: string): [number, number] => {
+      const at = src.indexOf(head);
+      return [at, at === -1 ? -1 : src.indexOf("\n}", at)];
+    };
+
+    // (i) THE TURN'S DOOR.
+    const conn = withoutComments(read(CONNECTION));
+    const [inAt, inEnd] = bodyOf(conn, "export async function inConnection");
+    expect(inAt, "inConnection has moved or been renamed").toBeGreaterThan(-1);
+    const inBody = conn.slice(inAt, inEnd);
+    const inOpens = hits(inBody, OPENERS);
+    expect(inOpens.map(([, m]) => m[0].replace(/\s/g, "")),
+      "inConnection opens its transaction through fencedConnectionWrite and nothing else").toEqual(["fencedConnectionWrite("]);
+    const inDoor = span(inBody, inOpens[0]![0] + inOpens[0]![1][0].length - 1);
+    const inRuns = hits(inBody, String.raw`\bfn\s*\(`).map(([i]) => i);
+    expect(inRuns.length, "inConnection no longer runs the caller").toBeGreaterThanOrEqual(1);
+    expect(inRuns.every((i) => i > inDoor[0] && i < inDoor[1]),
+      "inConnection runs the caller outside the fenced transaction").toBe(true);
+    expect(read(CONNECTION), "inConnection's door is no longer the store's calendar fence")
+      .toMatch(/import\s*\{[^}]*\bfencedConnectionWrite\b[^}]*\}\s*from\s*"@trafficflow\/db\/calendar"/);
+    expect(read("packages/db/src/calendar/index.ts"), "the store's calendar entry no longer exports the fence")
+      .toMatch(/export\s*\{[^}]*\bfencedConnectionWrite\b[^}]*\}\s*from\s*"\.\/fence\.js"/);
+
+    // (ii) THE STORE'S CALENDAR FENCE IS THE SEAM.
+    const fence = withoutComments(read(FENCE));
+    const [fAt, fEnd] = bodyOf(fence, "export async function fencedConnectionWrite");
+    expect(fAt, "fencedConnectionWrite has moved or been renamed").toBeGreaterThan(-1);
+    const fBody = fence.slice(fAt, fEnd);
+    const fOpens = hits(fBody, OPENERS);
+    expect(fOpens.map(([, m]) => m[0].replace(/\s/g, "")),
+      "fencedConnectionWrite opens through fencedAccountWrite and nothing else").toEqual(["fencedAccountWrite("]);
+    const fDoor = span(fBody, fOpens[0]![0] + fOpens[0]![1][0].length - 1);
+    const fRuns = hits(fBody, String.raw`\bfn\s*\(`).map(([i]) => i);
+    expect(fRuns.length, "fencedConnectionWrite no longer runs the caller").toBeGreaterThanOrEqual(1);
+    expect(fRuns.every((i) => i > fDoor[0] && i < fDoor[1]),
+      "fencedConnectionWrite runs the caller outside the seam's transaction").toBe(true);
+    expect(read(FENCE), "the calendar fence's fencedAccountWrite is no longer the seam's")
+      .toMatch(/import\s*\{[^}]*\bfencedAccountWrite\b[^}]*\}\s*from\s*"\.\.\/erasure-fence\.js"/);
+
+    // (iii) NOTHING ELSE IN THE FOLDER OPENS A TRANSACTION OR HOLDS A HANDLE TO OPEN ONE ON.
+    const files = serverSources().filter((f) => f.startsWith(FOLDER));
+    expect(files, "the calendar sync's folder is gone").toContain(CONNECTION);
+    expect(files.length, "the folder listing looked at nothing").toBeGreaterThanOrEqual(10);
+    expect(conn, "the turn's handle symbols are exported")
+      .not.toMatch(/\bexport\s+(?:const|let|var)\s+(?:POOL|BOUND)\b|\bexport\s*\{[^}]*\b(?:POOL|BOUND)\b/);
+    const loose: string[] = [];
+    const turnWrites: string[] = [];
+    for (const f of files) {
+      const raw = read(f);
+      const src = withoutComments(raw);
+      const at = (i: number) => `${f}:${lineOf(src, i)}`;
+      for (const [i, m] of hits(src, OPENERS)) {
+        if (declared(src, i) || (f === CONNECTION && i > inAt && i < inEnd)) continue;
+        loose.push(`${at(i)} opens a transaction (${m[0].replace(/\s/g, "")}) outside inConnection`);
+      }
+      for (const [i] of hits(src, String.raw`\[\s*(?:BOUND|POOL)\s*\]`)) {
+        if (f !== CONNECTION) loose.push(`${at(i)} reaches the pool's raw handle`);
+      }
+      for (const [i, m] of hits(src, String.raw`\b(?:calendarPool|makeDb|makeOwnedDb|makePooledDb|drizzle)\s*\(`)) {
+        if (!declared(src, i)) loose.push(`${at(i)} makes a database handle (${m[0].replace(/\s/g, "")})`);
+      }
+      for (const [i] of hits(src, String.raw`\bunboundPool\s*\(`)) {
+        if (!declared(src, i) && f !== `${FOLDER}roster.ts`) loose.push(`${at(i)} takes the unbound pool outside the roster`);
+      }
+      if (f === `${FOLDER}roster.ts`) {
+        for (const [i, m] of hits(src, String.raw`\.(?:insert|update|delete|execute)\s*\(`)) {
+          loose.push(`${at(i)} the roster, on the unbound pool, writes (${m[0].replace(/\s/g, "")})`);
+        }
+      }
+      for (const [i] of hits(raw, String.raw`(?:^|\n)\s*import\s+(?!type\b)[^;]*?from\s*["']\.\.\/|\bimport\s*\(\s*["']\.\.\/`)) {
+        loose.push(`${f}:${lineOf(raw, i + 1)} imports a module from outside the folder`);
+      }
+
+      // Every insert into a table the sweep empties: inside an `inConnection` call, or in a private
+      // function every one of whose references is a call that is (followed to the door, in-file).
+      const turns = hits(src, String.raw`\binConnection\s*\(`).filter(([i]) => !declared(src, i))
+        .map(([i, m]) => span(src, i + m[0].length - 1));
+      const decls = hits(src, String.raw`(?:^|\n)[ \t]*(export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(`)
+        .map(([d, m]) => {
+          // From the closing paren itself: past it, a `{` with nothing between is the body, which
+          // `bodyBrace` reads as a type when it starts on that `{` with no previous character.
+          const [, argEnd] = span(src, src.indexOf("(", d + m[0].length - 1));
+          const brace = bodyBrace(src, argEnd);
+          return { name: m[2]!, exported: Boolean(m[1]), head: d, body: brace === -1 ? null : span(src, brace, "{", "}") };
+        })
+        .flatMap((d) => d.body === null ? [] : [{ ...d, body: d.body }]);
+      const onTurn = (i: number, seen: ReadonlySet<string>): boolean => {
+        if (turns.some(([a, b]) => i > a && i < b)) return true;
+        const inner = decls.filter((d) => i > d.body[0] && i < d.body[1]).sort((x, y) => y.body[0] - x.body[0])[0];
+        if (inner === undefined || inner.exported || seen.has(inner.name)) return false;
+        const refs = hits(src, String.raw`\b${inner.name.replace(/\$/g, "\\$")}\b`).filter(([r]) => r < inner.head || r >= inner.body[0]);
+        return refs.length > 0 && refs.every(([r, m]) =>
+          /^\s*\(/.test(src.slice(r + m[0].length)) && onTurn(r, new Set([...seen, inner.name])));
+      };
+      const alias = aliases(src);
+      for (const [i, m] of hits(src, String.raw`\.insert\(\s*([A-Za-z_$][\w$]*)\s*\)`)) {
+        const table = alias.get(m[1]!) ?? m[1]!;
+        if (!ERASED.has(table)) continue;
+        if (onTurn(i, new Set())) turnWrites.push(`${f} insert ${table}`);
+        else loose.push(`${at(i)} inserts ${table} off a turn's transaction`);
+      }
+    }
+    expect(loose, "a calendar writer, transaction or handle that goes around inConnection's fenced door").toEqual([]);
+    for (const k of [
+      `${FOLDER}apply.ts insert calAttendees`, `${FOLDER}apply.ts insert calAlarms`,
+      `${FOLDER}apply.ts insert calEvents`, `${FOLDER}calendars.ts insert calCalendars`,
+    ]) expect(turnWrites, `${k} is no longer found on a turn's transaction`).toContain(k);
   });
 
   it("proves the (b1) ordering it rests on, rather than asserting it", () => {

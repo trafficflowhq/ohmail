@@ -94,6 +94,18 @@
       "node": "./dist/recur/occurrence.js",
       "default": "./src/recur/occurrence.ts"
     },
+    "./stored/time": {
+      "types": "./src/stored/time.ts",
+      "ohmail-source": "./src/stored/time.ts",
+      "node": "./dist/stored/time.js",
+      "default": "./src/stored/time.ts"
+    },
+    "./stored/event-range": {
+      "types": "./src/stored/event-range.ts",
+      "ohmail-source": "./src/stored/event-range.ts",
+      "node": "./dist/stored/event-range.js",
+      "default": "./src/stored/event-range.ts"
+    },
     "./ical/lines": {
       "types": "./src/ical/lines.ts",
       "ohmail-source": "./src/ical/lines.ts",

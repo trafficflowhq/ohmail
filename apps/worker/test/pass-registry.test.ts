@@ -89,6 +89,8 @@ const IN_WORKER_PASSES: readonly string[] = [
   "blank-repair.ts::blankRepairPass",
   "bubble-up-cron.ts::runBubbleUpCron",
   "bubble-up-pass.ts::bubbleUpPass",
+  "calendar-notices.ts::calendarNoticesPass",
+  "calendar/sync-pass.ts::calendarSyncPass",
   "folder-ops.ts::folderOpsPass",
   "gate-release.ts::gateReleasePass",
   "gone-letter-tidy.ts::goneLetterTidyPass",
