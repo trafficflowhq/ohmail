@@ -1,0 +1,61 @@
+{
+  "provider": "google",
+  "name": "calendar-list-writable",
+  "request": {
+    "method": "GET",
+    "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=250"
+  },
+  "response": {
+    "status": 200,
+    "contentType": "application/json",
+    "body": {
+      "kind": "calendar#calendarList",
+      "nextSyncToken": "sync-1",
+      "items": [
+        {
+          "kind": "calendar#calendarListEntry",
+          "id": "cal-1",
+          "summary": "google-account@bench.example",
+          "timeZone": "Europe/Zurich",
+          "colorId": "14",
+          "backgroundColor": "#9fe1e7",
+          "foregroundColor": "#000000",
+          "selected": true,
+          "accessRole": "owner",
+          "defaultReminders": [
+            {
+              "method": "popup",
+              "minutes": 30
+            }
+          ],
+          "notificationSettings": {
+            "notifications": [
+              {
+                "type": "eventCreation",
+                "method": "email"
+              },
+              {
+                "type": "eventChange",
+                "method": "email"
+              },
+              {
+                "type": "eventCancellation",
+                "method": "email"
+              },
+              {
+                "type": "eventResponse",
+                "method": "email"
+              }
+            ]
+          },
+          "primary": true,
+          "conferenceProperties": {
+            "allowedConferenceSolutionTypes": [
+              "hangoutsMeet"
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "name": "@ohmail/cal-providers",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./port": {
+      "types": "./src/port.ts",
+      "ohmail-source": "./src/port.ts",
+      "node": "./dist/port.js",
+      "default": "./src/port.ts"
+    },
+    "./refusals": {
+      "types": "./src/refusals.ts",
+      "ohmail-source": "./src/refusals.ts",
+      "node": "./dist/refusals.js",
+      "default": "./src/refusals.ts"
+    },
+    "./limits": {
+      "types": "./src/limits.ts",
+      "ohmail-source": "./src/limits.ts",
+      "node": "./dist/limits.js",
+      "default": "./src/limits.ts"
+    },
+    "./request": {
+      "types": "./src/request/index.ts",
+      "ohmail-source": "./src/request/index.ts",
+      "node": "./dist/request/index.js",
+      "default": "./src/request/index.ts"
+    },
+    "./google": {
+      "types": "./src/google/index.ts",
+      "ohmail-source": "./src/google/index.ts",
+      "node": "./dist/google/index.js",
+      "default": "./src/google/index.ts"
+    },
+    "./caldav": {
+      "types": "./src/caldav/index.ts",
+      "ohmail-source": "./src/caldav/index.ts",
+      "node": "./dist/caldav/index.js",
+      "default": "./src/caldav/index.ts"
+    },
+    "./microsoft": {
+      "types": "./src/microsoft/index.ts",
+      "ohmail-source": "./src/microsoft/index.ts",
+      "node": "./dist/microsoft/index.js",
+      "default": "./src/microsoft/index.ts"
+    },
+    "./ics": {
+      "types": "./src/ics/index.ts",
+      "ohmail-source": "./src/ics/index.ts",
+      "node": "./dist/ics/index.js",
+      "default": "./src/ics/index.ts"
+    }
+  },
+  "dependencies": {
+    "@ohmail/cal-core": "0.0.0",
+    "@trafficflow/core": "*",
+    "htmlparser2": "12.0.0"
+  }
+}
