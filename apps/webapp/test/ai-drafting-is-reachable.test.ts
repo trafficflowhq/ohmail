@@ -78,9 +78,9 @@ describe("the premise that drafting is disabled, checked in the four places it w
   });
 
   it("the production API wires a drafter whenever a model key is present — no flag turns it off", () => {
-    const deps = read("apps/api-vercel/src/deps.ts");
+    const deps = read("apps/server/src/deps.ts");
     expect(
-      /if \(anthropicApiKey\) \{[\s\S]{0,400}?lazily\(bag, "drafter"/.test(deps),
+      /if \(cfg\.ai !== null\) put\(bag, "drafter"/.test(deps),
       "the managed host no longer arms a drafter, which would change what a credit buys",
     ).toBe(true);
   });

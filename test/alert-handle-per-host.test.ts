@@ -34,10 +34,8 @@ const blockOf = (path: string): string => {
 };
 
 describe("the alert pass's own handle belongs to the self-host server alone", () => {
-  it("the managed host's alert block names no db: — its pass runs on the blind role", () => {
-    // Red mutation: add `db: …` to apps/api-vercel's alerts block.
-    expect(namesHandle(blockOf("apps/api-vercel/src/deps.ts"))).toBe(false);
-  });
+  // One wiring serves both, so its alerts block names the handle. That the managed pass never gets
+  // it is held on the built program: apps/server/test/differences.test.ts (staffDoor).
 
   it("the self-host server's alert block names db: — without it every /internal/alerts route answers 503", () => {
     // Red mutation: drop `db: rt.alertDb` from apps/server's alerts block.
