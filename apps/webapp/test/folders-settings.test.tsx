@@ -94,6 +94,15 @@ describe("the pane exists exactly where the shell wired it", () => {
     expect(navLabels()).not.toContain("Folders");
   });
 
+  it("the menu says which section is open, to a screen reader too, and only that one", async () => {
+    await mount(h(SettingsView, { ...BASE, foldersSection: h("p", null, "the toggle") }));
+    const current = () =>
+      [...host.querySelectorAll('.set-nav button[aria-current="page"]')].map((b) => b.textContent?.trim());
+    expect(current()).toEqual(["General"]);
+    await choose("Folders");
+    expect(current()).toEqual(["Folders"]);
+  });
+
   it("German reads German — the pane copy comes from the catalogue", async () => {
     await mount(
       h(SettingsView, { ...BASE, foldersSection: h(FoldersRow, { on: false, setFoldersEnabled: async () => false }) }),
