@@ -20,6 +20,7 @@ import type { MailboxSelection } from "./mailboxes.js";
 import type { ThreadBackfillPass } from "./thread-backfill.js";
 import { dialHostGuardFromEnv, type DialHostGuard } from "./dial-host-guard.js";
 import type { PlatformSignalConfig } from "./platform-signal-poll.js";
+import type { ApiCronTarget } from "./api-cron.js";
 import type { IngestRunBounds } from "./sync.js";
 
 /** One IMAP IDLE connection per mailbox lives in this process — cap it. */
@@ -424,6 +425,8 @@ export interface WorkerConfig {
   /** How often the leader RE-READS the roster so a mailbox registered (or disabled)
    *  after startup is picked up (or dropped) without a restart. */
   rosterIntervalMs?: number;
+  /** The kick scan's floor; absent is `SYNC_KICK_EVERY_MS`. Test-only: no setting names it. */
+  syncKickFloorMs?: number;
   /** Letters one slice of the agree's sweep moves; absent is the core's bound. Test-only. */
   agreeSweepSlice?: number;
   /** How often the leader proves it still holds its advisory lock (split-brain guard); after
@@ -660,7 +663,11 @@ export interface WorkerConfig {
    * ⇒ a NAMED refusal — like the Telegram pair, one being set can only mean somebody meant to arm it,
    * and a half-armed schedule that quietly does nothing is the dark-cron failure this replaces.
    */
-  apiCron?: { baseUrl: string; secret: string };
+  apiCron?: {
+    baseUrl: string; secret: string;
+    /** TEST SEAM: the rows and the jitter's source; absent is the shipped table. No setting names it. */
+    schedule?: { targets?: readonly ApiCronTarget[]; random?: () => number };
+  };
   /**
    * The 5xx poll (`platform-signal-poll.ts`), armed by this worker's OWN platform credential:
    * `TF_SIGNAL_VERCEL_TOKEN` + `TF_SIGNAL_VERCEL_TEAM_ID`, `TF_SIGNAL_PROJECTS` (default `ohmail-api`)

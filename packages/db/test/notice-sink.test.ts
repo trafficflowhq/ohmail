@@ -65,12 +65,13 @@ import {
   noticeSinkFor, noticeSinkInstalled, onNotice, setNoticeSink,
   type PgNoticeFacts,
 } from "../src/notices.js";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 // ONE scanner, so a `//` inside a string is never read as a comment — the quoted glob in
 // packages/services/src/mailbox-service.ts opened one, and a bracket walk ran off the file.
 import * as scan from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "../../../apps/worker/test/_start-function.js";
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -140,7 +141,7 @@ function postgresCallSites(src: string): { args: string; line: number }[] {
 describe("production Postgres clients must not leak raw notices", () => {
   const sites = ROOTS.flatMap((r) =>
     tsFiles(join(REPO, r)).flatMap((f) =>
-      postgresCallSites(stripComments(readFileSync(f, "utf8")))
+      postgresCallSites(stripComments(readSource(f)))
         .map((s) => ({ ...s, file: f.slice(REPO.length) })),
     ),
   );
@@ -209,7 +210,7 @@ describe("a host must install the sink, or the channel is wired to nothing", () 
 
   for (const host of HOSTS) {
     it(`${host} installs a notice sink`, () => {
-      const src = stripComments(readFileSync(join(REPO, host), "utf8"));
+      const src = stripComments(readSource(join(REPO, host)));
       expect(
         /setNoticeSink\s*\(/.test(src),
         `${host} never calls setNoticeSink, so every notice from this host is dropped — safe, but ` +

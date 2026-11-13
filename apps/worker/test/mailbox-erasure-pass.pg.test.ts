@@ -89,6 +89,24 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
     expect(third, "a pass with nothing owed did work").toMatchObject({ steps: 0, finished: 0 });
   });
 
+  it("an owed erasure outside the pass's shard is left to the worker that leads it", async () => {
+    const mine = randomUUID(); const theirs = randomUUID();
+    await db.insert(accounts).values([{ id: mine, name: "erase-mine" }, { id: theirs, name: "erase-theirs" }]);
+    const m1 = await mailbox(mine, "m1", 2);
+    const t1 = await mailbox(theirs, "t1", 2);
+    // Theirs is the older stamp: a pass that read past its shard would take it first.
+    await stamp(theirs, t1, new Date(NOW.getTime() - 60_000));
+    await stamp(mine, m1, NOW);
+
+    const r = await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([mine]) });
+    expect(r.finished).toBe(1);
+    expect(await done(m1)).toBe(true);
+    expect(await done(t1), "another shard's mailbox was erased from here").toBe(false);
+    expect(await erasureRemaining(db, theirs, t1)).toBe(2);
+
+    expect((await mailboxErasurePass(db, { now: () => NOW, shard: owedIn([theirs]) })).finished).toBe(1);
+  });
+
   it("a finished erasure takes the mailbox's storage snapshot with it, and leaves the others' (cloud 0057)", async () => {
     const x = randomUUID();
     await db.insert(accounts).values({ id: x, name: "erase-stats" });

@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "../../../apps/worker/test/_start-function.js";
 
 /**
  * THE BELT OVER THE REQUIRED `onCallFault` — every host client under `apps/<app>/src` states its fault
@@ -59,7 +60,7 @@ describe("every host entitlements client records its failed calls", () => {
     const src = join(ROOT, "apps", app, "src");
     try { return statSync(src).isDirectory() ? sources(src) : []; } catch { return []; }
   });
-  const read = files.map((f) => ({ file: relative(ROOT, f), ...clientCalls(f, readFileSync(f, "utf8")) }))
+  const read = files.map((f) => ({ file: relative(ROOT, f), ...clientCalls(f, readSource(f)) }))
     .filter((r) => r.calls > 0);
 
   it("finds the five host compositions — a census that finds none measured nothing", () => {
@@ -84,7 +85,7 @@ describe("every host entitlements client records its failed calls", () => {
   const callsSharedRecorder = (src: string): boolean => /\bentitlementsFaultRecorder\(/.test(withoutComments(src));
 
   it("every host composition records through the one shared recorder, never a spelling of its own", () => {
-    const own = read.filter((r) => !callsSharedRecorder(readFileSync(join(ROOT, r.file), "utf8")))
+    const own = read.filter((r) => !callsSharedRecorder(readSource(join(ROOT, r.file))))
       .map((r) => r.file);
     expect(own, "a second spelling of the row and its log line drifts from the first").toEqual([]);
   });

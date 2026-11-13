@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, tags, type Tx } from "@trafficflow/db";
@@ -12,6 +11,7 @@ import {
 import { readOrganizerScreening, serializeOrganizerProfile } from "@trafficflow/core/adapters/organizer-profile-store";
 import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 import { OrganizerProfileSync } from "../src/profile.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * A SETTINGS MESSAGE WRITTEN BEFORE THE ESCAPES IS REWRITTEN ONCE BY THE HOLDER.
@@ -124,7 +124,7 @@ describe("the census: onOrganize is called on the organizing arm only", () => {
   it("the worker and the sidecar gate their one call on the role", () => {
     /* Call sites found with comments and literals blanked; the gate read off the same raw line. */
     const calls = (rel: string): string[] => {
-      const raw = readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+      const raw = readSource(fileURLToPath(new URL(rel, import.meta.url)));
       const code = withoutCommentsAndLiterals(raw).split("\n");
       const lines = raw.split("\n");
       return code.flatMap((l, i) => (/\.onOrganize\(/.test(l) ? [lines[i]!] : []));

@@ -68,6 +68,21 @@ async function waitFor(pred: () => Promise<boolean> | boolean, ms: number, step 
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** An idle press leaves the mailbox this long unvisited first: the visit that made it an organizer is over. */
+const IDLE_BEFORE_PRESS_MS = 3_000;
+/**
+ * How long until the poll's interval is `into` old. The worker arms the poll as it starts
+ * (`polledFrom`) and it ticks every `pollIntervalMs` from there. An idle press is placed IN that
+ * interval, not a sleep after the Organize-here press was served: how soon that press is served
+ * decided where the sleep ended, and it ended on the poll's tick, where the poll's own visit renews
+ * once inside the kick's window (the next case measures that window).
+ */
+function untilThePollIs(polledFrom: number, into: number): number {
+  const earliest = Date.now() + IDLE_BEFORE_PRESS_MS;
+  const at = (earliest - polledFrom) % PRODUCTION.pollIntervalMs;
+  return IDLE_BEFORE_PRESS_MS + (into - at + PRODUCTION.pollIntervalMs) % PRODUCTION.pollIntervalMs;
+}
+
 const foreignClaim = (): string => formatClaim({
   authorizedAt: null, capabilities: [], installId: "a-desktop-install", kind: "local",
   displayName: "the laptop", heartbeat: new Date(), claimedAt: new Date(), nonce: randomUUID(),
@@ -125,14 +140,16 @@ describe("Hand the mailbox back rings the pass", () => {
   }, 60_000);
 
   /* THREE PRESSES at production intervals: one landing while the POLL's cycle is in flight (parked
-     inside `changesSince`), two at different points of the idle poll interval. Each: no claim of
-     ours in `_meta` within 10 s, the row released, and nothing renewed or permitted after the press. */
+     inside `changesSince`), two at different points of the idle poll interval (12 s and 37 s after
+     the poll's tick). Each: no claim of ours in `_meta` within 10 s, the row released, and nothing
+     renewed or permitted after the press. */
   it(`three hand-backs at production intervals: no claim of ours within ${RELEASED_WITHIN_MS / 1000} s, no renew after the press`, async () => {
     const db = makeDb(DB);
     const ctx = await handedBack(db);
     const fleet = new FakeAdapterFleet();
     const lines: Line[] = [];
     await boot(fleet, lines);
+    const polledFrom = Date.now();
     expect(await waitFor(() => fleet.syncs > 0, 20_000), "the reader never synced").toBe(true);
     const meta = fleet.metaFor(ctx.mailboxId);
     const ours = () => claimsOf(meta.messages, INSTALL);
@@ -151,7 +168,7 @@ describe("Hand the mailbox back rings the pass", () => {
         fleet.behave(ctx.mailboxId, { syncGate: new Promise<void>((r) => { openGate = r; }) });
         expect(await waitFor(() => fleet.syncInFlight > 0, PRODUCTION.pollIntervalMs + 10_000), "no cycle in flight").toBe(true);
       } else {
-        await sleep(shape === "idle 12 s" ? 12_000 : 37_000);
+        await sleep(untilThePollIs(polledFrom, shape === "idle 12 s" ? 12_000 : 37_000));
       }
 
       const traceMark = fleet.trace.length;

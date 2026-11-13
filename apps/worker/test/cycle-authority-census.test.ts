@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { cycleWriteAuthority, type LeasePermit } from "../src/lease.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * ONE COMPOSITION OF A CYCLE'S AUTHORITY, IN EVERY ROOT. The hosted worker handed `runSyncCycle`
@@ -74,7 +75,7 @@ function compositionsIn(file: string, text: string): Composition[] {
 }
 
 describe("every cycle's authority is composed from its own role, by one function", () => {
-  const found = productionFiles().flatMap((f) => compositionsIn(f.slice(REPO.length + 1), readFileSync(f, "utf8")));
+  const found = productionFiles().flatMap((f) => compositionsIn(f.slice(REPO.length + 1), readSource(f)));
 
   it("the three composing roots are the known ones, and each composes through the one function", () => {
     expect({ refused: found.filter((c) => c.verdict !== "ok").map((c) => `${c.where}: ${c.verdict}`) })
@@ -99,7 +100,7 @@ describe("every cycle's authority is composed from its own role, by one function
   });
 
   it("the function has one definition, and a reader never rides the permit it is handed", () => {
-    const defs = productionFiles().filter((f) => new RegExp(`export function ${COMPOSE}\\b`).test(readFileSync(f, "utf8")));
+    const defs = productionFiles().filter((f) => new RegExp(`export function ${COMPOSE}\\b`).test(readSource(f)));
     expect(defs.map((f) => f.slice(REPO.length + 1))).toEqual(["apps/worker/src/lease.ts"]);
     const permit = { standing: () => "held" } as unknown as LeasePermit;
     expect(cycleWriteAuthority("organizer", permit)).toBe(permit);

@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutCommentsAndLiterals, lineOf, span } from "../scripts/lib/source-scan.mjs";
+import { readSource } from "../apps/worker/test/_start-function.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -32,7 +33,7 @@ function sources(): { file: string; src: string }[] {
       if (e === "node_modules" || e === "dist") continue;
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (e.endsWith(".ts")) out.push({ file: relative(REPO, p), src: withoutCommentsAndLiterals(readFileSync(p, "utf8")) });
+      else if (e.endsWith(".ts")) out.push({ file: relative(REPO, p), src: withoutCommentsAndLiterals(readSource(p)) });
     }
   };
   for (const r of ROOTS) walk(join(REPO, r));

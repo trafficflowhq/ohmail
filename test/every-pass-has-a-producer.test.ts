@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { basename, join, relative, sep } from "node:path";
+import { readSource } from "../apps/worker/test/_start-function.js";
 
 /**
  * EVERY EXPORTED PASS HAS A PRODUCER, AND EVERY STATUS A PASS WRITES HAS A READER.
@@ -173,7 +174,7 @@ interface Source {
 const SOURCES: Source[] = callerRoots()
   .flatMap((r) => tsFiles(r))
   .map((f) => {
-    const code = stripComments(readFileSync(f, "utf8"));
+    const code = stripComments(readSource(f));
     return { rel: rel(f), code, ident: blankStrings(code) };
   });
 
@@ -184,7 +185,7 @@ function discover(): Pass[] {
   const found: Pass[] = [];
   for (const root of DISCOVERY_ROOTS) {
     for (const file of tsFiles(p(root))) {
-      const code = blankStrings(stripComments(readFileSync(file, "utf8")));
+      const code = blankStrings(stripComments(readSource(file)));
       const re = /export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g;
       for (let m = re.exec(code); m; m = re.exec(code)) {
         const name = m[1]!;
@@ -271,7 +272,7 @@ const SCHEDULE_MANIFEST: Record<string, Invoker> = {
 };
 
 /** `railway.toml`, or null: this repository declares no Railway service, so a railway claim is refused. */
-const RAILWAY: string | null = existsSync(p("railway.toml")) ? readFileSync(p("railway.toml"), "utf8") : null;
+const RAILWAY: string | null = existsSync(p("railway.toml")) ? readSource(p("railway.toml")) : null;
 
 function vercelCronPaths(): string[] {
   const out: string[] = [];
@@ -281,7 +282,7 @@ function vercelCronPaths(): string[] {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.name === "vercel.json") {
-        const json = JSON.parse(readFileSync(full, "utf8")) as { crons?: Array<{ path?: string }> };
+        const json = JSON.parse(readSource(full)) as { crons?: Array<{ path?: string }> };
         for (const c of json.crons ?? []) if (c.path) out.push(c.path);
       }
     }
@@ -313,7 +314,7 @@ function corroborate(name: string, inv: Invoker): string | null {
   }
   const file = join(WORKFLOW_DIR, inv.workflow);
   if (!existsSync(file)) return `${name}: .github/workflows/${inv.workflow} does not exist`;
-  return /^\s*schedule:/m.test(readFileSync(file, "utf8"))
+  return /^\s*schedule:/m.test(readSource(file))
     ? null
     : `${name}: .github/workflows/${inv.workflow} has no schedule: key`;
 }

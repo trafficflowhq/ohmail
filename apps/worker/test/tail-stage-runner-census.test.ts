@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { WORKER_PASSES } from "../src/pass-registry.js";
 import { TAIL_SECTION_PLAN } from "../src/cycle-tail-plan.js";
 import { lineOf, span, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { readSource } from "./_start-function.js";
 
 /**
  * EVERY CYCLE-TAIL CATCH GOES THROUGH THE RUNNER. In the worker entry's tail (from `tailSnapshot` to
@@ -125,7 +125,7 @@ function sectionsOffRunner(region: string, names: readonly string[]): string[] {
   return off;
 }
 
-const read = (p: string): string => readFileSync(join(REPO, p), "utf8");
+const read = (p: string): string => readSource(join(REPO, p));
 const tailModules = [
   ...new Set(WORKER_PASSES.filter((p) => p.triggers.includes("cycle-tail")).map((p) => p.module)),
   "apps/worker/src/away-reply-sweep.ts", "apps/worker/src/retention-prune.ts", "apps/worker/src/refund-obligation-drain.ts",

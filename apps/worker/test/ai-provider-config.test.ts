@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   makeAnthropicClient, makeHaikuClassifier, makeSonnetDrafter,
@@ -7,6 +6,7 @@ import {
 } from "@trafficflow/core";
 import { aiProviderLine, loadConfig, WorkerConfigError } from "../src/config.js";
 import { anthropicKey, openAiKey } from "../../../test/support/fixture-credentials.js";
+import { readSource } from "./_start-function.js";
 
 /**
  * THE WORKER'S AI BLOCK. Only ANTHROPIC_API_KEY builds the three ports exactly as 0.26.1 did —
@@ -153,7 +153,7 @@ describe("the boot line: the provider, its address kind, and whether this worker
   });
 
   it("the worker logs that line at boot", () => {
-    const src = readFileSync(fileURLToPath(new URL("../src/index.ts", import.meta.url)), "utf8");
+    const src = readSource(fileURLToPath(new URL("../src/index.ts", import.meta.url)));
     expect(src).toContain('cliLog.info("ai_provider_configured", aiProviderLine(config));');
   });
 });
