@@ -13,7 +13,16 @@
     "./omarchy-rule": "./omarchy/rule.ts",
     "./tokens.css": "./src/tokens.css",
     "./faces.css": "./src/faces.css",
-    "./ohmarchy.css": "./src/ohmarchy.css"
+    "./ohmarchy.css": "./src/ohmarchy.css",
+    "./design": {
+      "types": "./src/design/tokens.ts",
+      "ohmail-source": "./src/design/tokens.ts",
+      "node": "./dist/design/tokens.js",
+      "default": "./src/design/tokens.ts"
+    },
+    "./design.css": "./src/design/tokens.css",
+    "./design/motion.css": "./src/design/motion.css",
+    "./design/tokens.json": "./src/design/tokens.json"
   },
   "dependencies": {}
 }

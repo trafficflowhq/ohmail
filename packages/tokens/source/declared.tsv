@@ -1,0 +1,27 @@
+# What the sheet has and this package leaves out, and where a value here is not the sheet's. A row is: where, token, kind, reason.
+# `where` may end in *. A token * is a whole part or rule that one side lacks. A row that matches nothing fails the comparison.
+accents.*	*	sheet-only	Two accents ship: red and cobalt. A third is one more entry in the source.
+readSquare.*	*	sheet-only	Two accents ship: red and cobalt.
+calendar.accents.*	*	sheet-only	Two accents ship: red and cobalt.
+css :root[data-face="paper"][data-accent=*	*	sheet-only	Two accents ship: red and cobalt.
+css :root[data-face="ohmarchy"][data-accent=*	*	sheet-only	Two accents ship: red and cobalt.
+motion.liquid	*	sheet-only	One motion style ships: slick.
+motion.snap	*	sheet-only	One motion style ships: slick.
+motion.paper	*	sheet-only	One motion style ships: slick.
+motion.spring	*	sheet-only	One motion style ships: slick.
+motion.calendar.liquid	*	sheet-only	One motion style ships: slick.
+motion.calendar.snap	*	sheet-only	One motion style ships: slick.
+motion.calendar.paper	*	sheet-only	One motion style ships: slick.
+motion.calendar.spring	*	sheet-only	One motion style ships: slick.
+css :root[data-motion=*	*	sheet-only	One motion style ships: slick.
+css [data-motion=*	*	sheet-only	One motion style ships, so no part of a page picks its own.
+css :root[data-slow="1"]	*	sheet-only	The sheet's switch for watching a move slowly. A page that wants it sets the time scale itself.
+css .cc	*	sheet-only	An event chip's own properties, mixed from the calendar's tokens: they are written with the component.
+css .cc.grey	*	sheet-only	An event chip's own properties, mixed from the calendar's tokens: they are written with the component.
+css :root[data-ev="plain"] .cc	*	sheet-only	An event chip's own properties, under a way of drawing events that does not ship.
+css :root[data-face="ohmarchy"][data-ev="plain"] .cc	*	sheet-only	An event chip's own properties, under a way of drawing events that does not ship.
+css :root	mini-row	differs	The sheet's stylesheet writes a day of the mini month with room for a mark under the numeral. Its data resolves the day without one, which is what ships: the marks are an option the sheet leaves off.
+css :root[data-face="ohmarchy"]	mini-row	differs	The sheet's stylesheet writes a day of the mini month with room for a mark under the numeral. Its data resolves the day without one, which is what ships: the marks are an option the sheet leaves off.
+faces.*	readw	product-only	On the sheet since the tag this source names: the reading width of a wide window. The row goes when the tag moves.
+css :root	readw	product-only	On the sheet since the tag this source names: the reading width of a wide window. The row goes when the tag moves.
+css :root[data-face="ohmarchy"]	readw	product-only	On the sheet since the tag this source names: the reading width of a wide window. The row goes when the tag moves.

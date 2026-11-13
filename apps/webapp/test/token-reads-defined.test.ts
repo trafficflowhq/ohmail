@@ -28,7 +28,12 @@ const walk = (dir: string, out: string[] = []): string[] => {
   }
   return out;
 };
-const files = DOMAIN.flatMap((d) => walk(join(ROOT, d))).map((f) => relative(ROOT, f));
+/* The new design's files are not loaded beside the views this census reads (the tokens package's
+   design-not-yet-imported test holds that), so what they declare defines nothing here. Their own
+   reads are held by the tokens package's design-one-source test. */
+const NEW_DESIGN = ["packages/tokens/src/design/", "packages/ui/src/icons/", "packages/ui/src/motion/"];
+const files = DOMAIN.flatMap((d) => walk(join(ROOT, d))).map((f) => relative(ROOT, f).replace(/\\/g, "/"))
+  .filter((f) => !NEW_DESIGN.some((dir) => f.startsWith(dir)));
 const text = (f: string): string => readFileSync(join(ROOT, f), "utf8");
 const css = (f: string): string => text(f).replace(/\/\*[\s\S]*?\*\//g, "");
 const declared = (s: string): Set<string> => new Set([...s.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]!));
