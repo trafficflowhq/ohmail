@@ -44,6 +44,11 @@ async function inputsOf(entry: { file: string } | { text: string }): Promise<str
 }
 const foreign = (inputs: readonly string[]): string[] => inputs.filter((p) => !MAY_HOLD.some((dir) => p.startsWith(dir)));
 
+/** What the two doors the services' write door takes may be made of: themselves, the port, and the calendar core. A planted module is the stdin's own. */
+const DOORS_MAY_HOLD = ["packages/cal-providers/src/repeat-shapes.ts", "packages/cal-providers/src/series.ts", "packages/cal-providers/src/port.ts", "packages/cal-providers/src/planted.ts"];
+const beyondTheDoors = (inputs: readonly string[]): string[] =>
+  inputs.filter((p) => !DOORS_MAY_HOLD.includes(p) && !p.startsWith("packages/cal-core/src/"));
+
 function sourceFiles(dir = SRC): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? sourceFiles(join(dir, e.name)) : e.name.endsWith(".ts") ? [join(dir, e.name)] : []));
 }
@@ -73,6 +78,19 @@ describe("what the package's bundle is made from", () => {
     expect(foreign(inputs)).toEqual([]);
   });
 
+  it("makes each of the two doors the services' write door takes (./repeat-shapes, ./series), bundled alone, of those two modules, the port and the calendar core only", async () => {
+    for (const door of ["repeat-shapes.ts", "series.ts"]) {
+      const inputs = await inputsOf({ file: join(SRC, door) });
+      expect(inputs).toContain(`packages/cal-providers/src/${door}`);
+      expect(beyondTheDoors(inputs)).toEqual([]);
+    }
+  });
+
+  it("is a check that bites: the request port beside such a door is named", async () => {
+    const planted = beyondTheDoors(await inputsOf({ text: `export * from "./series.js";\nexport * from "./request/index.js";\n` }));
+    expect(planted).toContain("packages/cal-providers/src/request/index.ts");
+  });
+
   it("is a check that bites: the mail core's barrel and the invitation reader are named when they are imported", async () => {
     const barrel = foreign(await inputsOf({ text: `export * from "./index.js";\nexport { canonicalHost } from "@trafficflow/core";\n` }));
     expect(barrel).toContain("packages/core/src/index.ts");
@@ -91,7 +109,9 @@ describe("what the package's bundle is made from", () => {
 
   it("has a module behind every door, and names the calendar core, the mail core and the parser as its only dependencies", () => {
     const manifest = JSON.parse(readFileSync(join(PKG, "package.json"), "utf8")) as { dependencies: Record<string, string>; exports: Record<string, Record<string, string>> };
-    expect(Object.keys(manifest.exports)).toEqual([".", "./port", "./refusals", "./limits", "./request", "./connect", "./google", "./caldav", "./microsoft", "./ics"]);
+    // ./repeat-shapes and ./series: the services' write door asks a series' proof and reckons its end through these two pure modules, as the
+    // worker's drain does (ruling (i), and the case below holds what each is made of); any further door of this package needs a ruling of its own.
+    expect(Object.keys(manifest.exports)).toEqual([".", "./port", "./refusals", "./limits", "./repeat-shapes", "./series", "./request", "./connect", "./google", "./caldav", "./microsoft", "./ics"]);
     expect(Object.values(manifest.exports).map((to) => to["ohmail-source"]!).filter((source) => !existsSync(join(PKG, source)))).toEqual([]);
     expect(manifest.dependencies).toEqual({ "@ohmail/cal-core": "0.0.0", "@trafficflow/core": "*", htmlparser2: "12.0.0" });
   });
