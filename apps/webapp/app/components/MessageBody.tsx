@@ -3762,9 +3762,19 @@ img[data-ohmail-blocked]:not([width="1"]),img[data-ohmail-embedded]:not([width="
   background:#f4f3ee;outline:1px dashed #d8d5cc;outline-offset:-1px;min-width:14px;min-height:14px}
 /* WHERE A LINK ACTUALLY GOES, without a line of script — the frame has none and never will.
    Shown on hover AND on focus, because a keyboard reader is exactly the person who cannot
-   see a status bar. \`title\` carries the same sentence for assistive technology. */
-a[data-ohmail-host]:hover::after,a[data-ohmail-host]:focus::after{
-  content:" \\2192 " attr(data-ohmail-host);font-size:.82em;opacity:.75;white-space:nowrap}
+   see a status bar. \`title\` carries the same sentence for assistive technology.
+   It FLOATS under the link and takes no room in the letter. Drawn in the line, it widened the
+   link on hover, so a newsletter's row of buttons moved under the pointer. The anchor is its
+   containing block through :where(), zero specificity, so any position the sender gave an
+   anchor still wins. A marked link (below) keeps its own label and gets no hover chip. */
+:where(a[data-ohmail-host]){position:relative}
+a[data-ohmail-host]:not([data-ohmail-elsewhere]):hover::after,
+a[data-ohmail-host]:not([data-ohmail-elsewhere]):focus::after{
+  content:"\\2192 " attr(data-ohmail-host);position:absolute;left:0;top:100%;z-index:2147483647;
+  margin-top:2px;padding:1px 6px;border-radius:4px;background:#1b1b1b;color:#fff;opacity:.92;
+  font:500 11px/1.5 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  text-decoration:none;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis;
+  pointer-events:none}
 /* Said WITHOUT hovering when the visible text names one place and the link goes to another
    — the click-tracker case, which is the one an unsuspecting reader cannot see. */
 a[data-ohmail-elsewhere]::after{
