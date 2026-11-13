@@ -533,3 +533,50 @@ describe("the way back to the kept mailbox after a Connect refused for another o
     expect(await switchBack("same")).toEqual(["/local/mailboxes/m1/organize"]);
   });
 });
+
+/**
+ * A PULL HEARS THE RING'S ANSWER WHEN IT LANDS. The server's 202 says whether new mail is being
+ * fetched at all; `syncNow` hands it to the listener a pull gives it, ahead of the round, so the
+ * pull can say at once that nothing is checking. Through the real provider over a live session.
+ * Watched red: the hand-over removed from `syncNow`.
+ */
+describe("the sync doorbell hands its answer to a listener", () => {
+  it("the ring's own answer, once, and a button's press event in that place is no listener", async () => {
+    const phone = await phoneAfterThePairingEnded({ ownMailbox: false, remove: null });
+    scene.store = new ServerProfileStore(phone.kv);
+    scene.deps = phone.deps;
+    const ring = { requested: 1, requestedAt: "2026-11-13T12:00:00.000Z", mailboxes: [], fetching: { behind: true, since: null } };
+    let rings = 0;
+    const session = {
+      profile: phone.paired, standalone: false, bearer: null,
+      verifyIdentity: async () => ({ kind: "match" }),
+      store: { close: async () => undefined, version: () => 0 },
+      fetch: async () => new Response("{}", { status: 404 }),
+      engine: {
+        ...QUIET,
+        start: async () => undefined, syncOnce: async () => undefined,
+        requestPull: async () => { rings += 1; return ring; },
+      },
+    };
+    scene.connect = async () => ({ kind: "connected", session });
+    let conn: Connection | null = null;
+    function Probe() { conn = useConnection(); return null; }
+    const view = mount(h(ConnectionProvider, null, h(Probe)));
+    await settle();
+    expect(conn!.state.k, "premise: the launch opened the pairing").toBe("live");
+
+    const heard: unknown[] = [];
+    await act(async () => { await conn!.syncNow((answer) => heard.push(answer)); });
+    await settle();
+    expect(heard).toEqual([ring]);
+    expect(rings).toBe(1);
+
+    // The Servers screen hands `syncNow` to a button, which calls it with its press event.
+    await act(async () => { await (conn!.syncNow as unknown as (e: object) => Promise<void>)({ nativeEvent: {} }); });
+    await settle();
+    expect(rings).toBe(2);
+    expect(heard).toHaveLength(1);
+    view.unmount();
+  });
+});
+

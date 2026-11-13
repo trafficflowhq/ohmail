@@ -36,6 +36,7 @@ import { WaitingStrip } from "../../src/ui/WaitingStrip";
 import { useSeedOffer } from "../../src/ui/SeedOfferCard";
 import { unscreenedOffered } from "../../src/state/seed-offer";
 import { FilingStrip } from "../../src/ui/FilingStrip";
+import { LateStrip } from "../../src/ui/LateStrip";
 import { SkeletonList } from "../../src/ui/Skeleton";
 import { readingAtConnectLine, readingAtConnectNow } from "../../src/ui/standalone-form";
 import { useLocale } from "../../src/i18n/LocaleProvider";
@@ -133,6 +134,9 @@ function OhboxBody() {
               onMarkAll={() => w.actions.markAllSeen(shown.ohbox.unreadIds)}
               filed={shown.ohbox.filed}
             />
+            {/* New mail is late: the paired server says it is not fetching. First, where a person
+                looks for new mail; it leaves by itself. */}
+            <LateStrip />
             {reading ? (
               <Panel style={{ paddingVertical: 14, paddingHorizontal: 18, marginBottom: 12 }}>
                 <Txt variant="note" tone="ink2" accessibilityRole="text">

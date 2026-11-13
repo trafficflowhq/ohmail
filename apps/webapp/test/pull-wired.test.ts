@@ -102,6 +102,38 @@ describe("the live engine's doorbell survives the sync gate", () => {
     ]);
   });
 
+  /* The ring's answer says whether new mail is being fetched at all. Watched red: the adapter
+     built its answer from three named fields and dropped the fourth. */
+  const ringAnswering = async (fetching: unknown): Promise<Record<string, unknown>> => {
+    answer = (url) => url.includes("/api/sync/pull")
+      ? json(202, {
+          requested: 1, requestedAt: "2026-08-29T12:00:01.000Z",
+          mailboxes: [{ id: "mb-1", requestedAt: "2026-08-29T12:00:01.000Z" }],
+          ...(fetching === undefined ? {} : { fetching }),
+        })
+      : json(404, { error: { code: "not_found", message: "only the doorbell is stubbed" } });
+    const rang = await createEngine(false, ARMED).requestPull();
+    expect(rang, "the ring was refused").not.toBeNull();
+    return rang as unknown as Record<string, unknown>;
+  };
+
+  it("…and carries the server's word on fetching: behind with its time, or not behind", async () => {
+    expect((await ringAnswering({ behind: true, since: "2026-08-28T17:40:00.000Z" })).fetching)
+      .toEqual({ behind: true, since: "2026-08-28T17:40:00.000Z" });
+    expect((await ringAnswering({ behind: true, since: null })).fetching).toEqual({ behind: true, since: null });
+    expect((await ringAnswering({ behind: false, since: "2026-08-29T11:59:00.000Z" })).fetching)
+      .toEqual({ behind: false, since: "2026-08-29T11:59:00.000Z" });
+  });
+
+  it("a server that does not say stays null, and an older server's answer carries no such key", async () => {
+    const silent = await ringAnswering(null);
+    expect("fetching" in silent && silent.fetching === null, "null was not carried as null").toBe(true);
+    expect("fetching" in await ringAnswering(undefined), "an absent key was invented").toBe(false);
+    // A shape this build cannot read is no statement: absent, never "not behind".
+    expect("fetching" in await ringAnswering({ behind: "yes" })).toBe(false);
+    expect("fetching" in await ringAnswering("late")).toBe(false);
+  });
+
   it("the gate does not MANUFACTURE the capability: a doorbell-less adapter stays doorbell-less through `guard`", () => {
     // The GATE is driven directly here, because the demo path never reaches it (`createEngine`
     // returns a bare FixturesAdapter before `gate.guard`) — a demo-engine control would stay

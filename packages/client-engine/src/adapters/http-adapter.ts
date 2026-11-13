@@ -34,6 +34,7 @@ import type {
   AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, CreatedDraftRow, EngineAdapter, HeldReleaseGroupWire, HeldReleaseResultWire, HeldReleaseSenderWire, HeldReleaseWire, StayedWire,
   UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire, ScreenerWaitingItemWire, ScreenerWaitingWire,
   MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams, WithdrawSendAnswer, ScheduleFilesAnswer,
+  FetchingStanding, PullRing,
 } from "./adapter.js";
 import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import { OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE } from "./refusal-shape.js";
@@ -46,6 +47,19 @@ import { responseBlob } from "../bytes-blob.js";
 import { readTimelineWire, type StoreTimeline } from "../store-pages.js";
 import { ORGANIZER_REQUESTS_PATH, waitingRequestsOf } from "../organizer-requests-wire.js";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
+
+/**
+ * The pull answer's `fetching`, as the wire gave it: `null` stays null (this server does not say),
+ * a readable object is carried, and anything else is `undefined`, the absent key of an older
+ * server. A shape this build cannot read is never turned into "not behind".
+ */
+function fetchingOf(wire: unknown): FetchingStanding | null | undefined {
+  if (wire === null) return null;
+  if (typeof wire !== "object" || wire === undefined) return undefined;
+  const { behind, since } = wire as { behind?: unknown; since?: unknown };
+  if (typeof behind !== "boolean") return undefined;
+  return { behind, since: typeof since === "string" ? since : null };
+}
 
 /**
  * Where a rule verb goes: a row's id, or a published rule's address with its key in the body. A
@@ -834,10 +848,7 @@ export class HttpAdapter implements EngineAdapter {
    * instant at the database's clock, which is the client's honest-settle baseline. `requestedAt` is the newest of
    * them, kept for logging; a missing field degrades to "nothing to wait for".
    */
-  async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<{
-    requested: number; requestedAt: string;
-    mailboxes: Array<{ id: string; requestedAt: string }>;
-  }> {
+  async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing> {
     const body = opts?.mailboxIds && opts.mailboxIds.length > 0 ? { mailboxIds: [...opts.mailboxIds] } : {};
     return this.withDeadline(PULL_RING_TIMEOUT_MS, async (signal) => {
       const res = await this.request("POST", "/sync/pull", { body, ...(signal ? { signal } : {}) });
@@ -845,14 +856,17 @@ export class HttpAdapter implements EngineAdapter {
       const wire = (await res.json()) as Partial<{
         requested: number; requestedAt: string;
         mailboxes: Array<{ id?: string; requestedAt?: string }>;
+        fetching: unknown;
       }>;
       const mailboxes = (Array.isArray(wire.mailboxes) ? wire.mailboxes : [])
         .filter((m): m is { id: string; requestedAt: string } =>
           typeof m?.id === "string" && typeof m?.requestedAt === "string");
+      const fetching = fetchingOf(wire.fetching);
       return {
         requested: typeof wire.requested === "number" ? wire.requested : mailboxes.length,
         requestedAt: typeof wire.requestedAt === "string" ? wire.requestedAt : new Date().toISOString(),
         mailboxes,
+        ...(fetching === undefined ? {} : { fetching }),
       };
     });
   }

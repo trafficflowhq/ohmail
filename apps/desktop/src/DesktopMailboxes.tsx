@@ -30,12 +30,12 @@ import {
 } from "@ohmail/ui";
 
 import {
-  desktopFiler, deviceHoldings, filerSentence, holdingsSpeak, isRemovedMailbox, readerStandDown,
+  desktopFiler, deviceHoldings, filerKey, filerSentence, holdingsSpeak, isRemovedMailbox, readerStandDown,
   showInboundQuiet, type MailboxFacts,
 } from "../../webapp/app/shell/mail-state";
 import { addressKey } from "../../webapp/app/shell/address-key";
 import { holderIsLive, holderStopped, organizerSituation, standingOf } from "@trafficflow/core/reader-refusal";
-import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
+import { agoStamp, dayStamp, waterlineStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
 import { storeRefusalsFigure } from "../../webapp/app/shell/mailbox-error-key";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
@@ -1535,6 +1535,19 @@ export function DesktopMailboxes(
     !cloud && m.status !== "disabled" && m.organizerRole !== "reader"
     && Boolean(m.organizeConsentedAt);
 
+  /**
+   * THE SERVER BEHIND THIS DOOR IS NOT FETCHING THIS MAILBOX'S NEW MAIL: its own word on the row
+   * (`fetching`), which only a hosted door's rows carry: this computer's own engine answers null,
+   * and null and absent say nothing. Only where the row would otherwise read as healthy: a
+   * mailbox with trouble of its own keeps its own word. The values are the catalogue's, the time
+   * said as the strip says it.
+   */
+  const notCheckedOf = (m: MailboxFacts): { hasSince: string; since: string } | null => {
+    if (m.fetching?.behind !== true || m.status !== "connected" || m.syncBlockedSince) return null;
+    const since = m.fetching.since ? waterlineStamp(m.fetching.since, new Date(now), activeFormatLocale()) : "";
+    return { hasSince: since === "" ? "no" : "yes", since };
+  };
+
   const stateOf = (m: MailboxFacts): { said: string; when: string | null } => {
     const say = (said: string): { said: string; when: null } => ({ said, when: null });
     /* Read before the error arm: the LOCAL door derives `status: "error"` from the same
@@ -1683,6 +1696,11 @@ export function DesktopMailboxes(
         code: r.profileBlocked.code ?? t("desktopUnknownCode"),
       }));
     }
+    /* NOT CHECKED — above the progress arms and "Up to date", each of which says mail is moving
+       or has arrived, and below everything that is this mailbox's or this computer's own. The
+       row's own line says it, with since when; a second "Not checked" beside it would say one
+       fact twice, so the state says nothing. */
+    if (notCheckedOf(m)) return say("");
     if (m.lastSyncAt === null) return say(t("desktopStateFirstOpen"));
     if (m.initialImportCompletedAt === null) return say(t("desktopStateCatchingUp"));
     /* OLDER MAIL STILL BEING INDEXED — below catching up (mail arriving outranks words being
@@ -2236,13 +2254,16 @@ export function DesktopMailboxes(
                  agreed to, while nothing is filed and `ohmail/*` does not exist. Reachable from
                  this pane's own Add mailbox: connect, then cancel at the consent screen.
                  `organizeConsentedAt` is the truth-condition and it is already on the facts. */
+              /* A MAILBOX THE SERVER IS NOT CHECKING leads with that and since when: "Last
+                 checked" read as news of the day before for 26 hours. */
               organizesHere(shown) ? (
                 <>
                   {t("desktopLastChecked", { when: when(shown.lastSyncAt) })}
                   {" · "}
                   {t("desktopRoleOrganizer")}
                 </>
-              ) : t("desktopLastChecked", { when: when(shown.lastSyncAt) })
+              ) : notCheckedOf(shown) ? t("notChecked", notCheckedOf(shown)!)
+                : t("desktopLastChecked", { when: when(shown.lastSyncAt) })
             }
             /* THE STATE CELL IS A LIVE REGION. It carries the one fact on the row a person most
                needs — whether the mail server can be reached at all — and it changes on its own,
@@ -2254,9 +2275,11 @@ export function DesktopMailboxes(
                in the row are untouched. */
             value={(() => {
               const s = stateOf(shown);
+              /* Nothing to say and nothing set aside: no state cell, rather than an empty one. */
+              if (s.said === "" && !((reach.rows[shown.id]?.setAside ?? 0) > 0)) return undefined;
               return (
                 <>
-                  <span className="mbx-reach" role="status">{s.said}</span>
+                  {s.said === "" ? null : <span className="mbx-reach" role="status">{s.said}</span>}
                   {s.when ? <> <span className="mbx-reach-when" role="note">{s.when}</span></> : null}
                   {/* MESSAGES SET ASIDE ON THIS COMPUTER: a second line, a count and nothing else. */}
                   {(reach.rows[shown.id]?.setAside ?? 0) > 0 ? (
@@ -2355,6 +2378,12 @@ export function DesktopMailboxes(
               failed here; this is a condition the mailbox has been carrying since it connected. */}
           {sendingProblem(shown)
             ? <p className="set-note-inline">{sendingProblem(shown)}</p>
+            : null}
+          {/* WHO IS NOT CHECKING IT, and that nothing is lost: the strip's sentence, for this
+              mailbox. ohmail Cloud or the server somebody runs; a paired computer's rows carry no
+              such word of a service, so that door says the row's line alone. */}
+          {notCheckedOf(shown) && (filer === "cloud" || filer === "server")
+            ? <p className="set-note-inline">{t(filerKey("notChecked", filer), notCheckedOf(shown)!)}</p>
             : null}
           {/* ── WHO ORGANIZES THIS ONE, UNDER THE ROW IT IS ABOUT ────────────────────────────
               Per row, because the pane holds several and each can be held by somebody different.

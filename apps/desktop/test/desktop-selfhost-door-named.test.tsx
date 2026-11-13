@@ -1,12 +1,15 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, createTranslator } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../../webapp/app/shell/locale";
+import { DEFAULT_LOCALE, fillFrom, setActiveCatalog, setActiveFormatZone } from "../../webapp/app/shell/locale";
 import { ManagedServiceContext } from "../../webapp/app/shell/managed-service";
 import { desktopFiler } from "../../webapp/app/shell/mail-state";
 import { DOOR_COPY } from "../src/door-copy.js";
@@ -16,6 +19,23 @@ import { DesktopAbout } from "../src/DesktopAbout.js";
 import { DesktopSettings } from "../src/DesktopSettings.js";
 import { DesktopScreening } from "../src/DesktopScreening.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
+import { readMailboxFactsVia } from "../src/mailbox-facts-wire.js";
+import { createCloudSidecar } from "../../sidecar/src/cloud-engine.js";
+import { hostedMailbox, mailboxList } from "../../sidecar/test/fixtures/hosted-mailbox.js";
+
+/* jsdom's `Blob` has no `arrayBuffer()`; PGlite hands its extensions over as one. A gap in the TEST
+   environment only, shimmed as `desktop-first-cloud-door.test.tsx` does. */
+if (typeof (Blob.prototype as { arrayBuffer?: unknown }).arrayBuffer !== "function") {
+  (Blob.prototype as unknown as { arrayBuffer: () => Promise<ArrayBuffer> }).arrayBuffer =
+    function (this: Blob) {
+      return new Promise<ArrayBuffer>((resolve, reject) => {
+        const fr = new FileReader();
+        fr.onload = () => resolve(fr.result as ArrayBuffer);
+        fr.onerror = () => reject(fr.error);
+        fr.readAsArrayBuffer(this);
+      });
+    };
+}
 
 /**
  * A DOOR IS NAMED BY THE SERVER IT READS. The self-hosted door records no flavor — only the paired
@@ -143,5 +163,168 @@ describe("the rail and the Screener's offline notes name the door's server", () 
     }));
     expect(text).toContain(managed ? en.desktopScreener.offlineNote : en.desktopScreener.offlineNoteServer);
     if (!managed) expect(text).not.toMatch(/Cloud/);
+  });
+});
+
+/**
+ * NEW MAIL IS LATE, IN THE WINDOW OF AN ACCOUNT ON A SERVER. The window reads its mailbox rows from
+ * the engine on this computer, never from the server, and hands the shared shell whether the door's
+ * server is the managed service. So the rows here are what that door REALLY answers: a hosted-door
+ * engine is started once over a server whose mailboxes each carry a different word, and the strip is
+ * drawn from its answer. It arrives when the server says it is not fetching, leaves when it says it
+ * is, names ohmail Cloud only behind the managed origin, and shows nothing where no word arrives.
+ *
+ * Mutations watched red: the engine's door not carrying the server's word (nothing is drawn on any
+ * door); the narrowing dropping `fetching` (the same); `isManagedDoor` answering true for the
+ * self-hosted door (it says Cloud).
+ */
+describe("the window's sync strip says when its server is not fetching new mail", () => {
+  const NOW = new Date("2026-11-13T12:00:00.000Z");
+  const SINCE = "2026-11-13T11:10:00.000Z";
+  const tEn = createTranslator({ locale: "en", messages: en as never, namespace: "sync" as never }) as unknown as
+    (key: string, values?: Record<string, string | number>) => string;
+  /** What the server says on each mailbox's row; `older` is a server that sends no such key. */
+  const SAID = {
+    behind: { behind: true, since: SINCE },
+    runs: { behind: false, since: NOW.toISOString() },
+    silent: null,
+    older: "absent",
+  } as const;
+  type Word = keyof typeof SAID;
+  const WORDS = Object.keys(SAID) as Word[];
+  const boxId = (word: Word): string => `cccccccc-cccc-4ccc-8ccc-ccccccccccc${WORDS.indexOf(word)}`;
+  /** One mailbox row per word, as the window's own door answered it. */
+  const door = {} as Record<Word, Record<string, unknown>>;
+
+  beforeAll(async () => {
+    const listed = WORDS.map((word, i) => {
+      const row = hostedMailbox(boxId(word), i === 0 ? "me@ohmail.test" : `${word}@ohmail.test`, { lastSyncAt: SINCE });
+      if (SAID[word] === "absent") {
+        const { fetching: _drop, ...rest } = row;
+        return rest as typeof row;
+      }
+      return { ...row, fetching: SAID[word] as typeof row.fetching };
+    });
+    const send = (v: unknown): Response =>
+      new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
+    const dataDir = mkdtempSync(join(realpathSync(tmpdir()), "ohmail-late-door-"));
+    const engine = await createCloudSidecar({
+      dataDir, cloudUrl: "https://cloud.test", address: "me@ohmail.test", tokens: { accessToken: "a", refreshToken: "r" },
+      fetchImpl: (async (input: string | URL | Request) => {
+        const path = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).pathname;
+        if (path.startsWith("/mailboxes")) return send(mailboxList(listed));
+        if (path.startsWith("/sync/snapshot")) return send({ asOfSeq: 0, changes: [], nextCursor: null, window: { days: 90, minRows: 5000 } });
+        if (path.startsWith("/sync")) {
+          return send({ changes: { creates: [], updates: [], moves: [], deletes: [] }, cursor: "end", hasMore: false, serverTime: new Date().toISOString() });
+        }
+        if (path.startsWith("/messages/bodies")) return send({ items: [], nextCursor: null });
+        return new Response("not found", { status: 404 });
+      }) as unknown as typeof fetch,
+      pollIntervalMs: 3_600_000,
+    });
+    try {
+      await engine.start();
+      const res = await engine.handle(new Request("http://sidecar/mailboxes", {
+        headers: { authorization: `Bearer ${engine.sessionToken}` },
+      }));
+      const items = ((await res.json()) as { items: Array<Record<string, unknown>> }).items;
+      for (const word of WORDS) door[word] = items.find((r) => r.id === boxId(word))!;
+    } finally {
+      await engine.stop().catch(() => undefined);
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  let served: Record<string, unknown>[] = [];
+
+  afterEach(() => { setActiveFormatZone(null); vi.useRealTimers(); });
+
+  async function strip(status: EngineStatus): Promise<{ said: () => string; nextPoll: () => Promise<void> }> {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    setActiveFormatZone("UTC");
+    const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { EngineProvider } = await import("../../webapp/app/shell/engine");
+    const { MailStateProvider, FACTS_POLL_MS } = await import("../../webapp/app/shell/MailStateProvider");
+    const { SyncBar } = await import("../../webapp/app/shell/SyncBar");
+    const store = new MemoryMirrorStore();
+    await store.load();
+    const engine = new OhmailEngine({
+      store, now: () => NOW,
+      adapter: {
+        sync: async () => ({
+          changes: { creates: [], updates: [], moves: [], deletes: [] },
+          cursor: store.getCursor(), hasMore: false, serverTime: NOW.toISOString(),
+        }),
+        mutate: async () => ({ changes: [], seq: null }),
+        fetchBody: async () => null,
+      } as never,
+    });
+    /* The window's own read of the list, over the rows its door answered. */
+    const probe = () => readMailboxFactsVia(async () =>
+      new Response(JSON.stringify({ items: served }), { status: 200, headers: { "content-type": "application/json" } }));
+    hostEl = document.createElement("div");
+    document.body.append(hostEl);
+    root = createRoot(hostEl);
+    const settle = async (): Promise<void> => {
+      for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
+    };
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, {
+        locale: "en", messages: en as never, timeZone: "UTC", now: NOW,
+        children: h(ManagedServiceContext.Provider, {
+          value: isManagedDoor(status),
+          children: h(EngineProvider as never, {
+            demo: false, engine,
+            children: h(MailStateProvider as never, { probe, mirrored: 12, children: h(SyncBar, { variant: "rail" }) } as never),
+          } as never),
+        }),
+      } as never));
+    });
+    await settle();
+    return {
+      said: () => hostEl!.querySelector('[role="status"]')?.textContent ?? "",
+      nextPoll: async () => {
+        await act(async () => { await vi.advanceTimersByTimeAsync(FACTS_POLL_MS + 50); });
+        await settle();
+      },
+    };
+  }
+
+  it("the door answered each mailbox with the server's own word, or with none", () => {
+    expect(door.behind.fetching).toEqual(SAID.behind);
+    expect(door.runs.fetching).toEqual(SAID.runs);
+    expect(door.silent.fetching).toBeNull();
+    expect(door.older.fetching).toBeNull();
+  });
+
+  it("the managed door: it arrives with the server's time, and leaves when fetching runs again", async () => {
+    served = [door.behind];
+    const win = await strip(MANAGED);
+    expect(win.said()).toContain(tEn("behindTitle"));
+    expect(win.said()).toContain(tEn("behindLineCloud", { hasSince: "yes", since: "11:10" }));
+    served = [door.runs];
+    await win.nextPoll();
+    expect(hostEl!.textContent ?? "").toBe("");
+  });
+
+  it("a self-hosted door names your ohmail server, never ohmail Cloud", async () => {
+    served = [door.behind];
+    const win = await strip(SELF_HOSTED);
+    expect(win.said()).toContain(tEn("behindLineServer", { hasSince: "yes", since: "11:10" }));
+    expect(hostEl!.textContent ?? "").not.toMatch(/Cloud/);
+  });
+
+  /* A computer that organizes on its own reads the same store with no server behind it: its rows
+     carry `null`, as the rows of a server that sends no word do. */
+  it.each([
+    ["this computer organizes on its own", { state: "serving", mode: "local" } as EngineStatus, "older"],
+    ["a server that does not say", MANAGED, "silent"],
+    ["an older server sends no such key", MANAGED, "older"],
+  ] as Array<[string, EngineStatus, Word]>)("says nothing when %s", async (_what, status, word) => {
+    served = [door[word]];
+    const win = await strip(status);
+    await win.nextPoll();
+    expect(hostEl!.textContent ?? "").toBe("");
   });
 });

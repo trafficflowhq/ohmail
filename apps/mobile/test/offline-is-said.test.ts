@@ -84,11 +84,11 @@ describe("offline is said where the person looks", () => {
     const said: string[] = [];
     let rung = 0;
     const ring = async (): Promise<void> => { rung += 1; };
-    await pullRound("offline", ring, (r) => said.push(r.say));
+    await pullRound("offline", ring, (r) => said.push(r.say), null);
     expect(rung).toBe(0);
     expect(said).toEqual(["networkOffline"]);
-    await pullRound("online", ring, (r) => said.push(r.say));
-    await pullRound("unknown", ring, (r) => said.push(r.say));
+    await pullRound("online", ring, (r) => said.push(r.say), null);
+    await pullRound("unknown", ring, (r) => said.push(r.say), null);
     expect(rung).toBe(2);
     expect(said).toEqual(["networkOffline"]);
     expect(read("../src/state/pull.ts")).toContain("pullRound(networkNow(),");
