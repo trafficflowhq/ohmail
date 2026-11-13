@@ -20,7 +20,7 @@ id	claim	status	tests	verdict	waits
 6a	Demo and sample mail is invented: no real person's data and no real brand.	not yet run	packages/fixtures/test/shape.test.ts	docs/invariant-verdicts/6a.json	-
 6b	No message is ever replaced by a count or a 'more' placeholder.	not yet run	packages/fixtures/test/shape.test.ts apps/mobile/test/no-collapse.test.ts	docs/invariant-verdicts/6b.json	-
 7	Views take colour and shadow from the design tokens and match the design reference.	no test	-	docs/invariant-verdicts/7.json	restatement
-8a	A row of this table counts as bitten only when its verdict records the test red with the deciding line mutated and green restored.	not yet run	test/invariant-table.test.ts	docs/invariant-verdicts/8a.json	-
+8a	A row of this table counts as bitten only when its verdict records the test red with the deciding line mutated and green restored.	bitten	test/invariant-table.test.ts	docs/invariant-verdicts/8a.json	-
 8b	A console error fails the test that caused it.	no test	-	docs/invariant-verdicts/8b.json	-
 8c	Self-contained surfaces make no external request; the suite fails any test that tries one.	not yet run	test/no-external-network-reads-the-lookup.test.ts	docs/invariant-verdicts/8c.json	-
 8d	No test is deleted to make a change pass, and the suite never shrinks unnoticed.	no test	-	docs/invariant-verdicts/8d.json	-
