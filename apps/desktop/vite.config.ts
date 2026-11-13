@@ -98,6 +98,9 @@ const BASE_MESSAGE_NAMESPACES = [
   // `@ohmail/app/text`). No shell hands the calendar in yet; listed for the reason `body` is: the guard compares what
   // the sources READ.
   "calendar", "event", "week", "day", "month", "year", "agenda", "calsearch",
+  // The calendar's invitations, From mail, setup, settings panes and its parts beside mail (the folders of the same
+  // names under `packages/app/src`), for the same reason.
+  "invitations", "frommail", "calsetup", "calsettings", "calmail",
   // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.

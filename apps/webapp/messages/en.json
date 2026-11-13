@@ -5237,6 +5237,194 @@
     "allDay": "all day",
     "span": "{from}–{to}"
   },
+  "invitations": {
+    "title": "Invitations",
+    "close": "Close",
+    "unreadable": "The calendar cannot be read on this device.",
+    "noZone": "The invitations cannot be listed: this device does not know its time zone.",
+    "group": {
+      "toAnswer": "To answer",
+      "changed": "Changed",
+      "answered": "Answered"
+    },
+    "answer": {
+      "label": "Answer",
+      "accepted": "Yes",
+      "tentative": "Maybe",
+      "declined": "No"
+    },
+    "cancelled": "cancelled",
+    "mark": "oh",
+    "allAnswered": "{count, plural, one {# answered} other {# answered}}",
+    "allDay": "all day",
+    "span": "{from}–{to}",
+    "from": "From",
+    "calendar": "Calendar",
+    "sendAgain": "Send again",
+    "letGo": "Let go"
+  },
+  "frommail": {
+    "title": "From mail",
+    "unreadable": "The calendar cannot be read on this device.",
+    "noZone": "Events from mail cannot be listed: this device does not know its time zone.",
+    "empty": "Nothing found in mail",
+    "add": "Add",
+    "addAll": "Add {count, number}",
+    "addedMany": "{count, plural, one {# event added} other {# events added}}",
+    "show": "Show in calendar",
+    "onCalendar": "On your calendar",
+    "waiting": "{count, plural, =0 {Nothing to add} one {# to add} other {# to add}}",
+    "words": "In the letter",
+    "goesTo": "Goes to",
+    "close": "Close",
+    "allDay": "all day",
+    "span": "{from}–{to}"
+  },
+  "calsetup": {
+    "leave": "Not now",
+    "back": "Back",
+    "continue": "Continue",
+    "unread": "The calendar cannot be read on this device",
+    "way": {
+      "sentence": "My calendar is with <way></way>",
+      "label": "Where your calendar is",
+      "group": "Ways to connect a calendar",
+      "none": "No calendar can be connected from here",
+      "icloud": "iCloud",
+      "caldav": "Another CalDAV server",
+      "ics": "A subscription"
+    },
+    "signin": {
+      "icloud": "I’m <user></user> with app password <password></password>",
+      "caldav": "My server is <server></server>, I’m <user></user> with password <password></password>",
+      "ics": "I subscribe to <address></address>",
+      "connect": "Connect",
+      "asking": "Asking",
+      "empty": "Every blank needs filling. Nothing was sent.",
+      "notSent": "ohmail’s server did not answer. Nothing was connected."
+    },
+    "blank": {
+      "icloud": {
+        "user": "Apple Account email address",
+        "userHint": "email address",
+        "password": "App-specific password",
+        "passwordHint": "type it"
+      },
+      "caldav": {
+        "server": "The server’s address",
+        "serverHint": "its address",
+        "user": "User name",
+        "userHint": "user name",
+        "password": "Password",
+        "passwordHint": "type it"
+      },
+      "ics": {
+        "address": "The calendar’s address",
+        "addressHint": "its address"
+      }
+    },
+    "calendars": {
+      "sentence": "My calendars",
+      "group": "Calendars",
+      "show": "Show {name}",
+      "notSaved": "Not saved.",
+      "checking": "Reading your calendars",
+      "checkingLine": "This can take a moment. You can leave: they arrive by themselves.",
+      "refused": "Nothing was connected",
+      "again": "Try again"
+    },
+    "default": {
+      "sentence": "New events go to <calendar></calendar>",
+      "label": "New events go to",
+      "none": "a calendar",
+      "notSaved": "Not saved."
+    },
+    "wait": {
+      "counts": "{events, plural, one {# event} other {# events}} in {calendars, plural, one {# calendar} other {# calendars}}",
+      "open": "Open the calendar"
+    },
+    "fault": {
+      "signInRefused": "That sign-in was not accepted. iCloud takes an app-specific password, made at Apple, not the account’s own.",
+      "signInAgain": "The sign-in is no longer accepted. Sign in again.",
+      "forbidden": "This account may not read the server’s calendars.",
+      "notFound": "No calendar was found at that address.",
+      "noService": "That server offers no calendars.",
+      "addressInvalid": "That is not an address a calendar can be read from.",
+      "addressRefused": "Calendars are not read from that address.",
+      "hostUnknown": "That server could not be found.",
+      "unreachable": "The server did not answer. It is tried again by itself.",
+      "unreadable": "What the server sent could not be read.",
+      "unknown": "The calendar could not be connected."
+    }
+  },
+  "calsettings": {
+    "unread": "The calendar cannot be read on this device.",
+    "noSettings": "Settings is not here on this device",
+    "notSaved": "Not saved.",
+    "notChecked": "Not checked.",
+    "notRemoved": "Not removed.",
+    "way": {
+      "icloud": "iCloud",
+      "caldav": "CalDAV",
+      "ics": "Subscription",
+      "google": "Google",
+      "microsoft": "Microsoft 365"
+    },
+    "accounts": {
+      "add": "Add a calendar account",
+      "none": "No calendar account",
+      "noneShort": "None",
+      "signInAgain": "Sign in again",
+      "state": {
+        "inStep": "In step",
+        "signedOut": "Signed out",
+        "failing": "Not checked",
+        "removing": "Removing"
+      },
+      "calendarCount": "{count, plural, one {# calendar} other {# calendars}}",
+      "checkedAt": "Checked {when}",
+      "calendars": "Calendars",
+      "show": "Show {name}",
+      "newEventsHere": "New events go here",
+      "viewOnly": "View only",
+      "checked": "Checked",
+      "never": "Not yet",
+      "checkNow": "Check now",
+      "connectedWith": "Connected with",
+      "remove": "Remove",
+      "removeAsk": "Remove {name}?",
+      "rename": "Rename here",
+      "nameHere": "Name here",
+      "save": "Save"
+    },
+    "view": {
+      "newEvents": "New events go to",
+      "noWritable": "No calendar to write to",
+      "week": "Week",
+      "weekNumbers": "Week numbers",
+      "on": "On",
+      "off": "Off",
+      "hours": "Hours in view",
+      "from": "From",
+      "to": "To",
+      "endOfDay": "Midnight",
+      "time": "Time",
+      "zone": "Time zone",
+      "zoneNote": "Follows this device.",
+      "secondZone": "Second time zone",
+      "noSecondZone": "None",
+      "findZone": "Find a time zone"
+    }
+  },
+  "calmail": {
+    "today": "Today",
+    "now": "now",
+    "allDay": "all day",
+    "busy": "Busy",
+    "toAnswer": "To answer",
+    "more": "+{count}",
+    "coming": "Coming up with {name}"
+  },
   "calendar": {
     "landmark": "Calendar",
     "unreadable": "The calendar cannot be read on this device.",

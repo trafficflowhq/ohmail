@@ -1,0 +1,19 @@
+{
+  "frommail": {
+    "title": "From mail",
+    "unreadable": "The calendar cannot be read on this device.",
+    "noZone": "Events from mail cannot be listed: this device does not know its time zone.",
+    "empty": "Nothing found in mail",
+    "add": "Add",
+    "addAll": "Add {count, number}",
+    "addedMany": "{count, plural, one {# event added} other {# events added}}",
+    "show": "Show in calendar",
+    "onCalendar": "On your calendar",
+    "waiting": "{count, plural, =0 {Nothing to add} one {# to add} other {# to add}}",
+    "words": "In the letter",
+    "goesTo": "Goes to",
+    "close": "Close",
+    "allDay": "all day",
+    "span": "{from}–{to}"
+  }
+}
