@@ -7,7 +7,8 @@ import { runMigrations } from "../src/admin.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import { schema, alertState, alertPassRuns, workerHeartbeats } from "../src/schema.js";
 import {
-  runAlertPass, writeHeartbeat, refreshHeartbeat, alertDriverStatuses, listOpenAlerts, type Alert, type AlertSink,
+  runAlertPass, writeHeartbeat, refreshHeartbeat, claimHeartbeat, clearHeartbeat, alertDriverStatuses, listOpenAlerts,
+  type Alert, type AlertSink,
 } from "../src/alerts.js";
 import { readOrganizerStanding } from "../src/organizer-cycle.js";
 
@@ -201,6 +202,82 @@ describe.skipIf(!AVAILABLE)("the external dead-man's switch, on real Postgres", 
     const firstPass = new Date(back.getTime() + MIN);
     await writeHeartbeat(db, { ...pulse, instanceId: "wkr-back", lastCycleAt: firstPass, startedAt: back }, firstPass);
     expect(await readOrganizerStanding(db, firstPass)).toEqual({ lastCycleAt: iso(firstPass), behind: false, since: iso(firstPass) });
+  });
+
+  /**
+   * WHO MAY WRITE THE SHARD'S ROW. The row is what the write fence reads, so it has to follow the lock:
+   * it is claimed once, by the session that holds the shard's lock, and from then on only renewed by
+   * the instance it names. A renewal that could claim let a leader whose lock was long gone take the
+   * row back from its lawful successor.
+   */
+  const pulseOf = (instanceId: string) => ({
+    shardIndex: SHARD, instanceId, shards: 1, mailboxes: 2, expected: 2, accounts: 1, quarantined: 0,
+    degraded: false, aiCircuitOpenSince: null, lastCycleAt: null, startedAt: ago(MIN),
+  });
+  const shardRow = async (): Promise<typeof workerHeartbeats.$inferSelect | undefined> =>
+    (await db.select().from(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, SHARD)))[0];
+
+  it("a renewal moves only the row that names its own instance, and says whether it did", async () => {
+    await db.delete(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, SHARD));
+    await writeHeartbeat(db, pulseOf("wkr-first"), NOW);
+    expect(await refreshHeartbeat(db, pulseOf("wkr-first"), plus(1_000))).toBe(true);
+
+    // A successor claims the shard. The first one's renewal finds another holder: it writes
+    // nothing and says so, which is how that instance learns it no longer leads.
+    await writeHeartbeat(db, pulseOf("wkr-next"), plus(2_000));
+    expect(await refreshHeartbeat(db, { ...pulseOf("wkr-first"), mailboxes: 9 }, plus(3_000))).toBe(false);
+    expect(await shardRow()).toMatchObject({ instanceId: "wkr-next", leader: true, mailboxes: 2, beatAt: plus(2_000) });
+    expect(await refreshHeartbeat(db, pulseOf("wkr-next"), plus(4_000))).toBe(true);
+
+    // …and a row its own instance has surrendered is not renewed either.
+    await clearHeartbeat(db, { shardIndex: SHARD, instanceId: "wkr-next" }, plus(5_000));
+    expect(await refreshHeartbeat(db, pulseOf("wkr-next"), plus(6_000))).toBe(false);
+    expect(await shardRow()).toMatchObject({ instanceId: "wkr-next", leader: false });
+  });
+
+  it("a claim lands only for the session that holds the shard's lock", async () => {
+    await db.delete(workerHeartbeats).where(eq(workerHeartbeats.shardIndex, SHARD));
+    const key = 7_700_000_000_077n;                    // a lock key no worker uses
+    const MARK = 770_000_077;                          // …and the first key of a session's mark, likewise
+    const holder = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+    const other = postgres(PG_TEST_URL, { max: 1, onnotice: () => {} });
+    try {
+      const [held] = await holder<{ locked: boolean; marked: boolean; pid: number }[]>`
+        SELECT pg_try_advisory_lock(${key.toString()}::bigint) AS locked, pg_try_advisory_lock(${MARK}, 1) AS marked,
+          pg_backend_pid() AS pid`;
+      const [bystander] = await other<{ pid: number }[]>`SELECT pg_backend_pid() AS pid`;
+      expect(held).toMatchObject({ locked: true, marked: true });
+      const mine = { pid: Number(held!.pid), key, mark: [MARK, 1] } as const;
+
+      // A session that does not hold the lock claims nothing, whatever its process believes.
+      expect(await claimHeartbeat(db, pulseOf("wkr-other"), { ...mine, pid: Number(bystander!.pid) }, NOW)).toBe(false);
+      expect(await shardRow()).toBeUndefined();
+      // The holder's claim lands…
+      expect(await claimHeartbeat(db, pulseOf("wkr-holder"), mine, NOW)).toBe(true);
+      expect(await shardRow()).toMatchObject({ instanceId: "wkr-holder", leader: true });
+
+      // A session pooler hands a backend on to its next client, pid unchanged. That client takes the
+      // lock on it under a mark of its own: a claim of the first session is not this one's to make.
+      await holder`SELECT pg_advisory_unlock_all()`;
+      await holder`SELECT pg_try_advisory_lock(${key.toString()}::bigint), pg_try_advisory_lock(${MARK}, 2)`;
+      expect(await claimHeartbeat(db, pulseOf("wkr-handed-on"), mine, plus(500))).toBe(false);
+      expect(await shardRow()).toMatchObject({ instanceId: "wkr-holder", beatAt: NOW });
+
+      // Its session ends and a successor claims. A late claim by the old holder is refused and
+      // changes nothing: the lock it names is no longer its own.
+      await holder.end({ timeout: 5 });
+      for (let i = 0; i < 100; i++) {
+        const [left] = await other<{ n: number }[]>`SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND pid = ${Number(held!.pid)}`;
+        if (left!.n === 0) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      await writeHeartbeat(db, pulseOf("wkr-next"), plus(1_000));
+      expect(await claimHeartbeat(db, pulseOf("wkr-holder"), mine, plus(2_000))).toBe(false);
+      expect(await shardRow()).toMatchObject({ instanceId: "wkr-next", leader: true, beatAt: plus(1_000) });
+    } finally {
+      await holder.end({ timeout: 5 });
+      await other.end({ timeout: 5 });
+    }
   });
 
   it("TWO DRIVERS, ONE PAGE — a pass cannot notify while another is still delivering", async () => {

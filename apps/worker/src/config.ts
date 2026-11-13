@@ -214,6 +214,11 @@ export const DEFAULT_SERVING_NOTHING_MAX_MS = 120_000;
  */
 export const MIN_SERVING_NOTHING_MAX_MS = 60_000;
 /**
+ * The ceiling on `TF_STANDBY_RETRY_MS`: the serving bound's own floor, so a spare asks for the lock at
+ * least once inside any serving bound it can be given. It is also far below what a timer holds.
+ */
+export const MAX_STANDBY_RETRY_MS = MIN_SERVING_NOTHING_MAX_MS;
+/**
  * How stale the leader's last COMPLETED cycle may go, with mailboxes connected, before `/health`
  * reports `degraded`. This bound never answers 503 ({@link DEFAULT_STUCK_CYCLE_MAX_MS} does): the
  * platform gates a deployment on this endpoint, so a slow cycle must not refuse a deploy; what it must stop doing is hiding. The blind
@@ -292,6 +297,24 @@ export const DEFAULT_SYNC_BLOCK_GRACE_MS = 240_000;
 export const DEFAULT_LEASE_UNAVAILABLE_DETACH_MS = 120_000;
 /** How often the leader proves it still HOLDS its advisory lock (split-brain guard). */
 export const DEFAULT_LOCK_HEARTBEAT_MS = 10_000;
+/**
+ * How many heartbeats in a row a leader may ask for a proof of its lock and get none before it treats
+ * itself as not sure and stops leading, exactly as on a lost lock. A session that stays open while
+ * nothing answers on it (a path that drops packets) never closes and never answers "not held", so
+ * without this bound its leader believed for good while a successor took the lock. THREE: one answer
+ * may come late and one rejected check is asked again at the next heartbeat, both inside the bound;
+ * a session that cannot answer one read of `pg_locks` in thirty seconds is not carrying the cycle's
+ * statements either.
+ */
+export const LOCK_UNPROVEN_HEARTBEATS = 3;
+/**
+ * `TF_LOCK_HEARTBEAT_MS`'s band. At the top, the heartbeats a leader may go unproven still fit in the
+ * pager's window (`leaderStaleMs`, two minutes), so a leader that is not sure stops at about the time
+ * the pager says nobody leads; one pulse a heartbeat also keeps a working leader's row far inside
+ * that window. The floor keeps the proof bound a bound: at zero a leader would stand down at once.
+ */
+export const MIN_LOCK_HEARTBEAT_MS = 1_000;
+export const MAX_LOCK_HEARTBEAT_MS = DEFAULT_ALERT_THRESHOLDS.leaderStaleMs / LOCK_UNPROVEN_HEARTBEATS;
 /** First per-mailbox retry delay after a quarantine; doubles up to 16× (base 1 min → 16 min). */
 export const DEFAULT_MAILBOX_RETRY_MS = 60_000;
 /** Consecutive runtime sync failures before a mailbox is detached + quarantined. */
@@ -375,7 +398,8 @@ export interface WorkerConfig {
   shardIndex?: number;
   /** Health server port. 0 ⇒ an ephemeral port (tests). */
   healthPort?: number;
-  /** Standby lock-retry interval. */
+  /** Standby lock-retry interval. `loadConfig` caps it at {@link MAX_STANDBY_RETRY_MS}; a direct
+   *  config (tests) is unclamped. */
   standbyRetryMs?: number;
   /** How long an instance may serve nothing before `/health` reports 503.
    *  Default {@link DEFAULT_SERVING_NOTHING_MAX_MS}; `loadConfig` floors it at
@@ -402,7 +426,9 @@ export interface WorkerConfig {
   rosterIntervalMs?: number;
   /** Letters one slice of the agree's sweep moves; absent is the core's bound. Test-only. */
   agreeSweepSlice?: number;
-  /** How often the leader proves it still holds its advisory lock (split-brain guard). */
+  /** How often the leader proves it still holds its advisory lock (split-brain guard); after
+   *  {@link LOCK_UNPROVEN_HEARTBEATS} of them without a proof it stops leading. `loadConfig` keeps it
+   *  inside {@link MIN_LOCK_HEARTBEAT_MS} to {@link MAX_LOCK_HEARTBEAT_MS}; a direct config is unclamped. */
   lockHeartbeatMs?: number;
   /**
    * Mail 0029: how long a mailbox this process is NOT serving may stay unexplained before the worker
@@ -547,7 +573,9 @@ export interface WorkerConfig {
    * Which process this is, in log lines and in the `worker_heartbeats` row. The platform supplies
    * `RAILWAY_REPLICA_ID`; falls back to the hostname, then to a random suffix, because an
    * unidentified instance makes "which one wrote this beat" unanswerable during a deploy —
-   * the exact window in which two instances exist.
+   * the exact window in which two instances exist. In the row it is followed by `:` and eight hex
+   * that are one takeover's own: the row is renewed and the write fence passed by that name, and
+   * this id alone is a host's, not a leadership's.
    */
   instanceId?: string;
   /** `production` / `staging` — the first word of every alert, so nobody pages on staging. */
@@ -827,6 +855,35 @@ function servingNothingMaxMsFrom(env: NodeJS.ProcessEnv): number {
       `TF_SERVING_NOTHING_MAX_MS must be >= ${MIN_SERVING_NOTHING_MAX_MS} (the deploy ` +
       `health-check timeout); a shorter bound can 503 inside the window the platform is still waiting ` +
       `for the deployment's first 200 (got ${ms})`);
+  }
+  return ms;
+}
+
+/**
+ * `TF_LOCK_HEARTBEAT_MS` inside its band ({@link MAX_LOCK_HEARTBEAT_MS}), refused by name outside it.
+ * It had no ceiling: a value above what a timer holds made the leader verify its lock every millisecond.
+ */
+function lockHeartbeatMsFrom(env: NodeJS.ProcessEnv): number {
+  const ms = optInt(env, "TF_LOCK_HEARTBEAT_MS", DEFAULT_LOCK_HEARTBEAT_MS);
+  if (ms < MIN_LOCK_HEARTBEAT_MS || ms > MAX_LOCK_HEARTBEAT_MS) {
+    throw new WorkerConfigError("TF_LOCK_HEARTBEAT_MS",
+      `TF_LOCK_HEARTBEAT_MS must be between ${MIN_LOCK_HEARTBEAT_MS} and ${MAX_LOCK_HEARTBEAT_MS}: a leader ` +
+      `stops leading after ${LOCK_UNPROVEN_HEARTBEATS} heartbeats without a proof of its lock, and those ` +
+      `must fit in the two minutes after which the pager says nobody leads (got ${ms})`);
+  }
+  return ms;
+}
+
+/**
+ * `TF_STANDBY_RETRY_MS` at or under {@link MAX_STANDBY_RETRY_MS}, refused by name above it. It had no
+ * ceiling either: above what a timer holds, a spare asked for the lock every millisecond.
+ */
+function standbyRetryMsFrom(env: NodeJS.ProcessEnv): number {
+  const ms = optInt(env, "TF_STANDBY_RETRY_MS", DEFAULT_STANDBY_RETRY_MS);
+  if (ms > MAX_STANDBY_RETRY_MS) {
+    throw new WorkerConfigError("TF_STANDBY_RETRY_MS",
+      `TF_STANDBY_RETRY_MS must be at most ${MAX_STANDBY_RETRY_MS}: a spare has to ask for the leader lock ` +
+      `at least once inside the shortest serving bound (got ${ms})`);
   }
   return ms;
 }
@@ -1211,10 +1268,10 @@ export function loadConfig(
     shards,
     shardIndex,
     healthPort: optInt(env, "PORT", DEFAULT_HEALTH_PORT),
-    standbyRetryMs: optInt(env, "TF_STANDBY_RETRY_MS", DEFAULT_STANDBY_RETRY_MS),
+    standbyRetryMs: standbyRetryMsFrom(env),
     servingNothingMaxMs: servingNothingMaxMsFrom(env),
     rosterIntervalMs,
-    lockHeartbeatMs: optInt(env, "TF_LOCK_HEARTBEAT_MS", DEFAULT_LOCK_HEARTBEAT_MS),
+    lockHeartbeatMs: lockHeartbeatMsFrom(env),
     syncBlockGraceMs,
     leaseUnavailableDetachMs,
     mailboxRetryMs: optInt(env, "TF_MAILBOX_RETRY_MS", DEFAULT_MAILBOX_RETRY_MS),
