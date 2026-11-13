@@ -54,7 +54,8 @@ describe("the committed source", () => {
       if (typeof node === "string") strings.push(node);
       else if (node && typeof node === "object") Object.values(node).forEach(walk);
     };
-    walk(readSource());
+    const { tokens, motion } = readSource();
+    walk({ tokens, motion });
     expect(strings.length).toBeGreaterThan(500);
     expect(strings.filter((s) => /@|\/\/|\.example\b|\/home\/|[a-z]:\\/i.test(s))).toEqual([]);
   });

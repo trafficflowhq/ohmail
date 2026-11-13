@@ -5,6 +5,7 @@ export type SourceBlock = Record<string, SourceEntry>;
 export interface Source {
   tokens: Record<string, any>;
   motion: Record<string, any>;
+  fonts: Record<string, any>;
 }
 export interface Block {
   path: string;
