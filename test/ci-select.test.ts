@@ -50,6 +50,10 @@ describe("the scope: who runs the whole suite", () => {
   it("selects for a maintainer's pr/ branch, and runs every other run whole with its reason", () => {
     expect(eventWhole(pr())).toBeNull();
     expect(decideScope({ root: ROOT, ctx: pr(), changes: [M("apps/webapp/app/views/OhboxView.tsx")] }).scope).toBe("selected");
+    /* next, the second long-lived line, is a base like main: a maintainer's pull request into it runs the selected set. */
+    const intoNext = pr({ base: { ref: "next" } });
+    expect(eventWhole(intoNext)).toBeNull();
+    expect(decideScope({ root: ROOT, ctx: intoNext, changes: [M("apps/webapp/app/views/OhboxView.tsx")] }).scope).toBe("selected");
     const cases: Array<[string, Ctx, RegExp]> = [
       ["schedule", pr({}, { event_name: "schedule" }), /a schedule run is whole/],
       ["dispatch", pr({}, { event_name: "workflow_dispatch" }), /a workflow_dispatch run is whole/],
@@ -61,7 +65,8 @@ describe("the scope: who runs the whole suite", () => {
       ["a [bot] triggering actor", pr({}, { triggering_actor: "renovate[bot]" }), /a bot started the run/],
       ["a contributor", pr({ author_association: "CONTRIBUTOR" }), /not an owner, member or collaborator/],
       ["a docs/x head", pr({ head: { ref: "docs/x", repo: { full_name: "trafficflowhq/ohmail" } } }), /not a pr\/ branch/],
-      ["a base that is not main", pr({ base: { ref: "release" } }), /the base is not main/],
+      ["a base that is neither main nor next", pr({ base: { ref: "release" } }), /the base is not main or next/],
+      ["a base that only starts like next", pr({ base: { ref: "next-2" } }), /the base is not main or next/],
     ];
     for (const [what, ctx, why] of cases) {
       const s = decideScope({ root: ROOT, ctx, changes: [M("apps/webapp/app/views/OhboxView.tsx")] });

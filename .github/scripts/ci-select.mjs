@@ -1,7 +1,7 @@
 /**
  * WHAT A PULL REQUEST'S ci.yml RUN TESTS. A maintainer's pull request runs the files its diff can reach;
  * everything else runs the whole suite: the nightly, dispatch, a batch branch (pr/batch-*), a fork's or a
- * bot's pull request, and any diff that touches the harness. Verbs:
+ * bot's pull request, a pull request into any branch but main and next, and any diff that touches the harness. Verbs:
  *
  *   scope    whole or selected, from the event and the diff (git diff HEAD^1 HEAD on the merge commit).
  *            Node built-ins only: no module of the tree it judges is loaded before it decides.
@@ -44,6 +44,8 @@ export const PATH_OK = /^[A-Za-z0-9@._/+-]+$/;
  *  whole segment, `(name)` of the same characters. It never reaches a plan. */
 export const TREE_PATH_OK = /^(?:[A-Za-z0-9@._/+-]|(?<=^|\/)\([A-Za-z0-9@._+-]+\)(?=\/|$))+$/;
 const MAINTAINER = ["OWNER", "MEMBER", "COLLABORATOR"];
+/** The long-lived lines a lane lands on: main and next, the second line. A pull request into any other branch runs whole. */
+const BASES = ["main", "next"];
 
 const oneLine = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 400);
 
@@ -119,7 +121,7 @@ export function eventWhole(ctx) {
   if (pr.user?.type !== "User") return "the pull request was not opened by a person";
   if (!MAINTAINER.includes(pr.author_association)) return "the author is not an owner, member or collaborator";
   if (String(ctx.actor).endsWith("[bot]") || String(ctx.triggering_actor).endsWith("[bot]")) return "a bot started the run";
-  if (pr.base?.ref !== "main") return "the base is not main";
+  if (!BASES.includes(pr.base?.ref)) return "the base is not main or next";
   return null;
 }
 

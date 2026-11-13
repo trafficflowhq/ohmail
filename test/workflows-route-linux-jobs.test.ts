@@ -9,7 +9,8 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
  * The suite's jobs and the two engine jobs carry one `runs-on:` expression, byte for byte. It names the maintainers'
  * self-hosted runners (`self-hosted`, `ohmail-zorin`) only when the repository variable OHMAIL_LINUX_RUNNER reads
  * `zorin`, the run is this repository's own, no bot started it (neither `github.actor` nor `github.triggering_actor`
- * ends in `[bot]`), and it is the nightly schedule, a push to main, a dispatch on main or on a `pr/` branch (a
+ * ends in `[bot]`), and it is the nightly schedule, a push to main or to `next` (the second long-lived line, protected as main is),
+ * a dispatch on main, on `next` (its nightly: a schedule fires on the default branch alone) or on a `pr/` branch (a
  * dispatch needs write access: the release's whole run on its bump branch), or a maintainer's pull request: its head
  * a `pr/` branch of this repository, opened by a User who is OWNER, MEMBER or COLLABORATOR — the door guard.yml keeps
  * (.github/scripts/assert-pr-guard.sh). Everything else runs on GitHub's `ubuntu-24.04`, pinned: a fork's pull
@@ -28,7 +29,7 @@ import { evalIf, evalValue, type IfContext } from "./support/workflow-if.js";
  *   · the expression routes as above, and each of its guards is watched failing.
  */
 export const ROUTE =
-  "${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)) && fromJSON('[\"self-hosted\",\"ohmail-zorin\"]') || 'ubuntu-24.04' }}";
+  "${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)) && fromJSON('[\"self-hosted\",\"ohmail-zorin\"]') || 'ubuntu-24.04' }}";
 const SELF_HOSTED = ["self-hosted", "ohmail-zorin"];
 
 /** The routed jobs by file, with the names they keep (five of them are required contexts). */
@@ -136,6 +137,8 @@ const TO_SELF: Array<[string, IfContext]> = [
   ["a push to main", run("push", "refs/heads/main", null)],
   ["the nightly schedule", run("schedule", "refs/heads/main", null)],
   ["a dispatch on main", run("workflow_dispatch", "refs/heads/main", null)],
+  ["a push to next, the second line", run("push", "refs/heads/next", null)],
+  ["a dispatch on next (its nightly)", run("workflow_dispatch", "refs/heads/next", null)],
   ["a dispatch on a release's bump branch", run("workflow_dispatch", "refs/heads/pr/release-0.30.6", null)],
 ];
 const TO_HOSTED: Array<[string, IfContext]> = [
@@ -152,6 +155,11 @@ const TO_HOSTED: Array<[string, IfContext]> = [
   ["a v* tag", run("push", "refs/tags/v1.2.3", null)],
   ["an android-v* tag", run("push", "refs/tags/android-v1.2.3", null)],
   ["a push to another branch", run("push", "refs/heads/pr/x", null)],
+  ["a push to a branch that only starts like the second line's", run("push", "refs/heads/next-2", null)],
+  ["a push to a release branch", run("push", "refs/heads/release/x", null)],
+  ["a push to next by an app", run("push", "refs/heads/next", null, { "github.actor": "an-app[bot]", "github.triggering_actor": "an-app[bot]" })],
+  ["a dispatch on a branch that only starts like the second line's", run("workflow_dispatch", "refs/heads/next-2", null)],
+  ["a dispatch on a release branch", run("workflow_dispatch", "refs/heads/release/x", null)],
   ["a merge group", run("merge_group", "refs/heads/gh-readonly-queue/main/pr-7-abc", null)],
   ["a dispatch on a branch outside pr/", run("workflow_dispatch", "refs/heads/docs/x", null)],
   ["a dispatch on a v* tag", run("workflow_dispatch", "refs/tags/v1.2.3", null)],
@@ -254,11 +262,20 @@ describe("the Linux test jobs and the switch to the self-hosted runners", () => 
       expect(evalValue(mutated, ctx), clause).toEqual(SELF_HOSTED);
     }
     /* The dispatch's ref clause dropped: a dispatch on any branch would run here. */
-    const anyRef = ROUTE.replace("(github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/'))", "true");
+    const anyRef = ROUTE.replace("(github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/'))", "true");
     expect(anyRef).not.toBe(ROUTE);
     const docs = run("workflow_dispatch", "refs/heads/docs/x", null);
     expect(evalValue(ROUTE, docs)).toBe("ubuntu-24.04");
     expect(evalValue(anyRef, docs)).toEqual(SELF_HOSTED);
+    /* The push's ref clause dropped: a push to any branch would run here. */
+    const anyPush = ROUTE.replace("github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')", "github.event_name == 'push'");
+    expect(anyPush).not.toBe(ROUTE);
+    expect(evalValue(anyPush, run("push", "refs/heads/release/x", null))).toEqual(SELF_HOSTED);
+    /* The second line dropped from both arms: its landings and its nightly go back to GitHub's runners. */
+    const noNext = ROUTE.replaceAll(" || github.ref == 'refs/heads/next'", "");
+    expect(noNext).not.toBe(ROUTE);
+    expect(evalValue(noNext, run("push", "refs/heads/next", null))).toBe("ubuntu-24.04");
+    expect(evalValue(noNext, run("workflow_dispatch", "refs/heads/next", null))).toBe("ubuntu-24.04");
     /* The switch dropped: unset no longer means GitHub's runners. */
     const noSwitch = ROUTE.replace("vars.OHMAIL_LINUX_RUNNER == 'zorin' && ", "");
     expect(noSwitch).not.toBe(ROUTE);

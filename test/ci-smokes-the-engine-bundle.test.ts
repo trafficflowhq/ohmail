@@ -144,9 +144,9 @@ describe("the three callers of the smoke are the same check", () => {
 });
 
 describe("the workflow that carries all this still runs on its own", () => {
-  it("on every push to main, every v* tag and every pull request, not workflow_dispatch alone", () => {
+  it("on every push to main or next, every v* tag and every pull request, not workflow_dispatch alone", () => {
     // A job behind `workflow_dispatch` only would be the same silence with more ceremony.
-    expect(wf).toMatch(/\non:\n {2}push:\n {4}branches: \[main\]\n {4}tags: \["v\*"\]\n/);
+    expect(wf).toMatch(/\non:\n {2}push:\n {4}branches: \[main, next\]\n {4}tags: \["v\*"\]\n/);
     // `pull_request:` is asked inside the `on:` block, not beside `push:`: another trigger may sit between.
     const on = /\non:\n((?:[ \t].*\n|\n)*)/.exec(wf)?.[1] ?? "";
     expect(on).toMatch(/^ {2}pull_request:/m);

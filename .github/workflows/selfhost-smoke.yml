@@ -30,8 +30,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: selfhost-smoke-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  group: selfhost-smoke-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.event_name == 'push' && github.ref == 'refs/heads/next' && 'next' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'push' && github.ref == 'refs/heads/next' }}
 
 jobs:
   changes:

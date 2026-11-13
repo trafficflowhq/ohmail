@@ -140,8 +140,9 @@ name: build
 
 on:
   push:
-    branches: [main]
+    branches: [main, next]
     tags: ["v*"]
+  # `next` above is the second long-lived line: pull-request-only like main, never tagged, never released from.
   pull_request:
   # When `main` takes pull requests through a merge queue, its required checks (the engine and the
   # engine-bearing UI) must report on the queue's merge group, or the queue waits until it gives up.
@@ -169,13 +170,14 @@ env:
   # is a reviewed commit.
   RUST_TOOLCHAIN: "1.99.0"
 
-# A pull request's superseded run is cancelled, and so is a main run a newer push to main replaces: the
+# A pull request's superseded run is cancelled, and so is a main run a newer push to main replaces (`next`,
+# the second line, likewise, in a group of its own: the ref is in the group's name): the
 # newest one proves what landed. A run on a tag, on a merge group, by dispatch or by the nightly has a group
 # of its own — the commit — so it is never cancelled, nor dropped while pending behind another: a release's
 # installers come from the tag's run.
 concurrency:
-  group: build-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  group: build-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.event_name == 'push' && github.ref == 'refs/heads/next' && 'next' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'push' && github.ref == 'refs/heads/next' }}
 
 jobs:
   # ── WHICH PLATFORM BUILDS A PULL REQUEST NEEDS ─────────────────────────────
@@ -4440,7 +4442,7 @@ jobs:
   # Where it runs: as ci.yml's jobs do (its header says when that is the maintainers' own runners).
   engine:
     name: engine · typecheck · build
-    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
 
     steps:
@@ -4576,7 +4578,7 @@ jobs:
   # ==========================================================================
   engine-ui-smoke:
     name: engine-bearing UI · scan · smoke
-    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 15
 
     steps:

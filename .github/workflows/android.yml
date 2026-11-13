@@ -110,8 +110,8 @@ permissions:
 # too). A run on a tag, on a merge group, by dispatch or by the nightly has a group of its own — the
 # commit — so it is never cancelled, nor dropped while pending behind another.
 concurrency:
-  group: android-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+  group: android-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.event_name == 'push' && github.ref == 'refs/heads/next' && 'next' || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'push' && github.ref == 'refs/heads/next' }}
 
 jobs:
   # ── which pull requests need the APK ────────────────────────────────────────────────────
