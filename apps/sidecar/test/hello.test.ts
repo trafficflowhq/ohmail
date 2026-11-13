@@ -1,11 +1,18 @@
 import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+
+/* The app version a bundler bakes in (`__OHMAIL_ENGINE_VERSION__`), set before the engine loads. */
+const BAKED = vi.hoisted(() => {
+  (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__ = "9.8.7";
+  return "9.8.7";
+});
+afterAll(() => { delete (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__; });
 
 // Every test here stands up the real sidecar (createSidecar boots the engine's PGlite and
 // runs its migrations) in the test body — see pglite-budget.ts for the measured cost.
@@ -60,6 +67,8 @@ describe("GET /hello — the local engine's capability statement", () => {
     );
     expect(body.product).toBe("ohmail");
     expect(body.flavor).toBe("local");
+    // The release this engine is a build of, as the bundler baked it in: not the `0.0.0` default.
+    expect(body.apiVersion).toBe(BAKED);
     expect(body.needsSetup).toBe(false);
     expect(body.auth).toEqual({ password: false, totp: false, webauthn: false, publicSignup: false });
     // A fresh install has no model configured, SSE is disabled in this host, and there is no

@@ -983,6 +983,7 @@ input.tag-manage-input { /* by element: the row is the width, the field gives */
   overflow-wrap: anywhere;
 }
 .upd-line[data-s="downloading"] .ul-text,
+.upd-line[data-s="serverUpdating"] .ul-text,
 .upd-line[data-s="failed"] .ul-text {
   color: var(--ink2);
   font-weight: 500;

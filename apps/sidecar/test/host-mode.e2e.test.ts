@@ -2,10 +2,17 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
+
+/* The app version a bundler bakes in (`__OHMAIL_ENGINE_VERSION__`), set before the engine loads. */
+const BAKED = vi.hoisted(() => {
+  (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__ = "9.8.7";
+  return "9.8.7";
+});
+afterAll(() => { delete (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__; });
 import { freshDataDir } from "./_datadir.js";
 import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../desktop/src/host-client/bearer.js";
 import { BearerManager as ShippedBearerManager } from "../../desktop/test/fixtures/host-bearer-0.30.13.js";
@@ -191,6 +198,8 @@ describe("ARMED — the desktop-host door, stdio→host end to end", () => {
     expect(res.headers.getSetCookie()).toEqual([]);
     const body = await res.json();
     expect(body.flavor).toBe("desktop-host");
+    // The same engine, the same release: a paired phone reads what this desktop is a build of.
+    expect(body.apiVersion).toBe(BAKED);
     expect(body.needsSetup).toBe(false);
     expect(body.auth).toEqual({ password: false, totp: false, webauthn: false, publicSignup: false });
     /* `accountHeader` is a CONSTANT of the BUILD, not a host choice: the route table sets it

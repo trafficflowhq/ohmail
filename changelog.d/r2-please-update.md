@@ -1,0 +1,3 @@
+### ohmail says so when it is too old for its server, or its server is being updated
+
+Every app now names itself and its release on each request it makes to a server (`x-ohmail-client`), and every server states the release it is a build of at `GET /hello`, which used to answer `0.0.0`. When a server tells an app that it is too old for it, or that it is being updated, the web app, the desktop app, the page a desktop serves to a phone and the phone app each show one sentence about it, in English and German, with a way to update: Reload in a browser tab, Update on the desktop, the store or the download page on the phone, and the browser. A letter or a change you made waits and goes out once the server takes it. No server sends either answer yet.

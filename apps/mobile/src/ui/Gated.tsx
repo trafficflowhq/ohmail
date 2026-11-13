@@ -12,6 +12,7 @@ import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react
 import { ActivityIndicator, View } from "react-native";
 import { useConnection } from "../net/connection";
 import { accessLock, onAccessLock } from "../net/access-lock";
+import { onUpdateAnswer, updateAnswer } from "../net/update-answer";
 import { readAccess } from "../net/account";
 import type { ConnectedSession } from "../net/pairing";
 import "../state/access-verdict-native";
@@ -19,6 +20,7 @@ import { recordVerdict, storedVerdict, verdictsReady, verdictsSettled } from "..
 import { gateFor } from "../state/gate";
 import { useTheme } from "../theme";
 import { AccountWall } from "./AccountWall";
+import { UpdateCard } from "./UpdateCard";
 import { Panel, Screen } from "./base";
 import { awaitFirstPaint, paintsAtOnce, type FirstPaintInputs } from "./first-paint";
 import { Wordmark } from "./Icon";
@@ -29,6 +31,11 @@ import { BootShell } from "./Skeleton";
 /** The 402 sink's slot, subscribed — the transport writes it from outside React. */
 function useAccessLock(): ReturnType<typeof accessLock> {
   return useSyncExternalStore(onAccessLock, accessLock, accessLock);
+}
+
+/** The update-answer sink's slot, subscribed — the transport writes it from outside React. */
+function useUpdateAnswer(): ReturnType<typeof updateAnswer> {
+  return useSyncExternalStore(onUpdateAnswer, updateAnswer, updateAnswer);
 }
 
 /** Sessions whose first paint is decided — shared by the two `Gated` mounts, so a pushed route asks nothing again. */
@@ -81,8 +88,13 @@ function AccessGate() {
 export function Gated({ children }: { children: ReactNode }) {
   const conn = useConnection();
   const lock = useAccessLock();
-  const verdict = gateFor(conn.state, conn.profiles.length, lock);
   const session = conn.state.k === "live" ? conn.state.session : null;
+  /* An answer from ANOTHER server (the last pairing's) says nothing of this one: only this session's own
+     origin is heard, and a standalone phone has no server to answer. */
+  const heard = useUpdateAnswer();
+  const update = heard !== null && session !== null && !session.standalone && heard.origin === session.profile.origin
+    ? heard : null;
+  const verdict = gateFor(conn.state, conn.profiles.length, lock, update);
   const painted = useFirstPaint(session);
   /* The storage card stands atop the Ohbox alone, the tabs' first route. */
   const path = usePathname();
@@ -104,6 +116,10 @@ export function Gated({ children }: { children: ReactNode }) {
   if (verdict.to === "connecting") return <BootShell migrating={verdict.migrating} />;
   if (verdict.to === "welcome") return <Redirect href="/welcome" />;
   if (verdict.to === "servers") return <Redirect href="/servers" />;
+  /* THE SENTENCE ABOUT THE APP COMES FIRST: an app too old to speak to its server cannot read that server's
+     account verdict, and a server being updated has nothing else to say. The mirror on this phone is
+     untouched, and a queued act stays queued. */
+  if (verdict.to === "update") return <UpdateCard answer={verdict.answer} server={session?.profile ?? null} />;
   /* AHEAD OF THE APP, the way the browser tab swaps its own surface: a person whose account the
      service has refused should not be reading mail behind it. It takes nothing away — the mirror
      on this phone is untouched and so is the mailbox. */

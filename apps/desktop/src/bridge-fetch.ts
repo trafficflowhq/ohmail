@@ -21,8 +21,10 @@
  */
 
 import {
-  HttpAdapter, OhmailEngine, retryingRead, type WindowSearchPhases, type WindowSyncFailure,
+  CLIENT_HEADER, clientHeaderValue, HttpAdapter, OhmailEngine, retryingRead, updateAnswerOf, type UpdateAnswer,
+  type WindowSearchPhases, type WindowSyncFailure,
 } from "@ohmail/client-engine";
+import { BUILD_VERSION } from "./build-id.js";
 import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
 import { WindowOutboxStore } from "./window-outbox-store.js";
 import { readStoredVerdict, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
@@ -210,6 +212,44 @@ function noticeAccessRefusal(status: number, body: Uint8Array): void {
   } catch { /* A sink that throws must not replace the refusal with its own failure. */ }
 }
 
+/** What the window heard at its door: a server's update answer, or any ordinary answer (`"answered"`). */
+export type UpdateHearing = UpdateAnswer | "answered";
+type UpdateAnswerSink = (heard: UpdateHearing) => void;
+let updateAnswerSink: UpdateAnswerSink | null = null;
+
+/**
+ * A SERVER SAID THIS APP IS TOO OLD, OR THAT IT IS BEING UPDATED — raised once for the whole window,
+ * the access refusal's way (`onAccessRefused`): the gate subscribes and tells the one update line.
+ * LAST WRITER WINS, a notifier and not a throw — the `Response` is returned unchanged, so the act
+ * that was under way meets the engine's own rule (a queued act stays queued). A 2xx is told as
+ * `"answered"`, which lifts a "being updated" line and nothing else.
+ */
+export function onUpdateAnswer(sink: UpdateAnswerSink): () => void {
+  updateAnswerSink = sink;
+  return () => { if (updateAnswerSink === sink) updateAnswerSink = null; };
+}
+
+/**
+ * Tell the sink what this answer was. The body is decoded ONLY on the two statuses that can carry
+ * the answers, and the verdict is status and code together: an edge's own 503 is not one.
+ */
+function noticeUpdateAnswer(status: number, body: Uint8Array): void {
+  const sink = updateAnswerSink;
+  if (sink === null) return;
+  try {
+    if (status >= 200 && status < 300) {
+      sink("answered");
+      return;
+    }
+    if (status !== 426 && status !== 503) return;
+    const env = (JSON.parse(new TextDecoder().decode(body)) as { error?: { code?: unknown } } | null)?.error;
+    const answer = updateAnswerOf(status, env?.code);
+    if (answer !== null) sink(answer);
+  } catch {
+    /* Not JSON, or a sink that threw: neither may replace the answer with its own failure. */
+  }
+}
+
 interface TauriInternals {
   invoke(command: string, payload?: Record<string, unknown>, options?: unknown): Promise<unknown>;
 }
@@ -354,6 +394,16 @@ function toHeaders(pairs: unknown): Headers {
   return headers;
 }
 
+/**
+ * THIS WINDOW NAMES ITSELF ON EVERY REQUEST (`x-ohmail-client`), here because every request the
+ * window makes, the engine's and each wire's, leaves by {@link bridgeFetch}. A pair a caller set
+ * under that name is replaced, never doubled. A request the engine relays to a hosted account
+ * goes on under the engine's own name.
+ */
+const CLIENT_PAIR: [string, string] = [CLIENT_HEADER, clientHeaderValue("desktop-window", BUILD_VERSION)];
+const named = (pairs: [string, string][]): [string, string][] =>
+  [...pairs.filter(([name]) => name.toLowerCase() !== CLIENT_HEADER), CLIENT_PAIR];
+
 interface Meta {
   status?: number;
   statusText?: string;
@@ -394,6 +444,7 @@ function toResponse(bytes: Uint8Array, url: string): Response {
      from the bytes before they become a body: a `Response` body may be consumed once, and the
      caller owns that read. */
   noticeAccessRefusal(status, payload);
+  noticeUpdateAnswer(status, payload);
   if (url === ACCOUNT_ACCESS_PATH) noticeAccessAnswer(status, payload);
 
   const body = payload as unknown as BodyInit;
@@ -457,7 +508,7 @@ export const bridgeFetch: BridgeFetch = async (url, init) => {
     () => shell().invoke(REQUEST_COMMAND, {
       method,
       url,
-      headers: headerPairs(options.headers),
+      headers: named(headerPairs(options.headers)),
       ...bodyField(options.body),
     }),
     {

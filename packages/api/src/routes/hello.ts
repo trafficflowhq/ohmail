@@ -1,6 +1,8 @@
 import { API_VERSION } from "../version.js";
 import type { HelloConfig } from "../deps.js";
 import type { Route } from "../router.js";
+import { silentLogger } from "@trafficflow/core/mail";
+import { clientIdentityOf } from "../client-identity.js";
 
 /**
  * `GET /hello` — server identity + capability negotiation, before any credential exists: it makes
@@ -19,7 +21,7 @@ export const helloRoutes: Route[] = [
     relay: true,
     cost: "unauthenticated",
     options: { public: true, raw: true, anonymous: true },
-    handler: async (_req, deps) => {
+    handler: async (req, deps) => {
       const hello = deps.hello;
       if (!hello) {
         return helloResponse(503, {
@@ -45,6 +47,11 @@ export const helloRoutes: Route[] = [
       // Where a server keeps a scheduled letter's files sealed, how many days ahead it takes one.
       const kept = deps.services?.scheduledFiles;
       const scheduleFilesDays = kept?.atRest === "sealed" ? Math.floor(kept.maxAheadMs / DAY_MS) : null;
+      // About one line per app start: the web asks here at each load, the phone at each session
+      // start, a desktop's engine once per launch. The one line that carries the client's kind and
+      // release (`client-identity.ts`): how many are on which build. A reading for the operator,
+      // never an input to a rule.
+      (deps.logger ?? silentLogger).info("hello_served", { flavor: hello.flavor, ...clientIdentityOf(req.headers) });
       return helloResponse(200, {
         product: "ohmail",
         flavor: hello.flavor,

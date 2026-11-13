@@ -13,7 +13,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@ohmail/ui";
 /* `shortPin` moved to core when the phone grew the third end of the key comparison; this file
    still both USES it (the client door) and re-exports it (DesktopDevices imports it from here). */
-import { shortPin } from "@ohmail/client-engine";
+import { shortPin, updateAnswerOf } from "@ohmail/client-engine";
 
 import { ProviderHelpLinks, ProviderPicker } from "../../webapp/app/shell/ProviderPicker";
 import { PlaintextConsent, plaintextClaims, sameServerHost } from "../../webapp/app/shell/PlaintextConsent";
@@ -60,7 +60,8 @@ import {
 } from "./self-host.js";
 import { DOOR_COPY, machineWord } from "./door-copy.js";
 import { signInLead, type SignInCause } from "./cloud-session.js";
-import { DoorProblem } from "./DoorProblem.js";
+import { DoorProblem, HostedDoorProblem } from "./DoorProblem.js";
+import { updateAnswerSentence } from "../../webapp/app/shell/update-answer";
 import { linksOutToBilling } from "./distribution.js";
 import { localPlaintextOffer } from "./local-first-run.js";
 import { offLinkCode, onLinkCode, openApprovalPage, openWeb } from "./native.js";
@@ -1335,7 +1336,7 @@ function HostDoor({
       <h1>{DOOR_COPY.doorHostName}</h1>
       <p>{proved === null ? DOOR_COPY.hostAskLead : DOOR_COPY.hostPairLead(machineWord())}</p>
 
-      {problem ? <p className="join-error">{problem}</p> : null}
+      <HostedDoorProblem problem={problem} />
 
       <label className="join-label" htmlFor="host-link">{DOOR_COPY.hostLink}</label>
       {/* `type="text"`, for `ServerDoor`'s reason exactly: a url-typed field is
@@ -1420,7 +1421,10 @@ function HostDoor({
  * matters because the update flow makes "the engine is newer than this window" ordinary. The
  * last resort is the status line: "(409)" is a worse sentence, and better than a blank card.
  */
-function refusalSentence(refusal: HostRefusal, host: string): string {
+export function refusalSentence(refusal: HostRefusal, host: string): string {
+  // The other computer's answer about this app, handed on by the engine: the update line's sentence.
+  const answer = updateAnswerOf(refusal.status ?? 0, refusal.kind);
+  if (answer !== null) return updateAnswerSentence(answer);
   const known = sentenceForKind(refusal.kind, host);
   if (known !== null) return known;
   if (refusal.message) return refusal.message;
@@ -1618,7 +1622,7 @@ function CloudDoor({
       <p id={causeId}>{signInOnly ? signInLead(signInCause) : DOOR_COPY.cloudLead}</p>
       {notice ? <div className="join-note" role="status">{notice}</div> : null}
 
-      {problem ? <p className="join-error">{problem}</p> : null}
+      <HostedDoorProblem problem={problem} />
       {joinProblem ? <p className="join-error">{joinProblem}</p> : null}
 
       {/* THE BROWSER APPROVAL READS NO ADDRESS on a door already chosen or on the first-run door,

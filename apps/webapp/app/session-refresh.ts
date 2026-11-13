@@ -25,6 +25,15 @@ import {
   markSessionAlive, markSessionDead, registerSessionProbe, sessionIsDead, subscribeSessionRevival,
   subscribeSessionTruth,
 } from "./shell/session-truth";
+import { clientDeclaration, declareClient } from "./shell/client-declaration";
+import { RELOAD_REMEDY, hearUpdateAnswer } from "./shell/update-answer";
+
+/**
+ * THIS BUILD IS THE WEB APP, and says so on every request. Armed here because every door the web
+ * asks through loads this module: the API client, the engine's transport and the refresh below.
+ * The release is the one `next.config.mjs` inlines from the workspace manifest.
+ */
+declareClient("web", process.env.NEXT_PUBLIC_APP_VERSION);
 
 /** The one path that carries `tf_refresh`. Must equal `REFRESH_PATH` in `next.config.mjs`. */
 export const REFRESH_ENDPOINT = "/auth/refresh";
@@ -791,6 +800,7 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
           accept: "application/json",
           "content-type": "application/json",
           ...ERASED_DECLARATION,
+          ...clientDeclaration(),
           ...(csrf ? { "X-CSRF-Token": csrf } : {}),
         },
         body: JSON.stringify({ attemptId }),
@@ -806,6 +816,9 @@ export async function resumeSession(opts: ResumeOptions = {}): Promise<ResumeAns
       });
       // Any answer warms the API: the resume lane's lead is over.
       webLane.noteAnswer();
+      // "Too old" or "being updated" at the renewal door says so on the one update line; the renewal
+      // itself reads either as a fault that learned nothing about the session (`readRefreshAnswer`).
+      await hearUpdateAnswer(res, RELOAD_REMEDY);
       // An answer in hand is read even past the deadline; only the sign-in's abort drops it.
       if (request.signal.aborted && !timedOut) return superseded(null);
       // 204 with fresh Set-Cookie is success; a 401 means the family is
@@ -921,7 +934,7 @@ export function purgeSiteCache(): void {
   try {
     void fetch(REFRESH_ENDPOINT, {
       method: "POST",
-      headers: { [CACHE_PURGE_HEADER]: "cache" },
+      headers: { [CACHE_PURGE_HEADER]: "cache", ...clientDeclaration() },
       credentials: "same-origin",
       cache: "no-store",
       keepalive: true,

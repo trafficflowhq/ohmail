@@ -3177,6 +3177,15 @@ const TABLE = {
   wallMailboxUntouched: "Your mailbox is untouched.",
   wallKept:
     "Your mail and settings are kept. Nothing has been deleted, and your mail is on your own server either way.",
+  /* A SERVER SAID THIS APP IS TOO OLD FOR IT, OR THAT IT IS BEING UPDATED (`net/update-answer.ts`): one
+     whole sentence each, the browser's own (`update.lineTooOld`, `update.lineServerUpdating` in
+     `apps/webapp/messages/en.json`), and the three ways on. `test/update-answer-copy.test.ts` holds the
+     sentences against that catalogue. */
+  updateTooOld: "This ohmail is too old for its server.",
+  updateServerUpdating: "ohmail is being updated and will be back shortly.",
+  updateOpenStore: "Open the store",
+  updateOpenDownload: "Open the download page",
+  updateOpenBrowser: "Open in the browser",
   wallErasure: (date: string) =>
     `The rules, Screener decisions and settings ohmail keeps for you are erased on ${date}. Your mail is in your mailbox and is not part of that.`,
   wallErasureHeld:

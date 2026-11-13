@@ -1,8 +1,30 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 /**
  * The API host's Next config. Minimal on purpose: this app renders nothing.
  *
  * The one thing it does beyond bundling is {@link assertAlertingArmed} — see below.
  */
+
+/** The release Next inlines for `GET /hello`'s `apiVersion`. DERIVED — never set by hand. */
+export const RELEASE_VAR = "OHMAIL_RELEASE";
+
+/**
+ * WHICH RELEASE THIS SERVER IS A BUILD OF, read from the workspace's own `package.json` AT CONFIG TIME,
+ * as `apps/webapp/next.config.mjs` reads it for the About pane, and for the same reason: the number is
+ * a property of the source being built, never of the environment it runs in. There is no fallback and
+ * there must not be one: a deployment that states `0.0.0` tells every client a lie it believes. A
+ * manifest with no version is a build failure. (`/health`'s `version` is the commit, not this.)
+ */
+export function releaseVersion() {
+  const root = fileURLToPath(new URL("../../package.json", import.meta.url));
+  const version = JSON.parse(readFileSync(root, "utf8")).version;
+  if (typeof version !== "string" || version === "") {
+    throw new Error(`${root} declares no "version" — GET /hello cannot state which release this server is`);
+  }
+  return version;
+}
 
 /**
  * The minimum length of any shared secret on this host. Same number as
@@ -209,6 +231,8 @@ assertAlertingArmed(process.env);
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Inlined into the server bundle at build time: a compiled constant, not a runtime lookup.
+  env: { [RELEASE_VAR]: releaseVersion() },
   // These four must NOT be bundled by webpack:
   //   • imapflow / nodemailer — raw TCP + TLS clients with dynamic requires; bundling them
   //     is how you discover at runtime that a transport or an auth mechanism is missing.

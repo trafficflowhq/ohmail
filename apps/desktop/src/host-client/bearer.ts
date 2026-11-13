@@ -36,8 +36,10 @@
  * window, and the legitimate retry rotates straight past it.
  */
 
-import { isCredentialRefusal, isSessionRefusal, readRefreshAnswer } from "@ohmail/client-engine";
+import { clientHeaders, isCredentialRefusal, isSessionRefusal, readRefreshAnswer } from "@ohmail/client-engine";
 import { durableIdbCommit, storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
+import { BUILD_VERSION } from "../build-id.js";
+import { RELOAD_REMEDY, hearUpdateAnswer } from "../../../webapp/app/shell/update-answer.js";
 
 /** The wire pair the redeem and the refresh both answer. */
 export interface BearerTokens {
@@ -233,6 +235,13 @@ interface LooseInit {
   signal?: AbortSignal;
 }
 
+/**
+ * THIS PAGE NAMES ITSELF ON EVERY REQUEST (`x-ohmail-client`). Everything it asks goes to the
+ * computer that serves it, so the name rides the manager's own transport, and the pairing screen's
+ * bare redeem spreads the same pair. The release is the desktop's that built the page.
+ */
+export const PAIRED_PAGE_CLIENT: Readonly<Record<string, string>> = clientHeaders("paired-page", BUILD_VERSION);
+
 /** localStorage, or null where the browser refuses it (private mode edge cases). */
 function defaultStorage(): Storage | null {
   try {
@@ -284,7 +293,11 @@ export class BearerManager {
     );
     // BIND THE GLOBAL — the same illegal-invocation trap http-adapter.ts documents: a browser's
     // native fetch refuses any receiver that is not its own global.
-    this.fetchImpl = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+    const platform = opts.fetchImpl ?? (globalThis.fetch.bind(globalThis) as FetchLike);
+    this.fetchImpl = (url, init) => {
+      const asked = (init ?? {}) as LooseInit;
+      return platform(url, { ...asked, headers: { ...(asked.headers ?? {}), ...PAIRED_PAGE_CLIENT } });
+    };
     this.idb = opts.idb;
     this.refresh = this.door.get(REFRESH_STORAGE_KEY);
     /**
@@ -648,6 +661,15 @@ export class BearerManager {
    * included) travels as it was. An arrow property so it can be handed bare, receiverless.
    */
   fetch: FetchLike = async (url, init) => {
+    const res = await this.stampedFetch(url, init);
+    // The computer this page is served from says this page is too old for it, or that it is being
+    // updated: the one update line (AppShell mounts it) says so, with Reload. The act under way is
+    // not judged here, and the answer goes back to its caller whole.
+    await hearUpdateAnswer(res, RELOAD_REMEDY);
+    return res;
+  };
+
+  private stampedFetch: FetchLike = async (url, init) => {
     const options = (init ?? {}) as LooseInit;
     const stamped = (): LooseInit => ({
       ...options,

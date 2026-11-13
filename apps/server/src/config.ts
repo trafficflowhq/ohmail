@@ -299,6 +299,32 @@ export const buildIdentityOf = (
   return { version: "dev", source: "none" };
 };
 
+declare const __OHMAIL_RELEASE__: string | undefined;
+
+/** The checkout's own manifest version, where the server runs unbundled (`src` or `dist`, three levels down). */
+const workspaceVersion = (): string => {
+  try {
+    const v = (JSON.parse(readFileSync(new URL("../../../package.json", import.meta.url), "utf8")) as { version?: unknown }).version;
+    return typeof v === "string" ? v.trim() : "";
+  } catch {
+    return "";
+  }
+};
+
+/**
+ * WHICH RELEASE THIS SERVER IS A BUILD OF, the worker's rule (`apps/worker/src/build-version.ts`, whose
+ * source this repeats because the two hosts share no module): the workspace version the host bundler
+ * bakes in (`scripts/bundle-host.mjs`), else the checkout's manifest, else `null`. NOT the build label
+ * above: the published images carry a commit there, which says nothing about the release `GET /hello`
+ * states. The one place this host answers it.
+ */
+export const buildReleaseOf = (manifest: () => string = workspaceVersion): string | null => {
+  const baked = typeof __OHMAIL_RELEASE__ === "string" ? __OHMAIL_RELEASE__.trim() : "";
+  if (baked !== "") return baked;
+  const read = manifest().trim();
+  return read === "" ? null : read;
+};
+
 /**
  * Why the identity cannot be trusted, or null. One arm, unlike the managed host's and the
  * worker's: `"none"` is NOT reported here, because this process defaults `TF_ENV` to

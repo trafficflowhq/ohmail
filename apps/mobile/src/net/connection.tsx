@@ -23,6 +23,7 @@ import {
 } from "../engine/organizer-session";
 import { engineLogSink, logNetwork } from "../engine/engine-log";
 import { accessLock, clearAccessLock, onAccessLock } from "./access-lock";
+import { clearUpdateAnswer } from "./update-answer";
 import { decidedState, type DecidedState } from "./decided";
 import { deathRefusal } from "./session-death";
 import {
@@ -37,7 +38,7 @@ import { installPinning } from "./host-pinning";
 import { nativeHostPinning } from "./host-pinning-native";
 import { unifiedPushDistributor } from "./unified-push";
 import type { ServerProfile } from "../state/servers";
-import type { FetchLike, SignOutOutcome } from "./bearer";
+import type { SignOutOutcome } from "./bearer";
 import { SyncRunner, drainLine } from "./drain";
 import { idleSpacing, keepDraining, type AppLifecycle } from "./drain-cadence";
 import { appActivity, noteActivity } from "./activity";
@@ -53,6 +54,7 @@ import {
   listHeldStandalone,
   mobileDeviceKind,
   negotiate,
+  pairingFetch,
   pairWithServer,
   probePairing,
   type PairAdmission,
@@ -64,6 +66,7 @@ import {
 import { resolveApiBase, type BaseVerdict } from "./server-base.js";
 import { TransitionGate } from "./transitions";
 import { buildCommit } from "../build-info";
+import { appRelease } from "./app-release";
 
 export type ConnectionState =
   /** The launch instant, before the keystore has answered whether a pairing exists. */
@@ -238,6 +241,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
         profiles: nativeServerProfiles(),
         engineDeps: nativeEngineDeps(),
         deviceKind: mobileDeviceKind(Platform.OS),
+        // Named to every server in `x-ohmail-client`: the release `app.json` states (`net/app-release.ts`).
+        ...(appRelease() !== undefined ? { clientRelease: appRelease()! } : {}),
         /* The digest a re-pair names the family it replaces by (`previousSession`). */
         familyDigest: nativeFamilyDigest,
         /* THE CONNECTOR, so a forget takes down the wake registration of the pairing it is
@@ -457,6 +462,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
          session IS this phone's "sign in again" — pairing, a switch, a reconnect — so it is the
          one gesture that clears. A cold launch reaches this with the slot already empty. */
       clearAccessLock();
+      /* THE UPDATE CARD TOO: a session is a server's turn to be judged, and an answer another server gave
+         says nothing of this one. */
+      clearUpdateAnswer();
       offDead.current?.();
       /* NO DEAD SIGNAL ON THE STANDALONE DOOR, and `null` rather than a subscription that can never
          fire: the engine in this process mints its own bearer per launch, so there is no family for
@@ -717,8 +725,8 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
       syncError,
       profiles,
       activeId,
-      ask: (origin) => negotiate(globalThis.fetch.bind(globalThis) as FetchLike, origin),
-      probeBase: (origin) => resolveApiBase(globalThis.fetch.bind(globalThis) as FetchLike, origin),
+      ask: (origin) => negotiate(pairingFetch(env), origin),
+      probeBase: (origin) => resolveApiBase(pairingFetch(env), origin),
       /* The probe takes no gate turn and tears nothing down: it spends nothing, and the one
          thing it must install to dial — the code's key — is a lease the screens hand back
          (`discardAdmission`). A person who looks at the confirmation and presses Back is left

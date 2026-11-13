@@ -19,3 +19,16 @@ export function requestBase(session: {
 }): string {
   return apiBaseOf(session.profile.origin, session.profile.apiBase);
 }
+
+/**
+ * Is this request for the server at `origin`. Read off the parsed origin, never off a prefix of the
+ * base: the bare-routed family is this server's too, and a staged upload's grant is not. An unreadable
+ * URL is not.
+ */
+export function sameOrigin(url: string, origin: string): boolean {
+  try {
+    return new URL(url).origin === new URL(origin).origin;
+  } catch {
+    return false;
+  }
+}

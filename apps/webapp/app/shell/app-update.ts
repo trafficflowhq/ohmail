@@ -32,8 +32,15 @@ export const UPDATE_PERIOD_MS = 24 * 60 * 60 * 1000;
  *  · `downloading` — the desktop shell is fetching a release; there is nothing to press.
  *  · `failed` — an install did not go through, or a check somebody pressed did not finish; the
  *    verb tries again.
+ *  · `tooOld` — the SERVER said this app is too old for it (`426 client_too_old`); the verb is the
+ *    remedy the host has (reload a tab, update the desktop), named by {@link UpdateOffer.verb}.
+ *  · `serverUpdating` — the server said it is being updated (`503 server_updating`); there is
+ *    nothing to press, and the next answer from the same server lifts the line.
  */
-export type UpdateOfferKind = "reload" | "ready" | "downloading" | "failed";
+export type UpdateOfferKind = "reload" | "ready" | "downloading" | "failed" | "tooOld" | "serverUpdating";
+
+/** The two kinds a server's own answer arms (`update-answer.ts`), which a source with no line of its own never withdraws. */
+export const isUpdateAnswerKind = (kind: UpdateOfferKind): boolean => kind === "tooOld" || kind === "serverUpdating";
 
 export interface UpdateOffer {
   kind: UpdateOfferKind;
@@ -49,6 +56,8 @@ export interface UpdateOffer {
   failed?: "check" | "install";
   /** The key the source shows the line under: Later puts that key away for the rest of the run. */
   key?: string;
+  /** `tooOld` only: which verb the host's remedy has, so the line says Reload or Update and not a command. */
+  verb?: "reload" | "update";
 }
 
 /**

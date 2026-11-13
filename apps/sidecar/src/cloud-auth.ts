@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { describeError } from "@trafficflow/core/mail";
 import type { KeyProvider } from "@trafficflow/core/mail";
 import { normalizePathname } from "@trafficflow/api/relay-allowlist";
+import { CLIENT_HEADER, engineClientValue } from "./client-name.js";
 import { writeAtomic } from "./fs-atomic.js";
 import type { Diagnostic } from "./log.js";
 
@@ -164,6 +165,9 @@ export const OFFLINE_READ_ONLY = "offline_read_only";
 export const ERASED_ANSWER_HEADER = "x-ohmail-accepts";
 export const ACCOUNT_ERASED = "account_erased";
 
+/* WHO IS ASKING (`client-name.ts`): a session's requests carry the engine's name, set in `withBearer`. */
+export { CLIENT_HEADER, engineClientValue };
+
 /**
  * THE ANSWERS THIS PROCESS BUILT ITSELF, never Cloud's. "Did Cloud answer?" ({@link answeredByCloud})
  * asks this mark before any status: a built 503 or 410 carries the same status a server sends. Kept
@@ -235,6 +239,8 @@ export function offlineResponse(): Response {
 export interface CloudAuthConfig {
   /** The door's base URL, as `cloud-origin.ts` resolves it. A trailing slash is trimmed. */
   baseUrl: string;
+  /** The release this engine is a build of, named in {@link CLIENT_HEADER}; absent, `dev`. */
+  clientRelease?: string;
   /** The tokens this launch starts with — resolved store-wins-over-environment by the caller. */
   tokens: CloudTokens;
   /** Injected for tests; production uses the platform's own `fetch`. */
@@ -650,7 +656,9 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     try {
       res = await send(`${base}/auth/refresh`, {
         method: "POST",
-        headers: { "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED },
+        headers: {
+          "content-type": "application/json", [ERASED_ANSWER_HEADER]: ACCOUNT_ERASED, [CLIENT_HEADER]: clientValue,
+        },
         body: JSON.stringify({ refreshToken: staged.refreshToken, attemptId }),
       });
     } catch (err) {
@@ -769,10 +777,12 @@ export function createCloudAuth(cfg: CloudAuthConfig): CloudAuth {
     return renewing;
   };
 
+  const clientValue = engineClientValue(cfg.clientRelease);
   const withBearer = (init: RequestInit | undefined, access: string): RequestInit => {
     const headers = new Headers(init?.headers);
     headers.set("authorization", `Bearer ${access}`);
     headers.set(ERASED_ANSWER_HEADER, ACCOUNT_ERASED);
+    headers.set(CLIENT_HEADER, clientValue);
     return { ...init, headers };
   };
 

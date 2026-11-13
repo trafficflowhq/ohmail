@@ -169,3 +169,35 @@ describe("HttpAdapter reads ride the wrapper and writes do not", () => {
     expect(asked).toBe(1);
   });
 });
+
+describe("a read that meets \"the server is being updated\"", () => {
+  const updating = (seconds: string | null): Response =>
+    new Response("{\"error\":{\"code\":\"server_updating\",\"retryable\":true}}", {
+      status: 503,
+      headers: { "content-type": "application/json", ...(seconds === null ? {} : { "retry-after": seconds }) },
+    });
+
+  it("waits what the server named, up to the attempt bound, and then hands the answer back whole — so the window's one sentence can show", async () => {
+    const rec = recorder();
+    let asked = 0;
+    const read = retryingRead(async () => { asked++; return updating("30"); }, { waitFor: rec.waitFor });
+    const res = await read("/mailboxes");
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("server_updating");
+    expect(asked).toBe(RETRYING_READ_ATTEMPTS);
+    // THE BOUND THE SERVER MUST KEEP: a read hangs for the sum of what it was told to wait, so a
+    // window answer naming minutes would hold every read that long before any sentence could show.
+    // 1.0 cannot enforce it, so it is a rule of the server that sends the answer: at most 30 s.
+    expect(rec.waits.every((ms) => ms === 30_000)).toBe(true);
+    expect(rec.waits.reduce((a, b) => a + b, 0), "two waits of 30 s at most before the sentence").toBeLessThanOrEqual(60_000);
+  });
+
+  it("with no Retry-After it is answered at once: one ask, no wait", async () => {
+    const rec = recorder();
+    let asked = 0;
+    const read = retryingRead(async () => { asked++; return updating(null); }, { waitFor: rec.waitFor });
+    expect((await read("/mailboxes")).status).toBe(503);
+    expect(asked).toBe(1);
+    expect(rec.waits).toEqual([]);
+  });
+});

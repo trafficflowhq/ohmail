@@ -2223,6 +2223,11 @@ export const DE: Deck = {
   wallMailboxUntouched: "Dein Postfach ist unberührt.",
   wallKept:
     "Deine Mails und Einstellungen bleiben. Es wurde nichts gelöscht, und deine Mails liegen ohnehin auf deinem eigenen Server.",
+  updateTooOld: "Dieses ohmail ist zu alt für seinen Server.",
+  updateServerUpdating: "ohmail wird gerade aktualisiert und ist gleich wieder da.",
+  updateOpenStore: "Store öffnen",
+  updateOpenDownload: "Download-Seite öffnen",
+  updateOpenBrowser: "Im Browser öffnen",
   wallErasure: (date: string) =>
     `Die Regeln, Screener-Entscheidungen und Einstellungen, die ohmail für dich speichert, werden am ${date} gelöscht. Deine Mails liegen in deinem Postfach und gehören nicht dazu.`,
   wallErasureHeld:
