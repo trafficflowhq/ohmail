@@ -1056,6 +1056,7 @@ export function SettingsView({
                 key={id}
                 type="button"
                 className={shown === id ? "on" : undefined}
+                aria-current={shown === id ? "page" : undefined}
                 onClick={() => select(id)}
               >
                 {label}
