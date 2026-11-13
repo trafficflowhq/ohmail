@@ -23,7 +23,7 @@ const has: WebSupplies = {
   notifications: named("notifications"),
   frame: {
     places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-    appearance: named("appearance"), recover: named("recover"),
+    appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
   },
 };
 const engine = named<HostContract["engine"]>("engine");
@@ -52,6 +52,7 @@ const entries = (...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
+    calendar: has.frame.calendar,
   });
 /** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */
 const BROWSER_DEVICE = {
@@ -81,12 +82,12 @@ describe("the web shell's answers on the managed service", () => {
     expect(host.capabilities).toEqual({
       service: "managed", prices: "none", sendCeiling: "strict", awayRunsOn: "service", rulesMarked: true,
       imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced", pairing: "account",
-      account: "here", firstRunDoor: "cloud", mailboxes: "here", language: "account",
+      account: "here", firstRunDoor: "cloud", mailboxes: "here", language: "account", products: "none",
     });
   });
 
   it("hands on every wire it has but the switch for a person's own model", () => {
-    expect(withheld(host)).toEqual(["ownModelAutoSuggest"]);
+    expect(withheld(host)).toEqual(["calendar", "ownModelAutoSuggest"]);
     expect(host.wires.liveBody).toBe(has.wires.liveBody);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
@@ -136,12 +137,12 @@ describe("the web shell's answers on a self-hosted server", () => {
     expect(host.capabilities).toEqual({
       service: "self", prices: "none", sendCeiling: 20 * 1024 * 1024, awayRunsOn: "service", rulesMarked: true,
       imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced", pairing: "account",
-      account: "here", firstRunDoor: "selfhost", mailboxes: "here", language: "account",
+      account: "here", firstRunDoor: "selfhost", mailboxes: "here", language: "account", products: "none",
     });
   });
 
   it("has no Load it now: a server its operator runs keeps every body", () => {
-    expect(withheld(host)).toEqual(["liveBody", "ownModelAutoSuggest"]);
+    expect(withheld(host)).toEqual(["calendar", "liveBody", "ownModelAutoSuggest"]);
   });
 
   it("hands on the account's features with Devices and Invites, and is the same page in a browser", () => {

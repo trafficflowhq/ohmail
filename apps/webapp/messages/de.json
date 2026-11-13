@@ -5166,5 +5166,142 @@
     "loading": "Diese Sitzung wird geprüft …",
     "unavailableBody": "An diese ohmail-Installation ist kein Server angeschlossen, es gibt also keinen Account zum Löschen.",
     "back": "Zurück"
+  },
+  "week": {
+    "hours": "Die Stunden der Woche",
+    "allDay": "ganztags",
+    "chip": "{title}, {from} bis {to}",
+    "chipAllDay": "{title}, ganztags",
+    "above": "{count, plural, one {Ein Termin über den sichtbaren Stunden: zeigen} other {# Termine über den sichtbaren Stunden: den nächsten zeigen}}",
+    "below": "{count, plural, one {Ein Termin unter den sichtbaren Stunden: zeigen} other {# Termine unter den sichtbaren Stunden: den nächsten zeigen}}",
+    "unplaced": "{count, plural, one {1 Termin wird nicht gezeigt: Seine Zeitzone ist diesem Gerät nicht bekannt.} other {# Termine werden nicht gezeigt: Ihre Zeitzone ist diesem Gerät nicht bekannt.}}",
+    "capped": "Diese Woche enthält mehr, als auf einmal berechnet werden kann. Einige Termine werden vielleicht nicht gezeigt."
+  },
+  "day": {
+    "hours": "Die Stunden des Tages",
+    "allDay": "ganztags",
+    "chip": "{title}, {from} bis {to}",
+    "chipAllDay": "{title}, ganztags",
+    "above": "{count, plural, one {Ein Termin über den sichtbaren Stunden: zeigen} other {# Termine über den sichtbaren Stunden: den nächsten zeigen}}",
+    "below": "{count, plural, one {Ein Termin unter den sichtbaren Stunden: zeigen} other {# Termine unter den sichtbaren Stunden: den nächsten zeigen}}",
+    "freeHours": "{hours} Std.",
+    "freeHoursMinutes": "{hours} Std. {minutes} Min.",
+    "unplaced": "{count, plural, one {1 Termin wird nicht gezeigt: Seine Zeitzone ist diesem Gerät nicht bekannt.} other {# Termine werden nicht gezeigt: Ihre Zeitzone ist diesem Gerät nicht bekannt.}}",
+    "capped": "Dieser Tag enthält mehr, als auf einmal berechnet werden kann. Einige Termine werden vielleicht nicht gezeigt."
+  },
+  "month": {
+    "title": "Monat",
+    "more": "+{count}",
+    "moreLabel": "{count, plural, one {# weiterer} other {# weitere}} am {day}, Tag",
+    "week": "Woche {number}",
+    "weekLabel": "Woche {number}, Woche",
+    "nothing": "Nichts",
+    "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt",
+    "allDay": "ganztägig",
+    "until": "bis {time}",
+    "untilDay": "bis {day}",
+    "span": "{from}–{to}"
+  },
+  "year": {
+    "title": "Jahr",
+    "monthLabel": "{month}, Monat",
+    "week": "Woche {number}",
+    "weekLabel": "Woche {number}, Woche",
+    "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt"
+  },
+  "agenda": {
+    "title": "Agenda",
+    "today": "Heute",
+    "tomorrow": "Morgen",
+    "nothingToday": "Heute nichts",
+    "nothing": "Nichts",
+    "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt",
+    "allDay": "ganztägig",
+    "until": "bis {time}",
+    "untilDay": "bis {day}",
+    "span": "{from}–{to}",
+    "count": "{count, number}",
+    "month": "Monat"
+  },
+  "calsearch": {
+    "title": "Suche",
+    "field": "Suche",
+    "placeholder": "Titel, Ort, Personen",
+    "clear": "Leeren",
+    "count": "{count, plural, one {# Termin} other {# Termine}}",
+    "readAs": "Gelesen als {words}",
+    "nothing": "Nichts gefunden",
+    "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt",
+    "held": "Gesucht vom {from} bis {to}",
+    "allDay": "ganztägig",
+    "span": "{from}–{to}"
+  },
+  "calendar": {
+    "landmark": "Kalender",
+    "unreadable": "Der Kalender kann auf diesem Gerät nicht gelesen werden.",
+    "noZone": "Der Kalender kann nicht gezeichnet werden: Dieses Gerät kennt seine Zeitzone nicht.",
+    "notHere": "Dieser Teil des Kalenders ist noch nicht da.",
+    "views": "Ansicht",
+    "view": {
+      "day": "Tag",
+      "week": "Woche",
+      "month": "Monat",
+      "year": "Jahr",
+      "agenda": "Agenda"
+    },
+    "before": "Früher",
+    "after": "Später",
+    "today": "Heute",
+    "search": "Suchen",
+    "agenda": "Agenda",
+    "held": {
+      "from": "Gezeigt ab {day}",
+      "load": "Früher laden",
+      "none": "Frühere Tage bleiben beim Kalender.",
+      "failed": "Frühere Tage konnten nicht gelesen werden.",
+      "until": "Gezeigt bis {day}",
+      "after": "Spätere Tage bleiben beim Kalender."
+    }
+  },
+  "event": {
+    "waiting": {
+      "device": "Von diesem Gerät noch nicht gesendet",
+      "provider": "Wartet auf den Kalender"
+    },
+    "notSaved": "Nicht gespeichert",
+    "fault": {
+      "signIn": "Die Anmeldung beim Kalender muss erneuert werden.",
+      "notAllowed": "Der Kalender lässt diese Änderung nicht zu.",
+      "gone": "Der Termin ist nicht mehr in diesem Kalender.",
+      "unreachable": "Der Kalender war nicht erreichbar.",
+      "notKept": "Der Kalender würde diese Änderung nicht so behalten.",
+      "stale": "Der Termin wurde inzwischen anderswo geändert. Ihre oder die andere Fassung behalten.",
+      "versionUnknown": "Die Fassung des Kalenders war nicht lesbar, darum wurde nichts gesendet.",
+      "earlier": "Eine frühere Änderung dieses Termins wurde nicht gespeichert, darum wurde diese nicht gesendet.",
+      "chained": "Erneut drücken, sobald die Änderung davor erledigt ist.",
+      "expired": "Diese Änderung hat zu lange gewartet und wurde nicht gesendet.",
+      "unknown": "Die Änderung wurde nicht gespeichert."
+    },
+    "refusal": {
+      "off": "Der Kalender ist für diesen Account ausgeschaltet.",
+      "readOnly": "Dieser Kalender kann angesehen, aber nicht geändert werden.",
+      "full": "Zu viele Änderungen warten. Bitte gleich noch einmal versuchen.",
+      "left": "Sie wird gerade gesendet. Verwerfen geht, sobald der Kalender geantwortet hat.",
+      "connection": "Die Verbindung dieses Kalenders wartet in den Einstellungen auf Sie.",
+      "invalid": "Diese Änderung war so nicht lesbar.",
+      "gone": "Dieser Termin ist nicht mehr da.",
+      "tooLarge": "Diese Änderung ist zu groß zum Senden.",
+      "replay": "Dieser Druck wurde schon mit anderem Inhalt gesendet.",
+      "unknown": "Die Änderung wurde nicht gespeichert."
+    },
+    "taken": {
+      "create": "Termin hinzugefügt",
+      "update": "Änderung gespeichert",
+      "delete": "Termin entfernt",
+      "move": "Termin verschoben",
+      "answer": "Antwort gespeichert",
+      "retry": "Wird erneut gesendet",
+      "dismiss": "Änderung verworfen"
+    }
   }
 }

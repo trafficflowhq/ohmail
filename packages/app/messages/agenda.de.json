@@ -1,0 +1,16 @@
+{
+  "agenda": {
+    "title": "Agenda",
+    "today": "Heute",
+    "tomorrow": "Morgen",
+    "nothingToday": "Heute nichts",
+    "nothing": "Nichts",
+    "unplaced": "{count, plural, one {# Termin} other {# Termine}} in einer Zeitzone, die dieses Gerät nicht kennt",
+    "allDay": "ganztägig",
+    "until": "bis {time}",
+    "untilDay": "bis {day}",
+    "span": "{from}–{to}",
+    "count": "{count, number}",
+    "month": "Monat"
+  }
+}

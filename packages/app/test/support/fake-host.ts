@@ -9,6 +9,7 @@ import {
   PLACE_IDS,
   STAGE_IDS,
   type Appearance,
+  type CalendarEntry,
   type FrameHost,
   type FramePlaces,
   type FrameStages,
@@ -56,6 +57,7 @@ const WIRES = [
   "folderSummary",
   "ownModelAutoSuggest",
   "mailboxes",
+  "calendar",
 ] as const satisfies readonly (keyof HostWires)[];
 
 export const NO_PLACES: FramePlaces = Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])) as FramePlaces;
@@ -70,6 +72,11 @@ export interface FakeHostInput {
   readonly recover?: Recover;
   readonly places?: Partial<FramePlaces>;
   readonly stages?: Partial<FrameStages>;
+  /** The calendar's entry; `none` unless given. The switch also needs `capabilities.products`. */
+  readonly calendar?: CalendarEntry | None;
+  readonly products?: HostCapabilities["products"];
+  /** Wires a test hands in; every other is `none`. */
+  readonly wires?: Partial<HostWires>;
   readonly window?: FakeWindow;
   readonly address?: FakeAddress;
   readonly appearance?: MovableSignal<Appearance>;
@@ -101,13 +108,17 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       recover: input.recover ?? NONE,
     },
     reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
-    wires: Object.fromEntries(WIRES.map((key) => [key, NONE])) as unknown as HostWires,
-    capabilities: { service: input.service, ...CANNOT },
+    wires: {
+      ...(Object.fromEntries(WIRES.map((key) => [key, NONE])) as unknown as HostWires),
+      ...input.wires,
+    },
+    capabilities: { service: input.service, ...CANNOT, products: input.products ?? CANNOT.products },
     features: {
       ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Record<FeatureName, None>),
       ...input.features,
       places: { ...NO_PLACES, ...input.places },
       stages: { ...NO_STAGES, ...input.stages },
+      calendar: input.calendar ?? NONE,
     },
     device: {
       build: { surface: "web", version: null, commit: null, mailtoLeaves: false },

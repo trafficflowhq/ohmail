@@ -1,0 +1,12 @@
+{
+  "week": {
+    "hours": "Die Stunden der Woche",
+    "allDay": "ganztags",
+    "chip": "{title}, {from} bis {to}",
+    "chipAllDay": "{title}, ganztags",
+    "above": "{count, plural, one {Ein Termin über den sichtbaren Stunden: zeigen} other {# Termine über den sichtbaren Stunden: den nächsten zeigen}}",
+    "below": "{count, plural, one {Ein Termin unter den sichtbaren Stunden: zeigen} other {# Termine unter den sichtbaren Stunden: den nächsten zeigen}}",
+    "unplaced": "{count, plural, one {1 Termin wird nicht gezeigt: Seine Zeitzone ist diesem Gerät nicht bekannt.} other {# Termine werden nicht gezeigt: Ihre Zeitzone ist diesem Gerät nicht bekannt.}}",
+    "capped": "Diese Woche enthält mehr, als auf einmal berechnet werden kann. Einige Termine werden vielleicht nicht gezeigt."
+  }
+}

@@ -94,6 +94,10 @@ const BASE_MESSAGE_NAMESPACES = [
   // `frame` is the frame's own sentences (`@ohmail/app/frame`, read through `@ohmail/app/text`): the rail's and the
   // dock's names, the notice slot's "N more", the connection's sentences. The window draws the frame.
   "frame",
+  // The calendar's views and its event (`packages/app/src/calendar` and the six views beside it, read through
+  // `@ohmail/app/text`). No shell hands the calendar in yet; listed for the reason `body` is: the guard compares what
+  // the sources READ.
+  "calendar", "event", "week", "day", "month", "year", "agenda", "calsearch",
   // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.
@@ -863,6 +867,8 @@ export default defineConfig({
       { find: "@ohmail/client-engine/durable", replacement: r("../../packages/client-engine/src/durable.ts") },
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("../../packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("../../packages/client-engine/src/html-tree-budget.ts") },
+      { find: "@ohmail/client-engine/calendar-acts", replacement: r("../../packages/client-engine/src/calendar-acts.ts") },
+      { find: "@ohmail/client-engine/calendar-writes", replacement: r("../../packages/client-engine/src/calendar-writes.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       // The kit's doors and its squares window, ABOVE the old kit's bare name.
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },

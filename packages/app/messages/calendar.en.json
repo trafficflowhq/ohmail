@@ -1,0 +1,29 @@
+{
+  "calendar": {
+    "landmark": "Calendar",
+    "unreadable": "The calendar cannot be read on this device.",
+    "noZone": "The calendar cannot be drawn: this device does not know its time zone.",
+    "notHere": "This part of the calendar is not here yet.",
+    "views": "View",
+    "view": {
+      "day": "Day",
+      "week": "Week",
+      "month": "Month",
+      "year": "Year",
+      "agenda": "Agenda"
+    },
+    "before": "Previous",
+    "after": "Next",
+    "today": "Today",
+    "search": "Search",
+    "agenda": "Agenda",
+    "held": {
+      "from": "Shown from {day}",
+      "load": "Load earlier",
+      "none": "Earlier days stay with the calendar.",
+      "failed": "Earlier days could not be read.",
+      "until": "Shown until {day}",
+      "after": "Later days stay with the calendar."
+    }
+  }
+}

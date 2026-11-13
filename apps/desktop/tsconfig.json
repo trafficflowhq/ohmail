@@ -73,6 +73,8 @@
       "@ohmail/client-engine/durable": ["../../packages/client-engine/src/durable.ts"],
       "@ohmail/client-engine/send-fingerprint": ["../../packages/client-engine/src/send-fingerprint.ts"],
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
+      "@ohmail/client-engine/calendar-acts": ["../../packages/client-engine/src/calendar-acts.ts"],
+      "@ohmail/client-engine/calendar-writes": ["../../packages/client-engine/src/calendar-writes.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],
       "@ohmail/ui/mail": ["../../packages/ui/src/mail/index.ts"],

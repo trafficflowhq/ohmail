@@ -1,0 +1,9 @@
+{
+  "year": {
+    "title": "Year",
+    "monthLabel": "{month}, Month",
+    "week": "Week {number}",
+    "weekLabel": "Week {number}, Week",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know"
+  }
+}

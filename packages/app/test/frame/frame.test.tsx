@@ -15,7 +15,15 @@ import {
   useReport,
   useSelectionBar,
 } from "../../src/frame/commands.js";
-import type { FramePlaces, PaneProps, PlaceEntry, RailModel, StageEntry } from "../../src/frame/contract.js";
+import type {
+  CalendarEntry,
+  FramePlaces,
+  PaneProps,
+  PlaceEntry,
+  RailModel,
+  StageEntry,
+} from "../../src/frame/contract.js";
+import { calendar as emptyCalendar } from "../../src/calendar/entry.js";
 import { TextProvider } from "../../src/text/index.js";
 import { fakeHost, NO_ENGINE, type FakeHostInput } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow, movable } from "../support/fake-window.js";
@@ -785,5 +793,120 @@ describe("the frame", () => {
       act(() => made.window.resize(width, undefined, pointer));
       expect(box().value).toBe("half a letter");
     }
+  });
+});
+
+/** A calendar entry whose week and day are one body that says where it stands, and opens an event. */
+function CalendarHere({ route }: PaneProps) {
+  const { commands, product } = useFrame();
+  return (
+    <div>
+      <p>{`calendar ${product} at ${route.place} ${route.sub ?? "today"} open ${route.open ?? "nothing"}`}</p>
+      <button
+        type="button"
+        onClick={() => commands.event({ event: "ev-1", occurrence: null, day: "2026-11-18" })}
+      >
+        Open event
+      </button>
+      <button type="button" onClick={() => commands.event(null)}>
+        Close event
+      </button>
+    </div>
+  );
+}
+const calendarPlace = (id: "week" | "day"): PlaceEntry => ({
+  id,
+  body: "calendar",
+  rail: null,
+  panes: { kind: "wide", Wide: CalendarHere },
+});
+const someCalendar: CalendarEntry = {
+  ...emptyCalendar,
+  places: { ...emptyCalendar.places, week: calendarPlace("week"), day: calendarPlace("day") },
+};
+function OpensFromMail() {
+  const { commands, product } = useFrame();
+  return (
+    <div>
+      <p>{`mail ${product}`}</p>
+      <button
+        type="button"
+        onClick={() => commands.event({ event: "ev-9", occurrence: "20261120T090000", day: "2026-11-20" })}
+      >
+        Open the meeting
+      </button>
+    </div>
+  );
+}
+const mailThatOpens: PlaceEntry = {
+  id: "ohbox",
+  body: "ohbox",
+  rail: null,
+  panes: { kind: "wide", Wide: OpensFromMail },
+};
+
+describe("the calendar's places in the frame", () => {
+  it("folds a calendar address back to mail's home where the host offers no calendar, never a blank frame", () => {
+    for (const absent of [{ products: "both" as const }, { calendar: someCalendar }, {}]) {
+      const { address } = mount(
+        { address: fakeAddress("#/cal/week/2026-11-16"), ...absent },
+        { ohbox: mailThatOpens },
+      );
+      expect(screen.getByText("mail mail")).toBeTruthy();
+      expect(address.writes).toEqual([{ next: "#/ohbox", how: "replace" }]);
+      cleanup();
+    }
+  });
+
+  it("folds the calendar's setup back too where no calendar is offered", () => {
+    const { address } = mount({ address: fakeAddress("#/cal/cal-setup") }, { ohbox: mailThatOpens });
+    expect(address.writes).toEqual([{ next: "#/ohbox", how: "replace" }]);
+  });
+
+  it("draws the calendar's registered place where the host offers both products", () => {
+    const { address } = mount(
+      { address: fakeAddress("#/cal/week/2026-11-16"), calendar: someCalendar, products: "both" },
+      { ohbox: mailThatOpens },
+    );
+    expect(screen.getByText("calendar cal at week 2026-11-16 open nothing")).toBeTruthy();
+    expect(address.writes).toEqual([]);
+  });
+
+  it("opens and closes an event in the place it stands in", () => {
+    const { address } = mount(
+      { address: fakeAddress("#/cal/week/2026-11-16"), calendar: someCalendar, products: "both" },
+      { ohbox: mailThatOpens },
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open event" }));
+    expect(address.writes.at(-1)).toEqual({ next: "#/cal/week/2026-11-16/e/ev-1", how: "push" });
+    expect(screen.getByText("calendar cal at week 2026-11-16 open ev-1")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close event" }));
+    expect(address.writes.at(-1)).toEqual({ next: "#/cal/week/2026-11-16", how: "push" });
+  });
+
+  it("opens an event from mail in the calendar's last place, at the event's day", () => {
+    const { address } = mount(
+      { address: fakeAddress("#/cal/day/2026-11-16"), calendar: someCalendar, products: "both" },
+      { ohbox: mailThatOpens },
+    );
+    act(() => address.visit("#/ohbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Open the meeting" }));
+    expect(address.writes.at(-1)).toEqual({
+      next: "#/cal/day/2026-11-20/e/ev-9%4020261120T090000",
+      how: "push",
+    });
+    expect(screen.getByText("calendar cal at day 2026-11-20 open ev-9@20261120T090000")).toBeTruthy();
+  });
+
+  it("opens an event from mail in the week where the calendar was never visited", () => {
+    const { address } = mount({ calendar: someCalendar, products: "both" }, { ohbox: mailThatOpens });
+    fireEvent.click(screen.getByRole("button", { name: "Open the meeting" }));
+    expect(address.writes.at(-1)?.next).toBe("#/cal/week/2026-11-20/e/ev-9%4020261120T090000");
+  });
+
+  it("does nothing on an event where the host offers no calendar", () => {
+    const { address } = mount({ calendar: someCalendar }, { ohbox: mailThatOpens });
+    fireEvent.click(screen.getByRole("button", { name: "Open the meeting" }));
+    expect(address.writes).toEqual([]);
   });
 });

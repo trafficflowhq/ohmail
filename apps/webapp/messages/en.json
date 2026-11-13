@@ -5166,5 +5166,142 @@
     "loading": "Checking this session…",
     "unavailableBody": "This copy of ohmail has no server attached, so there is no account to delete.",
     "back": "Back"
+  },
+  "week": {
+    "hours": "The week's hours",
+    "allDay": "all day",
+    "chip": "{title}, {from} to {to}",
+    "chipAllDay": "{title}, all day",
+    "above": "{count, plural, one {An event above the hours in view: show it} other {# events above the hours in view: show the nearest}}",
+    "below": "{count, plural, one {An event below the hours in view: show it} other {# events below the hours in view: show the nearest}}",
+    "unplaced": "{count, plural, one {1 event is not shown: its time zone is not known on this device.} other {# events are not shown: their time zone is not known on this device.}}",
+    "capped": "This week holds more than can be worked out at once. Some events may not be shown."
+  },
+  "day": {
+    "hours": "The day's hours",
+    "allDay": "all day",
+    "chip": "{title}, {from} to {to}",
+    "chipAllDay": "{title}, all day",
+    "above": "{count, plural, one {An event above the hours in view: show it} other {# events above the hours in view: show the nearest}}",
+    "below": "{count, plural, one {An event below the hours in view: show it} other {# events below the hours in view: show the nearest}}",
+    "freeHours": "{hours} h",
+    "freeHoursMinutes": "{hours} h {minutes} min",
+    "unplaced": "{count, plural, one {1 event is not shown: its time zone is not known on this device.} other {# events are not shown: their time zone is not known on this device.}}",
+    "capped": "This day holds more than can be worked out at once. Some events may not be shown."
+  },
+  "month": {
+    "title": "Month",
+    "more": "+{count}",
+    "moreLabel": "{count, plural, one {# more} other {# more}} on {day}, Day",
+    "week": "Week {number}",
+    "weekLabel": "Week {number}, Week",
+    "nothing": "Nothing",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know",
+    "allDay": "all day",
+    "until": "until {time}",
+    "untilDay": "until {day}",
+    "span": "{from}–{to}"
+  },
+  "year": {
+    "title": "Year",
+    "monthLabel": "{month}, Month",
+    "week": "Week {number}",
+    "weekLabel": "Week {number}, Week",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know"
+  },
+  "agenda": {
+    "title": "Agenda",
+    "today": "Today",
+    "tomorrow": "Tomorrow",
+    "nothingToday": "Nothing today",
+    "nothing": "Nothing",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know",
+    "allDay": "all day",
+    "until": "until {time}",
+    "untilDay": "until {day}",
+    "span": "{from}–{to}",
+    "count": "{count, number}",
+    "month": "Month"
+  },
+  "calsearch": {
+    "title": "Search",
+    "field": "Search",
+    "placeholder": "Title, place, people",
+    "clear": "Clear",
+    "count": "{count, plural, one {# event} other {# events}}",
+    "readAs": "Read as {words}",
+    "nothing": "Nothing found",
+    "unplaced": "{count, plural, one {# event} other {# events}} in a time zone this device does not know",
+    "held": "Searched from {from} to {to}",
+    "allDay": "all day",
+    "span": "{from}–{to}"
+  },
+  "calendar": {
+    "landmark": "Calendar",
+    "unreadable": "The calendar cannot be read on this device.",
+    "noZone": "The calendar cannot be drawn: this device does not know its time zone.",
+    "notHere": "This part of the calendar is not here yet.",
+    "views": "View",
+    "view": {
+      "day": "Day",
+      "week": "Week",
+      "month": "Month",
+      "year": "Year",
+      "agenda": "Agenda"
+    },
+    "before": "Previous",
+    "after": "Next",
+    "today": "Today",
+    "search": "Search",
+    "agenda": "Agenda",
+    "held": {
+      "from": "Shown from {day}",
+      "load": "Load earlier",
+      "none": "Earlier days stay with the calendar.",
+      "failed": "Earlier days could not be read.",
+      "until": "Shown until {day}",
+      "after": "Later days stay with the calendar."
+    }
+  },
+  "event": {
+    "waiting": {
+      "device": "Not sent yet from this device",
+      "provider": "Waiting for the calendar"
+    },
+    "notSaved": "Not saved",
+    "fault": {
+      "signIn": "The calendar's sign-in needs renewing.",
+      "notAllowed": "The calendar does not let this change be written.",
+      "gone": "The event is no longer in that calendar.",
+      "unreachable": "The calendar could not be reached.",
+      "notKept": "The calendar would not keep this change as written.",
+      "stale": "The event was changed elsewhere since. Keep yours or theirs.",
+      "versionUnknown": "The calendar's copy could not be read, so nothing was sent.",
+      "earlier": "An earlier change to this event was not saved, so this one was not sent.",
+      "chained": "Press again once the change before it is done.",
+      "expired": "This change waited too long and was not sent.",
+      "unknown": "The change was not saved."
+    },
+    "refusal": {
+      "off": "The calendar is off for this account.",
+      "readOnly": "This calendar can be looked at, not changed.",
+      "full": "Too many changes are waiting. Try again in a moment.",
+      "left": "It is being sent now. It can be let go once the calendar has answered.",
+      "connection": "This calendar's connection is waiting for you in Settings.",
+      "invalid": "This change could not be read as written.",
+      "gone": "This event is no longer here.",
+      "tooLarge": "This change is too large to send.",
+      "replay": "This press was already sent with other contents.",
+      "unknown": "The change was not saved."
+    },
+    "taken": {
+      "create": "Event added",
+      "update": "Change saved",
+      "delete": "Event removed",
+      "move": "Event moved",
+      "answer": "Answer saved",
+      "retry": "Sending again",
+      "dismiss": "Change let go"
+    }
   }
 }

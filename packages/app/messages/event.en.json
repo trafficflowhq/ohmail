@@ -1,0 +1,43 @@
+{
+  "event": {
+    "waiting": {
+      "device": "Not sent yet from this device",
+      "provider": "Waiting for the calendar"
+    },
+    "notSaved": "Not saved",
+    "fault": {
+      "signIn": "The calendar's sign-in needs renewing.",
+      "notAllowed": "The calendar does not let this change be written.",
+      "gone": "The event is no longer in that calendar.",
+      "unreachable": "The calendar could not be reached.",
+      "notKept": "The calendar would not keep this change as written.",
+      "stale": "The event was changed elsewhere since. Keep yours or theirs.",
+      "versionUnknown": "The calendar's copy could not be read, so nothing was sent.",
+      "earlier": "An earlier change to this event was not saved, so this one was not sent.",
+      "chained": "Press again once the change before it is done.",
+      "expired": "This change waited too long and was not sent.",
+      "unknown": "The change was not saved."
+    },
+    "refusal": {
+      "off": "The calendar is off for this account.",
+      "readOnly": "This calendar can be looked at, not changed.",
+      "full": "Too many changes are waiting. Try again in a moment.",
+      "left": "It is being sent now. It can be let go once the calendar has answered.",
+      "connection": "This calendar's connection is waiting for you in Settings.",
+      "invalid": "This change could not be read as written.",
+      "gone": "This event is no longer here.",
+      "tooLarge": "This change is too large to send.",
+      "replay": "This press was already sent with other contents.",
+      "unknown": "The change was not saved."
+    },
+    "taken": {
+      "create": "Event added",
+      "update": "Change saved",
+      "delete": "Event removed",
+      "move": "Event moved",
+      "answer": "Answer saved",
+      "retry": "Sending again",
+      "dismiss": "Change let go"
+    }
+  }
+}

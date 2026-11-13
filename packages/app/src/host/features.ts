@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { FrameNotice, FramePlaces, FrameStages } from "../frame/contract.js";
+import type { CalendarEntry, FrameNotice, FramePlaces, FrameStages } from "../frame/contract.js";
 import type { None } from "./contract.js";
 
 /**
@@ -40,4 +40,6 @@ export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & 
   readonly places: FramePlaces;
   /** The bodies that stand over the app. */
   readonly stages: FrameStages;
+  /** The calendar's root export (`@ohmail/app/calendar`), handed in by a shell that mounts it; `none`: no calendar here. */
+  readonly calendar: CalendarEntry | None;
 };

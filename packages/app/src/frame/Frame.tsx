@@ -23,6 +23,8 @@ import { Columns } from "./Columns.js";
 import { FrameContext, NO_CONNECTION, type ConnectionFeed, type FrameInner } from "./commands.js";
 import { useConnectionNotice } from "./connection.js";
 import type {
+  CalendarEntry,
+  EventRef,
   FrameApi,
   FrameCommands,
   FrameHost,
@@ -43,6 +45,7 @@ import { DockRail, SideRail } from "./RailHost.js";
 import { ReportHost } from "./ReportHost.js";
 import { useReportSlot } from "./report-slot.js";
 import { attributesOf } from "./root-attributes.js";
+import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
 import { fragmentOf, routeOf } from "./route.js";
 import { Scoped } from "./scope.js";
 import { Stage } from "./Stage.js";
@@ -67,11 +70,22 @@ function useRoute(host: FrameHost): Route {
   return useMemo(() => routeOf(fragment), [fragment]);
 }
 
+/** The calendar's entry where this host offers the switch between the two products, else null. */
+function calendarOf(host: FrameHost): CalendarEntry | null {
+  const entry = host.features.calendar;
+  return host.capabilities.products === "both" && entry !== NONE ? entry : null;
+}
+
+const HOME: Route = { place: MAIL_HOME, sub: null, open: null, stage: null, words: {} };
+
 function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraft | null }) {
   const [railOpen, setRailOpen] = useState(false);
   const [held, setHeld] = useState(false);
   const now = useRef(route);
   now.current = route;
+  /* The place the calendar's side was last in: an event opened from mail goes there. Kept for the frame's life only. */
+  const lastCalendar = useRef<Route | null>(null);
+  if (isCalendarPlace(route.place) && route.stage === null) lastCalendar.current = route;
   const go = useCallback(
     (to: RouteTarget) => {
       const next: Route = { sub: null, open: null, stage: null, words: {}, ...to };
@@ -92,6 +106,22 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
       },
       rail: setRailOpen,
       hold: setHeld,
+      event: (ref: EventRef | null) => {
+        if (calendarOf(host) === null) return;
+        const here = now.current;
+        if (ref === null) {
+          if (isCalendarPlace(here.place))
+            host.device.address.write(fragmentOf({ ...here, open: null }), "push");
+          return;
+        }
+        const open = eventRefString(ref);
+        if (isCalendarPlace(here.place)) {
+          host.device.address.write(fragmentOf({ ...here, open }), "push");
+          return;
+        }
+        const there = lastCalendar.current ?? { ...HOME, place: CALENDAR_HOME };
+        go({ place: there.place, sub: ref.day, open, words: there.words });
+      },
     }),
     [go, host, draft],
   );
@@ -176,7 +206,16 @@ function FrameBody({ host }: { host: FrameHost }) {
   const look = useSignal(host.device.appearance);
   const plan: LayoutPlan = useMemo(() => layoutPlan(facts), [facts]);
   const attributes = useMemo(() => attributesOf(plan, look, facts), [plan, look, facts]);
-  const route = useRoute(host);
+  const addressed = useRoute(host);
+  const calendar = calendarOf(host);
+  /* A calendar address where the switch is absent folds back to mail's home: the bar is replaced, and mail's home is
+     drawn meanwhile, never a blank frame. */
+  const folded =
+    calendar === null && (isCalendarPlace(addressed.place) || addressed.stage?.id === "calSetup");
+  const route = folded ? HOME : addressed;
+  useEffect(() => {
+    if (folded) host.device.address.write(fragmentOf(HOME), "replace");
+  }, [folded, host]);
   const slot = useReportSlot();
   const [inner] = useState(() => ({
     notices: createNoticeStore(),
@@ -187,7 +226,7 @@ function FrameBody({ host }: { host: FrameHost }) {
   }));
   const { commands, railOpen, setRailOpen, held } = useCommands(host, route, inner.draft);
   const api: FrameApi = useMemo(
-    () => ({ host, route, plan, commands, report: slot.report }),
+    () => ({ host, route, plan, commands, report: slot.report, product: productOf(route.place) }),
     [host, route, plan, commands, slot.report],
   );
   const context: FrameInner = useMemo(
@@ -196,9 +235,13 @@ function FrameBody({ host }: { host: FrameHost }) {
   );
   const places = host.features.places;
 
-  const place = places[route.place];
+  const place = isCalendarPlace(route.place) ? (calendar?.places[route.place] ?? NONE) : places[route.place];
   const entry = place === NONE ? null : place;
-  const stageEntry = route.stage ? host.features.stages[route.stage.id] : NONE;
+  const stageEntry = !route.stage
+    ? NONE
+    : route.stage.id === "calSetup"
+      ? (calendar?.stage ?? NONE)
+      : host.features.stages[route.stage.id];
   const staged = stageEntry !== NONE;
   const pane: PaneProps = { route, plan, keysHere: !staged };
   const { list, reading, wide } = panesOf(entry, pane, plan.columns === 2 || route.open !== null);
