@@ -1,0 +1,21 @@
+{
+  "id": "8a",
+  "base": "aa2b4124cb9d0dc0e6eb3828620858d7f3384bba",
+  "recorded": "2026-11-13",
+  "command": "npx vitest run test/invariant-table.test.ts",
+  "tests": [
+    "test/invariant-table.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "test/support/invariant-table.mjs",
+      "line": "if (has !== (status === \"bitten\")) out.push(",
+      "to": "if (false) out.push(",
+      "failed": 2
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 11
+  }
+}
