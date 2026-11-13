@@ -38,8 +38,8 @@ const atTag: IfContext = {
 };
 
 describe("build.yml runs at the version tag", () => {
-  it("a push of a v* tag starts it, beside a push to main", () => {
-    expect(wf.on?.push?.branches).toEqual(["main"]);
+  it("a push of a v* tag starts it, beside a push to main or to next", () => {
+    expect(wf.on?.push?.branches).toEqual(["main", "next"]);
     expect(wf.on?.push?.tags, "build.yml no longer runs on the release tag").toContain("v*");
   });
 

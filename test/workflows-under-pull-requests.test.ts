@@ -33,11 +33,11 @@ export function concurrencyOf(text: string): { group: string | null; cancel: str
   };
 }
 
-/** build.yml's and android.yml's concurrency: a pull request's run and a push to main's are superseded by
- * the next one; any other run is keyed by its commit and never cancelled. */
-export const CANCEL = "${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' }}";
+/** build.yml's and android.yml's concurrency: a pull request's run and a push to a line's (main, or next, the
+ * second line) are superseded by the next one; any other run is keyed by its commit and never cancelled. */
+export const CANCEL = "${{ github.event_name == 'pull_request' || github.event_name == 'push' && github.ref == 'refs/heads/main' || github.event_name == 'push' && github.ref == 'refs/heads/next' }}";
 export const groupOf = (prefix: string) =>
-  `${prefix}-\${{ github.ref }}-\${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.sha }}`;
+  `${prefix}-\${{ github.ref }}-\${{ github.event_name == 'pull_request' && 'pr' || github.event_name == 'push' && github.ref == 'refs/heads/main' && 'main' || github.event_name == 'push' && github.ref == 'refs/heads/next' && 'next' || github.sha }}`;
 
 /** Problems with the concurrency as written. */
 export function concurrencyFindings(c: { group: string | null; cancel: string | null }, prefix: string): string[] {
@@ -56,6 +56,8 @@ const SUPERSEDED: Array<[Run, Run]> = [
     { label: "its next push", event: "pull_request", ref: "refs/pull/7/merge", sha: SHA_B }],
   [{ label: "a push to main", event: "push", ref: "refs/heads/main", sha: SHA_A },
     { label: "the next push to main", event: "push", ref: "refs/heads/main", sha: SHA_B }],
+  [{ label: "a push to next", event: "push", ref: "refs/heads/next", sha: SHA_A },
+    { label: "the next push to next", event: "push", ref: "refs/heads/next", sha: SHA_B }],
 ];
 /** Runs that are never cancelled and share a group with no other commit's run. */
 const KEPT: Run[] = [
@@ -65,6 +67,7 @@ const KEPT: Run[] = [
   { label: "a dispatch on a tag", event: "workflow_dispatch", ref: "refs/tags/v1.2.3", sha: SHA_A },
   { label: "a dispatch on main", event: "workflow_dispatch", ref: "refs/heads/main", sha: SHA_A },
   { label: "the nightly", event: "schedule", ref: "refs/heads/main", sha: SHA_A },
+  { label: "a dispatch on next (its nightly)", event: "workflow_dispatch", ref: "refs/heads/next", sha: SHA_A },
 ];
 
 /** A workflow value as the runner reads it: a whole `${{ }}` is its value, a bare true or false that
@@ -151,6 +154,8 @@ describe("the workflows of a main that takes pull requests", () => {
     const at = (event: string, ref: string) => ({ "github.event_name": event, "github.ref": ref, "github.sha": SHA_A });
     expect(valueOf(group, at("pull_request", "refs/pull/7/merge"))).toBe("build-refs/pull/7/merge-pr");
     expect(valueOf(group, at("push", "refs/heads/main"))).toBe("build-refs/heads/main-main");
+    expect(valueOf(group, at("push", "refs/heads/next")), "a push to next has next's own group, apart from main's").toBe("build-refs/heads/next-next");
+    expect(valueOf(group, at("push", "refs/heads/release/x")), "any other branch is keyed by its commit").toBe(`build-refs/heads/release/x-${SHA_A}`);
     expect(valueOf(group, at("push", "refs/tags/v1.2.3"))).toBe(`build-refs/tags/v1.2.3-${SHA_A}`);
     expect(valueOf(group, at("workflow_dispatch", "refs/heads/main"))).toBe(`build-refs/heads/main-${SHA_A}`);
     expect(valueOf(group, at("schedule", "refs/heads/main")), "the nightly is keyed by its commit, never main's group").toBe(`build-refs/heads/main-${SHA_A}`);
@@ -193,6 +198,17 @@ describe("the workflows of a main that takes pull requests", () => {
     expect(concurrencyRuns(concurrencyOf(before), "android")).toEqual([
       "android: a push to main and the next push to main do not share a group",
       "android: the next push to main does not cancel a push to main",
+      "android: a push to next and the next push to next do not share a group",
+      "android: the next push to next does not cancel a push to next",
+    ]);
+    /* build.yml left on the block before the second line: main's runs are superseded, next's are not. */
+    const mainOnly = build
+      .replace(" || github.event_name == 'push' && github.ref == 'refs/heads/next' && 'next'", "")
+      .replace(" || github.event_name == 'push' && github.ref == 'refs/heads/next' }}", " }}");
+    expect(concurrencyOf(mainOnly)).not.toEqual(concurrencyOf(build));
+    expect(concurrencyRuns(concurrencyOf(mainOnly), "build")).toEqual([
+      "build: a push to next and the next push to next do not share a group",
+      "build: the next push to next does not cancel a push to next",
     ]);
     /* A pull request's group without the pull request: every pull request shares one. */
     expect(concurrencyRuns(concurrencyOf(build.replace("-${{ github.ref }}-", "-")), "build")).toContain("build: two pull requests share a group");
