@@ -1,8 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { WORKER_NET_TIMEOUTS } from "@trafficflow/core/adapters/imap";
-import { makePlatformSignalPort, SSE_DISABLED_REFUSAL } from "@trafficflow/db/cloud";
+import { DEFAULT_ALERT_THRESHOLDS, makePlatformSignalPort, SSE_DISABLED_REFUSAL } from "@trafficflow/db/cloud";
 import {
   ATTACH_DEADLINE_MS, DEFAULT_ATTACH_CONCURRENCY, DEFAULT_SYNC_BLOCK_GRACE_MS, MAX_ATTACH_CONCURRENCY,
+  DEFAULT_LOCK_HEARTBEAT_MS, DEFAULT_STANDBY_RETRY_MS, LOCK_UNPROVEN_HEARTBEATS,
+  MAX_LOCK_HEARTBEAT_MS, MIN_LOCK_HEARTBEAT_MS, MAX_STANDBY_RETRY_MS,
   HEAVY_TURN_MS, SHARED_ACCOUNT_TURN_MS, TURN_START_MESSAGES, TURN_MIN_MESSAGES, TURN_MAX_MESSAGES,
   WorkerConfigError, loadConfig, resolveAttachConcurrency, nextTurnMessages, resolveHeavyTurnMs, resolveSharedAccountTurnMs,
 } from "../src/config.js";
@@ -185,5 +187,39 @@ describe("the key ring's retired versions", () => {
     expect(e.remedy).toContain(`${keyRingVar(1)} is set`);
     expect(`${e.message} ${e.remedy}`).not.toContain(KEY_ONE);
     expect(`${e.message} ${e.remedy}`).not.toContain(KEY_TWO);
+  });
+});
+
+describe("the lock's heartbeat and the spare's retry", () => {
+  it("ships a heartbeat whose three missed proofs end inside the pager's window, and a retry inside the serving floor", () => {
+    expect(LOCK_UNPROVEN_HEARTBEATS).toBe(3);
+    const pager = DEFAULT_ALERT_THRESHOLDS.leaderStaleMs;
+    expect(DEFAULT_LOCK_HEARTBEAT_MS * LOCK_UNPROVEN_HEARTBEATS).toBeLessThanOrEqual(pager);
+    // …and so does the largest heartbeat a deployment can set: a leader that is not sure has stopped
+    // by the time the pager says nobody leads.
+    expect(MAX_LOCK_HEARTBEAT_MS * LOCK_UNPROVEN_HEARTBEATS).toBeLessThanOrEqual(pager);
+    expect(DEFAULT_STANDBY_RETRY_MS).toBeLessThanOrEqual(MAX_STANDBY_RETRY_MS);
+    expect(loadConfig(BASE)).toMatchObject({
+      lockHeartbeatMs: DEFAULT_LOCK_HEARTBEAT_MS, standbyRetryMs: DEFAULT_STANDBY_RETRY_MS,
+    });
+  });
+
+  it("reads TF_LOCK_HEARTBEAT_MS and refuses one outside 1 s to 40 s by name", () => {
+    expect(loadConfig({ ...BASE, TF_LOCK_HEARTBEAT_MS: "1000" }).lockHeartbeatMs).toBe(MIN_LOCK_HEARTBEAT_MS);
+    expect(loadConfig({ ...BASE, TF_LOCK_HEARTBEAT_MS: "40000" }).lockHeartbeatMs).toBe(MAX_LOCK_HEARTBEAT_MS);
+    // 0 makes the bound 0 (a leader that stands down at every tick); past 40 s three proofs outlast the
+    // pager's window; past what a timer holds the lock would be verified every millisecond.
+    for (const bad of ["0", "999", "40001", "2147483648"]) {
+      expect(refusal({ TF_LOCK_HEARTBEAT_MS: bad }).configVar, bad).toBe("TF_LOCK_HEARTBEAT_MS");
+    }
+  });
+
+  it("reads TF_STANDBY_RETRY_MS and refuses one above a minute by name", () => {
+    expect(loadConfig({ ...BASE, TF_STANDBY_RETRY_MS: "60000" }).standbyRetryMs).toBe(MAX_STANDBY_RETRY_MS);
+    // A spare asks for the lock at least once inside any serving bound; past what a timer holds it
+    // would dial for it every millisecond.
+    for (const bad of ["60001", "2147483648"]) {
+      expect(refusal({ TF_STANDBY_RETRY_MS: bad }).configVar, bad).toBe("TF_STANDBY_RETRY_MS");
+    }
   });
 });

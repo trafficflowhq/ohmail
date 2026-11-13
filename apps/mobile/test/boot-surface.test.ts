@@ -72,7 +72,7 @@ describe("the provider sequences verify → drain (held at the source; no node r
     // callback BODY is extracted by balanced braces and the order guard → ring → drain is
     // asserted within it and nowhere else.
     // Two continuations chain on the gate (the adopt path and syncNow); anchor on syncNow's.
-    const syncNowAt = connection.indexOf("syncNow: () =>");
+    const syncNowAt = connection.indexOf("syncNow: (heard) =>");
     expect(syncNowAt, "syncNow left the connection layer").toBeGreaterThan(-1);
     const open = connection.indexOf("gate.then((ok) => {", syncNowAt);
     expect(open, "syncNow no longer chains on the clearance gate").toBeGreaterThan(-1);

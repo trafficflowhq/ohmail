@@ -692,6 +692,25 @@ const TABLE = {
   networkOffline: "This phone has no network. ohmail catches up when it is back.",
   networkOfflineHeld: "This phone has no network — showing the recent mail it holds.",
 
+  /* NEW MAIL IS LATE — the server this phone is paired with answers and says it is not fetching
+     (`MailboxDTO.fetching`). One calm strip over the Ohbox, a pull's answer and the mailbox's note
+     in Settings; `ui/late-lines.ts` chooses among whole sentences. Per who checks the mailboxes:
+     ohmail Cloud, or a server somebody runs, which is never called Cloud and whose lateness is not
+     "on us". */
+  lateTitle: "New mail is late.",
+  lateTitleDays: (days: number) => (days === 1 ? "New mail is a day late." : `New mail is ${days} days late.`),
+  lateLineCloud: (since: string) => `ohmail Cloud has not checked since ${since}. Nothing is lost, and it arrives as soon as checking runs again.`,
+  lateLineCloudNoTime: "ohmail Cloud is not checking right now. Nothing is lost, and it arrives as soon as checking runs again.",
+  lateLineCloudDay: (since: string) => `ohmail Cloud has not checked since ${since}, and that is on us. Nothing is lost, and it arrives as soon as checking runs again.`,
+  lateLineServer: (since: string) => `Your ohmail server has not checked since ${since}. Nothing is lost, and it arrives as soon as checking runs again.`,
+  lateLineServerNoTime: "Your ohmail server is not checking right now. Nothing is lost, and it arrives as soon as checking runs again.",
+  pullBehind: "Not checked. ohmail Cloud is not checking right now, and new mail arrives by itself as soon as it does.",
+  pullBehindServer: "Not checked. Your ohmail server is not checking right now, and new mail arrives by itself as soon as it does.",
+  notCheckedNoteCloud: (since: string) => `ohmail Cloud has not checked this mailbox since ${since}. Nothing is lost, and its mail arrives as soon as checking runs again.`,
+  notCheckedNoteCloudNoTime: "ohmail Cloud is not checking this mailbox right now. Nothing is lost, and its mail arrives as soon as checking runs again.",
+  notCheckedNoteServer: (since: string) => `Your ohmail server has not checked this mailbox since ${since}. Nothing is lost, and its mail arrives as soon as checking runs again.`,
+  notCheckedNoteServerNoTime: "Your ohmail server is not checking this mailbox right now. Nothing is lost, and its mail arrives as soon as checking runs again.",
+
   /* NOTHING HAS BEEN READ FROM THIS MAILBOX, and that is a different fact from the two above —
      both are true at once and both are shown. It deliberately makes NO claim about the link: a
      server that signs you in and then refuses to hand over the mail leaves the connection dead by

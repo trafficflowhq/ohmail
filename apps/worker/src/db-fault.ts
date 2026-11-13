@@ -102,6 +102,27 @@ const isConnectionCode = (code: string, tagged: boolean): boolean =>
   || (tagged && CONNECTION_ERRNOS.has(code));
 
 /**
+ * The supervisor's own word for a first contact that was accepted and then not answered inside its
+ * deadline (`supervisor.ts`): the session is ended and the wait goes on.
+ */
+export const FIRST_CONTACT_TIMEOUT = "FIRST_CONTACT_TIMEOUT";
+
+/**
+ * The code that says the database is AWAY, or null: the one class of start failure the supervisor
+ * waits through instead of exiting (`supervisor.ts`). A closed allow-list, because waiting is the
+ * dangerous branch: a fault it does not name (a refused credential, a database that does not exist,
+ * a certificate that does not verify, a setting) exits at once and loudly, as it always has. The
+ * shard's connection set, a cancelled statement (57014: at first contact the only statements are the
+ * lock's and the retirement gate's, so a cancel says the server could not answer) and
+ * {@link FIRST_CONTACT_TIMEOUT}. A new code is added here, with its case in `standby.e2e.test.ts`.
+ */
+export function databaseAwayCodeOf(err: unknown): string | null {
+  const tagged = err instanceof DatabaseFaultError;
+  return codesOf(err)
+    .find((code) => isConnectionCode(code, tagged) || code === "57014" || code === FIRST_CONTACT_TIMEOUT) ?? null;
+}
+
+/**
  * Is this throw the SHARD'S DATABASE CONNECTION failing — the question a cycle-tail stage asks before
  * it logs its own failure. Narrower than {@link isSharedDatabaseFault}: a statement timeout (57014), a
  * lock timeout (55P03) or a serialization failure (40001) on one large account is that account's and

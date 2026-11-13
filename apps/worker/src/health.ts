@@ -8,9 +8,11 @@ import type { ApiCronTargetHealth } from "./api-cron.js";
  * one for the length of a deploy (the platform kills anything else, and a killed hot spare can never
  * take over), bounded by {@link evaluateHealth}'s clock. It must not LIE the other way:
  * `lastCycleAt`/`lagSeconds` advance ONLY on a cycle that synced a mailbox (or had nothing to sync),
- * and `healthy` is FALSE for a leader with mailboxes to serve that served none past the bound (with
- * `expected`/`mailboxes`/`quarantined`/`awaitingCredentials`/`truncated` published beside it). A 503
- * gates a DEPLOYMENT going active, never a running instance. `kekFingerprint` + `kekActiveVersion` +
+ * and `healthy` is FALSE for an instance that has not reached its database, for a leader with mailboxes
+ * to serve that served none past the bound (with `expected`/`mailboxes`/`quarantined`/
+ * `awaitingCredentials`/`truncated` published beside it), for one whose database has failed that long
+ * and for one whose cycle has stopped moving. A platform gates a DEPLOYMENT on the 503; a running
+ * instance acts on its own verdict (`supervisor.ts`). `kekFingerprint` + `kekActiveVersion` +
  * `kekVersionCount` are the KEK-drift tripwire from `kekEnvIdentity()` in `@trafficflow/core`; ALL
  * THREE must match (fingerprint covers the whole ring; `kekActiveVersion` persists as `key_version`). */
 export interface HealthSnapshot {
@@ -98,6 +100,14 @@ export interface HealthSnapshot {
    * outage, and the field that told them apart did not exist.
    */
   waitingForLockSeconds: number | null;
+  /**
+   * Seconds this instance has been unable to reach its database, or null while it can: a start that
+   * has had no answer yet, or a leader that gave its leadership up. Public on
+   * `waitingForLockSeconds`' terms: it separates a blip from an outage and names nobody.
+   */
+  waitingForDatabaseSeconds: number | null;
+  /** The code the last attempt failed with (an SQLSTATE or an errno), never a message; null while it can. */
+  waitingForDatabaseCode: string | null;
   /** The lock is WON and the worker is still starting up — not a spare, not yet serving. */
   takingOver: boolean;
   lastCycleAt: string | null;
@@ -158,7 +168,10 @@ export interface HealthSnapshot {
   parkedReader: "composed" | "absent";
   /** This process's database hop: a handshake on its pools verified chain and host name (`readDbTls`). */
   dbTls: boolean;
-  /** Present in the fatal state (a failed takeover, or a LOST leader lock). */
+  /**
+   * Present in the fatal state (a failed takeover, a refused start, a stuck cycle). The error's class
+   * and code ({@link errorTokenOf}), or a sentence this product wrote: never a driver's message.
+   */
   error?: string;
 }
 
@@ -171,7 +184,7 @@ export interface HealthSnapshot {
  */
 export const PUBLIC_HEALTH_KEYS = [
   "version", "buildError", "leader", "standby", "takingOver", "healthy", "unhealthyReason",
-  "waitingForLockSeconds", "kekFingerprint", "kekActiveVersion", "kekVersionCount", "kek", "shard",
+  "waitingForLockSeconds", "waitingForDatabaseSeconds", "waitingForDatabaseCode", "kekFingerprint", "kekActiveVersion", "kekVersionCount", "kek", "shard",
   "alertSinks", "pager", "apiCron", "parkedReader", "dbTls", "error",
 ] as const satisfies readonly (keyof HealthSnapshot)[];
 
@@ -182,6 +195,18 @@ export function publicHealth(snap: HealthSnapshot): PublicHealth {
   const out: Record<string, unknown> = {};
   for (const key of PUBLIC_HEALTH_KEYS) if (key in snap) out[key] = snap[key];
   return out as PublicHealth;
+}
+
+/**
+ * An error as the endpoint may name it: its class and its code. A driver's message can carry the
+ * database's host and port, and this endpoint answers anyone; the message stays in the log.
+ */
+export function errorTokenOf(err: unknown): string {
+  if (err === null || typeof err !== "object") return "Error";
+  const name = (err as { name?: unknown }).name;
+  const code = (err as { code?: unknown }).code;
+  const token = (v: unknown): string | null => (typeof v === "string" && /^[A-Za-z0-9_]{1,64}$/.test(v) ? v : null);
+  return [token(name) ?? "Error", token(code)].filter((t) => t !== null).join(" ");
 }
 
 /** `Authorization: Bearer <secret>`, compared over digests so neither length nor prefix leaks. */
@@ -195,13 +220,21 @@ function bearerMatches(header: string | undefined, secret: string): boolean {
 /**
  * Why `/health` answers 503. A closed set, because it is published.
  *
- * · `fatal` — a failed takeover or a LOST leader lock. Pre-P18 behaviour, unchanged.
+ * · `fatal` — this instance refused or failed: a failed takeover, a refused start, a cycle that
+ *   stopped moving. The process exits; a restart is the remedy.
  * · `serving_nothing` — a leader that has mailboxes to serve and has been serving none of them
  *   for longer than the bound.
+ * · `stuck_cycle` — a leader with mailboxes connected whose cycle has not moved for
+ *   {@link stuckCycleBoundMs}. The supervisor exits on it.
+ * · `database_fault` — a leader whose own database has been failing for longer than the bound. A
+ *   restart cannot help; past {@link stuckCycleBoundMs} the leader gives its leadership up and waits.
+ * · `waiting_for_database` — an instance that has not reached its database: a start with no answer
+ *   yet, or a leader that lost its lock or gave it up. It retries for as long as it takes.
  * · `waiting_for_lock` — an instance that has been unable to take the leader lock for longer
  *   than the bound. A rolling deploy produces five seconds of this; a wedge produces hours.
  */
-export type UnhealthyReason = "fatal" | "serving_nothing" | "waiting_for_lock";
+export type UnhealthyReason =
+  | "fatal" | "serving_nothing" | "stuck_cycle" | "database_fault" | "waiting_for_database" | "waiting_for_lock";
 
 /**
  * Why `degraded` is true while nothing is unhealthy. A closed set, published, ranked so the cause
@@ -211,7 +244,7 @@ export type UnhealthyReason = "fatal" | "serving_nothing" | "waiting_for_lock";
  * healthy under it). `duty_gap` — enabled mailboxes in NO accounted-for bucket
  * (`roster_invariant_violated`), the one cause that is a BUG here. `roster_shortfall` — owed and
  * unserved for an accounted cause (`unserved` carries the breakdown). `at_capacity` — `maxMailboxes`
- * (`TF_MAX_MAILBOXES` or a shard). The three unhealthy tokens are the FLOOR, ranked last. NOT a cause:
+ * (`TF_MAX_MAILBOXES` or a shard). The unhealthy tokens are the FLOOR, ranked last. NOT a cause:
  * `organized_elsewhere:*` (see {@link UnservedBreakdown.standDown}). */
 export type DegradedReason =
   | "database_fault"
@@ -297,10 +330,14 @@ export function anyDegradedCause(c: DegradedCauses): boolean {
 export interface HealthInput extends DegradedCauses {
   /** ms epoch. Passed in, so the truth table is a pure function of its arguments. */
   now: number;
-  /** The supervisor recorded a fatal: a failed takeover, or a lost lock. */
+  /** The supervisor recorded a fatal: a failed takeover, a refused start, a stuck cycle. */
   fatal: boolean;
   leader: boolean;
   standby: boolean;
+  /** The database has not answered this instance: neither leading nor a spare. */
+  waiting: boolean;
+  /** ms epoch at which it began waiting for the database, or null while it is not. */
+  waitingSince: number | null;
   /** The lock is won; `startWorkerWithLock` has not returned yet. */
   takingOver: boolean;
   /** Enabled mailboxes of this shard that this process is supposed to serve. */
@@ -313,11 +350,30 @@ export interface HealthInput extends DegradedCauses {
   leaderSince: number | null;
   /** The last cycle in which something actually synced (ms epoch), or null. */
   lastCycleAt: number | null;
+  /** Up to when the cycle is known to have moved (`WorkerStats.cycleProgressAt`, ms epoch), or null. */
+  cycleProgressAt: number | null;
+  /** The last rotation's wall clock in ms, or null before the first. */
+  lastRotationMs: number | null;
+  /** ms epoch at which this process's own database started failing, or null while it answers. */
+  databaseFaultSince: number | null;
   /** The bound both clocks are measured against (`WorkerConfig.servingNothingMaxMs`). */
   maxMs: number;
   /** How stale a COMPLETED cycle may go, mailboxes connected, before the verdict says
    *  `degraded` (`WorkerConfig.staleCycleMaxMs`). Never moves `healthy`. */
   staleCycleMaxMs: number;
+  /** The floor of {@link stuckCycleBoundMs} (`WorkerConfig.stuckCycleMaxMs`). */
+  stuckCycleMaxMs: number;
+  pollIntervalMs: number;
+}
+
+/**
+ * How long a cycle may stand still before it is stuck: the floor, or four of this shard's own
+ * rotations and a poll when that is longer, so a shard that is slow by measurement is given its time.
+ */
+export function stuckCycleBoundMs(
+  input: Pick<HealthInput, "stuckCycleMaxMs" | "lastRotationMs" | "pollIntervalMs">,
+): number {
+  return Math.max(input.stuckCycleMaxMs, 4 * (input.lastRotationMs ?? 0) + input.pollIntervalMs);
 }
 
 export interface HealthVerdict {
@@ -340,7 +396,7 @@ export interface HealthVerdict {
  * `lastCycleAt ?? leaderSince`. It still cannot see a fast crash loop (detector is DB-side:
  * `worker_heartbeats.started_at` advancing while `last_cycle_at` does not). */
 export function evaluateHealth(input: HealthInput): HealthVerdict {
-  // THE STALE-CYCLE RULE — degraded, never unhealthy. The serving-nothing rule requires
+  // THE STALE-CYCLE RULE — degraded; the stuck rule below is the one that answers 503. The serving-nothing rule requires
   // `connected === 0`, so a leader whose mailboxes are all attached but whose cycle stopped COMPLETING
   // was invisible (`healthy: true, degraded: false` however stale `lastCycleAt` went — measured
   // `lagSeconds: 560` during a cold backfill). This names that without touching the deploy-gate
@@ -378,6 +434,26 @@ export function evaluateHealth(input: HealthInput): HealthVerdict {
 
   if (input.fatal) return verdict("fatal");
 
+  // A LEADER THAT IS ALIVE AND DOES NO WORK SAYS SO. Two clocks, one word each, and the word decides
+  // what anything outside does with the 503: a database that is away is not mended by a restart, a
+  // cycle that stopped moving for no named reason is. The stuck clock is the cycle's own movement
+  // (a rotation or a mailbox turn that ended, whatever its outcome, never later than the oldest turn
+  // still running), from the takeover until the first: a rotation is one turn per mailbox and outlasts
+  // any fixed bound on a large cold shard while its turns keep ending, and a mailbox that fails every
+  // turn is the quarantine's to deal with, not a restart's.
+  if (input.leader) {
+    const stuckSince = input.cycleProgressAt ?? input.leaderSince;
+    const stuck = input.connected > 0 && stuckSince !== null
+      && input.now - stuckSince >= stuckCycleBoundMs(input);
+    // A fault only counts against a shard that owes mail: an empty one has no cycle to clear it.
+    const failingFor = input.databaseFaultSince === null ? null : input.now - input.databaseFaultSince;
+    const owes = input.expected - input.standDown > 0;
+    if ((owes && failingFor !== null && failingFor >= input.maxMs) || (stuck && input.databaseFault)) {
+      return verdict("database_fault");
+    }
+    if (stuck) return verdict("stuck_cycle");
+  }
+
   // WHAT THIS SHARD IS ACTUALLY OWED — `expected` minus the mailboxes another organizer legitimately
   // holds. The stand-down ruling (`UnservedBreakdown.standDown`) must reach this rule and not only the
   // degraded one, or it is a preference: a Cloud shard whose whole duty is organized by desktop
@@ -392,13 +468,18 @@ export function evaluateHealth(input: HealthInput): HealthVerdict {
   }
 
   // A takeover in flight is NOT waiting for the lock — it holds it, so the standby clock must not fire
-  // on it. The exemption is UNBOUNDED, the honest limit of the rule: a takeover that WEDGES is
-  // indistinguishable from one working hard. It used to cover a first sync (`attach()` drained inline,
-  // so a takeover spent MINUTES per mailbox — ~six measured in production — and at `maxMailboxes=64`
-  // that was hours of green `/health`). Now attach is connect + lease + folders + kickstart + IDLE and
-  // syncs nothing, so the window shrank from drain-time to connect-time; it did NOT close (64 mailboxes
-  // × a hung dial is still unbounded). The detector is DB-side (`worker_heartbeats.started_at`
-  // advancing while `last_cycle_at` does not). Do not read the smaller window as a fixed bound.
+  // on it. The exemption has no bound in this verdict: a takeover that WEDGES is indistinguishable
+  // here from one working hard. It used to cover a first sync (`attach()` drained inline, so a
+  // takeover spent MINUTES per mailbox — ~six measured in production — and at `maxMailboxes=64` that
+  // was hours of green `/health`). Now attach is connect + lease + folders + kickstart + IDLE and
+  // syncs nothing, so the window shrank from drain-time to connect-time (64 mailboxes × a hung dial is
+  // still hours). The supervisor ends it: past `takeoverDeadlineMsOf` the process exits, 503 `fatal`.
+  // Before that the detector is DB-side (`worker_heartbeats.started_at` advancing while
+  // `last_cycle_at` does not).
+  // Not healthy from its first answer, with no grace: nothing may take an instance that has not
+  // reached its database for a working one, and no deployment goes live before its database answered.
+  if (input.waiting) return verdict("waiting_for_database");
+
   if (input.standby && !input.takingOver && input.now - input.standbySince >= input.maxMs) {
     return verdict("waiting_for_lock");
   }

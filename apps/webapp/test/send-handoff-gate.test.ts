@@ -28,6 +28,10 @@ describe("mayHandOff", () => {
     expect(mayHandOff({ ...HEALTHY, stateKey: "importing" })).toBe(true);
   });
 
+  it("is true while new mail is late: the server answers and sends, only the fetching waits", () => {
+    expect(mayHandOff({ ...HEALTHY, stateKey: "behind" })).toBe(true);
+  });
+
   const arms: Array<[string, Partial<HandOffInputs>]> = [
     ["send later", { scheduled: true }],
     ["offline", { online: false }],

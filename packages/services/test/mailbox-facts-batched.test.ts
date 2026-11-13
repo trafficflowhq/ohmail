@@ -4,9 +4,9 @@ import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { dialect } from "@trafficflow/db/dialect";
 import { accounts, mailboxes, messageFailures } from "@trafficflow/db";
-import { ACCOUNT_MAILBOXES_MAX_READ, type MailboxDTO } from "@trafficflow/services";
+import { ACCOUNT_MAILBOXES_MAX_READ, makeMailboxService, type MailboxDTO } from "@trafficflow/services";
 import {
-  A, B, GOLDEN, MIN, at, cred, ctxFor, erasing, failure, filing, folder, gapReader, goldenAnswer, heldReader, id,
+  A, B, GOLDEN, LAST_CYCLE_AT, MIN, at, cred, ctxFor, erasing, failure, filing, folder, gapReader, goldenAnswer, heldReader, id,
   inError, organizer, outstandingDrift, seed, seedPlain, settled, svc, theirFirst, theirSecond, theirThird, DAY, type Db,
 } from "./helpers/mailbox-facts-seed.js";
 
@@ -137,6 +137,79 @@ describe("GET /mailboxes reads every mailbox's facts in a fixed number of statem
     await seed(db);
     const { sent } = await measured(db, () => svc.get(ctxFor(db, A), organizer));
     expect(sent).toHaveLength(5);
+  });
+
+  /**
+   * 12 November 2026: no mailbox was fetched for 26 hours and every app showed "Connected · Synced".
+   * The server knew. It now says so on the call the apps already make: one fact about its organizer,
+   * on the rows it fetches, and the same fact on the answer to a pull.
+   */
+  it("says whether mail is being fetched, on the rows this server fetches and on the pull's answer", async () => {
+    const db = await makeTestDb();
+    await seed(db);
+    const rows = await svc.list(ctxFor(db, A));
+    const of = (mailboxId: string): MailboxDTO => rows.find((r) => r.id === mailboxId)!;
+    // Fetched here: organized here, in error (it is retried), and read for another install's organizer.
+    for (const fetched of [organizer, inError, gapReader]) {
+      expect(of(fetched).fetching, fetched).toEqual({ behind: true, since: LAST_CYCLE_AT });
+    }
+    // Not fetched, so not this server's to say: the disabled rows, whatever their role.
+    for (const disabled of [heldReader, erasing]) expect(of(disabled).fetching, disabled).toBeNull();
+    // Two words and nothing else: no count, no instance, nothing about another account.
+    for (const row of rows) if (row.fetching) expect(Object.keys(row.fetching).sort()).toEqual(["behind", "since"]);
+    expect((await svc.requestPull(ctxFor(db, A))).fetching).toEqual({ behind: true, since: LAST_CYCLE_AT });
+
+    // …and back: the same rows the moment the organizer has caught up.
+    const caughtUp = makeMailboxService({
+      installId: "install-here", organizerStanding: async () => ({ lastCycleAt: LAST_CYCLE_AT, behind: false, since: LAST_CYCLE_AT }),
+    });
+    expect((await caughtUp.get(ctxFor(db, A), organizer)).fetching).toEqual({ behind: false, since: LAST_CYCLE_AT });
+    expect((await caughtUp.requestPull(ctxFor(db, A))).fetching).toEqual({ behind: false, since: LAST_CYCLE_AT });
+
+    // A host that keeps no such record (a desktop, a phone organizing on its own) never says
+    // "current": it says nothing. A record that cannot be read says nothing either.
+    for (const silent of [
+      makeMailboxService({ installId: "install-here" }),
+      makeMailboxService({ installId: "install-here", organizerStanding: async () => { throw new Error("unreadable"); } }),
+    ]) {
+      expect((await silent.list(ctxFor(db, A))).map((r) => r.fetching)).toEqual(rows.map(() => null));
+      expect((await silent.requestPull(ctxFor(db, A))).fetching).toBeNull();
+    }
+  });
+
+  /**
+   * The rows and the pull's answer go by one rule, the organizer's own duty: it fetches every mailbox
+   * that is not disabled, also one it reads for another install's organizer and one in error, unless
+   * it has written on the row that it left it out (a closed account, its own capacity). A press was
+   * told "not checking" for a mailbox whose row said nothing.
+   */
+  it.each<{ account: string; rows: Array<[role: "organizer" | "reader", status: string, blocked?: string]>; carry: boolean[] }>([
+    { account: "only mailboxes read for another organizer", rows: [["reader", "connected"], ["reader", "connected"]], carry: [true, true] },
+    { account: "one organized here, one read, one disabled", rows: [["organizer", "connected"], ["reader", "connected"], ["organizer", "disabled"]], carry: [true, true, false] },
+    { account: "only disabled mailboxes", rows: [["organizer", "disabled"], ["reader", "disabled"]], carry: [false, false] },
+    { account: "only a mailbox in error, which a press does not ring", rows: [["organizer", "error"]], carry: [true] },
+    { account: "no mailbox", rows: [], carry: [] },
+    { account: "only mailboxes of a closed account", rows: [["reader", "connected", "account_closed"], ["reader", "connected", "account_closed"]], carry: [false, false] },
+    { account: "one fetched, one past the organizer's capacity", rows: [["organizer", "connected"], ["organizer", "connected", "at_capacity"]], carry: [true, false] },
+    { account: "a mailbox whose last pass was cut short, which is fetched again", rows: [["organizer", "connected", "read_limited"]], carry: [true] },
+  ])("an account with $account: its rows and its pull say the same", async ({ rows, carry }) => {
+    const db = await makeTestDb();
+    const acct = id("70");
+    await db.insert(accounts).values({ id: acct, name: "mfb-duty" });
+    for (const [i, [organizerRole, status, blocked]] of rows.entries()) {
+      await db.insert(mailboxes).values({
+        id: id(`7${i + 1}`), accountId: acct, provider: "imap", address: `d${i}@example.test`, organizerRole, status,
+        ...(blocked ? { syncBlockedReason: blocked, syncBlockedSince: at(-MIN) } : {}),
+      });
+    }
+    const standing = { behind: true, since: LAST_CYCLE_AT };
+    const listed = await svc.list(ctxFor(db, acct));
+    expect(listed.map((r) => r.fetching)).toEqual(carry.map((c) => (c ? standing : null)));
+    // One mailbox's own door says what the list says about it.
+    for (const r of listed) expect((await svc.get(ctxFor(db, acct), r.id)).fetching, r.id).toEqual(r.fetching);
+    const pull = await svc.requestPull(ctxFor(db, acct));
+    expect(pull.requested).toBe(rows.filter(([, status]) => status === "connected").length);
+    expect(pull.fetching).toEqual(carry.some(Boolean) ? standing : null);
   });
 
   it("answers byte for byte what the per-mailbox reads answered", async () => {

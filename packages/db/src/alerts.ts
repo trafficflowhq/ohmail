@@ -1,4 +1,4 @@
-import { and, desc, eq, exists, gt, gte, isNotNull, isNull, lt, lte, ne, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, exists, gt, gte, isNotNull, isNull, lt, lte, ne, or, sql, TransactionRollbackError, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
   alertDriverGaps, alertPassRuns, alertState, authEvents,
@@ -4455,14 +4455,15 @@ export interface HeartbeatInput {
 }
 
 /**
- * Stamp this leader's pulse — the CLAIMING write, called by the worker on every cycle and roster
- * pass. Only the process holding shard N's advisory lock may call this: the row IS "the leader of
- * shard N", and a standby writing it would make a leaderless shard look alive; the worker calls
- * it from the lock-held body only. Two write modes, and the difference matters: this one UPSERTS
- * and asserts `leader = true` — correct on the worker's serial queue, ordered against a queued
- * {@link clearHeartbeat}. {@link refreshHeartbeat} is the guarded UPDATE for callers NOT on that
- * queue, which can race a surrender. Pick by call site. Best-effort: a missed beat is at worst a
- * false alarm; a cycle aborted over bookkeeping is a real outage caused by observability code.
+ * Stamp this leader's pulse — the CLAIMING write: it UPSERTS, overwrites `instance_id` and asserts
+ * `leader = true`, whoever the row named before. The row IS "the leader of shard N" and the write
+ * fence reads it, so a claim is written ONCE per takeover and only by the process that holds shard
+ * N's advisory lock: the always-on worker claims through {@link claimHeartbeat}, which asks the
+ * database for that lock in the same transaction, and the cron backstop calls this directly, right
+ * after it took the lock. Everything after the claim is a {@link refreshHeartbeat}: a beat that
+ * could claim let a leader whose lock was gone take the row back from its lawful successor.
+ * Best-effort: a missed beat is at worst a false alarm; a cycle aborted over bookkeeping is a real
+ * outage caused by observability code.
  */
 export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = new Date()): Promise<void> {
   await db
@@ -4531,30 +4532,76 @@ export async function writeHeartbeat(db: Tx, input: HeartbeatInput, now: Date = 
            and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz > ${workerHeartbeats.aiCircuitOpenSince}
             then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
           else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
-        lastCycleAt: input.lastCycleAt,
+        // The last FINISHED pass is the shard's, not the process's: a leader that has not finished
+        // one yet keeps its predecessor's, so "nothing fetched since" stays true across a restart.
+        lastCycleAt: sql`coalesce(${input.lastCycleAt ? input.lastCycleAt.toISOString() : null}::timestamptz, ${workerHeartbeats.lastCycleAt})`,
         startedAt: input.startedAt,
         beatAt: now,
       },
     });
 }
 
+/**
+ * The session a claim rests on: the backend that took the shard's advisory lock, the lock's key, and
+ * that session's own mark (the two keys of an advisory lock only it holds). The pid alone is not the
+ * session: behind a session pooler a backend is handed to the next client with its pid unchanged.
+ */
+export interface HeartbeatLock { pid: number; key: bigint; mark: readonly [number, number] }
+
+/**
+ * Claim the shard's row for a takeover, IF the database agrees that the session `lock` names holds
+ * the shard's advisory lock: one transaction, {@link writeHeartbeat} FIRST, the question after, and
+ * the write rolled back on a no. False means the lock is not that session's (it never was, or its
+ * session has ended) and nothing was written. The row is whom the write fence lets write, so it may
+ * only ever follow the lock; a process's own belief that it leads is not asked.
+ *
+ * The order is the point. Asked first, a claim that was held between its two statements (a pool
+ * session gone silent) wrote on an answer that was no longer true, over the claim of the successor
+ * that had taken the lock meanwhile. Written first, the claim holds the row while it asks: a
+ * successor's claim waits behind it, so whatever this one's answer is, the successor's lands after.
+ * That wait ends with this transaction, which the pool's `idle_in_transaction_session_timeout` bounds.
+ *
+ * `pg_locks` is read in this database: the lock in the key form of the one-argument
+ * `pg_try_advisory_lock(bigint)`, the mark in the two-argument form.
+ */
+export async function claimHeartbeat(
+  db: Tx, input: HeartbeatInput, lock: HeartbeatLock, now: Date = new Date(),
+): Promise<boolean> {
+  try {
+    await db.transaction(async (tx) => {
+      await writeHeartbeat(tx, input, now);
+      const raw = await tx.execute(sql`
+        select count(*) = 2 as held from pg_locks
+        where locktype = 'advisory' and granted and pid = ${lock.pid}
+          and database = (select oid from pg_database where datname = current_database())
+          and ((objsubid = 1 and ((classid::bigint << 32) + objid::bigint) = ${lock.key.toString()}::bigint)
+            or (objsubid = 2 and classid::bigint = ${lock.mark[0]} and objid::bigint = ${lock.mark[1]}))`) as unknown;
+      const rows = (Array.isArray(raw) ? raw : (raw as { rows?: unknown })?.rows ?? []) as Array<{ held: boolean }>;
+      if (rows[0]?.held !== true) tx.rollback();
+    });
+    return true;
+  } catch (err) {
+    if (err instanceof TransactionRollbackError) return false;
+    throw err;
+  }
+}
+
 /** What a refresh may move. Identity (`shards`, `startedAt`) is fixed by the claiming write. */
 export type HeartbeatRefresh = Omit<HeartbeatInput, "shards" | "startedAt">;
 
 /**
- * Refresh a pulse this instance already owns — the write for callers not on the worker's serial
- * queue. Beats used to happen only at the end of a cycle, so a leader draining one long first
- * sync looked dead and paged a human. The fix is beating on a timer — exactly the caller that can
- * race a surrender, so the guard is in the statement: `WHERE shard_index = ? AND instance_id = ?
- * AND leader = true`. After a takeover or `clearHeartbeat`, a late refresh matches nothing, and
- * there is no INSERT, so a refresh can never announce a leader that never claimed. `beat_at` and
- * the counters move; `last_cycle_at` advances only on a cycle that actually synced, keeping
- * "alive but syncing nothing" distinct from "dead".
+ * Renew a pulse this instance already owns: every beat after the claim, on the worker's queue and
+ * off it (the timer that keeps a leader draining one long first sync from looking dead). The guard
+ * is in the statement: `WHERE shard_index = ? AND instance_id = ? AND leader = true`, and there is
+ * no INSERT, so a renewal can never claim. It answers whether it matched: FALSE means the row names
+ * another holder or was surrendered, which for the caller is a lost lock, never a reason to claim
+ * again. `beat_at` and the counters move; `last_cycle_at` advances only on a cycle that actually
+ * synced, keeping "alive but syncing nothing" distinct from "dead".
  */
 export async function refreshHeartbeat(
   db: Tx, input: HeartbeatRefresh, now: Date = new Date(),
-): Promise<void> {
-  await db
+): Promise<boolean> {
+  const renewed = await db
     .update(workerHeartbeats)
     .set({
       mailboxes: input.mailboxes,
@@ -4587,14 +4634,16 @@ export async function refreshHeartbeat(
          and ${input.aiProviderOkAt ? input.aiProviderOkAt.toISOString() : null}::timestamptz > ${workerHeartbeats.aiCircuitOpenSince}
           then ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz
         else least(${workerHeartbeats.aiCircuitOpenSince}, ${input.aiCircuitOpenSince ? input.aiCircuitOpenSince.toISOString() : null}::timestamptz) end`,
-      lastCycleAt: input.lastCycleAt,
+      lastCycleAt: sql`coalesce(${input.lastCycleAt ? input.lastCycleAt.toISOString() : null}::timestamptz, ${workerHeartbeats.lastCycleAt})`,
       beatAt: now,
     })
     .where(and(
       eq(workerHeartbeats.shardIndex, input.shardIndex),
       eq(workerHeartbeats.instanceId, input.instanceId),
       eq(workerHeartbeats.leader, true),
-    ));
+    ))
+    .returning({ shardIndex: workerHeartbeats.shardIndex });
+  return renewed.length > 0;
 }
 
 /** Who is surrendering: the shard, and the instance that must still own it to be allowed to. */

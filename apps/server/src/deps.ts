@@ -6,7 +6,7 @@ import {
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
   // The organizer's last completed pass, for the filing strip (mail 0097).
-  organizerCycleReader,
+  organizerStandingReader,
   acquireCeilingHandle, SESSION_ACQUIRE_TIMEOUT_MS,
   type AlertSink, type AttachmentStagingStorage,
 } from "@trafficflow/db/cloud";
@@ -353,12 +353,12 @@ export function buildServerServices(cfg: ServerConfig, db: Db): ApiServices {
       accessOf: async () => UNMETERED_ACCESS,
       // The same identity the organizer half writes — see `resolveCloudInstallId`.
       installId: resolveCloudInstallId(process.env),
-      /* WHEN THE ORGANIZER'S LAST PASS FINISHED (mail 0097). Wired HERE too and not only on the
-         managed API: the self-host tier runs the worker beside this process and writes the same
-         heartbeat, so it can answer the strip's "the last pass finished N seconds ago" clause
+      /* HOW THE ORGANIZER STANDS (mail 0097, and whether fetching is behind). Wired HERE too and not
+         only on the managed API: the self-host tier runs the worker beside this process and writes the
+         same heartbeat, so it can answer the strip's "the last pass finished N seconds ago" clause
          exactly as the managed deployment does. Leaving it off would have made an operator's own
          stack the one place that cannot tell a turn from a stall. */
-      lastOrganizerCycleAt: organizerCycleReader,
+      organizerStanding: organizerStandingReader,
     }),
     // NO adapter injected: a screener/approval decision leaves folder_state pending and the
     // ORGANIZER (apps/worker, running beside this process) applies the IMAP move — one organizer
