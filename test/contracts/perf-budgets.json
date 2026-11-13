@@ -587,6 +587,11 @@
           "value": "the CI perf smoke on hosted runners, the published build's runs for 0.25.0-0.25.8, every attempt (n=15): p50 6 819, p95 8 952, max 9 687 ms. The smoke now decides at 9 900 ms (p95 + 10 %), the readings and the rule in scripts/perf-smoke-check.mjs.",
           "document": "the project's change notes",
           "date": "2026-10-02"
+        },
+        {
+          "value": "release 1.0.11, the build workflow's perf smoke on the Linux x64 runner, the tag run and the two nightlies after it (n=3): list usable 8 674, 5 269 and 7 508 ms; shell painted 6 192, 4 464 and 5 280 ms. 4.3, 2.6 and 3.8 times the goal.",
+          "document": "the 1.0.11 before-readings (the build workflow's logs of the tag run and the nightlies of 2026-11-12 and 2026-11-13)",
+          "date": "2026-11-13"
         }
       ]
     },
@@ -607,6 +612,11 @@
           "value": "the CI perf smoke on hosted runners, the published build's runs for 0.25.0-0.25.8, every attempt (n=15): p50 4 126, p95 5 344, max 6 127 ms; macOS's packaged engine alone (n=11) p50 2 641, p95 3 464. The smoke now decides at 5 900 ms and macOS at 3 900 ms (p95 + 10 %); the hosted runner's 4 349 ms for the initdb store sits inside that spread, so a regression of that size is a rig cell's to see.",
           "document": "the project's change notes",
           "date": "2026-10-02"
+        },
+        {
+          "value": "release 1.0.11, the build workflow's perf smoke (n=3 per system, tag run and two nightlies): Linux x64 totalReadyMs 5 581, 4 156 and 4 875 ms; Linux arm64 3 236, 3 182 and 2 984; macOS 2 804, 3 552 and 2 738; Windows 5 126, 14 585 and 5 170. Against the 4 000 ms goal the Linux x64 median is 1.2 times it.",
+          "document": "the 1.0.11 before-readings (the build workflow's logs of the tag run and the nightlies of 2026-11-12 and 2026-11-13)",
+          "date": "2026-11-13"
         }
       ]
     },
