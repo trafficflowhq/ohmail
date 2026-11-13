@@ -28,6 +28,7 @@
     "packages/db-mail",
     "packages/fixtures",
     "packages/services",
+    "packages/cal-core",
     "packages/tokens",
     "packages/ui",
     "packages/wire"
