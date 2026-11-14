@@ -15,7 +15,7 @@ import {
   countWhen, listSurface, physicalFolderOf, saysEmpty,
   type EngineMessage, type OhmailEngine, type TagDTO,
 } from "@ohmail/client-engine";
-import { InfoNote, ListPane, ListRows, MessageRow, cssRect } from "@ohmail/ui";
+import { InfoNote, ListPane, ListRows, MessageRow, TAG_HUES, cssRect } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
@@ -101,7 +101,7 @@ export function HistoryView({
 }) {
   const t = useTranslations("history");
   const { row: senderCheckRow } = useSenderCheckWords();
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   const to = useTranslations("ohbox");
   const tReader = useTranslations("reader");
 
@@ -398,7 +398,7 @@ export function HistoryView({
           {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
           hasAttachment={m.hasAttachments}
           protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-          tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+          tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x, TAG_HUES) }))}
           place={physicalFolderOf(m)}
           onClick={() => openRow(m, i)}
         />,

@@ -1216,6 +1216,12 @@
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
     },
+    "./text/format": {
+      "types": "./src/text/format.ts",
+      "ohmail-source": "./src/text/format.ts",
+      "node": "./dist/text/format.js",
+      "default": "./src/text/format.ts"
+    },
     "./text/idn": {
       "types": "./src/text/idn.ts",
       "ohmail-source": "./src/text/idn.ts",
@@ -1233,6 +1239,12 @@
       "ohmail-source": "./src/text/locale.ts",
       "node": "./dist/text/locale.js",
       "default": "./src/text/locale.ts"
+    },
+    "./text/row-copy": {
+      "types": "./src/text/row-copy.ts",
+      "ohmail-source": "./src/text/row-copy.ts",
+      "node": "./dist/text/row-copy.js",
+      "default": "./src/text/row-copy.ts"
     },
     "./text/translator": {
       "types": "./src/text/translator.ts",

@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useTranslations } from "next-intl";
 import { FOLDER_OF_VIEW, forwardOffered, isProtectedMessage, isResurfaced, type EngineMessage, type OhmailView, type TagDTO } from "@ohmail/client-engine";
-import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, cssRect } from "@ohmail/ui";
+import { Button, Chip, DatePicker, Icon, InfoNote, Kbd, ReadingPane, TAG_HUES, cssRect } from "@ohmail/ui";
 import { MessageFiles } from "./MessageFiles";
 import { InvitationNote } from "./InvitationNote";
 import { MessageEvents } from "./MessageEvents";
@@ -1834,7 +1834,7 @@ export function MessagePane({
           >
             <div className="tag-note-chips">
               {mine.map((tag) => (
-                <Chip key={tag.id} variant="tag" hue={hueOf(tag)} big>
+                <Chip key={tag.id} variant="tag" hue={hueOf(tag, TAG_HUES)} big>
                   {tag.name}
                 </Chip>
               ))}

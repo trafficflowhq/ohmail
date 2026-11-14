@@ -59,7 +59,6 @@ const FRAME_MEETS = [
   "apps/webapp/app/shell/shell-open-state.ts",
   "apps/webapp/app/shell/todays-feeds.tsx",
   "apps/webapp/app/shell/todays-places.ts",
-  "apps/webapp/app/shell/todays-reasons.ts",
   "apps/webapp/app/shell/todays-supplies.ts",
 ];
 
@@ -97,8 +96,8 @@ const DOOR_PAGES = ["account/delete", "approve", "authorize-desktop", "join", "j
 const CEREMONY = /\/use-[a-z-]+-door\.ts$|\/mailbox\/(web-step-up\.ts|StepUp\.tsx)$/;
 /** The parts of today's design a door's route draws, each with the task that rebuilds it. */
 const DRAWN: Record<string, string[]> = {
-  // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button and date.
-  [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "apps/webapp/app/shell/format.ts", "packages/ui/src/index.ts"],
+  // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button.
+  [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "packages/ui/src/index.ts"],
 };
 /**
  * The doors' modules that still reach both designs. Every door's route and page stays in the lists above, which the
@@ -227,9 +226,9 @@ describe("the old stylesheets and the new meet only where listed", () => {
   });
 
   it("a listed module that reaches the new design no longer is found, so the list falls", () => {
-    const files = planted({ "apps/webapp/app/shell/todays-reasons.ts": "export {};\n" });
+    const files = planted({ "apps/webapp/app/shell/todays-places.ts": "export {};\n" });
     const both = reachBoth(files);
-    expect(MAY_MEET.filter((file) => !both.includes(file))).toContain("apps/webapp/app/shell/todays-reasons.ts");
+    expect(MAY_MEET.filter((file) => !both.includes(file))).toContain("apps/webapp/app/shell/todays-places.ts");
   });
 });
 

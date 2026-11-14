@@ -902,7 +902,10 @@ packages/app-logic/src/storage/persisted-ui.ts	prettier	1	lift-a
 packages/app-logic/src/storage/persisted-ui.ts	react-hooks/exhaustive-deps	1	lift-a
 packages/app-logic/src/storage/storage-owner.ts	no-restricted-globals	1	lift-a
 packages/app-logic/src/storage/storage-owner.ts	prettier	1	lift-a
+packages/app-logic/src/text/format.ts	max-lines	1	ruling:composition-lift
+packages/app-logic/src/text/format.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/text/idn.ts	prettier	1	ruling:lift-b-removals
+packages/app-logic/src/text/row-copy.ts	prettier	1	ruling:composition-lift
 packages/app-logic/src/writing/compose-autosave.ts	max-lines	1	ruling:lift-b-write
 packages/app-logic/src/writing/compose-autosave.ts	max-lines-per-function	4	ruling:lift-b-write
 packages/app-logic/src/writing/compose-autosave.ts	no-restricted-globals	2	ruling:lift-b-write

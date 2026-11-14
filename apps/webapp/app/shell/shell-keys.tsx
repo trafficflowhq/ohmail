@@ -25,6 +25,7 @@ import {
 } from "@ohmail/client-engine";
 import {
   Icon,
+  TAG_HUES,
   type Command,
   type RailGroup,
   useCommandPalette,
@@ -1184,7 +1185,7 @@ export function useShellKeys({
           items: tagGroups.map((g) => ({
             id: g.tag.id,
             label: g.tag.name,
-            hue: hueOf(g.tag),
+            hue: hueOf(g.tag, TAG_HUES),
             count: g.messages.length,
             title: t("rail.tagTitle", { count: g.messages.length }),
           })),

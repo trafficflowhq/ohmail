@@ -22,6 +22,7 @@ import {
   ListRows,
   MessageRow,
   SegmentedControl,
+  TAG_HUES,
 } from "@ohmail/ui";
 import { avatarOf, rowStamp, hueOf, resurfaceLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
@@ -157,7 +158,7 @@ export function TriageView({
   onMarkSeen: ReaderMarkSeen;
 }) {
   const t = useTranslations("triage");
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   const { row: senderCheckRow } = useSenderCheckWords();
   /* The "Done" release control's copy lives in the Ohbox namespace with the verb's other faces
      (the action bar's `actionDone`, the pinned row's) — ONE wording source, not a per-view copy. */
@@ -360,7 +361,7 @@ export function TriageView({
         {...rowThreadOf(m, threadCountOf, rowBadge.thread)}
         hasAttachment={m.hasAttachments}
         protectedLabel={m.protected != null ? rowBadge.protectedLabel : undefined}
-        tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x) }))}
+        tags={tagsOfMessage(m, tags).map((x) => ({ name: x.name, hue: hueOf(x, TAG_HUES) }))}
         {...(done ? { className: "fr-done" } : {})}
         /* "DONE" ON A SCHEDULED RESURFACE — the same release verb the pinned row and the action
            bar carry, read honestly for a row that is NOT pinned yet: the shell's `resurface_done`

@@ -17,7 +17,7 @@ import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useR
 import { useLocale, useTranslations } from "next-intl";
 import { countWhen, isOwnOutbound, presentsUnread } from "@ohmail/client-engine";
 import type { EngineMessage, MessageBody, TagDTO, WaterlineMeta } from "@ohmail/client-engine";
-import { ListPane, ListRows, MessageRow, Waterline } from "@ohmail/ui";
+import { ListPane, ListRows, MessageRow, TAG_HUES, Waterline } from "@ohmail/ui";
 import { MarkAllRead } from "../components/MarkAllRead";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
@@ -161,7 +161,7 @@ export function ReceiptsView({
   const t = useTranslations("receipts");
   const { row: senderCheckRow } = useSenderCheckWords();
   const tr = useTranslations("reads");
-  const rowBadge = useRowBadgeCopy();
+  const rowBadge = useRowBadgeCopy(useTranslations("message"));
   /** One key for both streams, and the reasoning is in `ReadsView` beside its own read. */
   const ts = useTranslations("stream");
   const tb = useTranslations("body");
@@ -259,7 +259,7 @@ export function ReceiptsView({
     now,
     onAction,
   });
-  const sentLabelOf = useSentLabel();
+  const sentLabelOf = useSentLabel(useTranslations("ohbox"));
   /** Are the cards drawn yet — see "the rows paint before the stream" below. */
   const [streamArmed, setStreamArmed] = useState(false);
   const stream = useStreamWindow({
@@ -581,7 +581,7 @@ export function ReceiptsView({
       seen={!presentsUnread(m)}
       dotless
       selected={current === m.id}
-      tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag) }))}
+      tags={tagsOfMessage(m, tags).map((tag) => ({ name: tag.name, hue: hueOf(tag, TAG_HUES) }))}
       follow={placed ? (
         <ThreadStrip
           channel={placed.walk}

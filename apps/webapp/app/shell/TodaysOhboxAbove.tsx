@@ -156,7 +156,7 @@ export function useOhboxUpper(
   const setupLink = input.setupHref;
   const setupHref = setupLink ?? SETTINGS_MAILBOXES;
   const t = useTranslations("ohbox");
-  const sentLabelOf = useSentLabel();
+  const sentLabelOf = useSentLabel(useTranslations("ohbox"));
   const { plan } = useFrame();
   const { state: mail, mailboxes } = useMailState();
   /* The after-verb choice, read when a verb has taken the open row: the stored choice of the shell's scope, or the
@@ -207,7 +207,7 @@ export function useOhboxUpper(
       mailbox: (a) => displayAddress(a),
       tag: (m) => {
         const tag = tagsOfMessage(m, tags)[0];
-        return tag ? { name: tag.name, hue: hueDegrees(hueOf(tag)) } : null;
+        return tag ? { name: tag.name, hue: hueDegrees(hueOf(tag, TAG_HUES)) } : null;
       },
     },
     mail: { mailboxes: mailboxes === null ? null : mailboxes.length, screenerCandidate: mail.screenerCandidate, arrived: mail.count },
