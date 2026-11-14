@@ -13,3 +13,8 @@ export { calendarSettings, setCalendarSettings, requireCalendarOn, CALENDAR_ZONE
 export { derivedRange, CALENDAR_RANGE_SLACK_MS, type EventRange, type EventRangeInput } from "./event-range.js";
 export { eventTimeOf, storedTimeOf, momentOrUtc, isExactMoment } from "./time.js";
 export { calendarExport, CALENDAR_EXPORT, type CalendarExport, type ExportAnswer } from "./export.js";
+export {
+  checkedAct, dismissCalendarWrite, enqueueCalendarWrite, recordCalendarWrite, retryCalendarWrite, wakeCalendarConnection,
+  type EnqueuedCalendarWrite,
+} from "./writes.js";
+export { writeMarksOf } from "./write-marks.js";

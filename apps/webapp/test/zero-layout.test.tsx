@@ -266,7 +266,7 @@ describe("the fix round — reconcile, exits, names", () => {
   const openSheet = async (container: HTMLElement): Promise<void> => {
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) {
+    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) {
       await tick();
     }
     await key("Enter");
@@ -302,7 +302,7 @@ describe("the fix round — reconcile, exits, names", () => {
     const container = await shell();
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) await tick();
+    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) await tick();
     await key("Enter");
     await tick();
     expect(document.querySelector(".reader"), "a sheet rose at 800 under classic — the two-pane band lost its column").toBeNull();
@@ -382,7 +382,7 @@ describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () 
   const openSheet = async (container: HTMLElement): Promise<void> => {
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) {
+    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) {
       await tick();
     }
     await key("Enter");
@@ -424,7 +424,7 @@ describe("the fix round, round 3 — the reconcile asks at the current width", (
   const openSheet = async (container: HTMLElement): Promise<void> => {
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) {
+    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) {
       await tick();
     }
     await key("Enter");
@@ -495,8 +495,8 @@ describe("crossing 700 with a message open — the overlay and the column trade 
   const openOverlay = async (container: HTMLElement): Promise<string> => {
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) await tick();
-    const id = container.querySelector<HTMLElement>(".view .row.sel[data-id]")!.dataset.id!;
+    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) await tick();
+    const id = container.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])[data-id]")!.dataset.id!;
     await key("Enter");
     const until = Date.now() + 4000;
     while (Date.now() < until && !document.querySelector(".reader")) await tick();
@@ -522,7 +522,7 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     expect(document.querySelector(".reader"), "the overlay stood over the two panes").toBeNull();
     const col = container.querySelector(".read-col");
     expect(col, "no reading column at 821").not.toBeNull();
-    expect(container.querySelector(`.view .row.sel[data-id="${id}"]`), "the column lost the message").not.toBeNull();
+    expect(container.querySelector(`.view :is(.row.sel, [role=option][data-open])[data-id="${id}"]`), "the column lost the message").not.toBeNull();
     const colSurface = col!.querySelector<HTMLElement>(".reply-editor .rte-surface");
     expect(colSurface, "the reply did not move into the column").not.toBeNull();
     expect(colSurface!.textContent).toContain("typed before the unfold");
@@ -545,8 +545,8 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     await tick();
     await tick();
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view-triage .row[data-id]")) await tick();
-    const row = container.querySelector<HTMLElement>(".view-triage .row[data-id]")!;
+    while (Date.now() < deadline && !container.querySelector(".view-triage :is(.row, [role=option])[data-id]")) await tick();
+    const row = container.querySelector<HTMLElement>(".view-triage :is(.row, [role=option])[data-id]")!;
     const id = row.dataset.id!;
     // a column view's own pick is its row's press (the keys open through the shell's column pick)
     await act(async () => { row.click(); });
@@ -559,7 +559,7 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     expect(container.querySelector(".read-col .msg"), "the close swapped another message into the column").toBeNull();
     expect(container.querySelector(".read-col .read-col-close"), "the ✕ stayed on a column at rest").toBeNull();
     // the next pick brings the column back
-    await act(async () => { container.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`)!.click(); });
+    await act(async () => { container.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`)!.click(); });
     await tick();
     expect(container.querySelector(".read-col .msg"), "a pick after the close did not open").not.toBeNull();
   });
@@ -569,7 +569,7 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     const container = await shell();
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view .row.sel[data-id]")) await tick();
+    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) await tick();
     await key("Enter");
     await tick();
     expect(document.querySelector(".reader")).toBeNull();

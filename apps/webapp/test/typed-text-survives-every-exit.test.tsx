@@ -624,8 +624,8 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
     newTab();
     holdSends = true;
     await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
-    await waitFor(() => container.querySelector('.view-ohbox .row[data-id="m1"]') !== null, "m1 in the Ohbox");
-    const row = container.querySelector<HTMLElement>('.view-ohbox .row[data-id="m1"]')!;
+    await waitFor(() => container.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]') !== null, "m1 in the Ohbox");
+    const row = container.querySelector<HTMLElement>('.view-ohbox :is(.row, [role=option])[data-id="m1"]')!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
@@ -669,7 +669,7 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
     sendMode = "lose";
     const first = await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
     const kept = store!;
-    const row = container.querySelector<HTMLElement>('.view-ohbox .row[data-id="m1"]')!;
+    const row = container.querySelector<HTMLElement>('.view-ohbox :is(.row, [role=option])[data-id="m1"]')!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));

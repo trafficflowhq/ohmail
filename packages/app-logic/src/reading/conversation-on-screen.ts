@@ -12,6 +12,15 @@ export function conversationOnScreen(presented: EntityReader, raw: EntityReader,
 }
 
 /**
+ * THE SAME QUESTION, A NEW ASKER: a list that keeps what it asked per asker (the Ohbox keeps a row's people) is handed
+ * one when the mirror moves, so what it keeps is the mirror's as it stands. The answer is the asker's own, read when
+ * asked: nothing of the render it was made in is held.
+ */
+export function askAnew<A extends unknown[], R>(ask: (...args: A) => R): (...args: A) => R {
+  return (...args) => ask(...args);
+}
+
+/**
  * WHAT THE READER'S MARK AS READ TAKES — the unread members of the conversation on screen (the
  * opened message alone where there is none), minus a resurfaced pin (its own Done answers it). The
  * bar's FACE is this set's emptiness and the press writes exactly this set, so the two cannot

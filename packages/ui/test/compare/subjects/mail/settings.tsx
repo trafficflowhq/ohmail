@@ -1,8 +1,21 @@
 import { readFileSync } from "node:fs";
 import type { ReactNode } from "react";
-import { Avatar, Button, Seg, Slot, Tag } from "../../../../src/base/index.js";
-import { SettingLine, SettingsHead, SettingsSheet } from "../../../../src/mail/index.js";
-import type { KitSubject, Look } from "../../harness.js";
+import { Avatar, Button, Field, Seg, Slot, Tag } from "../../../../src/base/index.js";
+import {
+  LookPicture,
+  RuleLine,
+  SettingArea,
+  SettingFilter,
+  SettingLine,
+  SettingNote,
+  SettingsHead,
+  SettingsSheet,
+  SettingTile,
+  SettingTiles,
+  TagLine,
+  type RowPerson,
+} from "../../../../src/mail/index.js";
+import { PAD, type KitSubject, type Look } from "../../harness.js";
 import * as W from "./world.js";
 
 /** A Settings pane's parts: its head on the ground, reaching over the column's ring as it does in the pane; a sheet as wide as the pane's column draws it. */
@@ -12,11 +25,13 @@ const head = (key: string, node: ReactNode): KitSubject => ({
   target: ".oh-settingshead",
   render: () => <div style={{ padding: "0 var(--ringw)" }}>{node}</div>,
 });
-const sheet = (key: string, node: ReactNode): KitSubject => ({
+const sheet = (key: string, node: ReactNode | ((look: Look) => ReactNode)): KitSubject => ({
   key,
   place: "block",
   target: ".oh-sheet",
-  render: (look) => <div style={{ paddingTop: below(key, look) }}>{node}</div>,
+  render: (look) => (
+    <div style={{ paddingTop: below(key, look) }}>{typeof node === "function" ? node(look) : node}</div>
+  ),
 });
 
 /**
@@ -34,10 +49,116 @@ function below(key: string, look: Look): number {
   return Math.round((target[1] - Math.floor(target[1])) * 64) / 64;
 }
 
+/**
+ * A sheet that stood lower in a phone's pane than the window holds it whole: the subject stands it at the same
+ * height, so the window's foot cuts it where it cut the reference (what lay under the foot was read as nothing
+ * there). Elsewhere it stands as `sheet` stands it.
+ */
+const tallSheet = (key: string, node: (look: Look) => ReactNode): KitSubject => ({
+  key,
+  place: "block",
+  target: ".oh-sheet",
+  render: (look) => {
+    const file = new URL(
+      `../../../reference/mail/${key}@${look.face}-${look.scheme}-${look.device}.json`,
+      import.meta.url,
+    );
+    const { target } = JSON.parse(readFileSync(file, "utf8")) as { target: [number, number, number, number] };
+    return (
+      <div style={{ paddingTop: look.device === "phone" ? target[1] - PAD : below(key, look) }}>
+        {node(look)}
+      </div>
+    );
+  },
+});
+
+/** A part of a sheet, read alone where it stands on the pane's sheet, as wide as the sheet's lines. */
+const part = (key: string, target: string, node: ReactNode): KitSubject => ({
+  key,
+  place: "block",
+  on: "sheet",
+  target,
+  render: () => node,
+});
+
 const quiet = (word: string, icon?: "copy") => (
   <Button kind="quiet" size="s" icon={icon}>
     {word}
   </Button>
+);
+
+/** The rules of the invented world: who, where their mail goes, where the rule came from, and the sender when it is one. */
+const RULES: [string, string, string, RowPerson?][] = [
+  [W.GIULIA.address, "Ohbox", "Screener decision · 14 messages", W.GIULIA],
+  ["makersfest.example", "Ohbox", "Whole domain · Screener decision"],
+  ["lichtgrat.example", "Ohbox", "You wrote to them"],
+  [
+    "mara@skylarknotes.example",
+    "News",
+    "Screener decision",
+    W.person("Skylark Notes", "mara@skylarknotes.example"),
+  ],
+  [W.ERDTON.address, "Receipts", "Suggestion", W.ERDTON],
+  ["fashion-deals.example", "Screened out", "Whole domain · Screener decision"],
+];
+
+/** The tags of the invented world: name, hue, and how many messages carry it. */
+const TAGS: [string, number, string][] = [
+  ["Pottery Project", 150, "4 messages"],
+  ["Paperwork", 78, "3 messages"],
+  ["Adventures", 25, "2 messages"],
+];
+
+/** The Tags pane's sheet: each tag at rest (or the first being renamed), then the line that names a new one. */
+const tags = (state: "rest" | "rename" | "taken") => (
+  <SettingsSheet>
+    {TAGS.map(([name, hue, count], i) =>
+      state === "rename" && i === 0 ? (
+        <TagLine
+          key={name}
+          hue={hue}
+          field={{ label: "Name", value: name, onChange: () => undefined }}
+          acts={
+            <>
+              <Button kind="two" size="s">
+                Save
+              </Button>
+              {quiet("Cancel")}
+            </>
+          }
+        />
+      ) : (
+        <TagLine
+          key={name}
+          hue={hue}
+          name={name}
+          colour={{ label: `Colour of ${name}` }}
+          value={count}
+          acts={
+            <>
+              {quiet("Rename")}
+              {quiet("Delete")}
+            </>
+          }
+        />
+      ),
+    )}
+    <TagLine
+      hue={150}
+      field={{
+        label: "New tag",
+        value: state === "taken" ? "Paperwork" : "",
+        placeholder: "Name a new tag",
+        onChange: () => undefined,
+      }}
+      refusal={state === "taken" ? "You already have “Paperwork”." : undefined}
+      acts={
+        <Button kind="two" size="s">
+          Add
+        </Button>
+      }
+    />
+  </SettingsSheet>
 );
 
 export const settings: KitSubject[] = [
@@ -74,6 +195,53 @@ export const settings: KitSubject[] = [
       </SettingLine>
     </SettingsSheet>,
   ),
+  tallSheet("SettingsSheet/look", (look) => {
+    /* General's Appearance sheet: the page's own face is the one chosen, both pictures in the page's scheme. */
+    const sample = [
+      { who: W.GIULIA.name, address: W.GIULIA.address, time: "09:12" },
+      { who: W.PETRA.name, address: W.PETRA.address, time: "08:47" },
+    ] as const;
+    return (
+      <SettingsSheet title="Appearance">
+        <SettingLine label="Theme">
+          <Seg
+            label="Theme"
+            options={[
+              { value: "light", label: "Light" },
+              { value: "auto", label: "Auto" },
+              { value: "dark", label: "Dark" },
+            ]}
+            value={look.scheme}
+          />
+        </SettingLine>
+        <SettingLine label="Look" narrow="under">
+          <Seg
+            label="Look applies on"
+            options={[
+              { value: "all", label: "All devices" },
+              { value: "this", label: "This device" },
+            ]}
+            value="all"
+          />
+        </SettingLine>
+        <SettingTiles label="Look">
+          <SettingTile name="oh" on={look.face === "paper"}>
+            <LookPicture face="paper" scheme={look.scheme} title="Ohbox" rows={sample} />
+          </SettingTile>
+          <SettingTile name="ohmarchy" tag="follows Omarchy" on={look.face === "ohmarchy"}>
+            <LookPicture face="ohmarchy" scheme={look.scheme} title="Ohbox" rows={sample} />
+          </SettingTile>
+        </SettingTiles>
+        <SettingLine label="Text size" narrow="under">
+          <Seg
+            label="Text size"
+            options={["90", "100", "110", "125", "150"].map((v) => ({ value: v, label: `${v}%` }))}
+            value="100"
+          />
+        </SettingLine>
+      </SettingsSheet>
+    );
+  }),
   sheet(
     "SettingsSheet/sign",
     <SettingsSheet title="ohmail on Linux" sign="desktop" aside={<Tag>This computer</Tag>}>
@@ -156,4 +324,82 @@ export const settings: KitSubject[] = [
       </SettingLine>
     </SettingsSheet>,
   ),
+  part(
+    "SettingNote/plain",
+    ".oh-settingnote",
+    <SettingNote>Only Screen out and Spam, at 90% or more.</SettingNote>,
+  ),
+  part(
+    "SettingNote/warn",
+    ".oh-settingnote",
+    /* It stands on a sheet that wants the person: the sheet's tint. */
+    <div style={{ display: "flow-root", padding: "var(--s4) 0", background: "var(--sheet-new)" }}>
+      <SettingNote warn>
+        You have no unused recovery codes. Without them, losing your authenticator locks you out.
+      </SettingNote>
+    </div>,
+  ),
+  sheet(
+    "SettingsSheet/area",
+    <SettingsSheet title="Ohbox">
+      <SettingLine label="Keep my Ohbox for what’s relevant" toggle={{ on: true }} />
+      <SettingLine label="File impersonations to Spam" toggle={{ on: true }} />
+      <SettingArea
+        label="In your words, what belongs in your Ohbox"
+        value={W.OHBOX_WORDS}
+        onChange={() => undefined}
+      />
+    </SettingsSheet>,
+  ),
+  sheet("SettingsSheet/filter", (look) => (
+    <SettingsSheet>
+      <Field
+        label="Search by sender or domain"
+        placeholder="Search by sender or domain"
+        value=""
+        onChange={() => undefined}
+        bare
+        sign="search"
+      />
+      <SettingFilter
+        label={look.device === "desktop" ? undefined : "Files into"}
+        act={quiet("Revoke all 6 matching")}
+      >
+        {look.device === "desktop" ? (
+          <Seg
+            label="Files into"
+            options={["All", "Ohbox", "News", "Receipts", "Screened out"].map((p) => ({
+              value: p,
+              label: p,
+            }))}
+            value="All"
+          />
+        ) : (
+          <Slot label="Files into">All</Slot>
+        )}
+      </SettingFilter>
+    </SettingsSheet>
+  )),
+  sheet(
+    "SettingsSheet/rules",
+    <SettingsSheet>
+      {RULES.map(([who, place, origin, sender]) => (
+        <RuleLine
+          key={who}
+          who={who}
+          person={sender ? { ...sender, label: sender.name, onContact: () => undefined } : undefined}
+          goes={
+            <>
+              goes to <Slot label={`Goes to ${place}`}>{place}</Slot>
+            </>
+          }
+          origin={origin}
+          act={quiet("Revoke")}
+        />
+      ))}
+    </SettingsSheet>,
+  ),
+  sheet("SettingsSheet/tags", tags("rest")),
+  sheet("SettingsSheet/tags-rename", tags("rename")),
+  sheet("SettingsSheet/tags-taken", tags("taken")),
 ];

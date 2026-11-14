@@ -84,7 +84,7 @@ export interface MessageVerbsInput {
 
 /** The row a verb should anchor its menu to, or null when the window has not mounted it. */
 function anchorFor(scope: string, id: string): HTMLElement | null {
-  return queryVisible<HTMLElement>(`${scope} .row[data-id="${CSS.escape(id)}"]`);
+  return queryVisible<HTMLElement>(`${scope} :is(.row, [role=option])[data-id="${CSS.escape(id)}"]`);
 }
 
 /**

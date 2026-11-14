@@ -15,7 +15,7 @@ const FEEDS: [string, string][] = [
   ["a mail program's Swiss holidays", "https://www.thunderbird.net/media/caldata/autogen/SwissHolidays.ics"],
   ["Google's holidays, typed as webcal", "webcal://calendar.google.com/calendar/ical/en.usa%23holiday%40group.v.calendar.google.com/public/basic.ics"],
 ];
-const providers = makeCalendarProviders({ clock: { now: () => Date.now() }, zones: intlZones(), resolver: nodeHostResolver, policy: { kind: "cloud" }, enabled: new Set<ProviderWord>(["ics"]), microsoft: null });
+const providers = makeCalendarProviders({ clock: { now: () => Date.now() }, zones: intlZones(), resolver: nodeHostResolver, policy: { kind: "cloud" }, enabled: new Set<ProviderWord>(["ics"]), microsoft: null, writes: false });
 const reader = providers.get("ics")!.reader;
 const page = { limit: 250, cursor: null, window: null };
 

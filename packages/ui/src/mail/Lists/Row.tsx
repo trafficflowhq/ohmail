@@ -57,7 +57,9 @@ export interface RowProps {
   sign?: IconName;
   /**
    * A section of Settings, not a letter: its name in the ink whether or not it wants the person, its value
-   * set off from the detail. Unread: it wants the person, and its sign carries the dot.
+   * set off from the detail. Unread: it wants the person, and its sign carries the dot. To a screen reader it
+   * is named by `who` alone, its value and detail (line two) are its description, and while `open` it is the
+   * current page.
    */
   entry?: boolean;
   /** Line two: what it is about. A node where the app marks what a search found. */
@@ -118,6 +120,9 @@ export function Row(props: RowProps) {
   /* WebKitGTK does not expose aria-description; a description a hidden node carries, it does. */
   const saidId = useId();
   const said = listing?.spoken ? saidId : undefined;
+  /* A section of Settings is named by its section alone; what line two says is its description. */
+  const section = entry && !listing;
+  const secondId = useId();
 
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
@@ -142,9 +147,10 @@ export function Row(props: RowProps) {
       className="oh-row"
       role={listing ? "option" : "button"}
       tabIndex={listing?.stop === false ? -1 : 0}
-      aria-label={listing?.name}
+      aria-label={section ? props.who : listing?.name}
       aria-description={listing?.spoken || undefined}
-      aria-describedby={said}
+      aria-describedby={section ? secondId : said}
+      aria-current={section && open ? "page" : undefined}
       aria-posinset={listing?.place?.at}
       aria-setsize={listing?.place?.of}
       data-id={mark?.id}
@@ -168,7 +174,7 @@ export function Row(props: RowProps) {
     >
       <RowFace {...props} />
       <RowFirst {...props} contact={contact} />
-      <span className="oh-row-second">
+      <span className="oh-row-second" id={section ? secondId : undefined}>
         <span className="oh-row-subject">{subject}</span>
         {preview ? <> </> : null}
         {preview ? (

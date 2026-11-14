@@ -5,8 +5,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { OhboxView } from "../app/views/OhboxView";
 import { KeymapProvider } from "@ohmail/app/keys";
+import { prepareToday, type TodayOhboxProps } from "./ohbox/_today";
+
+/** Today's Ohbox, as today's shell mounts it (prepared once: its mail state stands on an engine). */
+const OhboxView = await prepareToday();
+const Ohbox = (p: TodayOhboxProps) => <>{OhboxView(p)}</>;
 
 /**
  * THE OHBOX LIST HOLDS STILL UNDER THE READER. Reported live on 0.19.3: after a jump (the
@@ -73,10 +77,10 @@ const message = (i: number, id = `m${i}`, preview = hasPreview(i)): EngineMessag
 const rowPx = (m: EngineMessage): number => ROW_TWO_LINE_PX + (m.snippet ? PREVIEW_LINE_PX : 0);
 
 const heightOf = (el: HTMLElement): number => {
-  if (el.classList.contains("row")) {
-    return ROW_TWO_LINE_PX + (el.querySelector(".prev") ? PREVIEW_LINE_PX : 0);
+  if (el.classList.contains("oh-row")) {
+    return ROW_TWO_LINE_PX + (el.querySelector(".oh-row-preview") ? PREVIEW_LINE_PX : 0);
   }
-  if (el.classList.contains("grouplabel")) return LABEL_PX;
+  if (el.classList.contains("ob-heading")) return LABEL_PX;
   const inline = el.style.height;
   if (inline.endsWith("px")) return Number.parseFloat(inline);
   let sum = 0;
@@ -129,7 +133,7 @@ const truthIndexAt = (f: Fixture, px: number): number => {
 };
 
 const ohbox = (f: Fixture): React.ReactElement => (
-  <OhboxView owed={false}
+  <Ohbox owed={false}
     demo={false}
     newForYou={f.newForYou}
     previouslySeen={f.previouslySeen}
@@ -137,7 +141,6 @@ const ohbox = (f: Fixture): React.ReactElement => (
     onMarkSeen={() => {}} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
     onDoorbell={() => {}} onAction={() => {}} onAddTag={() => {}}
     bulk={{ run: () => true, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-    older={{ available: false, items: [], loading: false, error: null, exhausted: true, loadMore: () => {} }}
   />
 );
 
@@ -196,7 +199,7 @@ const read = (scroller: HTMLElement): { items: Item[]; padTop: number; padBottom
       y += h;
       return;
     }
-    if (el.classList.contains("row") || el.classList.contains("grouplabel")) { y += heightOf(el); return; }
+    if (el.classList.contains("oh-row") || el.classList.contains("ob-heading")) { y += heightOf(el); return; }
     for (const c of [...el.children]) walk(c as HTMLElement);
   };
   for (const c of [...scroller.children]) walk(c as HTMLElement);
@@ -323,7 +326,7 @@ describe("the Ohbox list holds still under the reader while the window measures 
     });
     Object.defineProperty(HTMLElement.prototype, "clientHeight", {
       configurable: true,
-      get(this: HTMLElement) { return this.classList.contains("scroller") ? VIEWPORT_PX : heightOf(this); },
+      get(this: HTMLElement) { return this.classList.contains("ob-scroll") ? VIEWPORT_PX : heightOf(this); },
     });
     Object.defineProperty(window, "matchMedia", {
       configurable: true, writable: true,
@@ -341,7 +344,7 @@ describe("the Ohbox list holds still under the reader while the window measures 
   const mountOhbox = async (f: Fixture, name: string) => {
     const { host, render } = mountRoot();
     await render(ohbox(f));
-    const scroller = host.querySelector(".list-col .scroller") as HTMLElement;
+    const scroller = host.querySelector(".ob-scroll") as HTMLElement;
     const rec = new Recorder(name, f);
     rec.record(scroller, await scrollTo(scroller, 0));
     return { scroller, rec, render };

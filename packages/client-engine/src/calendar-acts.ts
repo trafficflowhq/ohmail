@@ -1,0 +1,183 @@
+/**
+ * A PERSON'S CALENDAR ACTS OVER THE RECORDS THE FEED HOLDS: one pure overlay, used alike for the acts
+ * still on this device and for the writes an event's record says the provider has not taken yet, and
+ * the one selector a view reads, which says of each event whether it waits and where.
+ *
+ * Two waits, never blurred: `device` (the act is in this device's queue and has not reached our
+ * server) and `provider` (our server holds it and the provider has not taken it). A write the
+ * provider refused is not laid over the record: the record shows the provider's copy, and the
+ * refusal beside it, with the act kept so the view can offer to send it again.
+ *
+ * Behind an entry of its own: the phone's engine, which keeps no calendar, never reaches it.
+ */
+import type {
+  CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarReason, CalendarTime, CalendarWriteFault, ISODateTime,
+} from "@ohmail/wire";
+
+/** The instant a record this device made stands at until our server has it. */
+const NOT_YET: ISODateTime = new Date(0).toISOString();
+
+/** How far east of UTC `zone` is at `ms`, in ms, or `null` for a zone the platform does not know. */
+function offsetAt(zone: string, ms: number): number | null {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(new Date(ms));
+    const n = (type: string): number => Number(parts.find((p) => p.type === type)?.value ?? NaN);
+    const wall = Date.UTC(n("year"), n("month") - 1, n("day"), n("hour"), n("minute"), n("second"));
+    return Number.isFinite(wall) ? wall - Math.floor(ms / 1000) * 1000 : null;
+  } catch {
+    // A zone the platform does not know: read as UTC, as every reader of a record's range does.
+    return null;
+  }
+}
+
+/**
+ * A time's moment as a record keeps it, for a view's place of an event the server has not ranged
+ * yet: a day and a clock with no zone read as UTC, a clock in a zone resolved by the platform.
+ */
+function momentIso(t: CalendarTime): string | null {
+  const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z?)?$/.exec(t.value);
+  if (m === null) return null;
+  const asUtc = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] ?? 0), Number(m[5] ?? 0), Number(m[6] ?? 0));
+  let ms = asUtc;
+  if (t.kind === "zoned" && t.zone !== undefined) {
+    const first = offsetAt(t.zone, asUtc);
+    if (first !== null) {
+      ms = asUtc - first;
+      const second = offsetAt(t.zone, ms);
+      if (second !== null && second !== first) ms = asUtc - second;
+    }
+  }
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+}
+
+/** A record's fields set from an act's: each field present is written, the times with the moments they make. */
+function withFields(r: CalendarEventRecord, f: Partial<CalendarEventFields>): CalendarEventRecord {
+  const next: CalendarEventRecord = { ...r };
+  if (f.title !== undefined) next.title = f.title;
+  if (f.notes !== undefined) next.notes = f.notes;
+  if (f.place !== undefined) next.place = f.place;
+  if (f.callLink !== undefined) next.callLink = f.callLink;
+  if (f.busy !== undefined) next.busy = f.busy;
+  if (f.private !== undefined) next.private = f.private;
+  if (f.start !== undefined && f.end !== undefined) {
+    next.start = f.start;
+    next.end = f.end;
+    next.duration = null;
+    next.startsAt = momentIso(f.start) ?? r.startsAt;
+    next.endsAt = f.repeat === undefined ? (r.repeat === null ? momentIso(f.end) : r.endsAt) : r.endsAt;
+  }
+  if (f.repeat !== undefined) {
+    next.repeat = f.repeat === null ? null : { rules: [f.repeat], excluded: r.repeat?.excluded ?? [], added: r.repeat?.added ?? [] };
+    // A series' last moment is the provider's to say; until then it may run on.
+    next.endsAt = f.repeat === null ? momentIso(next.end ?? next.start) : null;
+  }
+  if (f.invitees !== undefined) next.invitees = f.invitees.map((p) => ({ address: p.address, name: p.name, role: p.role, answer: "none" as const }));
+  if (f.alarms !== undefined) next.alarms = f.alarms.map((minutesBefore) => ({ minutesBefore, method: "notice" as const }));
+  return next;
+}
+
+/** A new event as the person made it, before any server has it. */
+function made(act: Extract<CalendarEventAct, { kind: "calendar_event_create" }>): CalendarEventRecord {
+  const blank: CalendarEventRecord = {
+    id: act.eventId, calendarId: act.calendarId, uid: "", recurrenceId: "", thisAndFuture: false, sequence: 0, status: "confirmed",
+    title: "", notes: null, place: null, callLink: null, start: act.event.start, end: act.event.end, duration: null,
+    startsAt: NOT_YET, endsAt: null, occurrenceAt: null, repeat: null, busy: true, private: false, organizer: null,
+    myAnswer: null, heldBack: false, invitees: [], alarms: [], cut: false, writes: [], updatedAt: NOT_YET,
+  };
+  return withFields(blank, act.event);
+}
+
+/**
+ * THE ONE OVERLAY: `acts` laid over `records` in order. A new event appears; a change is written onto
+ * the record whole; a removal takes it out; a move gives it its new calendar; an answer is the
+ * account's own. An act on one day of a series is not laid over (no build takes it yet).
+ */
+export function applyCalendarActs(records: readonly CalendarEventRecord[], acts: readonly CalendarEventAct[]): CalendarEventRecord[] {
+  const byId = new Map(records.map((r) => [r.id, r] as const));
+  for (const act of acts) {
+    if (act.kind === "calendar_event_create") {
+      if (!byId.has(act.eventId)) byId.set(act.eventId, made(act));
+      continue;
+    }
+    const r = byId.get(act.eventId);
+    if (r === undefined || ("scope" in act && act.scope.kind !== "record")) continue;
+    switch (act.kind) {
+      case "calendar_event_update": byId.set(r.id, withFields(r, act.change)); break;
+      case "calendar_event_delete": byId.delete(r.id); break;
+      case "calendar_event_move": byId.set(r.id, { ...r, calendarId: act.toCalendarId }); break;
+      case "calendar_event_answer": byId.set(r.id, { ...r, myAnswer: act.answer }); break;
+    }
+  }
+  return [...byId.values()];
+}
+
+/** One act this device still holds, under the key it was pressed with. */
+export interface DeviceAct {
+  readonly key: string;
+  readonly act: CalendarEventAct;
+}
+
+/** An event as a view draws it: the record with every waiting write laid over, where it waits, and why one was refused. */
+export interface EventWithWrites {
+  readonly record: CalendarEventRecord;
+  readonly waiting: "device" | "provider" | null;
+  /** The last refusal: the provider's (on the record's marks) or our server's (of an act from this device). */
+  readonly refusal: CalendarWriteFault | CalendarReason | null;
+  /** The refused write a view can send again or let go; `null` for a refusal of our server's, which left nothing. */
+  readonly refusedWriteId: string | null;
+}
+
+/**
+ * THE SELECTOR: each event with its writes. The provider's pending writes (the record's marks) are
+ * laid over first, then this device's own acts; a refused mark is shown, never laid over. `refused`
+ * are this device's acts our server turned away, by event.
+ */
+export function eventsWithWrites(
+  records: readonly CalendarEventRecord[], device: readonly DeviceAct[],
+  refused: ReadonlyMap<string, CalendarReason | CalendarWriteFault> = new Map(),
+): EventWithWrites[] {
+  const marked = records.map((r) => {
+    const pending = r.writes.filter((w) => w.state === "pending" && w.act !== null).map((w) => w.act!);
+    return { r, pending };
+  });
+  const atProvider = new Set(marked.filter((m) => m.r.writes.some((w) => w.state === "pending")).map((m) => m.r.id));
+  const providerView = marked.map(({ r, pending }) => applyCalendarActs([r], pending)[0] ?? null);
+  const base = providerView.filter((r): r is CalendarEventRecord => r !== null);
+  const onDevice = new Set(device.map((d) => d.act.eventId));
+  const shown = applyCalendarActs(base, device.map((d) => d.act));
+  const original = new Map(records.map((r) => [r.id, r] as const));
+  return shown.map((record) => {
+    const marks = original.get(record.id)?.writes ?? [];
+    const lastRefused = [...marks].reverse().find((w) => w.state === "refused") ?? null;
+    return {
+      record,
+      waiting: onDevice.has(record.id) ? "device" : atProvider.has(record.id) ? "provider" : null,
+      refusal: refused.get(record.id) ?? lastRefused?.reason ?? null,
+      refusedWriteId: refused.has(record.id) ? null : lastRefused?.id ?? null,
+    };
+  });
+}
+
+/**
+ * The session's last key per event: an act on an event this device acted on before names that act
+ * (`after`), so our server writes it only onto the copy the earlier act made.
+ */
+export class CalendarActKeys {
+  private readonly last = new Map<string, string>();
+
+  /** The act as it is pressed: `after` set where this session acted on the event before. */
+  stamp(act: CalendarEventAct, key: string): CalendarEventAct {
+    const eventId = act.eventId;
+    const prior = this.last.get(eventId);
+    this.last.set(eventId, key);
+    if (act.kind === "calendar_event_create" || prior === undefined) return act;
+    return { ...act, after: prior };
+  }
+
+  /** An act our server refused leaves nothing to follow: the next act on the event names none. */
+  forget(eventId: string, key: string): void {
+    if (this.last.get(eventId) === key) this.last.delete(eventId);
+  }
+}

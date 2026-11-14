@@ -27,5 +27,9 @@
   { "key": "own:frame-noticebar@390", "file": "frame-noticebar-390", "variant": { "device": "phone", "face": "paper", "scheme": "light", "width": 390, "height": 844, "scale": 1 } },
   { "key": "own:frame-noticebar@719", "file": "frame-noticebar-719", "variant": { "device": "fold", "face": "paper", "scheme": "light", "width": 719, "height": 781, "scale": 1 } },
   { "key": "own:specimen@light", "file": "specimen-light", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 960, "height": 320, "scale": 1 } },
-  { "key": "own:specimen@dark", "file": "specimen-dark", "variant": { "device": "desktop", "face": "paper", "scheme": "dark", "width": 960, "height": 320, "scale": 2 } }
+  { "key": "own:specimen@dark", "file": "specimen-dark", "variant": { "device": "desktop", "face": "paper", "scheme": "dark", "width": 960, "height": 320, "scale": 2 } },
+  { "key": "own:ohbox-empty", "file": "ohbox-empty", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 1440, "height": 900, "scale": 1 } },
+  { "key": "own:ohbox-loading", "file": "ohbox-loading", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 1440, "height": 900, "scale": 1 } },
+  { "key": "own:ohbox-nomailbox", "file": "ohbox-nomailbox", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 1440, "height": 900, "scale": 1 } },
+  { "key": "own:ohbox-notorganizing", "file": "ohbox-notorganizing", "variant": { "device": "desktop", "face": "paper", "scheme": "light", "width": 1440, "height": 900, "scale": 1 } }
 ]

@@ -126,7 +126,9 @@ const hovering = (el: Element | null): void => {
   (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => el;
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")];
+const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")];
+/** The row the cursor stands on: today's `.sel`, the Ohbox's open option (`data-open`). */
+const isOpen = (row: HTMLElement): boolean => row.classList.contains("sel") || row.hasAttribute("data-open");
 /** Rows standing for ONE message — no `⤷ N` fold — so a per-row assert names one id. */
 const soloRows = (): HTMLElement[] => rows().filter((r) => !(r.textContent ?? "").includes("⤷"));
 const rail = (id: string): HTMLElement | null => host!.querySelector<HTMLElement>(`[data-rail-id="${id}"]`);
@@ -249,16 +251,16 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     expect(ghost(), "a ghost below the threshold").toBeNull();
     await pointer("pointerup", window, 12, 11);
     await click(row);
-    expect(row.classList.contains("sel"), "the click after a non-drag did not select").toBe(true);
+    expect(isOpen(row), "the click after a non-drag did not select").toBe(true);
 
     // A real drag: the release's click is suppressed — once.
-    const other = rows().find((r) => r.dataset.id !== id && !r.classList.contains("sel"))!;
+    const other = rows().find((r) => r.dataset.id !== id && !isOpen(r))!;
     await dragOver(other, null);
     await pointer("pointerup", window, 60, 60);
     await click(other);
-    expect(other.classList.contains("sel"), "the drag's release still clicked").toBe(false);
+    expect(isOpen(other), "the drag's release still clicked").toBe(false);
     await click(other);
-    expect(other.classList.contains("sel"), "the suppression was not one-shot").toBe(true);
+    expect(isOpen(other), "the suppression was not one-shot").toBe(true);
     await settle();
   });
 
@@ -267,14 +269,14 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await key("x");
     await key("j");
     await key("x");
-    const picked = host!.querySelectorAll('.view-ohbox .row[aria-selected="true"]');
+    const picked = host!.querySelectorAll('.view-ohbox :is(.row, [role=option])[aria-selected="true"]');
     expect(picked.length).toBeGreaterThanOrEqual(2);
     // The count the bar states is MESSAGES (a folded row picks its members), so it is the
     // number of moves a drop must dispatch — and the number the ghost badge must wear.
     // The count is the pill's leading capsule since 0.15.0 (`.list-foot .abar-count`), and the
     // number inside it is the live region — which is exactly the span to read here.
     const stated = Number(
-      (host!.querySelector('.list-foot .abar-count [role="status"]')?.textContent ?? "").match(/\d+/)?.[0],
+      ([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null),
     );
     expect(stated).toBeGreaterThanOrEqual(2);
 
@@ -289,13 +291,13 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     expect(moved).toHaveLength(stated);
     expect(new Set(moved.map((m) => m.messageId)).size).toBe(stated);
     for (const m of moved) expect(m.folder).toBe(FOLDER_OF_VIEW.reads);
-    expect(host!.querySelector(".list-foot"), "the selection survived its own drop").toBeNull();
+    expect(host!.querySelector(".ob-foot"), "the selection survived its own drop").toBeNull();
   });
 
   it("Escape cancels: no dispatch, the selection survives, the release is not a click", async () => {
     await mountShell();
     await key("x");
-    expect(host!.querySelector(".list-foot")).toBeTruthy();
+    expect(host!.querySelector(".ob-foot")).toBeTruthy();
 
     const row = rows()[3]!;
     sent = [];
@@ -303,7 +305,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     expect(rail("reads")!.classList.contains("drop-ok")).toBe(true);
     await key("Escape");
     // The drag owned that Escape: nothing cleared the selection, nothing stayed lit.
-    expect(host!.querySelector(".list-foot"), "Escape fell through to the shell's ladder").toBeTruthy();
+    expect(host!.querySelector(".ob-foot"), "Escape fell through to the shell's ladder").toBeTruthy();
     expect(lit()).toHaveLength(0);
     await pointer("pointerup", window, 60, 60);
     // The release's click arrives in the same task in a browser — before any timer runs.

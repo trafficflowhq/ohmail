@@ -45,7 +45,7 @@ describe("the engine store's commits are durable", () => {
     const w = engineStoreWorld();
     try {
       const platform: LocalEnginePlatformVerdict = await openLocalEnginePlatform({
-        openDatabase: w.open, deleteDatabase: w.drop, kv: memoryKV(),
+        openDatabase: w.open, deleteDatabase: w.drop, exists: w.exists, kv: memoryKV(),
         randomKekHex: () => "a".repeat(64), removal: noRemoval,
       });
       expect(platform.kind).toBe("ready");
@@ -78,7 +78,7 @@ describe("the engine store's commits are durable", () => {
     };
     try {
       const outcome = openLocalEnginePlatform({
-        openDatabase: stubborn, deleteDatabase: w.drop, kv,
+        openDatabase: stubborn, deleteDatabase: w.drop, exists: w.exists, kv,
         randomKekHex: () => "a".repeat(64), removal: noRemoval,
       });
       await expect(outcome).rejects.toBeInstanceOf(StoreFault);

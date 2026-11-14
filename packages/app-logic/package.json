@@ -292,6 +292,12 @@
       "node": "./dist/ohbox/index.js",
       "default": "./src/ohbox/index.ts"
     },
+    "./ohbox/context": {
+      "types": "./src/ohbox/context.ts",
+      "ohmail-source": "./src/ohbox/context.ts",
+      "node": "./dist/ohbox/context.js",
+      "default": "./src/ohbox/context.ts"
+    },
     "./ohbox/ohbox-list": {
       "types": "./src/ohbox/ohbox-list.ts",
       "ohmail-source": "./src/ohbox/ohbox-list.ts",

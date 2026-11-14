@@ -179,7 +179,7 @@ const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 /** The cursor on the Ohbox's first row, the way every one of these presses reaches a message. */
 async function cursorOnFirstRow(): Promise<string> {
   await key("j");
-  const id = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")?.dataset.id;
+  const id = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")?.dataset.id;
   expect(id, "`j` put the cursor on no row").toBeTruthy();
   return id!;
 }
@@ -195,7 +195,7 @@ async function bookAndOpenThePile(id: string): Promise<void> {
     window.dispatchEvent(new HashChangeEvent("hashchange"));
   });
   await waitFor(
-    () => host!.querySelector(`.view-triage .row[data-id="${id}"]`) != null,
+    () => host!.querySelector(`.view-triage :is(.row, [role=option])[data-id="${id}"]`) != null,
     "the booked row is in the Resurface pile",
   );
 }
@@ -209,7 +209,7 @@ describe("the finding: a reader install's Done says what the service answered", 
     // From here the install is a reader: the service refuses organizer-only verbs.
     refusing = true;
     sent = [];
-    const row = host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`);
+    const row = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
     await click(row!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
     await waitFor(() => said(REFUSED), "the refusal is never rendered");
 
@@ -219,7 +219,7 @@ describe("the finding: a reader install's Done says what the service answered", 
     expect(kinds("mark_seen"), "the release was sent over a refused clear").toHaveLength(0);
     // …and the interface agrees with the engine's rollback: the row is still in its pile.
     expect(
-      host!.querySelector(`.view-triage .row[data-id="${id}"]`),
+      host!.querySelector(`.view-triage :is(.row, [role=option])[data-id="${id}"]`),
       "the row left the pile the refusal kept it in",
     ).not.toBeNull();
   }, 20000);
@@ -230,7 +230,7 @@ describe("the finding: a reader install's Done says what the service answered", 
     await bookAndOpenThePile(id);
 
     sent = [];
-    const row = host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`);
+    const row = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
     await click(row!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
     await waitFor(() => said(doneSaid), "the release said nothing");
     expect(said(REFUSED), "an organizer was told a reader's refusal").toBe(false);
@@ -309,7 +309,7 @@ describe("the seam: nine families, each refused, each told", () => {
     const id = await cursorOnFirstRow();
     await bookAndOpenThePile(id);
     refusing = true;
-    const row = host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`);
+    const row = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
     await click(row!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
     await waitFor(() => said(REFUSED), "the refusal is never rendered");
     expect(said(doneSaid), "the press claimed it filed the message").toBe(false);
@@ -334,7 +334,7 @@ describe("the seam: nine families, each refused, each told", () => {
     // ⇧↓ starts a selection — the shell's own pick gesture.
     await key("ArrowDown", { shiftKey: true });
     await waitFor(
-      () => host!.querySelectorAll(".view-ohbox .row.picked, .view-ohbox .row[aria-selected='true']").length > 0,
+      () => host!.querySelectorAll(".view-ohbox :is(.row.picked, [role=option][data-picked]), .view-ohbox :is(.row, [role=option])[aria-selected='true']").length > 0,
       "nothing was picked",
     );
     refusing = true;

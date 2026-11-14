@@ -839,6 +839,14 @@ export const DE: Deck = {
         return "die Datenbank dieses Handys sicherte nicht zu, eine gespeicherte Änderung über einen Stromausfall zu behalten, deshalb wurde das Postfach darauf nicht geöffnet";
       case "engine_store_closed":
         return "das Postfach auf diesem Handy war bereits geschlossen, deshalb wurde nichts gelesen oder gespeichert";
+      case "store_copy_no_room":
+        return "auf diesem Handy ist zu wenig Platz frei, um vor dem Aktualisieren eine Kopie des Postfachs zu behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert";
+      case "store_copy_failed":
+        return "dieses Handy konnte vor dem Aktualisieren keine geprüfte Kopie des Postfachs behalten, deshalb wurde das Postfach nicht geöffnet und nichts darin geändert";
+      case "shell_keeper_not_deleted":
+        return "dieses Handy konnte die ungesendeten Briefe und vorgemerkten Änderungen, die es für dieses Postfach aufbewahrt hat, nicht löschen";
+      case "shell_view_not_cleared":
+        return "dieses Handy konnte die Kopie der Mails dieses Postfachs, die seine Mail-Ansicht aufbewahrt hat, nicht löschen";
       default: return code;
     }
   },
@@ -2486,4 +2494,7 @@ export const DE: Deck = {
   previewShareHint: "Teile sie, um sie in einer anderen App zu öffnen.",
   previewPdfMore: (n: number) => `Die ersten ${n} Seiten werden angezeigt.`,
   previewFrameLabel: "Anhangvorschau",
+  shellOpening: "Deine Mails werden geöffnet…",
+  shellWebViewMissing: "Die Web-Ansicht dieses Handys fehlt oder ist zu alt für ohmail. Aktualisiere Android System WebView und öffne ohmail dann erneut.",
+  shellEnded: "Die Ansicht von ohmail wurde mehrmals hintereinander beendet. Schließe ohmail und öffne es erneut.",
 };

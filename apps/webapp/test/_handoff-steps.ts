@@ -118,8 +118,8 @@ export async function composerOn(s: DraftShell, id: string, subject: string): Pr
 
 /** Select a row in the Ohbox and open its dock with `k` (r, R, F). */
 export async function dockOn(s: DraftShell, id: string, k = "r", shiftKey = false): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, `the row ${id}`);
-  await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), `the row ${id}`);
+  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, `the row ${id}`);
+  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `the row ${id}`);
   await key(k, shiftKey ? { shiftKey: true } : {});
   await waitFor(() => replySurface(s.el) != null, `the dock on ${id}`);
 }

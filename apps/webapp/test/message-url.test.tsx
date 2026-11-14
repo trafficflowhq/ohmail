@@ -137,7 +137,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     await mountShell();
     await key("j"); // the cursor lands on the first row — at split width the column IS the open
 
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id;
+    const selId = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id;
     expect(selId, "a selected row").toBeTruthy();
     expect(window.location.hash, "the bar claims the reading").toBe(`#/ohbox/m/${selId}`);
 
@@ -145,7 +145,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     // come back without a click — the URL was the claim, the restore honors it.
     await unmountKeepHash();
     await mountShell();
-    expect(host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id, "the restored selection").toBe(selId);
+    expect(host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id, "the restored selection").toBe(selId);
     expect(
       host!.querySelector(".read-col .msg-subject")?.textContent ?? "",
       "the reading column shows the restored message",
@@ -166,12 +166,12 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
+    const selId = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")!.dataset.id!;
     seen.length = 0;
 
     await unmountKeepHash();
     await mountShell();
-    expect(host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id).toBe(selId);
+    expect(host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id).toBe(selId);
     // The restore selected and rendered — and wrote nothing. No mark_seen rides a reload.
     expect(seen.filter((m) => m.kind === "mark_seen")).toEqual([]);
   });
@@ -180,11 +180,11 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    expect(host!.querySelector(".row.sel[data-id]")).toBeTruthy();
+    expect(host!.querySelector(":is(.row.sel, [role=option][data-open])[data-id]")).toBeTruthy();
 
     // Back is a hash move to the entry before the open.
     await goHash("#/ohbox");
-    expect(host!.querySelector(".row.sel[data-id]"), "the selection follows the URL out").toBeNull();
+    expect(host!.querySelector(":is(.row.sel, [role=option][data-open])[data-id]"), "the selection follows the URL out").toBeNull();
   });
 
   /**
@@ -290,7 +290,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
+    const selId = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")!.dataset.id!;
 
     await goHash(`#/search/m/${selId}`);
     expect(host!.querySelector(".reader .msg, .reader [class*=\"pm\"]"), "the overlay carries the reading").toBeTruthy();
@@ -303,7 +303,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const selId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
+    const selId = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")!.dataset.id!;
     await goHash(`#/search/m/${selId}`);
     expect(host!.querySelector(".reader .msg"), "the overlay is up").toBeTruthy();
 
@@ -323,13 +323,13 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     window.location.hash = "#/ohbox";
     await mountShell();
     await key("j");
-    const heldId = host!.querySelector<HTMLElement>(".row.sel[data-id]")!.dataset.id!;
+    const heldId = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")!.dataset.id!;
     await goHash(`#/search/m/${heldId}`);
     expect(host!.querySelector(".reader .msg"), "the overlay is up").toBeTruthy();
 
     await goHash(`#/ohbox/m/${heldId}`);
     await settle();
-    expect(host!.querySelector<HTMLElement>(".row.sel[data-id]")?.dataset.id, "the held selection").toBe(heldId);
+    expect(host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id, "the held selection").toBe(heldId);
     expect(host!.querySelector(".reader .msg"), "no stale overlay over the column").toBeNull();
   });
 

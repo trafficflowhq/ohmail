@@ -9,14 +9,14 @@ import {
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions, changeLog,
+  accounts, calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions, calWrites, changeLog,
   mailboxes,
 } from "@trafficflow/db/mail";
 import { SyncService, type SyncChange, type SyncResponse } from "@trafficflow/services/mail";
 import { calendarFeed, setCalendarSettings } from "@trafficflow/services/calendar";
 import { calendarRoutes } from "@trafficflow/api/calendar";
 import { HttpAdapter, MemoryMirrorStore, NAMED_FEED_KINDS, OhmailEngine, SYNC_ENTITY_TYPES } from "@ohmail/client-engine";
-import type { CalendarRecordKind } from "@ohmail/wire";
+import type { CalendarEventRecord, CalendarRecordKind } from "@ohmail/wire";
 import { syncRoutes } from "../../../packages/api/src/routes/sync.js";
 import { makeDeps, seedMailbox, seedSession, FIXED_NOW } from "../../../packages/api/test/helpers.js";
 import { openLocalDb, type OpenLocalDb } from "../src/db.js";
@@ -54,7 +54,7 @@ const at = (h: number) => new Date(FIXED_NOW.getTime() + h * 3_600_000);
  * the switch's own service, one row of every kind, and their changes. `word: false` is a server
  * that keeps none: the same rows, no port, no routes.
  */
-async function server(events = 1, opts: { word?: boolean } = {}) {
+async function server(events = 1, opts: { word?: boolean; marks?: boolean } = {}) {
   const word = opts.word ?? true;
   const { db, deps, clock } = await makeDeps();
   if (word) deps.services = { ...deps.services, calendar: calendarFeed } as never;
@@ -88,6 +88,14 @@ async function server(events = 1, opts: { word?: boolean } = {}) {
       { accountId: s.accountId, eventId: id, address: "b@example.test", name: null, role: "optional", answer: "none" },
     ]);
     await db.insert(calAlarms).values({ accountId: s.accountId, eventId: id, minutesBefore: 10 });
+  }
+  if (opts.marks === true) {
+    // A person's change owed to the provider, and an earlier one the provider refused: both ride the event's record.
+    const act = (title: string) => ({ v: 1, act: { kind: "calendar_event_update", eventId: ids.events[0]!, base: FIXED_NOW.toISOString(), scope: { kind: "record" }, change: { title } }, after: null, part: null });
+    await db.insert(calWrites).values([
+      { accountId: s.accountId, calendarId: ids.calendar, eventId: ids.events[0]!, op: "update", payload: act("Refused"), idempotencyKey: "press-1", state: "refused", refusal: "version_stale", createdAt: at(-2) },
+      { accountId: s.accountId, calendarId: ids.calendar, eventId: ids.events[0]!, op: "update", payload: act("Owed"), idempotencyKey: "press-2", state: "pending", createdAt: at(-1) },
+    ]);
   }
   await db.insert(calSuggestions).values({
     id: ids.suggestion, accountId: s.accountId, messageId: randomUUID(), mailboxId, evidence: "dates",
@@ -206,6 +214,17 @@ describe("every calendar kind walks from a row to two devices", () => {
     }
   }, 120_000);
 
+  it("an event's writes, owed and refused, ride its record through the desktop's copy and are served again as they left", async () => {
+    const srv = await server(1, { marks: true });
+    const { store } = await drain(srv.route);
+    const [event] = held(store, "calendar_event") as unknown as CalendarEventRecord[];
+    expect(event!.writes.map((w) => [w.key, w.state, w.reason, w.act?.kind])).toEqual([
+      ["press-1", "refused", "version_stale", "calendar_event_update"], ["press-2", "pending", null, "calendar_event_update"],
+    ]);
+    const desk = await desktopCopy(srv.route, srv.mailboxId);
+    expect(held(desk.second, "calendar_event")).toEqual(held(store, "calendar_event"));
+  }, 120_000);
+
   it("many rows arrive in pages and converge under a repeated and a reordered page", async () => {
     const srv = await server(30);
     const { store, pages } = await drain(srv.route, 10);
@@ -267,7 +286,7 @@ describe("every calendar kind walks from a row to two devices", () => {
   }, 120_000);
 
   it("signing out takes the whole calendar copy, and the local feed serves none of it again", async () => {
-    const srv = await server(2);
+    const srv = await server(2, { marks: true });
     const desk = await desktopCopy(srv.route, srv.mailboxId);
     const before = await new SyncService().getChanges(
       { db: desk.db, accountId: desk.world.accountId, userId: null, now: () => new Date(), requestId: "local" } as never,
@@ -279,7 +298,7 @@ describe("every calendar kind walks from a row to two devices", () => {
       { since: "0", limit: 2000, types: [...SYNC_ENTITY_TYPES], calendar: calendarFeed },
     )).changes.creates.filter((c) => c.type.startsWith("calendar"));
     await desk.db.transaction((tx) => wipeCalendarCopy(tx, desk.world.accountId));
-    for (const table of [calConnections, calCalendars, calEvents, calAttendees, calAlarms, calSuggestions, calSettings]) {
+    for (const table of [calConnections, calCalendars, calEvents, calAttendees, calAlarms, calSuggestions, calSettings, calWrites]) {
       expect(await desk.db.select().from(table)).toEqual([]);
     }
     // Past the cursor it had, a device is told the settings moved (its switch is gone with the

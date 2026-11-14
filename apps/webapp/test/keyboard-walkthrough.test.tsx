@@ -194,8 +194,8 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 4000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-const listRows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view .row[data-id]")];
-const selRow = (c: HTMLElement): HTMLElement | null => c.querySelector<HTMLElement>(".view .row.sel[data-id]");
+const listRows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
+const selRow = (c: HTMLElement): HTMLElement | null => c.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])[data-id]");
 const byText = (c: HTMLElement, sel: string, text: string): HTMLElement | null =>
   [...c.querySelectorAll<HTMLElement>(sel)].find((el) => (el.textContent ?? "").includes(text)) ?? null;
 

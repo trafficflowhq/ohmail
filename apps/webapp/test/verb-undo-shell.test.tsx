@@ -86,7 +86,7 @@ const toastText = (): string => (host!.querySelector(".toast")?.textContent ?? "
 const undoButton = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".toast .toast-act");
 
 const selectedId = (): string => {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   return id!;
 };

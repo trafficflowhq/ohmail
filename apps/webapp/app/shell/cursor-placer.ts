@@ -70,11 +70,13 @@ export function placeFirstRow(
   if (host.current != null) return false;
   const first = host.rows[0];
   if (first == null) return false;
-  const row = queryVisible<HTMLElement>(
-    `${host.scope} .row[data-id="${CSS.escape(first.id)}"]`,
-  );
-  if (row == null) return false;
-  host.select(first.id);
+  /* Today's rows and the Ohbox's kit rows alike; a folded row carries its open target's id and every member's in
+     `data-ids`, so the first message may stand in a row named by another. */
+  const row = queryVisible<HTMLElement>(`${host.scope} :is(.row, .oh-row)[data-id="${CSS.escape(first.id)}"]`)
+    ?? queryVisible<HTMLElement>(`${host.scope} :is(.row, .oh-row)[data-ids~="${CSS.escape(first.id)}"]`);
+  const id = row?.dataset.id;
+  if (row == null || id == null) return false;
+  host.select(id);
   /* The same nudge a click's selection gets — `block: "nearest"`, the whole list's convention.
      Optional-chained on the METHOD, not the node: jsdom mounts these views without implementing
      it (`RulesView`'s precedent). */

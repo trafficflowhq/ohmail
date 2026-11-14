@@ -5,9 +5,28 @@
 import { useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
-import { Button, Menu, MenuItem, contextTrigger } from "../../src/base/index.js";
+import {
+  Blank,
+  Button,
+  Menu,
+  MenuItem,
+  Page,
+  PhoneSheet,
+  Sentence,
+  contextTrigger,
+} from "../../src/base/index.js";
 import { AgendaRow, EventCard } from "../../src/calendar/index.js";
-import { ColumnHandle, ReadSquares, Recipients, Row, Rows, Switcher } from "../../src/mail/index.js";
+import {
+  ColumnHandle,
+  LookPicture,
+  ReadSquares,
+  Recipients,
+  Row,
+  Rows,
+  SettingTile,
+  SettingTiles,
+  Switcher,
+} from "../../src/mail/index.js";
 
 type At = { x: number; y: number } | null;
 let step: (() => void) | null = null;
@@ -19,7 +38,7 @@ const items = (
   </>
 );
 
-function AtControl() {
+function AtControl({ kind }: { kind?: "card" | "sheet" }) {
   const [open, setOpen] = useState(false);
   const control = useRef<HTMLButtonElement | null>(null);
   return (
@@ -27,9 +46,22 @@ function AtControl() {
       <Button ref={control} kind="two" opens="menu" expanded={open} onPress={() => setOpen(true)}>
         More
       </Button>
-      <Menu open={open} onClose={() => setOpen(false)} anchor={control} label="More">
-        {items}
-      </Menu>
+      {kind === "sheet" ? (
+        <PhoneSheet open={open} onClose={() => setOpen(false)} label="More">
+          {items}
+        </PhoneSheet>
+      ) : (
+        <Menu
+          open={open}
+          onClose={() => setOpen(false)}
+          anchor={control}
+          label="More"
+          kind={kind}
+          title={kind ? "Giulia Ferrari" : undefined}
+        >
+          {items}
+        </Menu>
+      )}
     </div>
   );
 }
@@ -177,8 +209,107 @@ function Knob() {
   );
 }
 
+/**
+ * A page of two columns, its act counted. `tall`: its sentence column is taller than any of the smaller windows.
+ * `typing`: it fits until the step says two refusals under the sentence, as a person types in its blank.
+ */
+function TwoColumns({ tall = false }: { tall?: boolean }) {
+  const [typed, setTyped] = useState("");
+  const [said, setSaid] = useState(false);
+  const [pressed, setPressed] = useState(0);
+  step = () => setSaid(true);
+  return (
+    <div style={{ position: "fixed", inset: 0 }} data-pressed={pressed}>
+      <Page
+        columns={2}
+        trail={<span>Account</span>}
+        refusal={
+          said
+            ? [
+                "That address is already the sign-in of another account, so it cannot receive the bill as well.",
+                "Write another address, or sign in to the account that has it and send the bill from there.",
+              ]
+            : undefined
+        }
+        material={
+          <div data-scene="material" style={{ height: 320 }}>
+            The plan and what it costs
+            <button type="button" data-scene="in-material">
+              Compare the plans
+            </button>
+          </div>
+        }
+        line="The bill goes to this address each month."
+        note="You can change it at any time."
+        acts={
+          <Button size="l" onPress={() => setPressed((n) => n + 1)}>
+            Subscribe
+          </Button>
+        }
+      >
+        <Sentence size="xl" level={1}>
+          Send the bill to{" "}
+          <Blank label="Billing address" placeholder="your address" value={typed} onChange={setTyped} />
+        </Sentence>
+        {tall ? (
+          <>
+            <Sentence size="xl">
+              Your trial has ended, and the mail you kept stays yours: export it, move it to another server,
+              or keep it here for thirty days while you decide what to do with it next.
+            </Sentence>
+            <Sentence size="xl">
+              After those thirty days the mailbox and everything in it are erased for good, the folders, the
+              rules and the calendar with them, and nothing of it can be brought back by anyone, us included.
+            </Sentence>
+            <Sentence size="xl">
+              Subscribing keeps all of it exactly where it is, and the address goes on receiving mail as
+              before.
+            </Sentence>
+            <Sentence size="xl">
+              The plan is paid each month or each year, it can be ended at any time from the account page, and
+              what was paid for a month that has begun is not taken back, nor is anything charged after the
+              end.
+            </Sentence>
+            <Sentence size="xl">
+              Whoever writes to this address meanwhile is told nothing: their mail waits here for you to come
+              back.
+            </Sentence>
+          </>
+        ) : null}
+      </Page>
+    </div>
+  );
+}
+
+/** General's two look tiles, the page's own face chosen first, each picture in the page's scheme. */
+function Tiles({ tag = "follows Omarchy" }: { tag?: string }) {
+  const [face, setFace] = useState<"paper" | "ohmarchy">("paper");
+  const scheme = document.documentElement.dataset.scheme === "dark" ? "dark" : "light";
+  const rows = [
+    { who: "Giulia Ferrari", address: "giulia@terracotta-milano.example", time: "09:12" },
+    { who: "Petra Wyss", address: "petra@makersfest.example", time: "08:47" },
+  ] as const;
+  return (
+    <div style={{ width: 680, maxWidth: "100%", padding: 16 }}>
+      <SettingTiles label="Look">
+        <SettingTile name="oh" on={face === "paper"} onPress={() => setFace("paper")}>
+          <LookPicture face="paper" scheme={scheme} title="Ohbox" rows={rows} />
+        </SettingTile>
+        <SettingTile name="ohmarchy" tag={tag} on={face === "ohmarchy"} onPress={() => setFace("ohmarchy")}>
+          <LookPicture face="ohmarchy" scheme={scheme} title="Ohbox" rows={rows} />
+        </SettingTile>
+      </SettingTiles>
+    </div>
+  );
+}
+
 const SCENES = {
+  tiles: Tiles,
+  /* A catalogue's longer word beside the name (German says more than English). */
+  tilesLong: () => <Tiles tag="übernimmt das Omarchy-Theme" />,
   control: AtControl,
+  card: () => <AtControl kind="card" />,
+  footSheet: () => <AtControl kind="sheet" />,
   pointer: AtPointer,
   handle: Handle,
   swipe: Swipe,
@@ -188,6 +319,8 @@ const SCENES = {
   phoneLines: () => <Lines phone />,
   squares: Squares,
   knob: Knob,
+  pageShort: () => <TwoColumns />,
+  pageTall: () => <TwoColumns tall />,
 };
 export type Scene = keyof typeof SCENES;
 

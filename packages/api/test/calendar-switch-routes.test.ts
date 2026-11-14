@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { calendarRoutes } from "@trafficflow/api/calendar";
+import { eq } from "drizzle-orm";
 import { fencedAccountWrite, recordCalendarChanges } from "@trafficflow/db";
-import { calCalendars, calConnections, calSettings } from "@trafficflow/db/mail";
+import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db/mail";
+import type { CalendarWriteAnswer } from "@ohmail/wire";
 import { calendarFeed } from "@trafficflow/services/calendar";
 import type { SyncResponse } from "@trafficflow/services/mail";
 import { makeDeps, req, seedSession, FIXED_NOW } from "./helpers.js";
@@ -33,10 +35,10 @@ async function rig(opts: { calendar: boolean; verified?: boolean }) {
   if (opts.calendar) deps.services = { ...deps.services, calendar: calendarFeed } as never;
   const s = await seedSession(db, { now: FIXED_NOW, ...(opts.verified === false ? { emailVerified: false } : {}) });
   const app = opts.calendar ? withCalendar : withoutCalendar;
-  const ask = (method: string, path: string, body?: unknown): Promise<Response> => app.handle(
+  const ask = (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<Response> => app.handle(
     req(method, path, {
       bearer: s.token, ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      headers: { "x-requested-with": "ohmail" },
+      headers: { "x-requested-with": "ohmail", ...headers },
     }),
     { ...deps, session: null, idempotency: null } as ApiDeps,
   );
@@ -123,5 +125,67 @@ describe("a calendar record leaves the server only with the word and the switch 
     expect(await kinds(r)).toEqual([]);
     expect((await r.ask("PATCH", "/calendar/settings", { enabled: true })).status).toBe(200);
     expect(await kinds(r)).toEqual(["calendar", "calendar_connection", "settings"]);
+  });
+});
+
+describe("the calendar's write routes", () => {
+  async function writable(r: Awaited<ReturnType<typeof rig>>) {
+    const connection = randomUUID();
+    const calendar = randomUUID();
+    await r.db.insert(calConnections).values({ id: connection, accountId: r.s.accountId, provider: "google", label: "Personal" });
+    await r.db.insert(calCalendars).values({ id: calendar, accountId: r.s.accountId, connectionId: connection, providerId: "primary", name: "Home", access: "owner" });
+    await r.db.insert(calSettings).values({ accountId: r.s.accountId, enabledAt: FIXED_NOW });
+    return { calendar };
+  }
+  const create = (calendarId: string, eventId = randomUUID()) => ({
+    kind: "calendar_event_create", eventId, calendarId,
+    event: {
+      title: "Glaze firing", start: { kind: "instant", value: "20261117T090000Z" }, end: { kind: "instant", value: "20261117T100000Z" },
+      notes: null, place: null, callLink: null, busy: true, private: false, repeat: null, invitees: [], alarms: [],
+    },
+  });
+
+  it("records an act under its key, answers 202 with the write and the event's record, and calls no provider", async () => {
+    const r = await rig({ calendar: true });
+    const { calendar } = await writable(r);
+    const fetched = vi.spyOn(globalThis, "fetch");
+    try {
+      const act = create(calendar);
+      const res = await r.ask("POST", "/calendar/writes", act, { "idempotency-key": "press-route-1" });
+      expect(res.status).toBe(202);
+      expect(res.headers.get("x-sync-seq")).toMatch(/^\d+$/);
+      const body = await res.json() as CalendarWriteAnswer;
+      expect(body.write).toMatchObject({ key: "press-route-1", state: "pending", reason: null });
+      expect(body.events.map((e) => [e.id, e.writes.map((w) => w.key)])).toEqual([[act.eventId, ["press-route-1"]]]);
+      const again = await r.ask("POST", "/calendar/writes", act, { "idempotency-key": "press-route-1" });
+      expect([again.status, (await again.json() as CalendarWriteAnswer).write?.id, again.headers.get("x-sync-seq")]).toEqual([202, body.write!.id, null]);
+      expect(fetched).not.toHaveBeenCalled();
+    } finally {
+      fetched.mockRestore();
+    }
+    expect((await r.db.select({ id: calWrites.id }).from(calWrites).where(eq(calWrites.accountId, r.s.accountId))).length).toBe(1);
+  });
+
+  it("asks for the key, and is refused to an unverified account and where the composition keeps no calendar", async () => {
+    const r = await rig({ calendar: true });
+    const { calendar } = await writable(r);
+    const none = await r.ask("POST", "/calendar/writes", create(calendar));
+    expect([none.status, (await none.json() as { error: { code: string } }).error.code]).toEqual([400, "idempotency_key_required"]);
+    const unverified = await rig({ calendar: true, verified: false });
+    const u = await writable(unverified);
+    expect((await unverified.ask("POST", "/calendar/writes", create(u.calendar), { "idempotency-key": "k" })).status).toBe(403);
+    const off = await rig({ calendar: false });
+    expect((await off.ask("POST", "/calendar/writes", create(calendar), { "idempotency-key": "k" })).status).toBe(404);
+    expect((await r.db.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, r.s.accountId))).length).toBe(0);
+  });
+
+  it("lets a write not tried yet go, and the new event with it", async () => {
+    const r = await rig({ calendar: true });
+    const { calendar } = await writable(r);
+    const made = await (await r.ask("POST", "/calendar/writes", create(calendar), { "idempotency-key": "press-route-2" })).json() as CalendarWriteAnswer;
+    const gone = await r.ask("DELETE", `/calendar/writes/${made.write!.id}`);
+    expect([gone.status, await gone.json()]).toEqual([200, { write: null, events: [] }]);
+    const retry = await r.ask("POST", `/calendar/writes/${made.write!.id}/retry`);
+    expect(retry.status).toBe(404);
   });
 });

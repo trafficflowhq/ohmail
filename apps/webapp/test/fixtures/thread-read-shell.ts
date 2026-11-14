@@ -141,7 +141,7 @@ export const keyAsBrowser = async (k: string, init: KeyboardEventInit = {}): Pro
 };
 /** The conversation's one Ohbox row. */
 export const theRow = (host: HTMLElement): HTMLElement | null =>
-  host.querySelector<HTMLElement>('[role="listbox"] .row');
+  host.querySelector<HTMLElement>('[role="listbox"] :is(.row, [role=option])');
 /** A row press, as a person makes it: one click opens the conversation on its newest (a second stays there). */
 export const openTheRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host), "the conversation's row");

@@ -4,7 +4,9 @@
  * compile. `cloud-mirror.ts`'s two default arms hand every calendar change to this file.
  *
  * The copy holds what the record carries and nothing more: no sign-in, no token, no principal, no
- * provider's ids (`provider_id` takes the hosted row's own id), no queued writes and no links. A
+ * provider's ids (`provider_id` takes the hosted row's own id), and no links. The writes an event's
+ * record carries (owed to the provider, or refused by it) are kept as the record says them, so the
+ * copy serves them again; nothing here drains them. A
  * removal takes what hangs on the row first, so the copy's own keys never refuse a page. A child
  * whose parent the copy does not hold is skipped, never a key violation that wedges the page. The
  * account's erasure stamp is read first, as for every row the account owns.
@@ -17,14 +19,14 @@ import {
 } from "@trafficflow/db";
 import {
   CALENDAR_ADDRESS_MAX_BYTES, CALENDAR_OCCURRENCE_KEY_MAX_BYTES, CALENDAR_PROVIDER_ID_MAX_BYTES, CALENDAR_UID_MAX_BYTES,
-  fitsCalendarBytes,
+  fitsCalendarBytes, isWriteUuid, writePayloadOf,
 } from "@trafficflow/db/calendar";
 import {
-  calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions,
+  calAlarms, calAttendees, calCalendars, calConnections, calEvents, calSettings, calSuggestions, calWrites,
 } from "@trafficflow/db/mail";
 import type {
-  CalendarConnectionRecord, CalendarEventRecord, CalendarRecord, CalendarRecordKind, CalendarRecords,
-  CalendarSuggestionRecord, SyncChange,
+  CalendarConnectionRecord, CalendarEventAct, CalendarEventRecord, CalendarRecord, CalendarRecordKind, CalendarRecords,
+  CalendarSuggestionRecord, CalendarWriteMark, SyncChange,
 } from "@ohmail/wire";
 import type { LocalWorld } from "./identity.js";
 
@@ -49,9 +51,30 @@ async function held(tx: Tx, table: typeof calConnections | typeof calCalendars, 
   return rows.length > 0;
 }
 
+/** What a write is, by the act its mark carries; a mark cut to fit carries none. */
+function opOf(act: CalendarEventAct | null): string {
+  switch (act?.kind) {
+    case "calendar_event_create": return "create";
+    case "calendar_event_delete": return "delete";
+    case "calendar_event_move": return "move";
+    case "calendar_event_answer": return "answer";
+    default: return "update";
+  }
+}
+
+/** An event's writes as its record says them, as the copy's rows. A mark the copy could not keep as it is (an id no row takes, a key past its length) is left out: never a page wedged for it. */
+function marksOf(world: LocalWorld, r: CalendarEventRecord) {
+  return r.writes.filter((m: CalendarWriteMark) => isWriteUuid(m.id) && /^[\x21-\x7e]{1,64}$/.test(m.key)).map((m: CalendarWriteMark) => ({
+    id: m.id, accountId: world.accountId, calendarId: r.calendarId, eventId: r.id, op: opOf(m.act),
+    payload: m.act === null ? {} : writePayloadOf(m.act, null, m.part === null ? null : { of: m.key.replace(/:2$/, ""), n: m.part }),
+    idempotencyKey: m.key, state: m.state, refusal: m.reason, createdAt: asDate(m.at) ?? new Date(0), updatedAt: asDate(m.at) ?? new Date(0),
+  }));
+}
+
 /** An event's own children, then the event. */
 async function removeEvents(tx: Tx, world: LocalWorld, ids: readonly string[]): Promise<void> {
   if (ids.length === 0) return;
+  await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), inArray(calWrites.eventId, [...ids])));
   await tx.delete(calAttendees).where(and(eq(calAttendees.accountId, world.accountId), inArray(calAttendees.eventId, [...ids])));
   await tx.delete(calAlarms).where(and(eq(calAlarms.accountId, world.accountId), inArray(calAlarms.eventId, [...ids])));
   await tx.update(calSuggestions).set({ eventId: null })
@@ -65,6 +88,7 @@ async function removeCalendars(tx: Tx, world: LocalWorld, ids: readonly string[]
   const events = await tx.select({ id: calEvents.id }).from(calEvents)
     .where(and(eq(calEvents.accountId, world.accountId), inArray(calEvents.calendarId, [...ids])));
   await removeEvents(tx, world, events.map((e: { id: string }) => e.id));
+  await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), inArray(calWrites.calendarId, [...ids])));
   await tx.delete(calAlarms).where(and(eq(calAlarms.accountId, world.accountId), inArray(calAlarms.calendarId, [...ids])));
   await tx.delete(calCalendars).where(and(eq(calCalendars.accountId, world.accountId), inArray(calCalendars.id, [...ids])));
 }
@@ -164,6 +188,12 @@ const event: KindStore<"calendar_event"> = {
         accountId: world.accountId, eventId: r.id, minutesBefore: a.minutesBefore, method: a.method,
       })));
     }
+    // The event's writes in place of what the copy held; a record from a server that carries none (an older one) says nothing of them.
+    if (Array.isArray(r.writes)) {
+      await tx.delete(calWrites).where(and(eq(calWrites.accountId, world.accountId), eq(calWrites.eventId, r.id)));
+      const marks = marksOf(world, r);
+      if (marks.length > 0) await tx.insert(calWrites).values(marks).onConflictDoNothing();
+    }
     return true;
   },
   async remove(tx, world, id) {
@@ -233,6 +263,7 @@ async function removeCalendarRows(tx: Tx, accountId: string): Promise<ChangeInpu
   const calendars = await ids(calCalendars);
   const connections = await ids(calConnections);
   const suggestions = await ids(calSuggestions);
+  await tx.delete(calWrites).where(eq(calWrites.accountId, accountId));
   await tx.delete(calAttendees).where(eq(calAttendees.accountId, accountId));
   await tx.delete(calAlarms).where(eq(calAlarms.accountId, accountId));
   await tx.delete(calSuggestions).where(eq(calSuggestions.accountId, accountId));

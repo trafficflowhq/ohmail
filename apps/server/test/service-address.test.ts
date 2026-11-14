@@ -3,12 +3,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SsrfRefusal, assertPublicHttpUrl, assertPublicHttpUrlShape, type HostResolver } from "@trafficflow/core/net";
-import { accessOf, type EntitlementsComposition } from "@trafficflow/db";
+import { accessOf, type EntitlementsComposition, type EntitlementsPort } from "@trafficflow/db";
 import { buildProgram } from "../src/program.js";
 import { loadSettings } from "../src/settings.js";
 import { isPrivateServiceName, parseServiceAddress } from "../src/settings/service-address.js";
 import { NotPrivateNetworkError, privateNetworkFetch } from "../src/settings/private-network-fetch.js";
 import { MANAGED_ENV, PROCESS_DOOR, env, fixture, functionDoor, functionInput, recordingLogger } from "./_envs.js";
+import { farSide, NOT_HTTP } from "../../../packages/core/test/far-side.js";
 
 /**
  * A BEARER OVER PLAIN HTTP, ONLY INSIDE A PRIVATE NETWORK. The rule has two halves and both are
@@ -189,6 +190,21 @@ describe("through the wiring: the program's own entitlements client", () => {
     const reading = await program.buildDeps(new Request("https://api.ohmail.app/health")).health!.dbTls!(false) as { billing?: unknown };
     expect(reading.billing).toEqual({ transport: "http-private" });
     await program.close();
+  });
+
+  it("a service that answers no HTTP: the client's own word, a fault, counted, and nothing held", async () => {
+    const far = await farSide((socket) => socket.write(NOT_HTTP));
+    try {
+      const { logger } = recordingLogger();
+      const settings = loadSettings(env(MANAGED_ENV, { ENTITLEMENTS_URL: `http://localhost:${new URL(far.url).port}` }), functionDoor());
+      const program = buildProgram(settings, functionInput(logger));
+      const entitlements = program.services.entitlementsPort as EntitlementsPort;
+      expect(await entitlements.accessOrFault("11111111-1111-4111-8111-111111111111")).toBe("fault");
+      expect(entitlements.accessFaults?.()).toBe(1);
+      await program.close();
+    } finally {
+      await far.close();
+    }
   });
 
   it("an https address keeps the ordinary fetch, and /health says https once the client is composed", async () => {

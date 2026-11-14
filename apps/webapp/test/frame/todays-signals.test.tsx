@@ -11,7 +11,10 @@ function Probe({ signals }: { signals: HostContract["signals"] }) {
   seen.now = useTodaysSignals(signals);
   return null;
 }
-const QUIET = { hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE } as const;
+const QUIET = {
+  hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+  posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
+} as const;
 const letter = (subject: string): LinkedDraft => ({ to: ["lena@example.com"], cc: [], bcc: [], subject, body: "" });
 
 /** A host's link slot: offered links wait until taken, each taken once. */

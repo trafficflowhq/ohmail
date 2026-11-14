@@ -125,6 +125,7 @@ function Screens() {
           }}
         >
           <Stack.Screen name="(tabs)" />
+          <Stack.Screen name="shell" options={{ animation: "none", gestureEnabled: false }} />
           {/* New mail is a sheet over the screen it was opened from, never a page of its own. */}
           <Stack.Screen
             name="compose"

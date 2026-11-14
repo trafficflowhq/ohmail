@@ -26,15 +26,24 @@ import { shellFrameOf, shellFramePaths } from "./source-anchor.js";
 const at = (p: string) => fileURLToPath(new URL(`../app/${p}`, import.meta.url));
 const read = (p: string) => readFileSync(at(p), "utf8");
 
-/** Every list surface that renders a mail row, and therefore draws thread circles. */
+/**
+ * Every list surface that renders a mail row, and therefore draws thread circles. The Ohbox is no view here any
+ * more: its rows are the kit's, and their circles are everybody in the conversation, asked of the shell's
+ * conversation asker (`SHELL_BINDINGS` below; drawn and named by `packages/app/test/ohbox/row-words.test.tsx`).
+ */
 const MAIL_LISTS = [
-  "OhboxView",
   "ReadsView",
   "ReceiptsView",
   "HistoryView",
   "TagView",
   "TriageView",
 ] as const;
+
+/** What the shell hands each list for its circles: the participants index, and the Ohbox its conversation asker. */
+const SHELL_BINDINGS: ReadonlyArray<readonly [string, string]> = [
+  ...MAIL_LISTS.map((view) => [view, "threadParticipants={participantsOf}"] as const),
+  ["TodaysOhbox", "conversationOf={ohboxConversationOf}"],
+];
 
 describe("thread circles are wired into every mail list", () => {
   it.each(MAIL_LISTS)("%s takes the shell's participants binding and passes it on its row", (view) => {
@@ -51,7 +60,7 @@ describe("thread circles are wired into every mail list", () => {
 
   it("the shell hands its indexed binding to every one of them", () => {
     const shell = read("shell/AppShell.tsx");
-    for (const view of MAIL_LISTS) {
+    for (const [view, binding] of SHELL_BINDINGS) {
       const open = shell.indexOf(`<${view}`);
       expect(open, `${view} is not rendered by the shell`).toBeGreaterThan(-1);
       /* The prop has to be inside THIS element, not merely somewhere in a file thousands of lines long —
@@ -62,9 +71,7 @@ describe("thread circles are wired into every mail list", () => {
       const indent = " ".repeat(open - shell.lastIndexOf("\n", open) - 1);
       const close = shell.indexOf(`\n${indent}/>`, open);
       expect(close, `${view}'s opening tag does not terminate at its own indentation`).toBeGreaterThan(open);
-      expect(shell.slice(open, close), `${view} is mounted without threadParticipants`).toContain(
-        "threadParticipants={participantsOf}",
-      );
+      expect(shell.slice(open, close), `${view} is mounted without ${binding}`).toContain(binding);
     }
   });
 

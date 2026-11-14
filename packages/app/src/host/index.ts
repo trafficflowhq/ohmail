@@ -12,7 +12,10 @@ export { panesOf } from "./panes.js";
 export type { ListedPanes } from "./panes.js";
 export type { HostReads } from "./reads.js";
 export type { HostSession, SessionAnswer } from "./session.js";
-export type { HostConnectionState, HostSignals, LinkIn, LinkedDraft, Signal } from "./signals.js";
+export type {
+  BackSignal, FoldFeature, FoldReading, HostConnectionState, HostSignals, KeyboardReading, LinkIn, LinkedDraft, SafeInsets,
+  Signal, WakeSignal,
+} from "./signals.js";
 export type { Entries, FrameSupplies, MayBeNone, Transports } from "./supplies.js";
 export { createFeed } from "./feed.js";
 export type { Feed } from "./feed.js";

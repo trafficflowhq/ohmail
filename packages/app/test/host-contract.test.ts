@@ -37,7 +37,7 @@ function hostThatCannot(over: Partial<Pick<HostContract, "wires" | "features" | 
     },
     signals: {
       hostConnection: NONE, linkIn: NONE, sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE,
-      droppedFiles: NONE,
+      droppedFiles: NONE, posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
     },
     ...over,
   };

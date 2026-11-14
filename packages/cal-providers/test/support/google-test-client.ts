@@ -116,6 +116,11 @@ export class GoogleTestClient {
     return this.#pages(`/calendars/${encodeURIComponent(calendarId)}/events`, { privateExtendedProperty: `${marker}=${this.#benchId}`, maxResults: "250", showDeleted: "false" });
   }
 
+  /** Every event of a window, marked or not (one the product made carries no marker), a series' days one by one, nothing deleted. */
+  listBetween(calendarId: string, timeMin: string, timeMax: string): Promise<{ status: number; items: GoogleJson[] }> {
+    return this.#pages(`/calendars/${encodeURIComponent(calendarId)}/events`, { timeMin, timeMax, singleEvents: "true", showDeleted: "false", maxResults: "250" });
+  }
+
   instances(calendarId: string, eventId: string): Promise<{ status: number; items: GoogleJson[] }> {
     return this.#pages(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/instances`, { maxResults: "250" });
   }

@@ -9,19 +9,31 @@
  * that opens a mailbox password, and a predictable one is no key at all.
  */
 import * as Crypto from "expo-crypto";
+import { File, Paths } from "expo-file-system";
 import * as SQLite from "expo-sqlite";
 import { nativeServerProfiles, secureKV } from "../state/servers-native";
 import {
   ENGINE_DB_FILE,
   ENGINE_DB_OPEN_OPTIONS,
+  expoEngineExecutor,
   openLocalEnginePlatform,
   removeStandaloneEngine,
   type EngineDbOpenOptions,
   type EngineRemovalRecord,
   type EngineStoreDatabase,
   type LocalEnginePlatformVerdict,
+  type PhoneSqlExecutor,
 } from "./local-engine";
+import { fileUriBesideStore, storeCopyHost, takeStoreCopy } from "./store-copy";
 import type { RandomKekHex } from "./kek";
+
+/**
+ * Whether a file stands beside the engine's store, read without opening it. The file system takes a
+ * `file://` location; expo-sqlite's directory is a bare path on both platforms.
+ */
+async function fileBesideStore(name: string): Promise<boolean> {
+  return new File(fileUriBesideStore(String(SQLite.defaultDatabaseDirectory), name)).exists;
+}
 
 /** 32 bytes of platform randomness as lower-case hex — the desktop's key spelling. */
 export const expoRandomKekHex: RandomKekHex = () =>
@@ -67,10 +79,25 @@ export function nativeEnginePlatform(): Promise<LocalEnginePlatformVerdict> {
   return openLocalEnginePlatform({
     openDatabase: openEngineDatabase,
     deleteDatabase: deleteEngineDatabase,
+    exists: fileBesideStore,
     kv: secureKV(),
     randomKekHex: expoRandomKekHex,
     removal: engineRemovalRecord(),
   });
+}
+
+/**
+ * THE COPY OF THE STORE BEFORE IT CROSSES INTO 2.0, bound to this platform: beside the store in
+ * expo-sqlite's directory, through the store's own handle, read back through a handle of its own.
+ */
+export function nativeTakeStoreCopy(exec: unknown): Promise<void> {
+  const host = storeCopyHost({
+    directory: String(SQLite.defaultDatabaseDirectory),
+    file: (uri) => new File(uri),
+    freeBytes: () => Paths.availableDiskSpace,
+    open: async (name) => expoEngineExecutor(await openEngineDatabase(name)),
+  });
+  return takeStoreCopy(exec as PhoneSqlExecutor, host).then(() => undefined);
 }
 
 /** The take-back's engine half, bound to this platform — `PairingEnv.standalone.removeEngine`. */
@@ -78,6 +105,7 @@ export function nativeRemoveStandaloneEngine(): Promise<void> {
   return removeStandaloneEngine({
     openDatabase: openEngineDatabase,
     deleteDatabase: deleteEngineDatabase,
+    exists: fileBesideStore,
     kv: secureKV(),
   });
 }

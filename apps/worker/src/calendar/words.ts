@@ -31,6 +31,13 @@ const HOUR = 60 * MINUTE;
 export const CALENDAR_TICK_MS = 15_000;
 /** The least time between two roster reads started by a ring. */
 export const CALENDAR_RING_GAP_MS = 1_000;
+/**
+ * How long a read a ring starts waits before it reads: a press rings at its act's commit, and the
+ * door pulls the act's connection due in a transaction of its own just after it (the services'
+ * `wakeCalendarConnection`), never inside the act's. Read at once, the roster would find that
+ * connection not yet due, and the press would wait for the floor.
+ */
+export const CALENDAR_RING_SETTLE_MS = 100;
 /** Connections the roster hands over in one read. */
 export const ROSTER_LIMIT = 64;
 /** Turns run at once. One lane holds a pool connection only for one store transaction. */

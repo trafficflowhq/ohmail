@@ -50,6 +50,7 @@ const MAY_MEET = [
   "apps/webapp/app/(product)/demo/DemoShell.tsx",
   "apps/webapp/app/(product)/mailbox/CloudShell.tsx",
   "apps/webapp/app/shell/AppShell.tsx",
+  "apps/webapp/app/shell/TodaysOhbox.tsx",
   "apps/webapp/app/shell/shell-open-state.ts",
   "apps/webapp/app/shell/todays-feeds.tsx",
   "apps/webapp/app/shell/todays-places.ts",

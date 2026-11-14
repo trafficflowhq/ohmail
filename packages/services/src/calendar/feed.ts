@@ -14,6 +14,7 @@ import type {
 } from "@ohmail/wire";
 import type { Db } from "../context.js";
 import { CALENDAR_EVENT_MAX_BYTES } from "../sync-page-byte-budget.js";
+import { writeMarksOf } from "./write-marks.js";
 
 type Builders = {
   [K in CalendarRecordKind]: (db: Db, accountId: string, ids: readonly string[]) => Promise<Map<string, CalendarRecords[K]>>;
@@ -118,10 +119,13 @@ async function buildCalendars(db: Db, accountId: string, ids: readonly string[])
   }]));
 }
 
-/** An event record past {@link CALENDAR_EVENT_MAX_BYTES}: times, repeat and title whole, the stranger's text left out. */
+/**
+ * An event record past {@link CALENDAR_EVENT_MAX_BYTES}: times, repeat and title whole, the
+ * stranger's text left out, and each waiting write's act with it (the mark stays: what waits and why).
+ */
 export function cutToFit(record: CalendarEventRecord): CalendarEventRecord {
   if (Buffer.byteLength(JSON.stringify(record), "utf8") <= CALENDAR_EVENT_MAX_BYTES) return record;
-  return { ...record, notes: null, invitees: [], cut: true };
+  return { ...record, notes: null, invitees: [], writes: record.writes.map((w) => ({ ...w, act: null })), cut: true };
 }
 
 async function buildEvents(db: Db, accountId: string, ids: readonly string[]): Promise<Map<string, CalendarEventRecord>> {
@@ -139,6 +143,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
   }).from(calEvents).where(and(eq(calEvents.accountId, accountId), inArray(calEvents.id, [...ids])));
   const found = rows.map((r) => r.id);
   const alarms = await alarmsBy(db, accountId, "eventId", found);
+  const marks = await writeMarksOf(db, accountId, found);
   const invitees = new Map<string, CalendarInvitee[]>();
   if (found.length > 0) {
     const people = await db.select({
@@ -184,6 +189,7 @@ async function buildEvents(db: Db, accountId: string, ids: readonly string[]): P
       invitees: invitees.get(r.id) ?? [],
       alarms: alarms.get(r.id) ?? [],
       cut: false,
+      writes: marks.get(r.id) ?? [],
       updatedAt: r.updatedAt.toISOString(),
     };
     return [r.id, cutToFit(record)];

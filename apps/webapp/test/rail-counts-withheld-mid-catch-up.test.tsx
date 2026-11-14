@@ -23,6 +23,10 @@ const railItem = (el: HTMLElement, id: string): HTMLElement => {
 };
 const countOf = (el: HTMLElement, id: string): string =>
   (railItem(el, id).querySelector(".oh-railentry-count")?.textContent ?? "").trim(); // the kit's count, as the rail draws it
+/* The Ohbox head's claim about its unread mail: the title's dot, hot once the head may say something is unread, plain
+   (ink) while it may not. The head prints no count beside its title (the rail says the number). */
+const headClaim = (el: HTMLElement): string | undefined =>
+  el.querySelector<HTMLElement>(".view-ohbox .oh-listhead-title .oh-dot")?.dataset.kind;
 
 describe("the rail's stream counts mid-catch-up", () => {
   it("withholds the badge and the tooltip until the catch-up lands, then states them", async () => {
@@ -58,7 +62,7 @@ describe("the rail's stream counts mid-catch-up", () => {
     expect(countOf(el, "ohbox"), "the Ohbox badge counted a mirror still catching up").toBe("");
     // Rows on screen, no number yet: the rail and the header say it is counting, never 0 and never nothing.
     expect(railItem(el, "ohbox").getAttribute("title"), "the Ohbox tooltip counted mid-catch-up").toBe("Counting unread…");
-    expect(el.querySelector(".view-ohbox .vhead .meta")?.textContent, "the Ohbox header said nothing over its rows").toBe("Counting unread…");
+    expect(headClaim(el), "the Ohbox header claimed unread mail mid-catch-up").toBe("ink");
     expect(railItem(el, "reads").getAttribute("title"), "the News tooltip counted mid-catch-up").toBeNull();
 
     // The control: the same rail states its numbers once the catch-up has landed.
@@ -67,7 +71,7 @@ describe("the rail's stream counts mid-catch-up", () => {
     await tick(LOADING_GRACE_MS * 4);
     expect(countOf(el, "ohbox")).toBe("3");
     expect(railItem(el, "ohbox").getAttribute("title")).toContain("3 unread");
-    expect(el.querySelector(".view-ohbox .vhead .meta")?.textContent).toBe("3 unread");
+    expect(headClaim(el)).toBe("hot");
   }, 30_000);
 });
 
@@ -110,8 +114,8 @@ describe("the Screener strip before the store's first queue answer", () => {
     await tick(LOADING_GRACE_MS * 4);
     return { el, release: () => { open = true; for (const r of held.splice(0)) r(); } };
   }
-  const bell = (el: HTMLElement): string => el.querySelector(".view-ohbox button.doorbell")?.textContent ?? "";
-  const meta = (el: HTMLElement): string | undefined => el.querySelector(".view-ohbox .vhead .meta")?.textContent ?? undefined;
+  /* The doorbell's words are its name ("2 first-time senders waiting — open the Screener"); it prints the number alone. */
+  const bell = (el: HTMLElement): string => el.querySelector(".view-ohbox .oh-doorbell")?.getAttribute("aria-label") ?? "";
 
   it("claims no waiting sender the store does not hold, before or after its answer", async () => {
     const { el, release } = await start(false);
@@ -120,25 +124,24 @@ describe("the Screener strip before the store's first queue answer", () => {
     release();
     await tick(LOADING_GRACE_MS * 4);
     expect(bell(el)).not.toContain("waiting");
-    expect(bell(el), "the strip never came back once the store answered").toContain("All clear");
   }, 30_000);
 
   it("CONTROL: senders the store lists are drawn the moment it answers", async () => {
     const { el, release } = await start(true);
     release();
     await tick(LOADING_GRACE_MS * 4);
-    expect(bell(el)).toContain("2 waiting");
+    expect(bell(el)).toContain("2 first-time senders waiting");
     expect(countOf(el, "screener")).toBe("2");
   }, 30_000);
 
   // The gate mail of senders the store does not list joins the Ohbox once it answers: 3 became 5.
   it("states the Ohbox's unread count once, after the store's answer", async () => {
     const { el, release } = await start(false);
-    expect(meta(el), "the Ohbox header counted before the store answered").toBe("Counting unread…");
+    expect(headClaim(el), "the Ohbox header counted before the store answered").toBe("ink");
     expect(countOf(el, "ohbox"), "the rail's Ohbox badge counted before the store answered").toBe("");
     release();
     await tick(LOADING_GRACE_MS * 4);
-    expect(meta(el)).toBe("5 unread");
+    expect(headClaim(el)).toBe("hot");
     expect(countOf(el, "ohbox")).toBe("5");
   }, 30_000);
 
@@ -179,12 +182,12 @@ describe("the Screener strip before the store's first queue answer", () => {
     });
     const el = await mountShell([mailbox({ lastSyncAt: ISO } as Partial<MailboxFacts>)], { engine });
     await tick(LOADING_GRACE_MS * 4);
-    expect(bell(el)).toContain("2 waiting");
+    expect(bell(el)).toContain("2 first-time senders waiting");
     expect(countOf(el, "screener")).toBe("2");
 
     const said = new Set<string>();
     const note = (): void => {
-      const n = bell(el).includes("waiting") ? el.querySelector(".view-ohbox button.doorbell b")?.textContent : null;
+      const n = bell(el).includes("waiting") ? el.querySelector(".view-ohbox .oh-doorbell .oh-doorbell-count")?.textContent : null;
       said.add(`strip:${n ?? "-"}`);
       said.add(`rail:${countOf(el, "screener") || "-"}`);
     };
@@ -208,13 +211,13 @@ describe("the Screener strip before the store's first queue answer", () => {
     note();
     watch.disconnect();
     expect([...said].filter((s) => !/:(2|-)$/.test(s)), "a count the store never stated").toEqual([]);
-    expect(bell(el)).toContain("2 waiting");
+    expect(bell(el)).toContain("2 first-time senders waiting");
     expect(countOf(el, "screener")).toBe("2");
   }, 30_000);
 
   it("CONTROL: a store that answers at once delays the Ohbox's count no further", async () => {
     const { el } = await start(false, true);
-    expect(meta(el)).toBe("5 unread");
+    expect(headClaim(el)).toBe("hot");
     expect(countOf(el, "ohbox")).toBe("5");
   }, 30_000);
 });

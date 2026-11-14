@@ -12,19 +12,21 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { intlZones } from "@ohmail/cal-core";
 import { makeCalendarProviders, Secret, type CalendarProvider, type HttpPort, type ProviderWord } from "@ohmail/cal-providers";
 import { GOOGLE_TOKEN_URL, makeReader as makeGoogleReader } from "@ohmail/cal-providers/google";
 import { makeReader as makeMicrosoftReader } from "@ohmail/cal-providers/microsoft";
 import type { HostResolver } from "@trafficflow/core/net";
-import { calCalendars, calConnections } from "@trafficflow/db";
+import { calCalendars, calConnections, calEvents, calWrites } from "@trafficflow/db";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
+import { calendarWriteDrain } from "../src/calendar/write-drain.js";
 import { startCalDavStandIn, type StandIn } from "../../../packages/cal-providers/test/caldav-stand-in.js";
 // @ts-expect-error a plain module
 import { startMsDouble } from "../../../packages/cal-providers/test/support/ms-double.mjs";
 import {
-  AVAILABLE, calendarsOf, capturedLog, changesOf, connectionOf, depsFor, eventsOf, openWorld, providersOf, seedConnection, tokenEndpoint, type World,
+  AVAILABLE, calendarsOf, capturedLog, changesOf, connectionOf, depsFor, eventsOf, openWorld, providersOf, recordWrite, seedConnection, tokenEndpoint,
+  type World,
 } from "./_calendar-world.js";
 
 const never = new AbortController().signal;
@@ -50,7 +52,7 @@ const NOBODY: HostResolver = { resolve: async () => [] };
 const providersFor = (policy: "cloud" | "own-network", enabled: ProviderWord[], graphBase: string | null = null) =>
   makeCalendarProviders({
     clock: { now: () => Date.now() }, zones: intlZones(), resolver: NOBODY, policy: { kind: policy },
-    enabled: new Set(enabled), microsoft: graphBase === null ? null : { graphBase },
+    enabled: new Set(enabled), microsoft: graphBase === null ? null : { graphBase }, writes: true,
   });
 /** A member's text: from 09:00 UTC on a day of November 2026, an hour long, or as long as `length` says (a DURATION, no DTEND). */
 const event = (uid: string, day: number, summary: string, length: string | null = null): string =>
@@ -94,6 +96,48 @@ describe.skipIf(!AVAILABLE)("the calendar's sync through the real providers", ()
     expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced", changed: 1 });
     expect((await eventsOf(w, t.accountId)).map((e) => e.title)).toEqual(["Event a", "Event b", "Event d", "Event e"]);
     dav.put("work", "c.ics", event("c@studio.example.test", 19, "Event c"));
+  }, 60_000);
+
+  it("a series and one changed day of it, read from the server, are never written: acts recorded on them are refused and the server is sent nothing", async () => {
+    const own: StandIn = await startCalDavStandIn();
+    try {
+      own.addCalendar("studio", { name: "Studio" });
+      own.put("studio", "weekly.ics", [
+        "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//ohmail//calendar sync test//EN",
+        "BEGIN:VEVENT", "UID:weekly@studio.example.test", "DTSTAMP:20261113T120000Z", "DTSTART:20261118T090000Z", "DTEND:20261118T100000Z",
+        "RRULE:FREQ=WEEKLY", "SUMMARY:Weekly kiln", "END:VEVENT",
+        "BEGIN:VEVENT", "UID:weekly@studio.example.test", "DTSTAMP:20261113T120000Z", "RECURRENCE-ID:20261125T090000Z",
+        "DTSTART:20261125T140000Z", "DTEND:20261125T150000Z", "SUMMARY:Weekly kiln, moved", "END:VEVENT",
+        "END:VCALENDAR", "",
+      ].join("\r\n"), '"w1"');
+      const t = await seedConnection(w, {
+        provider: "caldav", credential: { kind: "basic", user: own.options.user, password: new Secret(own.options.password) },
+        serverUrl: `http://127.0.0.1:${own.port}${own.paths.start}`,
+      });
+      const drain = calendarWriteDrain({ clock: { now: () => Date.now() }, zones: intlZones(), log: capturedLog().log });
+      const deps = depsFor(w, providersFor("own-network", ["caldav"]), { drainWrites: drain });
+      expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced", calendars: 1 });
+      const rows = await w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt, recurrenceId: calEvents.recurrenceId })
+        .from(calEvents).where(eq(calEvents.accountId, t.accountId));
+      const series = rows.find((r) => r.recurrenceId === "")!;
+      const day = rows.find((r) => r.recurrenceId !== "")!;
+      // Recorded as a door that took them would have recorded them: a removal of the one changed day, a new time for the whole series.
+      await recordWrite(w, { accountId: t.accountId, key: "drop-the-day", act: { kind: "calendar_event_delete", eventId: day.id, base: day.updatedAt.toISOString(), scope: { kind: "record" } } });
+      await recordWrite(w, { accountId: t.accountId, key: "move-the-series", act: {
+        kind: "calendar_event_update", eventId: series.id, base: series.updatedAt.toISOString(), scope: { kind: "record" },
+        change: { start: { kind: "instant", value: "20261118T160000Z" }, end: { kind: "instant", value: "20261118T170000Z" } },
+      } });
+      await makeDue(t.accountId);
+      expect(await calendarSyncPass(deps, t.due, never)).toMatchObject({ kind: "synced" });
+      expect(own.seen.filter((s) => ["PUT", "DELETE", "PATCH", "POST"].includes(s.method)).map((s) => s.method)).toEqual([]);
+      expect((await w.db.select({ key: calWrites.idempotencyKey, state: calWrites.state, refusal: calWrites.refusal }).from(calWrites)
+        .where(eq(calWrites.accountId, t.accountId)).orderBy(asc(calWrites.createdAt))).map((r) => [r.key, r.state, r.refusal]))
+        .toEqual([["drop-the-day", "refused", "repeat_unsupported"], ["move-the-series", "refused", "repeat_unsupported"]]);
+      expect((await eventsOf(w, t.accountId)).map((e) => [e.recurrenceId === "" ? "series" : "changed day", e.title]))
+        .toEqual([["series", "Weekly kiln"], ["changed day", "Weekly kiln, moved"]]);
+    } finally {
+      await own.close();
+    }
   }, 60_000);
 
   it("one member whose title holds U+0000 is left out; the members beside it and the next calendar are read", async () => {
@@ -382,7 +426,7 @@ describe.skipIf(!AVAILABLE)("the calendar's sync through the real providers", ()
       const made = providersFor("own-network", ["microsoft"], double.base).get("microsoft")!;
       const trade = tokenEndpoint(async () => ({ status: 200, body: { access_token: double.token, expires_in: 3600 } }));
       const http: HttpPort = { request: (url, req) => (new URL(url).hostname === "login.microsoftonline.com" ? trade.request(url, req) : made.http.request(url, req)) };
-      const provider: CalendarProvider = { reader: made.reader, http };
+      const provider: CalendarProvider = { reader: made.reader, writer: null, http };
       const deps = depsFor(w, providersOf({ microsoft: provider }), {
         clock: { now: () => Date.UTC(2024, 11, 10, 12) },
         oauth: { google: null, microsoft: async () => ({ clientId: "calendar-test-client", clientSecret: ["ms", "fixture"].join("-"), defaultTenant: "common", kind: "confidential" }) },

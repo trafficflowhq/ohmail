@@ -8,16 +8,37 @@ import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launch } from "../../../../test/compare/render.mjs";
-import { Button, Dialog, Dot, Empty, Field, JumpBack, Page, Sentence } from "../../src/base/index.js";
+import {
+  Blank,
+  Button,
+  Dialog,
+  Dot,
+  Empty,
+  Field,
+  JumpBack,
+  Page,
+  Sentence,
+  Seg,
+  Slot,
+} from "../../src/base/index.js";
 import { MiniMonth } from "../../src/calendar/index.js";
 import {
   ActionPanel,
   ColumnHandle,
+  Dock,
+  LookPicture,
   Message,
   MessageHead,
   Row,
   Rows,
+  RuleLine,
+  SettingArea,
+  SettingFilter,
+  SettingLine,
+  SettingNote,
+  SettingsSheet,
   Sheet,
+  TagLine,
   TextNotKept,
   type RowProps,
 } from "../../src/mail/index.js";
@@ -47,10 +68,59 @@ interface Drawn {
   press?: string;
   /** The keys pressed, in order, before it is read. */
   keys?: string[];
+  /** The web door's Text size: the zoom it stamps on the root. */
+  zoom?: number;
+  /** A window of another size than the device's own. */
+  window?: [number, number];
 }
 
 /** A page with the parts in the entry's root, the device's window and root attributes; `read` runs in it. */
 async function drawn<T>(parts: ReactNode, read: () => T, at: Drawn = {}): Promise<T> {
+  return opened(parts, at, (tab) => tab.evaluate(read));
+}
+
+/** One node of what Chromium itself hands a screen reader: its role, name, description and states. */
+interface Spoken {
+  role: string;
+  name: string;
+  description: string;
+  disabled?: boolean;
+}
+
+/** What Chromium's own accessibility tree says of the parts, drawn as `drawn` draws them. */
+async function spoken(parts: ReactNode, at: Drawn = {}): Promise<Spoken[]> {
+  return opened(parts, at, async (tab) => {
+    const cdp = await tab.context().newCDPSession(tab);
+    type Value = { value?: unknown };
+    type AxNode = {
+      ignored: boolean;
+      role?: Value;
+      name?: Value;
+      description?: Value;
+      properties?: { name: string; value: Value }[];
+    };
+    const { nodes } = (await cdp.send("Accessibility.getFullAXTree")) as { nodes: AxNode[] };
+    await cdp.detach();
+    const said = (v?: Value) => (typeof v?.value === "string" ? v.value : "");
+    return nodes
+      .filter((n) => !n.ignored)
+      .map((n) => {
+        const prop = (name: string) => n.properties?.find((p) => p.name === name)?.value.value;
+        return {
+          role: said(n.role),
+          name: said(n.name),
+          description: said(n.description),
+          ...(prop("disabled") === true ? { disabled: true } : {}),
+        };
+      });
+  });
+}
+
+async function opened<T>(
+  parts: ReactNode,
+  at: Drawn,
+  take: (tab: Awaited<ReturnType<NonNullable<typeof browser>["newPage"]>>) => Promise<T>,
+): Promise<T> {
   const {
     entry = "base",
     device = "desktop",
@@ -61,6 +131,8 @@ async function drawn<T>(parts: ReactNode, read: () => T, at: Drawn = {}): Promis
     hover,
     press,
     keys = [],
+    zoom = 1,
+    window,
   } = at;
   const root = {
     "data-face": face,
@@ -72,13 +144,14 @@ async function drawn<T>(parts: ReactNode, read: () => T, at: Drawn = {}): Promis
   const attrs = Object.entries(root)
     .map(([k, v]) => ` ${k}="${v}"`)
     .join("");
-  const [width, height] = DEVICES[device].window;
+  const [width, height] = window ?? DEVICES[device].window;
   const tab = await browser!.newPage({
     viewport: { width, height },
     reducedMotion: still ? "reduce" : "no-preference",
   });
   try {
-    await tab.setContent(`<!doctype html><html lang="${lang}"${attrs}><head><meta charset="utf-8">
+    const stamp = zoom === 1 ? "" : ` style="zoom:${zoom};--ui-zoom:${zoom}"`;
+    await tab.setContent(`<!doctype html><html lang="${lang}"${attrs}${stamp}><head><meta charset="utf-8">
 <style>${await fontsCss()}</style><style>${await entryCss(entry)}</style><style>html,body{margin:0}</style></head>
 <body><div class="oh-root">${renderToStaticMarkup(parts)}</div></body></html>`);
     await tab.evaluate(() => document.fonts.ready);
@@ -88,7 +161,7 @@ async function drawn<T>(parts: ReactNode, read: () => T, at: Drawn = {}): Promis
       await tab.mouse.down();
     }
     for (const key of keys) await tab.keyboard.press(key);
-    return await tab.evaluate(read);
+    return await take(tab);
   } finally {
     await tab.close();
   }
@@ -955,4 +1028,794 @@ describe("an empty place's way on, as a link", () => {
     },
     120_000,
   );
+});
+
+describe("a section of Settings in its list, to a screen reader", () => {
+  const menu = (open: "General" | null) => (
+    <Rows>
+      <Row
+        entry
+        who="General"
+        people={[]}
+        sign="settings"
+        subject="Light"
+        preview="English"
+        open={open === "General"}
+      />
+      <Row
+        entry
+        who="Mailboxes"
+        people={[]}
+        sign="mail"
+        when="2"
+        subject="1 full"
+        preview="lichtgrat.example"
+        unread
+      />
+    </Rows>
+  );
+  /* As the journeys find a section: a button named exactly by it, which says it is the current page. */
+  const current = (open: "General" | null, at: Drawn) =>
+    opened(menu(open), at, (tab) =>
+      Promise.all(
+        ["General", "Mailboxes"].map((name) =>
+          tab.getByRole("button", { name, exact: true }).getAttribute("aria-current"),
+        ),
+      ),
+    );
+  it.each([
+    ["paper", "desktop"],
+    ["ohmarchy", "desktop"],
+    ["paper", "phone"],
+    ["ohmarchy", "phone"],
+  ] as const)(
+    "in %s on a %s: a button named by its section alone, its value and detail its description, the open one the current page",
+    async (face, device) => {
+      const at: Drawn = { entry: "mail", face, device };
+      const buttons = (await spoken(menu("General"), at)).filter((n) => n.role === "button");
+      expect(buttons.map((b) => b.name)).toEqual(["General", "Mailboxes"]);
+      // The dot between value and detail is drawn in paper with a pointer only, and said where it is drawn.
+      const dot = face === "paper" && device === "desktop" ? " · " : " ";
+      expect(buttons.map((b) => b.description.replace(/\s+/g, " ").trim())).toEqual([
+        `Light${dot}English`,
+        `1 full${dot}lichtgrat.example`,
+      ]);
+      expect(await current("General", at)).toEqual(["page", null]);
+      expect(await current(null, at)).toEqual([null, null]);
+    },
+    60_000,
+  );
+});
+
+describe("a setting's line, to a screen reader", () => {
+  it.each([
+    ["paper", "desktop"],
+    ["ohmarchy", "desktop"],
+    ["paper", "phone"],
+    ["ohmarchy", "phone"],
+  ] as const)(
+    "in %s on a %s: a group named by its label alone, around its value and its control",
+    async (face, device) => {
+      const tree = await spoken(
+        <SettingsSheet title="About">
+          <SettingLine label="Build" tag="Web" value="2.0.0">
+            <Button kind="quiet" size="s" onPress={() => {}}>
+              Copy
+            </Button>
+          </SettingLine>
+          <SettingLine label="Notify me on this device" toggle={{ on: true }} />
+        </SettingsSheet>,
+        { entry: "mail", face, device },
+      );
+      const roles = tree.filter((n) => ["group", "button", "switch"].includes(n.role));
+      // The tree is read in Chromium's own order, which is no document order.
+      expect(roles.map((n) => `${n.role} ${n.name}`).sort()).toEqual([
+        "button Copy",
+        "group Build",
+        "group Notify me on this device",
+        "switch Notify me on this device",
+      ]);
+    },
+    60_000,
+  );
+});
+
+/** Each look a sheet of Settings is drawn in, at the web door's two Text sizes. */
+const SETTINGS_LOOKS = (["paper", "ohmarchy"] as const).flatMap((face) =>
+  (["light", "dark"] as const).flatMap((scheme) =>
+    ([1, 1.25] as const).map((zoom) => [face, scheme, zoom] as const),
+  ),
+);
+
+describe("a note on a sheet of settings", () => {
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: the second ink, a step up under the line it is about, the warning sign of 18 at the head of its first line, the words a step after it",
+    async (face, scheme, zoom) => {
+      const seen = await drawn(
+        <div style={{ width: 520, paddingTop: 16 }}>
+          <SettingLine label="Two-step sign-in" value="On" />
+          <SettingNote warn>
+            You have no unused recovery codes. Without them, losing your authenticator locks you out.
+          </SettingNote>
+        </div>,
+        () => {
+          const note = document.querySelector("p")!;
+          const [sign, words] = [note.querySelector("svg")!, note.querySelector("span")!].map((e) =>
+            e.getBoundingClientRect(),
+          );
+          const box = note.getBoundingClientRect();
+          const line = document.querySelector("[role='group']")!.getBoundingClientRect();
+          /* A token as the browser computes it here: lengths in the window's px, as the boxes are. */
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;width:var(--s2);height:var(--s3);color:var(--ink2)";
+          note.parentElement!.append(probe);
+          const token = probe.getBoundingClientRect();
+          return {
+            sign: [sign.left - box.left, sign.top - box.top, sign.width],
+            words: words.left - sign.right,
+            step: token.width,
+            ink: getComputedStyle(note).color,
+            ink2: getComputedStyle(probe).color,
+            /* How far it stands into the line above it. */
+            rise: line.bottom - box.top,
+            /* What stands under it, in the window's px: the box less the words' lines. */
+            under: box.bottom - words.bottom,
+            s3: token.height,
+            measure: getComputedStyle(note).maxWidth !== "none",
+          };
+        },
+        { entry: "mail", face, scheme, zoom },
+      );
+      expect(seen.ink).toBe(seen.ink2);
+      expect(seen.sign.map((v) => Math.round(v * 100) / 100)).toEqual([0, 2 * zoom, 18 * zoom]);
+      expect(Math.abs(seen.words - seen.step)).toBeLessThan(0.5);
+      expect(Math.abs(seen.rise - seen.step)).toBeLessThan(0.5);
+      expect(Math.abs(seen.under - seen.s3)).toBeLessThan(0.5);
+      expect(seen.measure).toBe(true);
+    },
+    60_000,
+  );
+});
+
+describe("a setting written in words", () => {
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: its label a step under the line above and a step more than a field's own over its field, its refusal under the field",
+    async (face, scheme, zoom) => {
+      const seen = await drawn(
+        <div style={{ width: 520 }}>
+          <SettingLine label="Away responder" toggle={{ on: true }} />
+          <SettingArea label="Message" value="" onChange={() => {}} refusal="Add a message first." />
+          <SettingLine label="Turns off on" value="No end date" />
+        </div>,
+        () => {
+          const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+          const [above, label, field, refusal, below] = [
+            "[role='group']",
+            "label",
+            "textarea",
+            "[id$='-said']",
+            "[role='group']:last-child",
+          ].map(box);
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;width:var(--s2);height:6px";
+          document.querySelector(".oh-root")!.append(probe);
+          const step = probe.getBoundingClientRect();
+          return {
+            over: label.top - above.bottom,
+            between: field.top - label.bottom,
+            refusal: refusal.top - field.bottom,
+            under: below.top - refusal.bottom,
+            step: step.width,
+            gap: step.height,
+            /* The label's own room under its words, in the page's px. */
+            labelUnder: parseFloat(getComputedStyle(document.querySelector("label")!).paddingBottom),
+            pageStep: step.width / (parseFloat(document.documentElement.style.zoom) || 1),
+            sideways: document.documentElement.scrollWidth - innerWidth,
+          };
+        },
+        { entry: "mail", face, scheme, zoom },
+      );
+      const near = (a: number, b: number) => expect(Math.abs(a - b), `${a} for ${b}`).toBeLessThan(0.75);
+      near(seen.over, seen.step);
+      near(seen.labelUnder, seen.pageStep);
+      near(seen.between, seen.gap);
+      near(seen.refusal, seen.gap);
+      near(seen.under, seen.step);
+      expect(seen.sideways).toBe(0);
+    },
+    60_000,
+  );
+});
+
+describe("a rule, said as its sentence", () => {
+  const rule = (
+    /* As wide as a phone's sheet holds its lines: the window less its steps, at every Text size. */
+    <div style={{ padding: "0 16px" }}>
+      <RuleLine
+        who="giulia@terracotta-milano.example"
+        person={{
+          name: "Giulia Ferrari",
+          address: "giulia@terracotta-milano.example",
+          label: "Giulia Ferrari",
+          onContact: () => {},
+        }}
+        goes={
+          <>
+            goes to <Slot label="Goes to Ohbox">Ohbox</Slot>
+          </>
+        }
+        origin="Screener decision · 14 messages"
+        act={
+          <Button kind="quiet" size="s">
+            Revoke
+          </Button>
+        }
+      />
+    </div>
+  );
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: the circle, the sentence and its word side by side; under a finger who, where and whence on three lines, the circle a thumb's 44",
+    async (face, scheme, zoom) => {
+      for (const device of ["desktop", "phone"] as const) {
+        const seen = await drawn(
+          rule,
+          () => {
+            const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+            const [line, circle, name, slot, origin, act] = [
+              ".oh-ruleline",
+              "button[aria-label='Giulia Ferrari']",
+              "b",
+              "button[aria-label='Goes to Ohbox']",
+              "small",
+              "button:not([aria-label])",
+            ].map(box);
+            return {
+              order: circle.right <= name.left && name.right <= act.left,
+              /* What answers a press beside the circle, 8 of the page's px out of its box and inside a thumb's 44. */
+              beside: (() => {
+                const zoomed = parseFloat(document.documentElement.style.zoom) || 1;
+                const hit = document.elementFromPoint(
+                  circle.left - 8 * zoomed,
+                  circle.top + circle.height / 2,
+                );
+                return hit?.closest("button")?.getAttribute("aria-label") ?? null;
+              })(),
+              ends: line.right - act.right,
+              lines: [name.top < slot.top, slot.bottom <= origin.top + 1],
+              tall: line.height,
+              xl: (() => {
+                const probe = document.createElement("i");
+                probe.style.cssText = "display:block;height:var(--h-xl)";
+                document.querySelector(".oh-root")!.append(probe);
+                return probe.getBoundingClientRect().height;
+              })(),
+              sideways: document.documentElement.scrollWidth - innerWidth,
+              widest: [...document.querySelectorAll("*")]
+                .map((e) => [e.getBoundingClientRect().right, e.tagName + "." + e.className] as const)
+                .sort((a, b) => b[0] - a[0])[0],
+            };
+          },
+          { entry: "mail", face, scheme, zoom, device },
+        );
+        expect(seen.order, device).toBe(true);
+        expect(seen.beside, device).toBe(device === "phone" ? "Giulia Ferrari" : null);
+        expect(seen.ends, device).toBeLessThan(0);
+        expect(seen.tall, device).toBeGreaterThanOrEqual(seen.xl - 0.5);
+        expect(seen.lines, device).toEqual(device === "phone" ? [true, true] : [seen.lines[0], true]);
+        expect(seen.sideways, `${device} ${JSON.stringify(seen.widest)}`).toBe(0);
+      }
+    },
+    60_000,
+  );
+});
+
+describe("a tag's line", () => {
+  const quiet = (word: string) => (
+    <Button kind="quiet" size="s">
+      {word}
+    </Button>
+  );
+  const lines = (
+    <SettingsSheet>
+      <TagLine
+        hue={150}
+        name="Pottery Project"
+        colour={{ label: "Colour of Pottery Project", expanded: false }}
+        value="4 messages"
+        acts={
+          <>
+            {quiet("Rename")}
+            {quiet("Delete")}
+          </>
+        }
+      />
+      <TagLine
+        hue={150}
+        field={{ label: "New tag", value: "Paperwork", placeholder: "Name a new tag", onChange: () => {} }}
+        refusal="You already have “Paperwork”."
+        acts={
+          <Button kind="two" size="s">
+            Add
+          </Button>
+        }
+      />
+    </SettingsSheet>
+  );
+  it.each(
+    (["paper", "ohmarchy"] as const).flatMap((face) =>
+      (["light", "dark"] as const).flatMap((scheme) =>
+        ([1, 1.25, 1.5] as const).map((zoom) => [face, scheme, zoom] as const),
+      ),
+    ),
+  )(
+    "in %s %s at Text size %s: the colour a round button with its dot in the middle, the two words one group at the line's end, the name's field at the line's height, its refusal under the whole line",
+    async (face, scheme, zoom) => {
+      for (const device of ["desktop", "phone"] as const) {
+        const seen = await drawn(
+          <div style={{ width: device === "desktop" ? 676 : undefined }}>{lines}</div>,
+          () => {
+            const box = (el: Element) => el.getBoundingClientRect();
+            const word = (w: string) =>
+              box([...document.querySelectorAll("button")].find((b) => b.textContent === w)!);
+            const probe = (length: string) => {
+              const i = document.createElement("i");
+              i.style.cssText = `display:block;height:${length}`;
+              document.querySelector(".oh-sheet")!.append(i);
+              const h = i.getBoundingClientRect().height;
+              i.remove();
+              return h;
+            };
+            const [rest, written] = [".oh-settingline", ".oh-tagline"].map((sel) =>
+              box(document.querySelector(sel)!),
+            );
+            const colour = document.querySelector("button[aria-label='Colour of Pottery Project']")!;
+            const dot = box(colour.querySelector(".oh-tagdot")!);
+            const field = document.querySelector("input")!;
+            const refusal = box(document.querySelector(".oh-field-refusal")!);
+            const count = box(
+              [...document.querySelectorAll("span")].find((e) => e.textContent === "4 messages")!,
+            );
+            const touch = document.documentElement.dataset.touch === "1";
+            return {
+              colour: [box(colour).width, box(colour).height, getComputedStyle(colour).borderRadius],
+              pill: (() => {
+                const i = document.createElement("i");
+                i.style.borderRadius = "var(--r-pill)";
+                document.querySelector(".oh-sheet")!.append(i);
+                const r = getComputedStyle(i).borderRadius;
+                i.remove();
+                return r;
+              })(),
+              hue: probe(touch ? "var(--s6)" : "var(--h-s)"),
+              middle: [
+                dot.left + dot.width / 2 - (box(colour).left + box(colour).width / 2),
+                dot.top + dot.height / 2 - (box(colour).top + box(colour).height / 2),
+                dot.width,
+              ],
+              pulled: rest!.left - box(colour).left,
+              s2: probe("var(--s2)"),
+              together: word("Delete").left - word("Rename").right,
+              edge: rest!.right - word("Delete").right,
+              beside: touch
+                ? [word("Rename").top >= box(colour).bottom - 0.5, count.left - rest!.left]
+                : [count.right <= word("Rename").left, word("Rename").top < box(colour).bottom],
+              field: [box(field).height, getComputedStyle(field).fontWeight, box(field).left - written!.left],
+              hm: probe("var(--h-m)"),
+              mid: (() => {
+                const i = document.createElement("b");
+                i.style.fontWeight = "var(--w-mid)";
+                document.querySelector(".oh-sheet")!.append(i);
+                const w = getComputedStyle(i).fontWeight;
+                i.remove();
+                return w;
+              })(),
+              under: [
+                refusal.left - box(field).left,
+                refusal.top - box(field).bottom,
+                refusal.right > word("Add").left,
+              ],
+              sideways: document.documentElement.scrollWidth - innerWidth,
+              /* What answers a press 4 of the page's px out of the colour's box, inside the step a finger is given. */
+              reach: (() => {
+                const zoomed = parseFloat(document.documentElement.style.zoom) || 1;
+                const hit = document.elementFromPoint(
+                  box(colour).left - 4 * zoomed,
+                  box(colour).top + box(colour).height / 2,
+                );
+                return colour.contains(hit);
+              })(),
+              /* Read last: the keys on the colour. */
+              ring: (() => {
+                (colour as HTMLElement).focus();
+                const drawn = getComputedStyle(colour);
+                return [drawn.outlineStyle, drawn.borderRadius];
+              })(),
+            };
+          },
+          { entry: "mail", face, scheme, zoom, device },
+        );
+        const at = `${device}`;
+        /* Under a finger the colour answers a step further round it; under the keys it wears the kit's ring and stays round. */
+        expect(seen.reach, at).toBe(device === "phone");
+        expect(seen.ring, at).toEqual(["solid", seen.pill]);
+        /* The colour: a button of the face's pill as tall as a small control (a step of six under a finger), its dot of 12 in its middle, pulled out by a step. */
+        expect(seen.colour[0], at).toBeCloseTo(seen.hue, 0);
+        expect(seen.colour[1], at).toBeCloseTo(seen.hue, 0);
+        expect(seen.colour[2], at).toBe(seen.pill);
+        expect(Math.abs(seen.middle[0]!) + Math.abs(seen.middle[1]!), at).toBeLessThanOrEqual(1);
+        expect(seen.middle[2], at).toBeCloseTo(12 * zoom, 0);
+        expect(seen.pulled, at).toBeCloseTo(seen.s2, 0);
+        /* The two words one group: drawn a step closer than two buttons stand, the last at the line's edge past its padding. */
+        expect(seen.together, at).toBeCloseTo(-seen.s2, 0);
+        expect(seen.edge, at).toBeLessThan(0);
+        /* On a desktop the count and the words beside the name; under a finger under it, the count set in by the colour. */
+        if (device === "desktop") expect(seen.beside, at).toEqual([true, true]);
+        else {
+          expect(seen.beside[0], at).toBe(true);
+          expect(seen.beside[1], at).toBeCloseTo(seen.hue, 0);
+        }
+        /* The name's field: one line at the line's height in the middle weight, set in by the colour's width. */
+        expect(seen.field[0], at).toBeCloseTo(seen.hm, 0);
+        expect(seen.field[1], at).toBe(seen.mid);
+        expect(seen.field[2], at).toBeCloseTo(seen.hue, 0);
+        /* Its refusal under the whole line: from the field's edge, at once under it, on under the word that acts. */
+        expect(seen.under[0], at).toBeCloseTo(0, 0);
+        expect(seen.under[1], at).toBeGreaterThanOrEqual(-0.5);
+        expect(seen.under[2], at).toBe(true);
+        expect(seen.sideways, at).toBe(0);
+      }
+    },
+    60_000,
+  );
+});
+
+describe("a list's search and its filter", () => {
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: the sign inside the box at its edge's step, the words a step after it; the filter's word at the line's end",
+    async (face, scheme, zoom) => {
+      const seen = await drawn(
+        <div style={{ width: 676 }}>
+          <Field
+            label="Search by sender or domain"
+            placeholder="Search by sender or domain"
+            value=""
+            onChange={() => {}}
+            bare
+            sign="search"
+          />
+          <SettingFilter
+            act={
+              <Button kind="quiet" size="s">
+                Revoke all 6 matching
+              </Button>
+            }
+          >
+            <Seg
+              label="Files into"
+              options={[
+                { value: "all", label: "All" },
+                { value: "news", label: "News" },
+              ]}
+              value="all"
+            />
+          </SettingFilter>
+        </div>,
+        () => {
+          const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+          const [input, sign, filter] = ["input", "svg", "[role='group']"].map(box);
+          const act = [...document.querySelectorAll("button")]
+            .find((b) => b.textContent === "Revoke all 6 matching")!
+            .getBoundingClientRect();
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;width:var(--s4);height:var(--s2)";
+          document.querySelector(".oh-root")!.append(probe);
+          const step = probe.getBoundingClientRect();
+          const pad = parseFloat(getComputedStyle(document.querySelector("input")!).paddingLeft);
+          return {
+            sign: [
+              sign.left - input.left,
+              sign.width,
+              sign.top + sign.height / 2 - (input.top + input.height / 2),
+            ],
+            words: pad * (step.width / (parseFloat(getComputedStyle(probe).width) || 1)),
+            edge: step.width,
+            s2: step.height,
+            inLine: act.top < filter.bottom && act.left > filter.right,
+            sideways: document.documentElement.scrollWidth - innerWidth,
+          };
+        },
+        { entry: "mail", face, scheme, zoom },
+      );
+      const near = (a: number, b: number) => expect(Math.abs(a - b), `${a} for ${b}`).toBeLessThan(0.75);
+      near(seen.sign[0]!, seen.edge);
+      near(seen.sign[1]!, 18 * zoom);
+      near(seen.sign[2]!, 0);
+      near(seen.words, seen.edge + 18 * zoom + seen.s2);
+      expect(seen.inLine).toBe(true);
+      expect(seen.sideways).toBe(0);
+    },
+    60_000,
+  );
+});
+
+describe("a refused blank", () => {
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: its dotted line turns hot while it is refused, and back to the ink",
+    async (face, scheme, zoom) => {
+      for (const refused of [true, false]) {
+        const seen = await drawn(
+          <p className="oh-text">
+            Your token is{" "}
+            <Blank label="setup token" placeholder="token" value="x" refused={refused} onChange={() => {}} />
+          </p>,
+          () => {
+            const line = getComputedStyle(document.querySelector("input")!);
+            const probe = document.createElement("i");
+            probe.style.cssText = "color:var(--hot);background-color:var(--ink)";
+            document.querySelector(".oh-root")!.append(probe);
+            const tones = getComputedStyle(probe);
+            return {
+              color: line.borderBottomColor,
+              style: line.borderBottomStyle,
+              hot: tones.color,
+              ink: tones.backgroundColor,
+            };
+          },
+          { face, scheme, zoom },
+        );
+        expect(seen.style, `refused ${refused}`).toBe("dotted");
+        expect(seen.color, `refused ${refused}`).toBe(refused ? seen.hot : seen.ink);
+      }
+    },
+    60_000,
+  );
+});
+
+describe("the dock in a low room", () => {
+  const places = ["ohbox", "screener", "news", "receipts", "later", "drafts"].map((id, i) => ({
+    id,
+    label: id,
+    icon: id as "ohbox",
+    count: i < 2 ? String(i + 2) : undefined,
+    current: i === 0,
+  }));
+  /*
+   * Where the frame stands it. Asked for upright: beside the column, a rail's width, a step in from the window's
+   * edges. Unasked: in the frame's foot box, 440 wide in the middle and a step over the foot.
+   */
+  const dock = (upright: boolean, onSearch = false) => (
+    <div
+      style={
+        upright
+          ? { position: "fixed", inset: "var(--s3) auto var(--s3) var(--s3)", width: 64, display: "grid" }
+          : {
+              position: "fixed",
+              left: "max(var(--s3), 50% - 220px)",
+              right: "max(var(--s3), 50% - 220px)",
+              bottom: "var(--s4)",
+            }
+      }
+    >
+      <Dock
+        label="Places"
+        floor={2}
+        places={onSearch ? places.map((place) => ({ ...place, current: false })) : places}
+        more={{ label: "More" }}
+        search={{ label: "Search", current: onSearch }}
+        write={{ label: "Write" }}
+        upright={upright}
+      />
+    </div>
+  );
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: asked for, it stands upright, Write first, the places a thumb's 48 under it; unasked it keeps the foot however low the window, every entry inside it and Write answering a finger",
+    async (face, scheme, zoom) => {
+      for (const [width, height, asked] of [
+        [678, 466, true],
+        [568, 320, true],
+        [678, 466, false],
+        [568, 320, false],
+        [640, 360, false],
+        [390, 430, false],
+        [390, 844, false],
+        [669, 951, false],
+      ] as const) {
+        const room = [width, height] as const;
+        const seen = await drawn(
+          dock(asked),
+          () => {
+            const nav = document.querySelector("nav")!;
+            const box = (el: Element) => el.getBoundingClientRect();
+            const write = [...nav.querySelectorAll("button")].find((b) => b.textContent === "Write")!;
+            const first = nav.querySelector("button[aria-current='page']") ?? nav.querySelector("button")!;
+            const places = first.parentElement!;
+            const probe = document.createElement("i");
+            probe.style.cssText = "display:block;width:var(--h-l);height:var(--s2)";
+            document.querySelector(".oh-root")!.append(probe);
+            const tok = box(probe);
+            return {
+              upright: getComputedStyle(nav).flexDirection === "column",
+              writeFirst: box(write).bottom <= box(places).top,
+              between: box(places).top - box(write).bottom,
+              entry: [box(first).width, box(first).height],
+              thumb: tok.width,
+              step: tok.height,
+              ring: getComputedStyle(places).boxShadow,
+              /* The entries that stand between the window's head and its foot (a narrow foot may scroll sideways). */
+              inside: [...nav.querySelectorAll("button")].filter((b) => {
+                const at = box(b);
+                return at.top >= -0.5 && at.bottom <= innerHeight + 0.5;
+              }).length,
+              entries: nav.querySelectorAll("button").length,
+              /* Write answers a finger at its middle. */
+              writes: (() => {
+                const at = box(write);
+                return write.contains(
+                  document.elementFromPoint(at.left + at.width / 2, at.top + at.height / 2),
+                );
+              })(),
+            };
+          },
+          { entry: "mail", device: "phone", face, scheme, zoom, window: [...room] },
+        );
+        expect(seen.upright, `${room} ${asked}`).toBe(asked);
+        if (!asked) {
+          /* At the foot every entry stays inside the window, however low it is: Write is never out of reach. */
+          expect(seen.inside, `${room}: entries inside the window`).toBe(seen.entries);
+          expect(seen.writes, `${room}: Write answers a finger`).toBe(true);
+          continue;
+        }
+        expect(seen.writeFirst, `${room}`).toBe(true);
+        expect(Math.abs(seen.between - seen.step), `${room}`).toBeLessThan(0.75);
+        expect(
+          seen.entry.map((v) => Math.round(v)),
+          `${room}`,
+        ).toEqual([Math.round(seen.thumb), Math.round(seen.thumb)]);
+        expect(seen.ring, `${room}`).toBe("none");
+      }
+    },
+    60_000,
+  );
+  it.each(SETTINGS_LOOKS)(
+    "in %s %s at Text size %s: on Search its disc is filled as the open place is, its sign in that fill's ink",
+    async (face, scheme, zoom) => {
+      const seen = await drawn(
+        dock(true, true),
+        () => {
+          const search = document.querySelector("nav button[data-search]")!;
+          const probe = document.createElement("i");
+          probe.style.cssText = "color:var(--on-nav-on);background-color:var(--nav-on)";
+          document.querySelector(".oh-root")!.append(probe);
+          const tones = getComputedStyle(probe);
+          const drawn = getComputedStyle(search);
+          return {
+            fill: drawn.backgroundColor,
+            ink: drawn.color,
+            on: tones.backgroundColor,
+            onInk: tones.color,
+          };
+        },
+        { entry: "mail", device: "phone", face, scheme, zoom, window: [678, 466] },
+      );
+      expect(seen.fill).toBe(seen.on);
+      expect(seen.ink).toBe(seen.onInk);
+    },
+    60_000,
+  );
+});
+
+describe("a look's picture", () => {
+  const ROWS = [
+    { who: "Giulia Ferrari", address: "giulia@terracotta-milano.example", time: "09:12" },
+    { who: "Petra Wyss", address: "petra@makersfest.example", time: "08:47" },
+  ] as const;
+  /* What the picture draws, node by node, and the face's own tokens as a root of the page's face computes them. */
+  const read = () => {
+    const picture = document.querySelector<HTMLElement>("span[data-face]")!;
+    const props = [
+      "color",
+      "background-color",
+      "box-shadow",
+      "border-radius",
+      "font-family",
+      "font-size",
+      "font-weight",
+      "line-height",
+      "letter-spacing",
+      "padding",
+      "margin",
+      "width",
+      "height",
+    ];
+    const at = picture.getBoundingClientRect();
+    const nodes = [picture, ...picture.querySelectorAll("*")].map((el) => {
+      const cs = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return [
+        el.tagName,
+        r.left - at.left,
+        r.top - at.top,
+        r.width,
+        r.height,
+        ...props.map((p) => cs.getPropertyValue(p)),
+      ].join(" | ");
+    });
+    const sheet = picture.firstElementChild!;
+    const title = sheet.children[0]!;
+    const open = sheet.children[1]!;
+    const probe = document.createElement("i");
+    probe.style.cssText =
+      "color:var(--ink);background-color:var(--ground);border-top-color:var(--sheet);border-right-color:var(--hot);border-bottom-color:var(--row-open);font-family:var(--f-display)";
+    document.body.append(probe);
+    const tok = getComputedStyle(probe);
+    const drawn = (el: Element) => getComputedStyle(el);
+    return {
+      nodes,
+      seen: {
+        ground: drawn(picture).backgroundColor,
+        ink: drawn(picture).color,
+        sheet: drawn(sheet).backgroundColor,
+        hot: drawn(title.lastElementChild!).backgroundColor,
+        open: drawn(open).backgroundColor,
+        title: drawn(title).fontFamily,
+      },
+      tokens: {
+        ground: tok.backgroundColor,
+        ink: tok.color,
+        sheet: tok.borderTopColor,
+        hot: tok.borderRightColor,
+        open: tok.borderBottomColor,
+        title: tok.fontFamily,
+      },
+    };
+  };
+  it.each(
+    (["light", "dark"] as const).flatMap((scheme) =>
+      ([1, 1.25] as const).map((zoom) => [scheme, zoom] as const),
+    ),
+  )(
+    "in %s at Text size %s: each face's picture wears that face's own tokens, and draws the same on a Paper page and on an Ohmarchy page",
+    async (scheme, zoom) => {
+      for (const face of ["paper", "ohmarchy"] as const) {
+        const [onPaper, onOhmarchy] = await Promise.all(
+          (["paper", "ohmarchy"] as const).map((page) =>
+            drawn(<LookPicture face={face} scheme={scheme} title="Ohbox" rows={ROWS} />, read, {
+              entry: "mail",
+              face: page,
+              scheme,
+              zoom,
+            }),
+          ),
+        );
+        /* Read on a page of the picture's own face, the tokens are that face's. */
+        const own = face === "paper" ? onPaper! : onOhmarchy!;
+        expect(own.seen, `${face} ${scheme}: the picture against its face's tokens`).toEqual(own.tokens);
+        expect(onOhmarchy!.nodes, `${face} ${scheme}: the same on both pages`).toEqual(onPaper!.nodes);
+      }
+    },
+    60_000,
+  );
+  it("its sheet names no root and no other part: every rule that reaches it is the picture's own", async () => {
+    const rules = await drawn(
+      <LookPicture face="paper" scheme="light" title="Ohbox" rows={ROWS} />,
+      () => {
+        const out: string[] = [];
+        const walk = (list: CSSRuleList) => {
+          for (const rule of list) {
+            if (rule instanceof CSSStyleRule && rule.selectorText.includes("oh-lookpic"))
+              out.push(rule.selectorText);
+            if ("cssRules" in rule) walk((rule as CSSGroupingRule).cssRules);
+          }
+        };
+        for (const sheet of document.styleSheets) walk(sheet.cssRules);
+        return out;
+      },
+      { entry: "mail" },
+    );
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.filter((rule) => /:root|\bhtml\b|\bbody\b/.test(rule))).toEqual([]);
+    expect(
+      rules.filter((rule) => (rule.match(/\.[\w-]+/g) ?? []).some((name) => !name.startsWith(".oh-lookpic"))),
+    ).toEqual([]);
+  });
 });

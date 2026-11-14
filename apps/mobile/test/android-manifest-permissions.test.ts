@@ -22,6 +22,10 @@ const req = createRequire(join(MOBILE, "package.json"));
 type Perm = { $: Record<string, string> };
 
 async function introspectedPermissions(): Promise<Perm[]> {
+  return (await introspectedManifest())["uses-permission"] as Perm[];
+}
+
+async function introspectedManifest(): Promise<Record<string, any>> {
   const { getPrebuildConfigAsync } = req("@expo/prebuild-config") as {
     getPrebuildConfigAsync: (root: string, o: { platforms: string[] }) => Promise<{ exp: Record<string, any> }>;
   };
@@ -35,7 +39,7 @@ async function introspectedPermissions(): Promise<Perm[]> {
     platforms: ["android"],
     assertMissingModProviders: false,
   });
-  return exp._internal.modResults.android.manifest.manifest["uses-permission"] as Perm[];
+  return exp._internal.modResults.android.manifest.manifest as Record<string, any>;
 }
 
 describe("the Android manifest's permissions", () => {
@@ -55,5 +59,16 @@ describe("the Android manifest's permissions", () => {
     /* The ones the app does use stay: the pairing scanner, the organizer's notification. */
     expect(requested).toContain("android.permission.CAMERA");
     expect(requested).toContain("android.permission.POST_NOTIFICATIONS");
+  }, 60_000);
+});
+
+describe("the Android manifest's lines for the shell's web view", () => {
+  it("tells the web view to report nothing and look nothing up, and allows no cleartext", async () => {
+    const app = (await introspectedManifest()).application[0] as { $: Record<string, string>; "meta-data"?: Perm[] };
+    const meta = Object.fromEntries((app["meta-data"] ?? []).map((m) => [m.$["android:name"], m.$["android:value"]]));
+    expect(meta["android.webkit.WebView.MetricsOptOut"]).toBe("true");
+    expect(meta["android.webkit.WebView.EnableSafeBrowsing"]).toBe("false");
+    expect(app.$["android:usesCleartextTraffic"]).not.toBe("true");
+    expect(app.$["android:requestLegacyExternalStorage"]).not.toBe("true");
   }, 60_000);
 });

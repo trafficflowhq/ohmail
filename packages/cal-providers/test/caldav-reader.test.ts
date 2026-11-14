@@ -164,7 +164,7 @@ const resolver: HostResolver = { resolve: async (name) => NAMES[name] ?? [] };
 /** The real request port with a low ceiling on an answer's bytes, so that one heavy object is past it. */
 const SMALL_ANSWERS = 64 * 1024;
 const overNetwork = (maxBodyBytes: number): HttpPort =>
-  guardedRequest({ resolver, request: pinnedHttpRequest, policy: { kind: "own-network" }, hosts: null, limits: { connectMs: 5_000, totalMs: 20_000, maxRedirects: 5, maxBodyBytes } });
+  guardedRequest({ writes: false, resolver, request: pinnedHttpRequest, policy: { kind: "own-network" }, hosts: null, limits: { connectMs: 5_000, totalMs: 20_000, maxRedirects: 5, maxBodyBytes } });
 const http = overNetwork(SMALL_ANSWERS);
 const reader = makeReader({ http, clock: CLOCK, zones: ZONES });
 

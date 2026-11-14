@@ -192,6 +192,7 @@
       "./plugins/release-minification",
       "./plugins/with-ios-scene-lifecycle",
       "./plugins/live-text-size",
+      "./plugins/shell-assets",
       "./plugins/backup-exclusions"
     ],
     "locales": {

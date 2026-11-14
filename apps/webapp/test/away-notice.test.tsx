@@ -153,7 +153,7 @@ function ohboxProps(): Record<string, unknown> {
  * row — when this probe includes it — reports through the same `update` echo.
  */
 async function mount(opts: { active: boolean; withRow?: boolean }): Promise<void> {
-  const { OhboxView } = await import("../app/views/OhboxView.js");
+  const OhboxView = await (await import("./ohbox/_today.js")).prepareToday();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const { AwayNotice, useAwayNotice } = await import("../app/shell/AwayNotice.js");
   const { AwayResponderRow } = await import("../app/shell/AwayResponderRow.js");
@@ -498,7 +498,7 @@ describe("the away responder's Ohbox notice", () => {
   /**
    * THE LIST'S FIRST BLOCK, INSIDE THE SCROLLER — the structural half of "pinned wide, in the flow
    * narrow". A jsdom layout cannot scroll, so what is held here is the fact the two forms both
-   * depend on: the notice is a DESCENDANT of `.scroller`. Rendered above the scroller (the header
+   * depend on: the notice is a DESCENDANT of the list's scroller. Rendered above it (the header
    * slot) it can only ever stay put, at every width; inside it, `banner.css`'s one media rule
    * pins it at 1024px and up and lets it scroll away below. The rendered forms at 390 and 1440 are
    * read in a real browser by `scripts/fit-render.mjs`.
@@ -510,7 +510,7 @@ describe("the away responder's Ohbox notice", () => {
     await mount({ active: true });
     const el = notice();
     expect(el, "no notice rendered").not.toBeNull();
-    const scroller = host!.querySelector(".scroller");
+    const scroller = host!.querySelector(".ob-scroll");
     expect(scroller, "no scroller — the list pane did not render").not.toBeNull();
     expect(scroller!.contains(el), "the notice stands ABOVE the scroller — it can never scroll away").toBe(true);
     expect(scroller!.firstElementChild, "the notice is not the scroller's first block").toBe(el);

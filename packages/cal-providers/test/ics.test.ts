@@ -110,7 +110,7 @@ function gated(policy: AddressPolicy, table: Record<string, string[]>, answer: (
     const a = answer(url);
     return { status: a.status, headers: a.headers ?? {}, stream: Readable.from([Buffer.from(a.body ?? "")]) as unknown as IncomingMessage };
   };
-  const http = guardedRequest({ resolver, request, policy, hosts: null, limits: { connectMs: 2_000, totalMs: 4_000, maxRedirects: 5, maxBodyBytes: 1024 * 1024 } });
+  const http = guardedRequest({ writes: false, resolver, request, policy, hosts: null, limits: { connectMs: 2_000, totalMs: 4_000, maxRedirects: 5, maxBodyBytes: 1024 * 1024 } });
   return { reader: makeReader({ http, clock, zones }), looked, dialled };
 }
 
@@ -520,7 +520,7 @@ describe("on a real connection", () => {
       return name === "localhost" ? ["127.0.0.1"] : [];
     },
   };
-  const through = (policy: AddressPolicy): CalendarReader => makeReader({ http: namedHostRequest({ resolver, policy }), clock, zones });
+  const through = (policy: AddressPolicy): CalendarReader => makeReader({ http: namedHostRequest({ writes: false, resolver, policy }), clock, zones });
   const serve = (h: Handler): void => {
     handler = h;
     seen.length = 0;

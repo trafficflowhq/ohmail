@@ -6,7 +6,14 @@
     "FolderFold": "FolderShelf",
     "Attach": "Composer",
     "DraftTabs": "Composer",
-    "SettingLine": "SettingsSheet"
+    "SettingLine": "SettingsSheet",
+    "SettingArea": "SettingsSheet",
+    "SettingFilter": "SettingsSheet",
+    "RuleLine": "SettingsSheet",
+    "TagLine": "SettingsSheet",
+    "SettingTiles": "SettingsSheet",
+    "SettingTile": "SettingsSheet",
+    "LookPicture": "SettingsSheet"
   },
   "rows": [
     { "component": "Row", "state": "unread", "looks": "all" },
@@ -426,6 +433,112 @@
       "component": "SettingsSheet",
       "state": "detail",
       "looks": ["paper-light-desktop", "paper-light-phone", "ohmarchy-light-phone", "paper-light-fold"]
+    },
+    {
+      "component": "SettingNote",
+      "state": "plain",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "SettingNote",
+      "state": "warn",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "area",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "filter",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "rules",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "tags",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "tags-rename",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "tags-taken",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "look",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
     }
   ]
 }

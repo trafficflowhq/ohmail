@@ -1236,6 +1236,14 @@ const TABLE = {
         return "this phone's database would not promise to keep a saved change through a power cut, so the mailbox on it was not opened";
       case "engine_store_closed":
         return "the mailbox on this phone had already been closed, so nothing was read or saved";
+      case "store_copy_no_room":
+        return "this phone has too little free space to keep a copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
+      case "store_copy_failed":
+        return "this phone could not keep a checked copy of the mailbox before updating it, so the mailbox was not opened and nothing in it was changed";
+      case "shell_keeper_not_deleted":
+        return "this phone could not delete the unsent letters and queued changes it kept for that mailbox";
+      case "shell_view_not_cleared":
+        return "this phone could not delete the copy of that mailbox's mail its mail view kept";
       /* A code this build does not know is a newer store talking to an older deck. Saying the code
          is better than saying nothing, and it is the one arm that can reach a screen unworded. */
       default: return code;
@@ -3470,6 +3478,9 @@ const TABLE = {
   previewShareHint: "Share it to open it in another app.",
   previewPdfMore: (n: number) => `The first ${n} pages are shown.`,
   previewFrameLabel: "Attachment preview",
+  shellOpening: "Opening your mail…",
+  shellWebViewMissing: "This phone's web view is missing or too old for ohmail. Update Android System WebView, then open ohmail again.",
+  shellEnded: "ohmail's view stopped several times in a row. Close ohmail and open it again.",
 };
 
 /**

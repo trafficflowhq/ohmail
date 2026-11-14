@@ -119,6 +119,8 @@ const BOUND = {
     file: "packages/db/src/message-invitations.ts",
     code: /Buffer\.byteLength\(row\.recurrenceId, "utf8"\) > INVITATION_RECURRENCE_ID_MAX_BYTES\) return false/,
   },
+  // A calendar write's key, minted by the device for one press: printable ASCII, so its characters are its bytes.
+  calendarWriteKey: { file: "packages/db/src/calendar/write-act.ts", code: /v\.length <= CALENDAR_WRITE_LIMITS\.keyChars && PRINTABLE_KEY\.test\(v\)/ },
 } as const;
 type Bound = keyof typeof BOUND;
 
@@ -255,7 +257,7 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "cal_links.uid": { unwritten: "the UID a letter named, bounded where the link is written" },
   "cal_links.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
   "cal_credentials.kind": { unwritten: "a closed set of kinds the product writes; classed `not` by its writer" },
-  "cal_writes.idempotency_key": { unwritten: "a key the client mints, bounded where the write is accepted" },
+  "cal_writes.idempotency_key": { inbound: "calendarWriteKey" },
   // cloud 0105, a calendar's notice channels. The channel's id is minted by the service or handed
   // back by the provider; either way it is bounded where the channel is opened.
   "cal_push_channels.provider": { unwritten: "a provider name the product writes; classed `not` by its writer" },

@@ -21,6 +21,7 @@ export interface RelaySpec {
 export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "DELETE", pattern: "/account" },
   { method: "DELETE", pattern: "/auth/2fa/totp" },
+  { method: "DELETE", pattern: "/calendar/writes/:id" },
   { method: "DELETE", pattern: "/devices/:id" },
   { method: "DELETE", pattern: "/drafts/:id" },
   { method: "DELETE", pattern: "/drafts/:id/schedule" },
@@ -152,6 +153,8 @@ export const RELAY_ALLOWLIST: readonly RelaySpec[] = [
   { method: "POST", pattern: "/auth/step-up/webauthn/options" },
   { method: "POST", pattern: "/auth/step-up/webauthn/verify" },
   { method: "POST", pattern: "/auth/verify-email/resend" },
+  { method: "POST", pattern: "/calendar/writes" },
+  { method: "POST", pattern: "/calendar/writes/:id/retry" },
   { method: "POST", pattern: "/consent/reset" },
   { method: "POST", pattern: "/consent/seed" },
   { method: "POST", pattern: "/contacts/:id/notes" },

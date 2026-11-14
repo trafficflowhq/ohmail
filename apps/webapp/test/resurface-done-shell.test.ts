@@ -103,12 +103,26 @@ const barButton = (label: string): HTMLButtonElement | undefined =>
     .find((b) => (b.textContent ?? "").trim().startsWith(label));
 
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
+/** The Done a pinned row offers beside it: today's piles stand `.rsf-done` there, the Ohbox's row its quick verb in
+ *  its slot, named Done. */
+const doneBeside = (rowEl: Element | null | undefined): HTMLButtonElement | null => {
+  const slot = rowEl?.parentElement;
+  if (!slot) return null;
+  return slot.querySelector<HTMLButtonElement>(".rsf-done") ??
+    (slot.getAttribute("role") !== "listbox"
+      ? [...slot.querySelectorAll<HTMLButtonElement>("button")].find((b) => (b.textContent ?? "").trim() === "Done") ?? null
+      : null);
+};
+/** The Done the row of a letter still offers beside it, wherever the row stands (the new list's other rows offer
+ *  their own quick Done, so the spent pin's row is read by its letter). */
+const doneBesideRowOf = (id: string): HTMLButtonElement | null =>
+  doneBeside(host!.querySelector(`:is(.row, [role=option])[data-id="${id}"]`));
 
 /** The ids rendered in a labelled listbox, top to bottom. */
 function idsInGroup(label: string): string[] {
   const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
   if (!box) return [];
-  return [...box.querySelectorAll(".row[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
+  return [...box.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 
 /**
@@ -118,14 +132,14 @@ function idsInGroup(label: string): string[] {
 async function cursorOnOlderEarlierRow(): Promise<string[]> {
   const before = idsInGroup("Earlier");
   expect(before.length, "the demo's Earlier needs two rows").toBeGreaterThan(1);
-  await click(host!.querySelector(`[role="listbox"][aria-label="Earlier"] .row[data-id="${before[1]}"]`));
-  expect(host!.querySelector<HTMLElement>(".row.sel")?.dataset.id).toBe(before[1]);
+  await click(host!.querySelector(`[role="listbox"][aria-label="Earlier"] :is(.row, [role=option])[data-id="${before[1]}"]`));
+  expect(host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id).toBe(before[1]);
   return before;
 }
 
 /** Pin the message under the cursor via the chooser, and return its id. */
 async function pinSelected(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -193,7 +207,7 @@ describe("Done on a PINNED message — the deliberate release, nothing else", ()
     await click(barButton("Done"));
     // First frame: the release control is gone with the pin it released (the row itself keeps
     // its slot for the slide — see `MessageRow.actions` — but offers nothing).
-    expect(host!.querySelector(".rsf-done"), "a spent pin still offers Done").toBeNull();
+    expect(doneBesideRowOf(id), "a spent pin still offers Done").toBeNull();
 
     // The slide (SETTLE_MS = 280) re-files the row under "Earlier" at its arrival slot: the
     // release stamps `lastReadAt`, which is state and sorts nothing, and writes no open read.
@@ -218,9 +232,9 @@ describe("Done on the Resurfaced ROW — the batched release, at the adapter", (
     const id = await pinSelected();
 
     sent = [];
-    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] .row[data-id="${id}"]`);
+    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id="${id}"]`);
     expect(rowEl, "the pinned row is not under Resurfaced").toBeTruthy();
-    await click(rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
+    await click(doneBeside(rowEl));
 
     const seen = kinds("mark_seen") as Array<{ messageIds: string[]; unread: boolean; via?: string }>;
     expect(seen, "the row's Done reached the adapter as nothing at all").toHaveLength(1);
@@ -237,8 +251,8 @@ describe("Done on the Resurfaced ROW — the batched release, at the adapter", (
     await mountShell();
     const before = await cursorOnOlderEarlierRow();
     const id = await pinSelected();
-    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] .row[data-id="${id}"]`);
-    await click(rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done"));
+    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id="${id}"]`);
+    await click(doneBeside(rowEl));
 
     await act(async () => { vi.advanceTimersByTime(400); });
     expect(idsInGroup("Resurfaced")).toEqual([]);
@@ -252,7 +266,7 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
     await mountShell();
     // Book a return for the message under the cursor: Resurface → Tomorrow parks it into the
     // Resurface pile (one pile only — it leaves the Ohbox entirely).
-    const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+    const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
     expect(id).toBeTruthy();
     await key("Enter");
     await click(barButton("Resurface"));
@@ -265,7 +279,7 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
       window.dispatchEvent(new Event("hashchange"));
     });
 
-    const rowEl = host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`);
+    const rowEl = host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`);
     expect(rowEl, "the booked message is not in the Resurface pile").toBeTruthy();
     const done = rowEl!.parentElement?.querySelector<HTMLButtonElement>(".rsf-done");
 
@@ -285,6 +299,29 @@ describe("Done on a SCHEDULED row — the same release, plus the cancelled booki
     expect(seen[0]!.via).toBeUndefined();
 
     // The pile lets go of the row in the same gesture.
-    expect(host!.querySelector(`.view-triage .row[data-id="${id}"]`)).toBeNull();
+    expect(host!.querySelector(`.view-triage :is(.row, [role=option])[data-id="${id}"]`)).toBeNull();
+  });
+});
+
+describe("a focused Done the press takes away gives the keyboard to the list (the shell's one focus rule)", () => {
+  /* `focus-follows`: a focused control the page removes (a row's Done) lands on the row after it, else the row before
+     it, as for any control a verb takes away; never the page, never a control of the list's head. */
+  it("the keyboard lands on the row that stood after the pinned row", async () => {
+    await mountShell();
+    const id = await pinSelected();
+    const rowEl = host!.querySelector<HTMLElement>(`[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id="${id}"]`);
+    const done = doneBeside(rowEl);
+    expect(done, "the premise: the pinned row offers Done").toBeTruthy();
+    const rows = [...host!.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
+    const after = rows[rows.indexOf(rowEl!) + 1]?.dataset.id;
+    expect(after, "the premise: a row stands after the pinned one").toBeTruthy();
+    await act(async () => { done!.focus(); });
+    expect(document.activeElement, "the premise: Done holds the keyboard").toBe(done);
+    await click(done);
+    for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
+    expect(done!.isConnected, "the premise: the press took Done away").toBe(false);
+    const at = document.activeElement as HTMLElement | null;
+    const where = at === null || at === document.body ? "the page" : at.outerHTML.slice(0, 120);
+    expect(at?.closest(":is(.row, [role=option])")?.getAttribute("data-id"), `after Done the keyboard is on ${where}`).toBe(after);
   });
 });

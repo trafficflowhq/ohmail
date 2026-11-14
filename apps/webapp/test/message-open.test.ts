@@ -125,17 +125,17 @@ const cursorHit = (): HTMLElement | null => host!.querySelector<HTMLElement>(".v
  * THE ID OF THE MESSAGE THAT IS OPEN, in whichever pile the shell landed in.
  *
  * The list-shaped piles (Ohbox, Receipts, History, a tag, a folder) mark the open message with
- * `.row.sel`; Reads is a STREAM and marks it by expanding its card. This helper asks both,
+ * `:is(.row.sel, [role=option][data-open])`; Reads is a STREAM and marks it by expanding its card. This helper asks both,
  * because "the hit opened where it lives" is a claim about every pile and the assertion should
  * not quietly become a claim about the row-shaped ones.
  *
- * It used to be the `.row.sel` query alone, and it passed for a reason that was not the rule:
+ * It used to be the `:is(.row.sel, [role=option][data-open])` query alone, and it passed for a reason that was not the rule:
  * the second search hit for this query happened to be an Ohbox message. Search now breaks a
  * relevance tie by recency, which reordered two equally-scoring hits and put a Reads message
  * there instead — a real message, opened correctly, in a pile the selector could not see.
  */
 function openedMessageId(): string | undefined {
-  const row = host!.querySelector<HTMLElement>(".view .row.sel");
+  const row = host!.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])");
   if (row?.dataset.id) return row.dataset.id;
   const open = host!.querySelector<HTMLElement>('.view-reads .scast .sc-x[aria-expanded="true"]');
   return open?.closest<HTMLElement>(".scast")?.dataset.sid;
@@ -340,7 +340,7 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
      */
     await mountShell();
     await key("j");
-    const cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
+    const cursor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!.dataset.id!;
     await key("Enter");
 
     expect(
@@ -356,7 +356,7 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
     const paneSubject =
       host!.querySelector<HTMLElement>(".view-ohbox .read-col .msg .msg-subject")?.textContent ?? "";
     const rowSubject =
-      host!.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${cursor}"] .subj`)
+      host!.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${cursor}"] :is(.subj, .oh-row-subject)`)
         ?.textContent ?? "";
     expect(rowSubject).not.toBe("");
     expect(paneSubject).toContain(rowSubject.trim().slice(0, 12));
@@ -383,14 +383,14 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
     setViewport(true);
     await mountShell();
     await key("j");
-    const cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
+    const cursor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!.dataset.id!;
     await key("Enter");
 
     const reader = host!.querySelector(".reader");
     expect(reader, "no reader opened").toBeTruthy();
     const subject = host!.querySelector<HTMLElement>(".reader .msg .msg-subject")?.textContent ?? "";
     const rowSubject =
-      host!.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${cursor}"] .subj`)
+      host!.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${cursor}"] :is(.subj, .oh-row-subject)`)
         ?.textContent ?? "";
     expect(rowSubject).not.toBe("");
     expect(subject).toContain(rowSubject.trim().slice(0, 12));
@@ -405,7 +405,7 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
     // stale value happens to be right, which is why `↵` alone does not catch it.
     setViewport(true);
     await mountShell();
-    const target = [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")][2]!;
+    const target = [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")][2]!;
     const wanted = target.dataset.id!;
     await act(async () => {
       target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
@@ -413,7 +413,7 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
 
     expect(host!.querySelector(".reader"), "no reader opened").toBeTruthy();
     const subject = host!.querySelector<HTMLElement>(".reader .msg .msg-subject")?.textContent ?? "";
-    const rowSubject = target.querySelector<HTMLElement>(".subj")?.textContent ?? "";
+    const rowSubject = target.querySelector<HTMLElement>(":is(.subj, .oh-row-subject)")?.textContent ?? "";
     expect(rowSubject).not.toBe("");
     expect(subject, `the reader is not showing ${wanted}`).toContain(rowSubject.trim().slice(0, 12));
   });
@@ -466,7 +466,7 @@ describe("a remaining case — the reader opens on a message, not on a pile", ()
     await key("j");
     await key("j");
     await key("j");
-    const opened = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
+    const opened = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!.dataset.id!;
     await key("Enter");
     expect(host!.querySelector(".reader")).toBeTruthy();
 

@@ -121,7 +121,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // consent settings beside it: a Cloud-mode install keeps only a copy of the switch.
     // 198 -> 199 with `POST /drafts/from-text`, relayed like Draft reply beside it.
     // 199 -> 200 with an invitation's answer by mail: a send, relayed like `POST /drafts/:id/send`.
-    expect(RELAY_ALLOWLIST.length).toBe(200);
+    // 200 -> 203 with the calendar's three write routes (record, send again, let go): a Cloud-mode
+    // install drains nothing of its own, so a write it is asked for is the account's server's.
+    expect(RELAY_ALLOWLIST.length).toBe(203);
   });
 
   it("every pattern in the projection is a real route", () => {

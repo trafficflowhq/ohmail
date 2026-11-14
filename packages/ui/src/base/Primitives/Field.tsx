@@ -1,5 +1,5 @@
 import { useId, type Ref } from "react";
-import { Icon } from "../../icons/Icon.js";
+import { Icon, type IconName } from "../../icons/Icon.js";
 import "./field.css";
 
 export interface FieldProps {
@@ -16,6 +16,10 @@ export interface FieldProps {
   lines?: number;
   /** In a menu: one line, the label beside the field. */
   row?: boolean;
+  /** Only its box: the label is not drawn and names it to a screen reader alone (a list's search, whose placeholder says what it finds). */
+  bare?: boolean;
+  /** A sign inside a bare field's box, before the words: `search` for a list's search. */
+  sign?: IconName;
   name?: string;
   autoComplete?: string;
   /** The keyboard a phone opens for it: `numeric` for a code. */
@@ -39,6 +43,8 @@ export function Field({
   refusal,
   lines,
   row,
+  bare,
+  sign,
   name,
   autoComplete = "off",
   inputMode,
@@ -57,6 +63,7 @@ export function Field({
     className: "oh-control oh-field-input",
     value,
     placeholder,
+    "aria-label": bare ? label : undefined,
     "aria-invalid": refusal ? true : undefined,
     "aria-describedby": described,
     inputMode,
@@ -65,10 +72,18 @@ export function Field({
     spellCheck: false,
   } as const;
   return (
-    <div className="oh-field" data-refused={refusal ? "" : undefined} data-row={row ? "" : undefined}>
-      <label className="oh-field-label" htmlFor={at}>
-        {label}
-      </label>
+    <div
+      className="oh-field"
+      data-refused={refusal ? "" : undefined}
+      data-row={row ? "" : undefined}
+      data-sign={sign ? "" : undefined}
+    >
+      {bare ? null : (
+        <label className="oh-field-label" htmlFor={at}>
+          {label}
+        </label>
+      )}
+      {sign ? <Icon name={sign} size={18} /> : null}
       {lines ? (
         <textarea
           {...shared}

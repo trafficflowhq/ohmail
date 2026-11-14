@@ -174,6 +174,48 @@
       "outdatedUnknown": "The install that organizes this mailbox can't take this change from here. Make it there, or update ohmail on it.",
       "elsewhere": "{name} organizes this mailbox, so this change is made there.",
       "elsewhereUnknown": "Another ohmail install organizes this mailbox, so this change is made there."
+    },
+    "list": {
+      "menu": "Ohbox actions",
+      "pull": "Pull new mail"
+    },
+    "end": {
+      "older": "Older mail",
+      "history": "History",
+      "top": "Back to top"
+    },
+    "row": {
+      "unread": "Unread",
+      "read": "Read",
+      "file": "Has an attachment",
+      "marks": "{count} messages, oldest first: {unread, plural, =0 {all read} other {# unread}}",
+      "people": "{count} people: {names}",
+      "you": "you",
+      "more": "+{count}",
+      "open": "Open",
+      "forward": "Forward",
+      "menu": "Message actions",
+      "select": "Select",
+      "deselect": "Deselect"
+    },
+    "bar": {
+      "label": "Selection",
+      "screen": "Screening",
+      "screenCommit": "Screen them",
+      "screenConfirm": "{senders, plural, one {1 sender} other {# senders}} → {place}. {count, plural, one {1 message moves} other {# messages move}}. No rule is made, so future mail is unchanged.",
+      "screenConfirmRules": "{senders, plural, one {1 sender} other {# senders}} → {place}. {count, plural, one {1 message moves} other {# messages move}}, and {rules, plural, one {1 of them is still waiting, so this becomes a rule for their future mail} other {# of them are still waiting, so this becomes a rule for their future mail}}. There is no undo.",
+      "screenNothing": "That mail is already in {place}. Nothing would move and no rule would be made.",
+      "screenTo": "screen to"
+    },
+    "blank": {
+      "unread": "{count, plural, one {1 unread} other {# unread}}",
+      "clear": "All read",
+      "none": "Nothing open"
+    },
+    "empty": {
+      "loading": "Loading your mail",
+      "nothing": "Nothing in your Ohbox",
+      "nothingYet": "Nothing in your Ohbox yet"
     }
   }
 }

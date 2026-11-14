@@ -196,6 +196,11 @@ export interface CalendarEventRecord {
    * invitees are empty. The full event stays at the provider and on the server.
    */
   cut: boolean;
+  /**
+   * The person's writes to this event that the provider has not taken yet, or refused: oldest
+   * first. The record itself is the provider's copy; what waits rides here, beside it.
+   */
+  writes: CalendarWriteMark[];
   updatedAt: ISODateTime;
 }
 
@@ -270,11 +275,154 @@ export interface CalendarSettingsBody {
 
 // ── acts ─────────────────────────────────────────────────────────────────────
 
-/** What a person can do to the calendar from a client, as the queue carries it. None yet. */
-export type CalendarAct = never;
+/**
+ * Why a write did not reach the provider, or was not carried out there: the reading's words, the
+ * writers' own, and the queue's. Never a provider's text.
+ */
+export type CalendarWriteFault =
+  | CalendarSyncFault
+  /** The provider's copy changed since the copy the change was made on. Nothing was overwritten. */
+  | "version_stale"
+  /** No version to make the change against, and none could be read. Nothing was sent. */
+  | "version_unknown"
+  /** The event is no longer at the provider. */
+  | "event_gone"
+  /** The provider refused the write: the calendar can be looked at, not written. */
+  | "read_only"
+  /** The provider's object was read with something left out, so it is not written back. */
+  | "left_out"
+  | "invitees_unsupported"
+  | "repeat_unsupported"
+  /** A field the provider would not keep as written. */
+  | "field_unwritable"
+  /** An earlier write of the same event was refused, so this one was not sent. */
+  | "earlier_refused"
+  /** The recorded act is no shape this version writes. */
+  | "content_refused"
+  /** Too old, or tried too often, to be sent late. */
+  | "expired";
+
+/** One invitee of an event as a person writes it. */
+export interface CalendarWriteInvitee {
+  address: string;
+  name: string | null;
+  role: "required" | "optional";
+}
+
+/** An event's fields as a person writes them: times as the store keeps them, an end always. */
+export interface CalendarEventFields {
+  title: string;
+  start: CalendarTime;
+  end: CalendarTime;
+  notes: string | null;
+  place: string | null;
+  /** A call's link, https only. */
+  callLink: string | null;
+  busy: boolean;
+  private: boolean;
+  /** One `RRULE` value, or `null` for an event that does not repeat. */
+  repeat: string | null;
+  invitees: CalendarWriteInvitee[];
+  /** Reminders, each in minutes before the start. */
+  alarms: number[];
+}
+
+/**
+ * Which part of an event a change or a removal is about: the record whole, one occurrence of a
+ * series, or one occurrence and every later one. `at` is the occurrence's key as a record writes
+ * it (`recurrenceId`). A change to the later ones makes a new series, `newEventId`.
+ */
+export type CalendarChangeScope =
+  | { kind: "record" }
+  | { kind: "occurrence"; at: string }
+  | { kind: "following"; at: string; newEventId: string };
+export type CalendarRemoveScope =
+  { kind: "record" } | { kind: "occurrence"; at: string } | { kind: "following"; at: string };
+
+/**
+ * What an act on an event the device holds names: the event, the record's `updatedAt` as the device
+ * held it (`base`), and the key of the device's previous act on the same event (`after`), so that a
+ * change is only ever written onto the copy it was made on.
+ */
+export interface CalendarEventBase {
+  eventId: string;
+  base: ISODateTime;
+  after?: string;
+}
+
+/**
+ * A person's act on one event, as the queue carries it and the server records it. Ids are the
+ * store's rows (`eventId` of a new event, and `newEventId`, are uuids the device makes and the
+ * server adopts); no act names a provider's id, an address or a version.
+ */
+export type CalendarEventAct =
+  | { kind: "calendar_event_create"; eventId: string; calendarId: string; event: CalendarEventFields }
+  | (CalendarEventBase & {
+      kind: "calendar_event_update";
+      scope: CalendarChangeScope;
+      change: Partial<CalendarEventFields>;
+    })
+  | (CalendarEventBase & { kind: "calendar_event_delete"; scope: CalendarRemoveScope })
+  | (CalendarEventBase & { kind: "calendar_event_move"; toCalendarId: string })
+  | (CalendarEventBase & {
+      kind: "calendar_event_answer";
+      scope: { kind: "record" } | { kind: "occurrence"; at: string };
+      answer: "accepted" | "tentative" | "declined";
+    });
+
+/**
+ * What a person can do to the calendar from a client, as the queue carries it: an act on an
+ * event, or a word on a write that was refused (send it again; let it go).
+ */
+export type CalendarAct =
+  | CalendarEventAct
+  | { kind: "calendar_write_retry"; writeId: string }
+  | { kind: "calendar_write_dismiss"; writeId: string };
 
 /**
  * The words a refused calendar act is answered with. `calendar_off`: the account has not switched
- * the calendar on, or this server has none.
+ * the calendar on, or this server has none. `calendar_read_only`: the calendar or the event takes
+ * no such write (a subscription, a calendar shared to look at, an invitation the account does not
+ * organise). `calendar_writes_full`: too many writes are waiting. `calendar_write_left`: the write
+ * is under way or done and can no longer be let go. `calendar_connection_stopped`: the calendar's
+ * connection waits for the person (signed out, being removed).
  */
-export type CalendarReason = "calendar_off";
+export type CalendarReason =
+  | "calendar_off"
+  | "calendar_read_only"
+  | "calendar_writes_full"
+  | "calendar_write_left"
+  | "calendar_connection_stopped";
+
+/**
+ * A write that waits for the provider, or that it refused, as the event's record carries it.
+ * `act` is the act as recorded; `null` only where the record was cut to fit. `part` is 2 for the
+ * second half of a two-part act whose first half is done (a series ended, the new one not made).
+ */
+export interface CalendarWriteMark {
+  id: string;
+  key: string;
+  state: "pending" | "refused";
+  reason: CalendarWriteFault | null;
+  act: CalendarEventAct | null;
+  part: 1 | 2 | null;
+  at: ISODateTime;
+}
+
+/** What a recorded write stands at, as the route answers it. */
+export interface CalendarWriteReceipt {
+  id: string;
+  key: string;
+  state: "pending" | "applied" | "refused";
+  reason: CalendarWriteFault | null;
+}
+
+/**
+ * What a calendar write's route answers: where the write stands (`null` for one let go), and the
+ * records of the events it touched, each with its marks, so a device passes from its own queue to
+ * the record without a gap.
+ */
+export interface CalendarWriteAnswer {
+  write: CalendarWriteReceipt | null;
+  events: CalendarEventRecord[];
+}

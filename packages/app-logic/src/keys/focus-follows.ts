@@ -16,8 +16,10 @@ import { queryAllVisible, queryVisible } from "../lists/visible-dom.js";
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-/** A message row, and any list item a verb can take away. */
-const ITEM = '.row[data-id], [role="listitem"]';
+/** A message row (today's, or the Ohbox's own list's), and any list item a verb can take away. */
+const ITEM = '.row[data-id], .oh-row[data-id], [role="listitem"]';
+/** A list's own stop, where the keyboard stands when no row holds it: today's scroller, the Ohbox's. */
+const LIST_STOP = ".view .scroller, .view .ob-scroll";
 /** Where a focused control sat when it was a layer over the page. */
 const LAYER = '[role="dialog"], [role="alertdialog"], [role="menu"], [aria-modal="true"]';
 /** The surfaces that own the page while they stand: nothing behind one may take focus. */
@@ -93,19 +95,19 @@ function enterInto(root: HTMLElement, atRoot = false): boolean {
 
 function rowOf(el: HTMLElement): HTMLElement | null {
   return el.closest<HTMLElement>(ITEM)
-    ?? el.closest(".row-slot")?.querySelector<HTMLElement>(".row[data-id]") ?? null;
+    ?? el.closest(".row-slot, .oh-row-slot")?.querySelector<HTMLElement>(".row[data-id], .oh-row[data-id]") ?? null;
 }
 
 function rowById(id: string | null): HTMLElement | null {
   if (id === null) return null;
-  for (const row of queryAllVisible<HTMLElement>(".row[data-id]")) {
+  for (const row of queryAllVisible<HTMLElement>(".row[data-id], .oh-row[data-id]")) {
     if (row.dataset.id === id) return row;
   }
   return null;
 }
 
 function cursorRow(): HTMLElement | null {
-  return queryVisible<HTMLElement>(".view .row.sel");
+  return queryVisible<HTMLElement>(".view .row.sel, .view .oh-row[data-open]");
 }
 
 function holderOf(el: HTMLElement | null): Surface | null {
@@ -118,7 +120,7 @@ function holderOf(el: HTMLElement | null): Surface | null {
 function placeOf(target: Element | null): Place {
   const el = target instanceof HTMLElement && target !== document.body ? target : null;
   const row = el ? rowOf(el) : null;
-  const list = row?.closest<HTMLElement>('.scroller, [role="list"]') ?? null;
+  const list = row?.closest<HTMLElement>('.scroller, .ob-scroll, [role="list"]') ?? null;
   let next: HTMLElement | null = null;
   let prev: HTMLElement | null = null;
   if (row && list) {
@@ -174,12 +176,12 @@ function land(p: Place, returnTo: boolean): boolean {
   } else if (p.el !== null && p.el === p.row && p.el.hasAttribute("tabindex")) {
     /* A CURSOR ROW TAKEN AWAY (moved under New, or filed): the ring goes where the cursor is, or
        to the list's own stop. A neighbour would wear the ring while the verbs act elsewhere. */
-    if (take(cursorRow()) || take(p.list?.closest<HTMLElement>(".scroller") ?? null)) return true;
+    if (take(cursorRow()) || take(p.list?.closest<HTMLElement>(".scroller, .ob-scroll") ?? null)) return true;
   }
   for (const q of chain) {
     if (take(q.next) || take(rowById(q.nextId)) || take(q.prev) || take(rowById(q.prevId))) return true;
   }
-  if (take(cursorRow()) || take(queryVisible<HTMLElement>(".view .scroller"))) return true;
+  if (take(cursorRow()) || take(queryVisible<HTMLElement>(LIST_STOP))) return true;
   if (returnTo && take(tabbables(queryVisible<HTMLElement>(".view") ?? document.body)[0])) return true;
   return modal !== null && enterInto(modal);
 }

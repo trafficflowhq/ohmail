@@ -9,15 +9,16 @@
  * a page applied twice, or out of order, writes what once would have and then nothing: the
  * provider's version decides whether an object changed, and an equal one writes nothing.
  */
-import { and, eq, getTableName, inArray, ne, sql, type SQL } from "drizzle-orm";
+import { and, eq, getTableName, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { eventTimeOf, storedTimeOf, type EventTime, type StoredTime, type ZoneSource } from "@ohmail/cal-core";
+import type { ChangeItem } from "@ohmail/cal-providers";
 import {
   CALENDAR_CHANGES_PER_TRANSACTION, calAlarms, calAttendees, calEvents, calWrites, recordCalendarChanges,
   type CalendarChange, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { inConnection, type ConnectionDb, type ConnectionKey } from "./connection.js";
-import { occurrenceKey, timeOfKey, type MappedRow } from "./map.js";
+import { occurrenceKey, rowsOfObject, timeOfKey, type MapContext, type MappedRow, type Upsert } from "./map.js";
 import { storableKey } from "./storable.js";
 
 /** A calendar as its row names it: the store's id, and the provider's. */
@@ -104,7 +105,19 @@ export interface DaysShown {
   readonly keys: ReadonlySet<string>;
   readonly changes: number;
 }
-export type Work = ObjectWrite | ObjectGone | DayCancelled | DaysExcluded | DaysShown;
+/**
+ * A new event a person made, named by the provider at last: the row its write stood in takes the
+ * provider's id and UID, after any other row of the calendar that already holds that id (a reading
+ * that got there first) goes with its delete. The object's own write then finds the row by its id.
+ */
+export interface Repointed {
+  readonly kind: "repoint";
+  readonly eventId: string;
+  readonly providerId: string;
+  readonly uid: string;
+  readonly changes: number;
+}
+export type Work = ObjectWrite | ObjectGone | DayCancelled | DaysExcluded | DaysShown | Repointed;
 
 /**
  * What a transaction, or a run of them, ended as: the changes recorded and the works the store
@@ -176,6 +189,92 @@ export function objectWrite(providerId: string, rows: readonly MappedRow[], stor
   const remove = stored.filter((s) => !keep.has(s.recurrenceId)).length;
   const series = unite ? rows.filter((r) => r.values.recurrenceId !== "").length : 0;
   return { kind: "object", providerId, rows, keep, remove, changes: rows.length * (series > 0 ? 2 : 1) + remove };
+}
+
+/** A cancelled day as a work: one change for its series, one for each changed row of that day (one, where none is known yet). */
+export const dayCancelled = (c: { readonly uid: string; readonly key: string; readonly time: EventTime }, rows: number): Work =>
+  ({ kind: "cancelled", uid: c.uid, key: c.key, time: c.time, changes: 1 + Math.max(rows, 1) });
+
+/** What the planner made of a page's items, or of a write's answer: the works, and what the caller decides about. */
+export interface PlannedItems {
+  readonly works: readonly Work[];
+  /** Objects named by a text no row can hold, or that no row could keep: left out, said as a count. */
+  readonly unkept: number;
+  /** Cancelled days whose series is neither stored nor in these items: the caller holds them or lets them go. */
+  readonly held: readonly { readonly uid: string; readonly key: string; readonly time: EventTime }[];
+  /** A `gone` named something nobody stores, or a stored changed day's own id: a removed day only a whole reading confirms. */
+  readonly goneOfDays: boolean;
+}
+
+/**
+ * Items as works for the store, measured against what is stored: each object mapped and written
+ * unless it is stored as it is, each removal with what goes with it, each cancelled day where its
+ * series is known. The one planner for a reading's page and for a write's answer, so the store
+ * and the provider meet through one mapper and one apply.
+ */
+export async function planItems(apply: ApplyContext, items: readonly ChangeItem[], map: MapContext): Promise<PlannedItems | "gone"> {
+  const objects = new Map<string, Upsert[]>();
+  const gone: string[] = [];
+  const cancels: { uid: string; key: string; time: EventTime }[] = [];
+  /** What the items name by a text no row can hold: left out, and said as a count. No stored row can carry such a name. */
+  let unkept = 0;
+  for (const item of items) {
+    if (item.kind === "upsert") {
+      const list = objects.get(item.id) ?? [];
+      list.push(item);
+      objects.set(item.id, list);
+    } else if (item.kind === "gone") {
+      // Kept in the list all the same: the read of stored rows passes it over, and it is then a removal of something nobody stores.
+      gone.push(item.id);
+      if (!storableKey(item.id)) unkept += 1;
+    } else {
+      // The key carries the zone's name, a stranger's text like the UID, only where the platform does not know the zone. A known
+      // one (a vendor's prefix too) keys by the moment; a name the store cannot hold is then refused in the day's own write, and counted.
+      const key = occurrenceKey(item.originalStart, apply.zones);
+      if (storableKey(item.uid) && storableKey(key)) cancels.push({ uid: item.uid, key, time: item.originalStart });
+      else unkept += 1;
+    }
+  }
+  const mapped = new Map<string, ReturnType<typeof rowsOfObject>>();
+  for (const [id, ups] of objects) mapped.set(id, rowsOfObject(ups, map));
+  const stored = await storedRowsOf(apply, [...objects.keys(), ...gone], cancels.map((c) => c.uid));
+  if (stored === "gone") return "gone";
+  const byProvider = new Map<string, StoredRow[]>();
+  for (const s of stored) byProvider.set(s.providerId, [...(byProvider.get(s.providerId) ?? []), s]);
+
+  const works: Work[] = [];
+  const seriesHere = new Set<string>();
+  for (const [id, m] of mapped) {
+    if (!m.ok) {
+      if (m.reason === "unstorable") unkept += 1;
+      continue;
+    }
+    for (const r of m.rows) if (r.values.recurrenceId === "") seriesHere.add(r.values.uid);
+    const was = byProvider.get(id) ?? [];
+    if (storedAsIs(m.rows, was)) continue;
+    works.push(objectWrite(id, m.rows, was, apply.unite));
+  }
+  // Where a changed day is an object of its own, a series named as gone takes its days' rows with it: how many, for the works' count.
+  const goneSeries = apply.unite ? gone.flatMap((id) => (byProvider.get(id) ?? []).filter((s) => s.recurrenceId === "").map((s) => s.uid)) : [];
+  const ofGoneSeries = await storedRowsOf(apply, [], goneSeries);
+  if (ofGoneSeries === "gone") return "gone";
+  let goneOfDays = false;
+  for (const id of gone) {
+    const was = byProvider.get(id) ?? [];
+    const uids = new Set(was.filter((s) => s.recurrenceId === "").map((s) => s.uid));
+    const days = ofGoneSeries.filter((s) => uids.has(s.uid) && s.recurrenceId !== "" && s.providerId !== id).length;
+    if (was.length > 0) works.push(objectGone(id, was.length + days, { withDays: apply.unite, dayLeaves: apply.unite }));
+    if (was.length === 0 || was.some((s) => s.recurrenceId !== "")) goneOfDays = true;
+  }
+  const seriesStored = new Set(stored.filter((s) => s.recurrenceId === "").map((s) => s.uid));
+  const held: { uid: string; key: string; time: EventTime }[] = [];
+  for (const c of cancels) {
+    // The day's own changed rows go with it, also where their series is not stored.
+    const rows = stored.filter((s) => s.uid === c.uid && s.recurrenceId === c.key).length;
+    if (seriesStored.has(c.uid) || seriesHere.has(c.uid) || rows > 0) works.push(dayCancelled(c, rows));
+    else held.push(c);
+  }
+  return { works, unkept, held, goneOfDays };
 }
 
 /**
@@ -302,7 +401,7 @@ async function applyOrSplit(ctx: ApplyContext, chunk: readonly Work[]): Promise<
  * The store refused a statement of one work's own for what its rows hold. The one failure that is
  * answered by leaving an object out; `cause` is the store's error.
  */
-class ObjectRefused extends Error {
+export class ObjectRefused extends Error {
   constructor(cause: unknown) {
     super("the store refused an object's own row", { cause });
     this.name = "ObjectRefused";
@@ -315,6 +414,7 @@ async function applyWork(tx: Tx, ctx: ApplyContext, w: Work, changes: CalendarCh
   else if (w.kind === "gone") await removeObject(tx, ctx, w, changes);
   else if (w.kind === "cancelled") await cancelDay(tx, ctx, w, changes);
   else if (w.kind === "excluded") await excludeDays(tx, ctx, w, changes);
+  else if (w.kind === "repoint") await repoint(tx, ctx, w, changes);
   else await bringBack(tx, ctx, w.uid, w.keys, changes);
 }
 
@@ -455,6 +555,15 @@ async function writeObject(tx: Tx, ctx: ApplyContext, w: ObjectWrite, changes: C
   }
 }
 
+async function repoint(tx: Tx, ctx: ApplyContext, w: Repointed, changes: CalendarChange[]): Promise<void> {
+  for (const held of await lockedRows(tx, ctx, eq(calEvents.providerId, w.providerId))) {
+    if (held.id !== w.eventId) await removeRow(tx, ctx, held.id, changes);
+  }
+  await tx.update(calEvents).set({ providerId: w.providerId, uid: w.uid, versionTag: null, updatedAt: sql`now()` })
+    .where(and(eq(calEvents.id, w.eventId), eq(calEvents.accountId, ctx.key.accountId), eq(calEvents.calendarId, ctx.calendar.id)));
+  if (!changes.some((c) => c.id === w.eventId)) changes.push({ kind: "calendar_event", id: w.eventId, op: "update" });
+}
+
 /** The series' own row of a UID, under lock, or none. */
 async function seriesRow(tx: Tx, ctx: ApplyContext, uid: string) {
   const [series] = await lockedRows(tx, ctx, and(eq(calEvents.uid, uid), eq(calEvents.recurrenceId, "")));
@@ -558,10 +667,11 @@ export async function dropCandidates(
       old: sql<boolean>`bool_and(${calEvents.updatedAt} < ${at(startedAt)})`,
       touches,
     }).from(calEvents).where(mine).groupBy(calEvents.providerId);
-    // A write a person made that is still owed to the provider: its object stays until the write is through.
+    // A write a person made that is still owed to the provider: its object stays until the write is through. So does a
+    // new event the provider refused, which no reading names: it goes when the person lets the write go.
     const owed = await tx.selectDistinct({ providerId: calEvents.providerId }).from(calEvents)
       .innerJoin(calWrites, and(eq(calWrites.accountId, calEvents.accountId), eq(calWrites.eventId, calEvents.id)))
-      .where(and(mine, eq(calWrites.state, "pending")));
+      .where(and(mine, or(eq(calWrites.state, "pending"), and(eq(calWrites.state, "refused"), eq(calWrites.op, "create")))));
     const waiting = new Set(owed.map((r) => r.providerId));
     return rows.map((r) => ({ providerId: r.providerId, rows: Number(r.rows), old: r.old === true, owed: waiting.has(r.providerId), touches: r.touches === true }));
   });

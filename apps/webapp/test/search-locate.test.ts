@@ -228,7 +228,7 @@ describe("the arrival: the shell locates the row it navigated to", () => {
     // Four views find their own cursor this way to scroll it, and the `s` binding anchors the
     // screening popover on it. This is a fifth reader of an established contract, which is
     // what lets a view added later be located without being taught anything.
-    expect(shell).toMatch(/\.view \.row\[data-id="\$\{CSS\.escape\(located\)\}"\]/);
+    expect(shell).toMatch(/\.view :is\(\.row, \[role=option\]\)\[data-id="\$\{CSS\.escape\(located\)\}"\]/);
     expect(shell).toMatch(/scrollIntoView\(\{ block: "center" \}\)/);
     expect(shell).toMatch(/classList\.add\("is-located"\)/);
   });

@@ -13,10 +13,10 @@ import {
   MAX_PINNED_ADDRESSES, SsrfRefusal, assertPublicHostShape, assertPublicHttpUrl, canonicalHost, isBlockedAddress,
   isPrivateNetworkAddress, resolvePinUnchecked, type HostResolver, type PinnedRequestOptions, type PinnedResponse,
 } from "@trafficflow/core/net";
-import { MAX_URL_CHARS, MAX_VALIDATOR_CHARS, MIN_EXPLICIT_PORT } from "../limits.js";
+import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS, MIN_EXPLICIT_PORT } from "../limits.js";
 import type { ProviderRefusal } from "../refusals.js";
 import { readCapped } from "./capped-body.js";
-import type { HttpAnswer, HttpPort, HttpRequest } from "./index.js";
+import { sendableTag, type HttpAnswer, type HttpPort, type HttpRequest } from "./index.js";
 
 export type AddressPolicy = { readonly kind: "cloud" } | { readonly kind: "own-network" };
 
@@ -39,18 +39,25 @@ export interface GuardDeps {
   readonly limits: GuardLimits;
   /** A provider's fixed hosts: no other host is dialled. `null` for a host a person named. */
   readonly hosts: ReadonlySet<string> | null;
+  /**
+   * Whether this port may write (PUT, PATCH, DELETE). The worker's composition says yes; a program
+   * that only reads says no. No default: an absent word must not open the writing branch.
+   */
+  readonly writes: boolean;
 }
 
 const USER_AGENT = "ohmail-Calendar/2.0";
 const ADAPTER_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "depth", "prefer"]);
 const REDIRECTS: ReadonlySet<number> = new Set([301, 302, 303, 307, 308]);
+/** The methods that change something at the provider. Each needs a sign-in and a precondition, and none follows a redirect. */
+const WRITING: ReadonlySet<string> = new Set(["PUT", "PATCH", "DELETE"]);
 /** Names of a person's own network. The gate refuses them; the own-network policy admits these and no other name it refuses. */
 const OWN_NETWORK_SUFFIXES = [".local", ".localhost", ".home.arpa"];
 const PRINTABLE = /^[\x20-\x7e]*$/;
 const TOKEN = /^[\x21-\x7e]+$/;
 
 /** A socket's or a lookup's failure, by its code. Anything else is a fault of this program and is thrown on. */
-const TRANSPORT_CODES: ReadonlySet<string> = new Set([
+export const TRANSPORT_CODES: ReadonlySet<string> = new Set([
   "ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH",
   "ENETDOWN", "EPIPE", "EADDRNOTAVAIL", "EHOSTDOWN", "ERR_SOCKET_CONNECTION_TIMEOUT", "ERR_SOCKET_CLOSED", "ERR_STREAM_PREMATURE_CLOSE",
   // A handshake that is no TLS at all (a plain server on the port) fails as a protocol error of the socket.
@@ -60,9 +67,11 @@ const TRANSPORT_CODES: ReadonlySet<string> = new Set([
   "DEPTH_ZERO_SELF_SIGNED_CERT", "SELF_SIGNED_CERT_IN_CHAIN", "INVALID_CA", "INVALID_PURPOSE", "PATH_LENGTH_EXCEEDED", "HOSTNAME_MISMATCH",
   "OUT_OF_MEM", "UNSPECIFIED",
 ]);
+/** The families of such failures, each matched by the start of its code. */
+export const TRANSPORT_PREFIXES: readonly string[] = ["CERT_", "CRL_", "UNABLE_TO_", "ERROR_IN_", "ERR_TLS_", "ERR_SSL_", "ERR_OSSL_", "HPE_"];
 const isTransportFailure = (err: unknown): boolean => {
   const code = typeof err === "object" && err !== null ? (err as { code?: unknown }).code : undefined;
-  return typeof code === "string" && (TRANSPORT_CODES.has(code) || /^(CERT_|CRL_|UNABLE_TO_|ERROR_IN_|ERR_TLS_|ERR_SSL_|ERR_OSSL_|HPE_)/.test(code));
+  return typeof code === "string" && (TRANSPORT_CODES.has(code) || TRANSPORT_PREFIXES.some((prefix) => code.startsWith(prefix)));
 };
 
 function parse(text: string, against?: string): URL | null {
@@ -155,7 +164,31 @@ function headersFor(req: HttpRequest, body: Uint8Array | null, hop: number): Rec
   const usable = (text: string | null): text is string => text !== null && text !== "" && text.length <= MAX_VALIDATOR_CHARS && PRINTABLE.test(text);
   if (v !== null && usable(v.etag)) headers["if-none-match"] = v.etag;
   else if (v !== null && usable(v.lastModified)) headers["if-modified-since"] = v.lastModified;
+  // A write never follows a redirect, so its precondition is only ever the first hop's.
+  if (hop === 0 && req.precondition !== undefined) {
+    if (req.precondition.kind === "new") headers["if-none-match"] = "*";
+    else headers["if-match"] = req.precondition.tag;
+  }
   return headers;
+}
+
+/**
+ * A write as the port takes it, or a fault of the program that asked: the port must be one that
+ * writes, the write must carry a sign-in and a precondition that is an entity tag or "new", and no
+ * reading's validators; a precondition on any other method is a fault too. Asked before any lookup.
+ */
+function assertWriteShape(deps: GuardDeps, req: HttpRequest): boolean {
+  const writing = WRITING.has(req.method);
+  if (!writing) {
+    if (req.precondition !== undefined) throw new TypeError(`a calendar ${req.method} may not carry a precondition`);
+    return false;
+  }
+  if (!deps.writes) throw new TypeError("a calendar request port made for reading was asked to write");
+  if (req.auth === null) throw new TypeError("a calendar write carries no sign-in");
+  if (req.precondition === undefined) throw new TypeError("a calendar write carries no precondition");
+  if (req.validators !== null) throw new TypeError("a calendar write carries a reading's validators");
+  if (req.precondition.kind === "unchanged" && !sendableTag(req.precondition.tag)) throw new TypeError("a calendar write's version is no entity tag");
+  return true;
 }
 
 const headerOf = (res: PinnedResponse, name: string): string | null => {
@@ -167,8 +200,12 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
   for (const [name, value] of Object.entries(req.headers)) {
     if (!ADAPTER_HEADERS.has(name) || !PRINTABLE.test(value)) throw new TypeError(`a calendar request may not carry the header ${name} as given`);
   }
+  const writing = assertWriteShape(deps, req);
   const refused = (reason: ProviderRefusal): HttpAnswer => ({ arrived: false, reason });
   if (req.signal.aborted) return refused("timeout");
+  const body = req.body === null ? null : new TextEncoder().encode(req.body);
+  // A body nobody may send is refused before anyone is asked about the address.
+  if (body !== null && body.byteLength > FETCH_BODY_MAX_BYTES) return refused("too_large");
 
   // One signal for the whole call: the caller's, the whole call's clock and each hop's.
   const ac = new AbortController();
@@ -181,7 +218,6 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
     if (isTransportFailure(err)) return "connection_failed";
     throw err;
   };
-  const body = req.body === null ? null : new TextEncoder().encode(req.body);
 
   try {
     let current = first;
@@ -208,8 +244,8 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
         if ("refused" in cleared) return refused(cleared.refused);
         const headers = headersFor(req, body, hop);
         if (headers === null) return refused("sign_in_refused");
-        // The wait is this call's, not the request's: a connection can end with neither an answer nor an error
-        // (a server that answers with a change of protocol), and such a request never settles and hears no signal.
+        // The wait is this call's, not the request's: the call ends at its own bound even with a request that never
+        // settles. The product's pinned request settles on every path; the bound does not lean on that.
         const asking = deps.request(url.href, { method: req.method, headers, body: body ?? undefined, pin: cleared.pin, signal: ac.signal });
         const answered = await unlessAborted(asking, ac.signal);
         if (answered === "late") {
@@ -232,8 +268,9 @@ async function run(deps: GuardDeps, first: string, req: HttpRequest): Promise<Ht
       }
 
       // The same request goes to the new address, method and body as they were: a calendar server's
-      // well-known address answers a PROPFIND with a redirect, and means that PROPFIND.
-      if (deps.limits.maxRedirects > 0 && REDIRECTS.has(res.status)) {
+      // well-known address answers a PROPFIND with a redirect, and means that PROPFIND. A write never
+      // goes on: its 3xx is the answer, so a server cannot send a change or a removal to another path.
+      if (deps.limits.maxRedirects > 0 && REDIRECTS.has(res.status) && !writing) {
         res.stream.destroy();
         const location = headerOf(res, "location");
         if (location === null) return refused("redirect_invalid");

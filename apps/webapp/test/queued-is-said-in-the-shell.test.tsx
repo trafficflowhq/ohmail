@@ -145,7 +145,7 @@ const said = (needle: string): boolean =>
 
 async function cursorOnFirstRow(): Promise<string> {
   await key("j");
-  const id = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")?.dataset.id;
+  const id = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")?.dataset.id;
   expect(id, "`j` put the cursor on no row").toBeTruthy();
   return id!;
 }
@@ -185,7 +185,7 @@ describe("a set: the sentence counts the whole press", () => {
     await cursorOnFirstRow();
     await key("ArrowDown", { shiftKey: true });
     await waitFor(
-      () => host!.querySelectorAll(".view-ohbox .row.picked, .view-ohbox .row[aria-selected='true']").length > 0,
+      () => host!.querySelectorAll(".view-ohbox :is(.row.picked, [role=option][data-picked]), .view-ohbox :is(.row, [role=option])[aria-selected='true']").length > 0,
       "nothing was picked",
     );
     recording = true;
@@ -203,7 +203,7 @@ describe("a set: the sentence counts the whole press", () => {
     await cursorOnFirstRow();
     await key("ArrowDown", { shiftKey: true });
     await waitFor(
-      () => host!.querySelectorAll(".view-ohbox .row.picked, .view-ohbox .row[aria-selected='true']").length > 0,
+      () => host!.querySelectorAll(".view-ohbox :is(.row.picked, [role=option][data-picked]), .view-ohbox :is(.row, [role=option])[aria-selected='true']").length > 0,
       "nothing was picked",
     );
     sent = [];

@@ -424,7 +424,7 @@ describe("a web tab's mount and its return, on the wire", () => {
       latencyOf = (p) => (SCREENER_READS.includes(p) ? SLOW_SCREENER_MS : LATENCY);
     });
     const rowOf = (): HTMLElement | null =>
-      (newId === "" ? null : document.querySelector<HTMLElement>(`.row[data-id="${newId}"]`));
+      (newId === "" ? null : document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${newId}"]`));
     expect(await until(() => rowOf() !== null, back, 5_000), "the premise: the new letter is on screen").toBeGreaterThanOrEqual(0);
     // The drain settled and the eager pass asked the new letter's body: a background read.
     await shell.tick(100);

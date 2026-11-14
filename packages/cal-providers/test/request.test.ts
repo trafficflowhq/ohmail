@@ -11,10 +11,12 @@ import { createServer as createRawServer, type AddressInfo, type Socket } from "
 import { Readable } from "node:stream";
 import { pinnedHttpRequest, type HostResolver, type PinnedRequestOptions, type PinnedResponse } from "@trafficflow/core/net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS } from "../src/limits.js";
+import { FETCH_BODY_MAX_BYTES, MAX_URL_CHARS, MAX_VALIDATOR_CHARS } from "../src/limits.js";
 import type { ProviderRefusal } from "../src/refusals.js";
 import { guardedRequest, type GuardDeps } from "../src/request/guarded.js";
-import { fixedHostRequest, namedHostRequest, retryAfterMs, textOf, type HttpAnswer, type HttpPort, type HttpRequest, type HttpResponse } from "../src/request/index.js";
+import {
+  fixedHostRequest, namedHostRequest, retryAfterMs, sendableTag, textOf, type HttpAnswer, type HttpPort, type HttpRequest, type HttpResponse,
+} from "../src/request/index.js";
 
 // A public address outside every range the gate refuses. It is only ever handed to a stand-in.
 const PUBLIC = "203.0.114.1";
@@ -50,7 +52,7 @@ function standIn(answer: { status?: number; headers?: Record<string, string>; bo
 function guard(policy: GuardDeps["policy"], table: Record<string, string[] | Error> = {}, hosts: GuardDeps["hosts"] = null) {
   const { resolver, asked } = resolverOf(table);
   const { request, calls } = standIn();
-  return { port: guardedRequest({ resolver, request, policy, limits: LIMITS, hosts }), asked, calls };
+  return { port: guardedRequest({ writes: false, resolver, request, policy, limits: LIMITS, hosts }), asked, calls };
 }
 
 // Written from the rules of what the server may fetch, never from the gate's code. An address with a
@@ -172,7 +174,7 @@ describe("a person's own computer or server may reach the person's own network, 
     const table: Record<string, string[]> = { "nas.example.test": ["192.168.1.20"] };
     const { resolver, asked } = resolverOf(table);
     const { request, calls } = standIn();
-    const port = guardedRequest({ resolver, request, policy: { kind: "own-network" }, limits: LIMITS, hosts: null });
+    const port = guardedRequest({ writes: false, resolver, request, policy: { kind: "own-network" }, limits: LIMITS, hosts: null });
     expect(wordOf(await port.request("http://nas.example.test:5232/mila/", get()))).toBe("arrived");
     table["nas.example.test"] = ["192.168.1.20", PUBLIC];
     expect(wordOf(await port.request("http://nas.example.test:5232/mila/", get()))).toBe("address_not_allowed");
@@ -193,7 +195,7 @@ describe("a redirect is a second address nobody has cleared yet", () => {
       if (to === undefined) return { status: 200, headers: {}, stream };
       return { status: 302, headers: to === null ? {} : { location: to }, stream };
     };
-    return { port: guardedRequest({ resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null }), asked, calls };
+    return { port: guardedRequest({ writes: false, resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null }), asked, calls };
   }
   const NAMES = { "a.example.test": [PUBLIC], "b.example.test": [PUBLIC], "inside.example.test": ["10.0.0.1"] };
 
@@ -260,7 +262,7 @@ describe("a credential travels only where it is admitted", () => {
       const stream = Readable.from([Buffer.from("ok")]) as unknown as IncomingMessage;
       return calls.length === 1 && redirectTo !== null ? { status: 301, headers: { location: redirectTo }, stream } : { status: 207, headers: {}, stream };
     };
-    return { port: guardedRequest({ resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null }), calls };
+    return { port: guardedRequest({ writes: false, resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null }), calls };
   }
   const propfind = get({ method: "PROPFIND", headers: { depth: "0", "content-type": "application/xml; charset=utf-8" }, body: "<propfind/>", auth });
   const line = `Basic ${Buffer.from(`mila:${PASSWORD}`, "utf8").toString("base64")}`;
@@ -296,7 +298,7 @@ describe("a credential travels only where it is admitted", () => {
   it("is not sent without TLS where the sign-in is for TLS alone: a plain address is refused before anyone is asked", async () => {
     const { resolver, asked } = resolverOf({ "caldav.example.test": ["192.168.1.20"] });
     const { request, calls } = standIn();
-    const port = guardedRequest({ resolver, request, policy: { kind: "own-network" }, limits: LIMITS, hosts: null });
+    const port = guardedRequest({ writes: false, resolver, request, policy: { kind: "own-network" }, limits: LIMITS, hosts: null });
     const plain = "http://caldav.example.test:8008/principals/mila/";
     expect(wordOf(await port.request(plain, get({ auth: { ...auth, tlsOnly: true } })))).toBe("address_not_allowed");
     expect([asked, calls.length]).toEqual([[], 0]);
@@ -323,10 +325,119 @@ describe("a credential travels only where it is admitted", () => {
   it("keeps nothing between two calls: each asks the resolver and dials on its own", async () => {
     const { resolver, asked } = resolverOf(NAMES);
     const { request, calls } = standIn();
-    const port = guardedRequest({ resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null });
+    const port = guardedRequest({ writes: false, resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null });
     await port.request("https://caldav.example.test/", propfind);
     await port.request("https://caldav.example.test/", get());
     expect([asked.length, calls.length, calls[1]!.opts.headers?.authorization]).toEqual([2, 2, undefined]);
+  });
+});
+
+describe("a write leaves only as the port allows it", () => {
+  const NAMES = { "caldav.example.test": [PUBLIC], "other.example.test": [PUBLIC] };
+  const PASSWORD = ["wheel", "trim", "glaze"].join("-");
+  const auth = { credential: { kind: "basic" as const, user: "mila", password: () => PASSWORD }, admits: (host: string) => host === "caldav.example.test", tlsOnly: true };
+  const MEMBER = "https://caldav.example.test/calendars/mila/studio/one.ics";
+  const TAG = '"6e1a-17"';
+  const put = (over: Partial<HttpRequest> = {}): HttpRequest =>
+    get({ method: "PUT", headers: { "content-type": "text/calendar; charset=utf-8" }, body: "BEGIN:VCALENDAR", auth, precondition: { kind: "unchanged", tag: TAG }, ...over });
+
+  /** A port over stand-ins: `writes` as the composition says, a first answer of `status` (with `location` for a 3xx), then 200. */
+  function port(o: { writes: boolean; status?: number; location?: string; policy?: GuardDeps["policy"]; table?: Record<string, string[]> } = { writes: true }) {
+    const { resolver, asked } = resolverOf(o.table ?? NAMES);
+    const calls: { url: string; method: string | undefined; headers: Record<string, string>; body: unknown }[] = [];
+    const request = async (url: string, opts: PinnedRequestOptions): Promise<PinnedResponse> => {
+      calls.push({ url, method: opts.method, headers: opts.headers ?? {}, body: opts.body });
+      const stream = Readable.from([Buffer.from("")]) as unknown as IncomingMessage;
+      const first = calls.length === 1 && o.status !== undefined;
+      return { status: first ? o.status! : 200, headers: first && o.location !== undefined ? { location: o.location } : {}, stream };
+    };
+    return { port: guardedRequest({ resolver, request, policy: o.policy ?? { kind: "cloud" }, limits: LIMITS, hosts: null, writes: o.writes }), asked, calls };
+  }
+
+  it("writes its precondition itself, If-Match for a change and If-None-Match for a new object, and no other line of its own", async () => {
+    const change = port();
+    expect(wordOf(await change.port.request(MEMBER, put()))).toBe("arrived");
+    expect(change.calls[0]!.method).toBe("PUT");
+    expect(change.calls[0]!.headers["if-match"]).toBe(TAG);
+    expect(Object.keys(change.calls[0]!.headers).sort()).toEqual(["accept", "accept-encoding", "authorization", "content-length", "content-type", "if-match", "user-agent"]);
+    const made = port();
+    await made.port.request(MEMBER, put({ precondition: { kind: "new" } }));
+    expect([made.calls[0]!.headers["if-none-match"], made.calls[0]!.headers["if-match"]]).toEqual(["*", undefined]);
+    const weak = port();
+    await weak.port.request(MEMBER, put({ method: "DELETE", body: null, headers: {}, precondition: { kind: "unchanged", tag: 'W/"AAAA3x"' } }));
+    expect([weak.calls[0]!.method, weak.calls[0]!.headers["if-match"]]).toEqual(["DELETE", 'W/"AAAA3x"']);
+  });
+
+  it("refuses a write without a precondition, with a reading's validators, under a version that is no tag, and a precondition on any other method, before anyone is asked", async () => {
+    const faults: HttpRequest[] = [
+      put({ precondition: undefined }),
+      put({ method: "DELETE", body: null, precondition: undefined }),
+      put({ method: "PATCH", precondition: undefined }),
+      put({ validators: { etag: TAG, lastModified: null } }),
+      put({ precondition: { kind: "unchanged", tag: "*" } }),
+      put({ precondition: { kind: "unchanged", tag: "6e1a-17" } }),
+      put({ precondition: { kind: "unchanged", tag: "2026-11-13T09:00:00.000Z" } }),
+      put({ precondition: { kind: "unchanged", tag: '"a\r\nx-injected: 1"' } }),
+      put({ precondition: { kind: "unchanged", tag: `"${"a".repeat(5_000)}"` } }),
+      put({ precondition: { kind: "unchanged", tag: "" } }),
+      get({ precondition: { kind: "new" } }),
+      get({ method: "POST", body: "{}", precondition: { kind: "unchanged", tag: TAG } }),
+      get({ method: "PROPFIND", precondition: { kind: "unchanged", tag: TAG } }),
+    ];
+    for (const req of faults) {
+      const { port: p, asked, calls } = port();
+      await expect(p.request(MEMBER, req), `${req.method} ${JSON.stringify(req.precondition)?.slice(0, 40)}`).rejects.toThrow(TypeError);
+      expect([asked, calls.length]).toEqual([[], 0]);
+    }
+  });
+
+  it("refuses the three writing methods on a port made for reading, and without a sign-in, where a reading's methods still pass", async () => {
+    for (const method of ["PUT", "PATCH", "DELETE"] as const) {
+      const reading = port({ writes: false });
+      await expect(reading.port.request(MEMBER, put({ method }))).rejects.toThrow(TypeError);
+      const anonymous = port();
+      await expect(anonymous.port.request(MEMBER, put({ method, auth: null }))).rejects.toThrow(TypeError);
+      expect([reading.calls.length, anonymous.calls.length]).toEqual([0, 0]);
+    }
+    const reading = port({ writes: false });
+    expect(wordOf(await reading.port.request(MEMBER, get({ method: "PROPFIND", auth })))).toBe("arrived");
+  });
+
+  it("follows no redirect for a write: the 3xx is the answer, one request in all, and nothing reaches the address it names", async () => {
+    for (const status of [301, 302, 303, 307, 308]) {
+      const { port: p, calls } = port({ writes: true, status, location: "https://other.example.test/calendars/mila/studio/one.ics" });
+      const answer = await p.request(MEMBER, put());
+      expect([status, answer.arrived && answer.status, answer.arrived && answer.location]).toEqual([status, status, "https://other.example.test/calendars/mila/studio/one.ics"]);
+      expect(calls.map((c) => c.url)).toEqual([MEMBER]);
+    }
+    // A reading through the same kind of port still follows its redirect, through the gate again.
+    const reading = port({ writes: true, status: 301, location: "https://caldav.example.test/calendars/mila/" });
+    expect(wordOf(await reading.port.request(MEMBER, get({ method: "PROPFIND", auth })))).toBe("arrived");
+    expect(reading.calls.length).toBe(2);
+  });
+
+  it("refuses a plain address under a sign-in for TLS, and a host the sign-in may not travel to, before any lookup and with nothing handed on", async () => {
+    const plain = port({ writes: true, policy: { kind: "own-network" }, table: { "caldav.example.test": ["192.168.1.20"] } });
+    expect(wordOf(await plain.port.request("http://caldav.example.test:8008/calendars/mila/studio/one.ics", put()))).toBe("address_not_allowed");
+    const elsewhere = port();
+    expect(wordOf(await elsewhere.port.request("https://other.example.test/calendars/mila/studio/one.ics", put()))).toBe("host_changed");
+    expect([plain.asked, plain.calls.length, elsewhere.asked, elsewhere.calls.length]).toEqual([[], 0, [], 0]);
+  });
+
+  it("refuses a body past the ceiling before any lookup", async () => {
+    const { port: p, asked, calls } = port();
+    expect(wordOf(await p.request(MEMBER, put({ body: "x".repeat(FETCH_BODY_MAX_BYTES + 1) })))).toBe("too_large");
+    expect([asked, calls.length]).toEqual([[], 0]);
+  });
+
+  it("calls a version sendable only where it is an entity tag as the standard writes one, and not too long", () => {
+    const rows: [string, boolean][] = [
+      ['"6e1a-17"', true], ['W/"6e1a-17"', true], ['""', true], ['"3181159475812000"', true],
+      ["*", false], ["6e1a-17", false], ['W/6e1a', false], ['"a"b"', false], ['"a b"', false], ['"é"', false],
+      ['"a\u0000"', false], ['"x"\r\n', false], ["", false], [`"${"a".repeat(MAX_VALIDATOR_CHARS - 2)}"`, true],
+      [`"${"a".repeat(MAX_VALIDATOR_CHARS - 1)}"`, false], ["2026-11-13T09:00:00.000Z", false],
+    ];
+    expect(rows.map(([tag]) => [tag.slice(0, 24), sendableTag(tag)])).toEqual(rows.map(([tag, ok]) => [tag.slice(0, 24), ok]));
   });
 });
 
@@ -340,7 +451,7 @@ describe("the call's own bounds end every wait, whatever the connection does", (
     return { stream: stream as unknown as IncomingMessage, ended: () => ended };
   }
   const over = (request: GuardDeps["request"], limits: Partial<GuardDeps["limits"]>) =>
-    guardedRequest({ resolver: resolverOf(NAMES).resolver, request, policy: { kind: "cloud" }, limits: { ...LIMITS, ...limits }, hosts: null });
+    guardedRequest({ writes: false, resolver: resolverOf(NAMES).resolver, request, policy: { kind: "cloud" }, limits: { ...LIMITS, ...limits }, hosts: null });
 
   it("ends as a timeout when a request neither answers nor fails: at the head's bound, and at the caller's word", { timeout: 4_000 }, async () => {
     // A request that settles never and hears no signal: what a connection ended without an answer and without an error is.
@@ -413,7 +524,7 @@ describe("a certificate the platform does not accept", () => {
   const failing = (code: string) => {
     const { resolver } = resolverOf({ "feeds.example.test": [PUBLIC] });
     const request: GuardDeps["request"] = () => Promise.reject(Object.assign(new Error("the handshake failed"), { code }));
-    return guardedRequest({ resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null });
+    return guardedRequest({ writes: false, resolver, request, policy: { kind: "cloud" }, limits: LIMITS, hosts: null });
   };
 
   it("is a connection that failed, whatever is wrong with it, and never a throw", async () => {
@@ -465,7 +576,7 @@ afterAll(() => {
 
 const NOBODY: HostResolver = { resolve: async () => [] };
 const real = (limits: Partial<GuardDeps["limits"]> = {}, policy: GuardDeps["policy"] = { kind: "own-network" }) =>
-  guardedRequest({ resolver: NOBODY, request: pinnedHttpRequest, policy, limits: { ...LIMITS, ...limits }, hosts: null });
+  guardedRequest({ writes: false, resolver: NOBODY, request: pinnedHttpRequest, policy, limits: { ...LIMITS, ...limits }, hosts: null });
 const serve = (h: Handler): void => {
   handler = h;
   seen.length = 0;
@@ -479,7 +590,7 @@ describe("on a real connection", () => {
       else if (req.url === "/b") res.writeHead(302, { location: `${base}/c` }).end();
       else res.writeHead(200, { "content-type": "text/calendar", etag: '"v1"' }).end("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n");
     });
-    const answer = await namedHostRequest({ resolver: NOBODY, policy: { kind: "own-network" } }).request(`${base}/a`, get());
+    const answer = await namedHostRequest({ writes: false, resolver: NOBODY, policy: { kind: "own-network" } }).request(`${base}/a`, get());
     expect(answer.arrived && [answer.status, answer.hops, answer.url, answer.header("ETag"), answer.header("x-absent"), textOf(answer.body)]).toEqual([200, 2, `${base}/c`, '"v1"', null, "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"]);
     expect([seen.map((s) => s.url), connections]).toEqual([["/a", "/b", "/c"], 3]);
     expect(Object.keys(seen[0]!.headers).sort()).toEqual(["accept", "accept-encoding", "connection", "host", "user-agent"]);
@@ -487,13 +598,13 @@ describe("on a real connection", () => {
 
   it("opens no socket for the same address on a hosted server", async () => {
     serve((_req, res) => res.end("never"));
-    const answer = await namedHostRequest({ resolver: NOBODY, policy: { kind: "cloud" } }).request(`${base}/a`, get());
+    const answer = await namedHostRequest({ writes: false, resolver: NOBODY, policy: { kind: "cloud" } }).request(`${base}/a`, get());
     expect([wordOf(answer), connections]).toEqual(["address_not_allowed", 0]);
   });
 
   it("hands a redirect back as it is where a provider's hosts are fixed, and follows nothing", async () => {
     serve((_req, res) => res.writeHead(302, { location: "https://elsewhere.example.test/" }).end());
-    const answer = await fixedHostRequest(new Set(["127.0.0.1"]), { resolver: NOBODY, policy: { kind: "own-network" } }).request(`${base}/v1.0/me/calendars`, get());
+    const answer = await fixedHostRequest(new Set(["127.0.0.1"]), { writes: false, resolver: NOBODY, policy: { kind: "own-network" } }).request(`${base}/v1.0/me/calendars`, get());
     expect(answer.arrived && [answer.status, answer.location, answer.hops]).toEqual([302, "https://elsewhere.example.test/", 0]);
     expect(seen.length).toBe(1);
   });
@@ -614,8 +725,8 @@ describe("the socket goes where the gate's lookup said, not where the name leads
   }
   const PAIRS: readonly (readonly [string, string])[] = [["127.0.0.1", "127.0.0.2"], ["127.0.0.1", "::1"]];
   const MAKERS: [string, (resolver: HostResolver) => HttpPort][] = [
-    ["a host a person named", (resolver) => namedHostRequest({ resolver, policy: { kind: "own-network" } })],
-    ["a provider's fixed hosts", (resolver) => fixedHostRequest(new Set(["localhost"]), { resolver, policy: { kind: "own-network" } })],
+    ["a host a person named", (resolver) => namedHostRequest({ writes: false, resolver, policy: { kind: "own-network" } })],
+    ["a provider's fixed hosts", (resolver) => fixedHostRequest(new Set(["localhost"]), { writes: false, resolver, policy: { kind: "own-network" } })],
   ];
 
   for (const [name, make] of MAKERS) {
@@ -631,17 +742,17 @@ describe("the socket goes where the gate's lookup said, not where the name leads
         }
       }
       if (pair === undefined) return ctx.skip();
+      // One port for both rows, one after the other: no connection the first row's request left carries the second's.
+      const servers = await onOnePort(...pair);
+      if (servers === null) throw new Error("the two addresses were free a moment ago");
       const reached: [string, string | false][] = [];
-      for (const pinned of pair) {
-        // Servers and a port of the row's own: the platform keeps a connection by name, and would answer from it.
-        const servers = await onOnePort(...pair);
-        if (servers === null) throw new Error("the two addresses were free a moment ago");
-        try {
+      try {
+        for (const pinned of pair) {
           const answer = await make({ resolve: async () => [pinned] }).request(`http://localhost:${servers.port}/`, get());
           reached.push([pinned, answer.arrived && textOf(answer.body)]);
-        } finally {
-          servers.close();
         }
+      } finally {
+        servers.close();
       }
       expect(reached).toEqual(pair.map((address) => [address, address]));
     });

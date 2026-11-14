@@ -166,10 +166,16 @@
     column-gap: var(--oh-page-pad);
   }
 
-  /* The unfolded phone held upright: a page that stacks takes the whole width, its material under the buttons, and scrolls as one. */
+  /*
+   * The unfolded phone held upright: a page that stacks takes the whole width, its material under the buttons, and
+   * scrolls as one. A page of two columns whose sentence column is taller than its window folds to the same column
+   * (the part says `data-folded`), at its own lead.
+   */
   :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] {
     --oh-page-lead: 96px;
   }
+  :root[data-device="desktop"] .oh-page[data-columns="2"][data-folded] > .oh-page-body,
+  :root[data-device="fold"] .oh-page[data-columns="2"][data-folded] > .oh-page-body,
   :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] > .oh-page-body {
     --oh-page-body-pad: 0 var(--oh-page-pad) var(--s7);
     --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto auto;
@@ -177,6 +183,8 @@
     grid-template-columns: minmax(0, 1fr);
     overflow: hidden auto;
   }
+  :root[data-device="desktop"] .oh-page[data-columns="2"][data-folded] .oh-page-material,
+  :root[data-device="fold"] .oh-page[data-columns="2"][data-folded] .oh-page-material,
   :root[data-device="fold"]:not([data-pose="land"]) .oh-page[data-stack] .oh-page-material {
     --oh-page-material-pad: 0;
     min-height: auto;

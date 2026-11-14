@@ -171,6 +171,11 @@ const ALIASES: Record<string, string> = {
   "@trafficflow/services/calendar": r("packages/services/src/calendar/index.ts"),
   "@ohmail/cal-core": r("packages/cal-core/src/index.ts"),
   "@ohmail/cal-core/recur/span": r("packages/cal-core/src/recur/span.ts"),
+  // The calendar's write door reads a repeat's grammar, a zone and a stored time through these.
+  "@ohmail/cal-core/recur/rrule": r("packages/cal-core/src/recur/rrule.ts"),
+  "@ohmail/cal-core/stored/event-range": r("packages/cal-core/src/stored/event-range.ts"),
+  "@ohmail/cal-core/stored/time": r("packages/cal-core/src/stored/time.ts"),
+  "@ohmail/cal-core/time/zones": r("packages/cal-core/src/time/zones.ts"),
   /* The dialect seam, reached from `engine.ts` — which names the store this install actually
      opened, so `/health` can say `sqlite` or `pglite` instead of null. A new workspace edge is an
      unresolved edge until it is listed here, and this census failed naming it, which is the

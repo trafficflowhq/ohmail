@@ -164,6 +164,15 @@
     left: var(--s2);
     transform-origin: 50% 100%;
   }
+  /* One column from 600 wide (an open Duo held upright): the sheet keeps a phone's measure in the middle of the foot. */
+  @media (min-width: 600px) {
+    :root[data-device="phone"] .oh-menu:not([data-anchored]),
+    :root[data-device="phone"] .oh-menu[data-sheet] {
+      --oh-menu-sheet-measure: 460px;
+      right: max(var(--s2), calc(50% - var(--oh-menu-sheet-measure) / 2));
+      left: max(var(--s2), calc(50% - var(--oh-menu-sheet-measure) / 2));
+    }
+  }
   :root[data-device="phone"] .oh-menu-item {
     min-height: var(--h-l);
   }

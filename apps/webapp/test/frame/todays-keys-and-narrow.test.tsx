@@ -18,8 +18,9 @@ describe("today's keys and the frame's rail", () => {
     it(`${what} from a row steps into the rail`, async () => {
       const store = await storeWith([msg("m1")]);
       const el = await shell(store, engineOver(store));
-      await waitFor(() => el.querySelector(".row[data-id='m1']") != null, "the row");
-      const row = el.querySelector<HTMLElement>(".row[data-id='m1']")!;
+      /* A row of the Ohbox: an option of its listbox (today's views keep `.row`). */
+      await waitFor(() => el.querySelector(":is(.row, [role=option])[data-id='m1']") != null, "the row");
+      const row = el.querySelector<HTMLElement>(":is(.row, [role=option])[data-id='m1']")!;
       await act(async () => { row.focus(); });
       expect(inRail()).toBe(false);
       await act(async () => { fireEvent.keyDown(document.activeElement ?? document.body, init); });

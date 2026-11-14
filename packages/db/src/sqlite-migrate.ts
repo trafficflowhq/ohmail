@@ -16,6 +16,11 @@ import { sql } from "drizzle-orm";
    the barrel threw while the artifact was still initialising. The journal is a data module and
    reaches nothing. */
 import { SQLITE_JOURNAL, type SqliteJournalEntry } from "@ohmail/db-mail/sqlite-journal";
+
+/** The device journal an open applies when it is handed none: what a phone reads its 2.0 line from. */
+export { SQLITE_JOURNAL };
+/** Whether an open owes the 2.0 line's first entry: the phone's composition reaches it on this door. */
+export { owesFirstOfLine } from "./journal-heads.js";
 import { assertSqliteCapabilities } from "./dialect/index.js";
 
 /**

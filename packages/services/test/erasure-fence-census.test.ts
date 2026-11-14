@@ -324,21 +324,34 @@ function sameBlock(from: readonly number[], to: readonly number[]): boolean {
  *
  * A `{` belongs to the type while angle brackets are open, or where the previous non-space
  * character still demands one; anything else opens the body. `;` or `=` first means there is no
- * body at all — an overload signature, or a property.
+ * body at all — an overload signature, or a property. So does the END OF THE STATEMENT written
+ * without a semicolon: the method arm takes any line that starts with a name and `(`, a call or an
+ * interface's member too, and a scan that ran on through its `}` or `)` took the next class's or
+ * namespace's brace for its body. A closer nothing in the scan opened, or a declaration word,
+ * ends it; a type's own brackets are passed over whole, so their closers are never met.
+ *
+ * ITS ONE CONTRACT: `from` is the first character AFTER the argument list's closing paren. Asked
+ * from the paren itself, the scan meets a closer it did not open and finds no body.
  */
 function bodyBrace(src: string, from: number): number {
   let angle = 0;
-  let prev = "";
+  let prev = ")";   // as if the paren were just read: a `{` met first is the body, never a type
   for (let i = from; i < src.length; i++) {
     const c = src[i]!;
     if (/\s/.test(c)) continue;
     if (c === "<") { angle++; prev = c; continue; }
     if (c === ">") { if (angle > 0) angle--; prev = c; continue; }
     if (c === ";" || c === "=") return -1;
+    if (c === "}" || c === ")") return -1;   // closes what the statement's line was inside: it has ended
+    if (c === "(") { const [, end] = span(src, i); i = end; prev = ")"; continue; }   // `(A | B)`: one type
+    if (/[A-Za-z]/.test(c) && !/[\w$.]/.test(src[i - 1] ?? "")
+        && /^(?:class|namespace|module|interface|enum|function|export)(?![\w$.])/.test(src.slice(i, i + 10))) {
+      return -1;   // a new declaration begins: a return type never holds one
+    }
     if (c === "{") {
       if (angle === 0 && !":<,|&(".includes(prev)) return i;
       const [, end] = span(src, i, "{", "}");
-      i = end - 1;
+      i = end;   // past the type's own `}`, which would otherwise end the scan as a closer
       prev = "}";
       continue;
     }
@@ -955,6 +968,90 @@ describe("the erasure fence census", () => {
       .map((d) => `${d.table} ${d.cls}`))
       .toEqual(["snippets c-unfenced"]);
 
+    /* NO RETURN TYPE AT ALL — the other side of the same scan. It starts just past the argument
+       list, and a `{` met there first is the body: read as a type, the body was skipped and the
+       scan ran on to the next brace it would take. Driven both ways again: a fenced door with no
+       return type reads fenced, and a helper with none, followed by a class, does not hand the
+       class's body over as "a body" — where a fence in one method fenced a write in the next. */
+    const untypedReturn = `
+      import { snippets, fenceErased } from "@trafficflow/db";
+      export async function untypedDoor(tx: Tx, accountId: string) {
+        await fenceErased(tx, dialect(tx), { accountId });
+        await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+      }
+    `;
+    expect(classify(PLANTED, untypedReturn)
+      .map((d) => `${d.table} ${d.cls}`))
+      .toEqual(["snippets a-fenced"]);
+
+    const untypedThenClass = `
+      import { snippets, fenceErased } from "@trafficflow/db";
+      export function helper(n: number) {
+        return n + 1;
+      }
+      export class Svc {
+        async check(tx: Tx, accountId: string) {
+          await fenceErased(tx, dialect(tx), { accountId });
+        }
+        async write(tx: Tx, accountId: string) {
+          await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+        }
+      }
+    `;
+    expect(classify(PLANTED, untypedThenClass)
+      .map((d) => `${d.table} ${d.cls}`))
+      .toEqual(["snippets c-unfenced"]);
+
+    /* A STATEMENT THAT ENDS WITHOUT A SEMICOLON — the same scan, one step on. The method arm
+       takes any line that starts with a name and `(`, so a call on its own line, an interface's
+       member, an arrow's body on the next line and a parenthesised return reach the scan too. It
+       stopped only at `;` or `=`, ran through the statement's own `}` or `)` to the next class's
+       or namespace's brace, and that body became "a body": the fence in one method fenced the
+       insert in a later one. Nothing in the repository enforces semicolons. */
+    const laterClass = `
+      export class Svc {
+        async check(tx: Tx, accountId: string) {
+          await fenceErased(tx, dialect(tx), { accountId });
+        }
+        async write(tx: Tx, accountId: string) {
+          await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+        }
+      }
+    `;
+    const laterNamespace = `
+      export namespace Svc {
+        export async function check(tx: Tx, accountId: string) {
+          await fenceErased(tx, dialect(tx), { accountId });
+        }
+        export async function write(tx: Tx, accountId: string) {
+          await tx.insert(snippets).values({ accountId, title: "t", body: "b" });
+        }
+      }
+    `;
+    const noSemicolon: Record<string, string> = {
+      "a call": `
+      register(1)${laterClass}`,
+      "a call, then a namespace": `
+      register(1)${laterNamespace}`,
+      "an interface's member": `
+      interface Q {
+        foo(a: number): void
+      }${laterClass}`,
+      "an arrow's body on the next line": `
+      export const h = (n: number) =>
+        wrap(n)${laterClass}`,
+      "a return in parentheses": `
+      export function h(n: number): number {
+        return (
+          wrap(n)
+        )
+      }${laterClass}`,
+    };
+    expect(Object.entries(noSemicolon).flatMap(([what, before]) =>
+      classify(PLANTED, `import { snippets, fenceErased } from "@trafficflow/db";${before}`)
+        .map((d) => `${what}: ${d.table} ${d.cls}`)))
+      .toEqual(Object.keys(noSemicolon).map((what) => `${what}: snippets c-unfenced`));
+
     // An ALIASED planted insert, which is the hole this census carried until now.
     const aliased = `
       import { snippets as snip } from "@trafficflow/db";
@@ -1318,10 +1415,10 @@ describe("the erasure fence census", () => {
         .map(([i, m]) => span(src, i + m[0].length - 1));
       const decls = hits(src, String.raw`(?:^|\n)[ \t]*(export\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(`)
         .map(([d, m]) => {
-          // From the closing paren itself: past it, a `{` with nothing between is the body, which
-          // `bodyBrace` reads as a type when it starts on that `{` with no previous character.
+          // From the first character past the closing paren, as `bodies()` asks: a `{` met first
+          // there is the body.
           const [, argEnd] = span(src, src.indexOf("(", d + m[0].length - 1));
-          const brace = bodyBrace(src, argEnd);
+          const brace = bodyBrace(src, argEnd + 1);
           return { name: m[2]!, exported: Boolean(m[1]), head: d, body: brace === -1 ? null : span(src, brace, "{", "}") };
         })
         .flatMap((d) => d.body === null ? [] : [{ ...d, body: d.body }]);

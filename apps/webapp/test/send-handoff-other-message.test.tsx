@@ -53,8 +53,8 @@ async function writeToKim(s: DraftShell): Promise<void> {
     await act(async () => { node?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
   };
   await navigate("#/ohbox");
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row m1");
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row m1");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row m1");
   const kim = (): Element | undefined => [...s.el.querySelectorAll(".rcpt-chip")].find((c) => (c.textContent ?? "").includes("Kim"));
   await waitFor(() => kim() !== undefined, "Kim's chip");
   await click(kim());

@@ -43,8 +43,8 @@ async function key(k: string): Promise<void> {
 }
 
 async function openReplyOn(s: DraftShell, id: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "the row");
+  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
 }
@@ -733,7 +733,7 @@ describe("two windows over one disk: a waiting send cancelled in the window that
     sendMakesItsRow(A, server);
     if (fwd) await fillForward(A, "colleague@example.net", BODY);
     else {
-      await press(A.el.querySelector(".view-ohbox .row[data-id='m1']"), "A's row");
+      await press(A.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "A's row");
       await press(A.el.querySelector(".read-col .abar-reply"), "A's Reply");
       await waitFor(() => replySurface(A.el) != null, "A's reply editor");
       await act(async () => { typeInto(replySurface(A.el)!, BODY); });
@@ -745,7 +745,7 @@ describe("two windows over one disk: a waiting send cancelled in the window that
       .some((e) => e.entity.key === sendKey && e.entity.createdRow !== undefined), "B reads A's send and its row off the disk", PAUSE_ROUNDS);
     if (fwd) await openForward(B);
     else {
-      await press(B.el.querySelector(".view-ohbox .row[data-id='m1']"), "B's row");
+      await press(B.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "B's row");
       await press(B.el.querySelector(".read-col .abar-reply"), "B's Reply");
     }
     await waitFor(() => B.el.querySelector(".reply[data-reply-for]") != null, "B's dock", PAUSE_ROUNDS);

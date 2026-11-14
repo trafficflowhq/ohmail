@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -286,7 +286,11 @@ const FORBIDDEN_FILE = (file: string): boolean => {
     || p.startsWith("packages/core/src/adapters/");
 };
 
-/** Resolve to a source file, `"external"` (npm/node) or `null` (a workspace edge nobody mapped). */
+/**
+ * Resolve to a source file, `"external"` (npm/node) or `null` (a workspace edge nobody mapped). A
+ * relative `.json` import of a file that exists resolves to that data file, which `crawl` walks as a
+ * leaf; of a file that does not exist, it is an unresolved edge like any other.
+ */
 function resolveSpec(
   spec: string,
   fromFile: string,
@@ -295,6 +299,7 @@ function resolveSpec(
   if (spec === ARTIFACT_SPEC || spec === PDF_FRAME_SPEC) return "external";
   if (spec.startsWith(".")) {
     const base = dirname(fromFile);
+    if (spec.endsWith(".json") && lstatSync(join(base, spec), { throwIfNoEntry: false })?.isFile() === true) return join(base, spec);
     const candidates = spec.endsWith(".js")
       ? [join(base, spec.replace(/\.js$/, ".ts")), join(base, spec.replace(/\.js$/, ".tsx"))]
       : [
@@ -333,6 +338,7 @@ function crawl(roots: readonly string[]): Crawl {
     if (visited.has(file)) continue;
     visited.add(file);
     if (FORBIDDEN_FILE(file)) hits.push(`${rel(file)} is in the phone's graph`);
+    if (file.endsWith(".json")) continue; // a data file imports nothing: walked, never read for edges
     let source: string;
     try {
       source = readFileSync(file, "utf8");
@@ -1001,6 +1007,39 @@ describe("§6 every refusal rule fires — the controls", () => {
     const found = crawl([r("apps/sidecar/src/engine.ts")]);
     expect(found.hits.length, "the crawl reported nothing about the desktop engine")
       .toBeGreaterThan(0);
+  });
+
+  /**
+   * A DATA FILE IS THE END OF A PATH, watched both ways over this test's own fixtures
+   * (`test/fixtures/no-host-census`). A relative `.json` import of a file that exists resolves to
+   * it, and the crawl walks it as a leaf: a data file imports nothing, so it can open no path, and
+   * its text is never read for edges (the fixture's data holds an import as a string, which read as
+   * code would be an edge). A `.json` import of a file that does not exist stays an unresolved
+   * edge, as before.
+   */
+  const fixture = (name: string): string => join(APP, "test/fixtures/no-host-census", name);
+
+  it("§1 a relative .json import of a file that exists resolves to it, and the data file is walked as a leaf", () => {
+    const walked = crawl([fixture("reads-data.ts")]);
+    expect([...walked.unresolved], "the data file's edge went unresolved, or its text was read for edges")
+      .toEqual([]);
+    expect([...walked.visited].map(rel).sort()).toEqual([
+      "apps/mobile/test/fixtures/no-host-census/data.json",
+      "apps/mobile/test/fixtures/no-host-census/reads-data.ts",
+    ]);
+    expect(walked.hits).toEqual([]);
+  });
+
+  it("§1 a relative .json import of a file that does not exist is an unresolved edge", () => {
+    expect([...crawl([fixture("reads-missing.ts")]).unresolved]).toEqual([
+      "apps/mobile/test/fixtures/no-host-census/reads-missing.ts → ./no-such-file.json",
+    ]);
+  });
+
+  it("§1 a relative .json import of a FOLDER is no data file: the code inside it is walked", () => {
+    expect([...crawl([fixture("reads-folder.ts")]).unresolved]).toEqual([
+      "apps/mobile/test/fixtures/no-host-census/folder.json/index.ts → ./not-a-module",
+    ]);
   });
 
   it("§2 the hand-written host shapes are each found", () => {

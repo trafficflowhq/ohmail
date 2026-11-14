@@ -72,7 +72,7 @@ describe.each(CALDAV_LIVE_ROWS)("the CalDAV reader at $name", (row) => {
       say(`caldav-live ${row.name}: NOT ASKED (its place is not named to this run)`);
       return;
     }
-    const reader = makeReader({ http: namedHostRequest({ resolver: nodeHostResolver, policy: row.policy }), clock: CLOCK, zones: ZONES });
+    const reader = makeReader({ http: namedHostRequest({ writes: false, resolver: nodeHostResolver, policy: row.policy }), clock: CLOCK, zones: ZONES });
     const signal = AbortSignal.timeout(150_000);
     /** What was read against what the bench planted: numbers, words and yes or no only. */
     const read: Record<string, number | string | boolean> = {};

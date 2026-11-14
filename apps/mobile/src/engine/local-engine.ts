@@ -208,8 +208,17 @@ export interface EngineStoreSeams {
    * database nothing ever wrote to and the read-back is the only thing that notices.
    */
   deleteDatabase: (name: string) => Promise<void>;
+  /** REQUIRED: whether a file of that name stands beside the store, read without opening (so without creating) it. */
+  exists: (name: string) => Promise<boolean>;
   kv: SecureKV;
 }
+
+/**
+ * The copy taken before the store crossed into 2.0 (`store-copy.ts`), and the part a cut-off copy
+ * leaves: the same mail and the same sealed password. Named here, not imported, so this module keeps
+ * importing nothing it does not read.
+ */
+const STORE_COPIES = ["ohmail-engine.before-2.db", "ohmail-engine.before-2.db.part"];
 
 /** Which of {@link ENGINE_STORE_TABLES} the store still holds. Creates nothing it does not drop. */
 async function engineStoreSurvivors(deps: EngineStoreSeams): Promise<string[]> {
@@ -239,6 +248,8 @@ async function engineStoreSurvivors(deps: EngineStoreSeams): Promise<string[]> {
 export async function removeStandaloneEngine(deps: EngineStoreSeams): Promise<void> {
   await forgetKek(deps.kv);
   await deps.deleteDatabase(ENGINE_DB_FILE);
+  // AND THE COPIES taken before the store crossed into 2.0, each read back below as a file.
+  for (const name of STORE_COPIES) await deps.deleteDatabase(name);
   const survivors = await engineStoreSurvivors(deps);
   if (survivors.length === 0) await deps.deleteDatabase(ENGINE_DB_FILE).catch(() => undefined);
   if (survivors.length > 0) {
@@ -250,6 +261,13 @@ export async function removeStandaloneEngine(deps: EngineStoreSeams): Promise<vo
       `this phone still holds the removed mailbox's own store — "${ENGINE_DB_FILE}" survived ` +
         `being deleted (${survivors.join(", ")})`,
     );
+  }
+  /* The deleter swallows a refusal, so only the files themselves say the removal landed: the store's
+     file (the probe above may have made an empty one, deleted again), the copy and its part. */
+  const standing: string[] = [];
+  for (const name of [ENGINE_DB_FILE, ...STORE_COPIES]) if (await deps.exists(name)) standing.push(name);
+  if (standing.length > 0) {
+    throw new StoreFault("engine_store_not_deleted", `this phone still holds the removed mailbox's files (${standing.join(", ")})`);
   }
 }
 

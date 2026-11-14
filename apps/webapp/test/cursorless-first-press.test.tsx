@@ -257,9 +257,9 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 const selectedIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row.sel[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll(":is(.row.sel, [role=option][data-open])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 

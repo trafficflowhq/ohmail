@@ -4,5 +4,6 @@
  * switch of its own: a program serves it by naming the word and the base of the API, and by nothing less.
  */
 export const provider = "microsoft" as const;
-export { makeReader, type MicrosoftDeps } from "./reader.js";
+export { graphAuthorization, makeReader, type MicrosoftDeps } from "./reader.js";
+export { makeWriter } from "./writer.js";
 export { MS_GRAPH_BASE, MS_GRAPH_CALENDAR_SCOPE, MS_SIGN_IN_HOST, microsoftHosts } from "./graph.js";

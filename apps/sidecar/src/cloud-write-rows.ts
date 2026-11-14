@@ -25,6 +25,7 @@ const verbs = (...v: string[]): WriteRoute => ({ rows: "sync", verbs: v });
 export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "DELETE /account": none,
   "DELETE /auth/2fa/totp": none,
+  "DELETE /calendar/writes/:id": direct,
   "DELETE /devices/:id": none,
   "DELETE /drafts/:id": verbs("draft_discard"),
   "DELETE /drafts/:id/schedule": verbs("draft_schedule_cancel"),
@@ -75,6 +76,9 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "POST /auth/step-up/webauthn/options": none,
   "POST /auth/step-up/webauthn/verify": none,
   "POST /auth/verify-email/resend": none,
+  // The calendar's writes: until the window's engine carries the calendar's acts, the echo-await alone covers them.
+  "POST /calendar/writes": direct,
+  "POST /calendar/writes/:id/retry": direct,
   "POST /consent/reset": direct,
   "POST /consent/seed": direct,
   "POST /contacts/:id/notes": none,

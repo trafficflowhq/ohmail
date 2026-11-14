@@ -68,3 +68,36 @@ const KNOWN: ReadonlySet<string> = new Set(PROVIDER_REFUSALS);
 
 /** A stored or received word as a word of this list: one this version does not know reads as `unknown`. */
 export const asProviderRefusal = (word: string): ProviderRefusal => (KNOWN.has(word) ? (word as ProviderRefusal) : "unknown");
+
+/**
+ * Why a write was not carried out where no word of the reading says it: a second closed list beside
+ * the first and never inside it, because the first is what a connection stands at and the store and
+ * the wire hold it to theirs. A writer answers a word of either list; it is kept with the write,
+ * never on the connection.
+ */
+export const WRITE_REFUSALS = [
+  /** The provider's object is not the copy the change was made on. Nothing was overwritten. */
+  "version_stale",
+  /** No version to make the change against, and none could be read: nothing leaves unconditional. */
+  "version_unknown",
+  /** The object is no longer at the provider. A removal of it is done; any other change is not. */
+  "event_gone",
+  /** The provider refused the write itself: the calendar can be looked at, not written. */
+  "read_only",
+  /** The stored object was read with something left out, and is never written back. */
+  "left_out",
+  /** The provider takes no invitees on this calendar. */
+  "invitees_unsupported",
+  /** A repeat this provider was not proven to keep as written. */
+  "repeat_unsupported",
+  /** A field the provider would not keep as written (a notes change on a body in markup). */
+  "field_unwritable",
+] as const;
+
+export type WriteRefusal = (typeof WRITE_REFUSALS)[number];
+
+const WRITE_KNOWN: ReadonlySet<string> = new Set<string>([...PROVIDER_REFUSALS, ...WRITE_REFUSALS]);
+
+/** A write's word as a word of the two lists: one this version does not know, or a status with no word, reads as `unknown`. */
+export const asWriteRefusal = (word: string): ProviderRefusal | WriteRefusal =>
+  (WRITE_KNOWN.has(word) ? (word as ProviderRefusal | WriteRefusal) : "unknown");

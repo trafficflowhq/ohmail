@@ -84,7 +84,9 @@ const VALUE_PRESERVING = new Set(["map", "flatMap", "reduce", "reduceRight"]);
  */
 const SQL = new RegExp(
   "\\b(SELECT|INSERT|UPDATE|DELETE|CREATE TABLE|DROP TABLE|PRAGMA"
-  + "|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE)\\b");
+  + "|BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE"
+  /* `VACUUM INTO`: the copy the phone takes of its own engine store before the store crosses into 2.0. */
+  + "|VACUUM)\\b");
 
 /* ── the named exceptions ───────────────────────────────────────────────────────────────────── */
 

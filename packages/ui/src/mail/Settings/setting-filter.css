@@ -1,0 +1,43 @@
+/* The line that narrows a list: one line that scrolls sideways with a pointer, and wraps under a finger. */
+@layer oh {
+  .oh-settingfilter {
+    --oh-settingfilter-pad: var(--s2) 0 var(--s1);
+    --oh-settingfilter-pull: calc(var(--cap-q) * -1);
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--oh-settingfilter-pad);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .oh-settingfilter::-webkit-scrollbar {
+    display: none;
+  }
+
+  .oh-settingfilter > .oh-seg {
+    flex: none;
+  }
+
+  .oh-settingfilter-label {
+    font-weight: var(--w-mid);
+  }
+
+  /* The word that acts ends on the line's edge. */
+  .oh-settingfilter[data-act] {
+    margin-right: var(--oh-settingfilter-pull);
+  }
+
+  .oh-settingfilter[data-act] > :last-child {
+    flex: none;
+    margin-left: auto;
+    color: var(--ink);
+  }
+
+  :root[data-touch="1"] .oh-settingfilter {
+    flex-wrap: wrap;
+    gap: 0 var(--s2);
+    min-height: var(--h-m);
+    overflow: visible;
+  }
+}

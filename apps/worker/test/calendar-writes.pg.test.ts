@@ -1,0 +1,459 @@
+/**
+ * THE DRAIN OF THE WRITES OWED TO A PROVIDER, on this checkout's own Postgres, with a scripted
+ * writer that keeps a provider's store of its own: a write recorded at the door reaches the writer
+ * once per attempt under a name made from its row, settles in one transaction, and keeps the
+ * queue's order, bounds and words. A real provider is never asked here.
+ */
+import { randomUUID } from "node:crypto";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { and, asc, eq, sql } from "drizzle-orm";
+import type { CalendarProvider, Connection, WriteAnswer } from "@ohmail/cal-providers";
+import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db";
+import { calendarPool, passDb, type ConnectionKey } from "../src/calendar/index.js";
+import { calendarSyncPass } from "../src/calendar/sync-pass.js";
+import { calendarWriteDrain, WRITE_MAX_ATTEMPTS, WRITE_PRUNE_PER_TURN } from "../src/calendar/write-drain.js";
+import {
+  AVAILABLE, Secret, ZONES, capturedLog, connectionOf, depsFor, openWorld, providersOf, recordWrite, scriptedReader, scriptedWriter, seedConnection, single,
+  upsert, type ScriptedPage, type World,
+} from "./_calendar-world.js";
+
+const never = new AbortController().signal;
+
+describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => {
+  let w: World;
+  beforeAll(async () => { w = await openWorld(6); }, 120_000);
+  afterAll(async () => { await w?.close(); });
+
+  /** A press recorded as the door records it; `after`: the key of the write it waits for. */
+  const press = async (accountId: string, key: string, act: unknown, after?: string) => {
+    const prior = after === undefined ? null : (await w.db.select({ id: calWrites.id }).from(calWrites)
+      .where(and(eq(calWrites.accountId, accountId), eq(calWrites.idempotencyKey, after))))[0]?.id ?? null;
+    return recordWrite(w, { accountId, key, act, after: prior });
+  };
+  const connection = (tag: string): Connection => ({
+    provider: "google", start: null,
+    credential: { kind: "bearer", accessToken: async () => ({ ok: true, token: `token-${tag}` }) },
+  });
+
+  /** An account with its calendar on, a Google connection, one calendar, and one event the provider holds at version 1. */
+  async function account() {
+    const seeded = await seedConnection(w, { provider: "google", credential: null });
+    const [cal] = await w.db.insert(calCalendars).values({
+      accountId: seeded.accountId, connectionId: seeded.connectionId, providerId: `cal-${seeded.accountId.slice(0, 6)}`, name: "Studio", access: "owner",
+    }).returning({ id: calCalendars.id });
+    const [ev] = await w.db.insert(calEvents).values({
+      accountId: seeded.accountId, calendarId: cal!.id, providerId: "evt-1", versionTag: '"v1"', uid: "uid-1", title: "Kiln check",
+      startKind: "instant", startLocal: "20261118T090000Z", endKind: "instant", endLocal: "20261118T100000Z",
+      startsAt: new Date("2026-11-18T09:00:00Z"), endsAt: new Date("2026-11-18T10:00:00Z"),
+    }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
+    const key: ConnectionKey = { accountId: seeded.accountId, id: seeded.connectionId };
+    return { ...seeded, key, calendarId: cal!.id, eventId: ev!.id, base: ev!.updatedAt.toISOString() };
+  }
+  type Account = Awaited<ReturnType<typeof account>>;
+
+  const create = (a: Account, title = "Glaze firing", eventId: string = randomUUID()) => ({
+    kind: "calendar_event_create", eventId, calendarId: a.calendarId,
+    event: {
+      title, start: { kind: "instant", value: "20261117T090000Z" }, end: { kind: "instant", value: "20261117T100000Z" },
+      notes: null, place: null, callLink: null, busy: true, private: false, repeat: null, invitees: [], alarms: [],
+    },
+  });
+  const update = (a: Account, title: string, base = a.base, after?: string) =>
+    ({ kind: "calendar_event_update", eventId: a.eventId, base, ...(after === undefined ? {} : { after }), scope: { kind: "record" }, change: { title } });
+
+  const provider = (writer: CalendarProvider["writer"]): CalendarProvider =>
+    ({ reader: scriptedReader("google", { readings: new Map() }), writer, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
+
+  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal } = {}) =>
+    calendarWriteDrain({ clock: { now: o.clock ?? (() => Date.now()) }, zones: ZONES, log: capturedLog().log, ...(o.turnMs === undefined ? {} : { turnMs: o.turnMs }) })({
+      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer), connection: connection(o.tag ?? a.accountId), signal: o.signal ?? never,
+    });
+
+  const rows = (a: Account) => w.db.select({
+    id: calWrites.id, key: calWrites.idempotencyKey, state: calWrites.state, refusal: calWrites.refusal, attempts: calWrites.attempts,
+    base: calWrites.baseVersionTag, payload: calWrites.payload, next: calWrites.nextAttemptAt,
+  }).from(calWrites).where(eq(calWrites.accountId, a.accountId)).orderBy(asc(calWrites.createdAt), asc(calWrites.idempotencyKey));
+  const events = (a: Account) => w.db.select({ id: calEvents.id, providerId: calEvents.providerId, title: calEvents.title, versionTag: calEvents.versionTag })
+    .from(calEvents).where(eq(calEvents.accountId, a.accountId)).orderBy(asc(calEvents.title));
+  /** Make an owed write due now: its wait, or its claim's lease, is over. */
+  const dueNow = (a: Pick<Account, "accountId">) => w.db.update(calWrites).set({ nextAttemptAt: sql`now() - interval '1 second'` }).where(and(eq(calWrites.accountId, a.accountId), eq(calWrites.state, "pending")));
+
+  /**
+   * A CalDAV account whose turns run as the worker runs them (the drain composed, then the reading),
+   * read and written by the test's scripted hands. `due()` makes its calendars and its connection due.
+   */
+  async function davAccount(reader: ReturnType<typeof scriptedReader>, writer: ReturnType<typeof scriptedWriter>) {
+    const t = await seedConnection(w, { provider: "caldav", credential: { kind: "basic", user: "mila", password: new Secret(`pw-${randomUUID().slice(0, 8)}`) }, serverUrl: "http://127.0.0.1:1/dav/" });
+    const drain = calendarWriteDrain({ clock: { now: () => Date.now() }, zones: ZONES, log: capturedLog().log });
+    const deps = depsFor(w, providersOf({ caldav: { reader, writer, http: { request: async () => ({ arrived: false as const, reason: "unknown" as const }) } } }), { drainWrites: drain });
+    const due = async () => {
+      await w.db.update(calCalendars).set({ nextPollAt: null }).where(eq(calCalendars.accountId, t.accountId));
+      await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, t.accountId));
+    };
+    const stored = async (providerId: string) => (await w.db.select({ id: calEvents.id, updatedAt: calEvents.updatedAt, versionTag: calEvents.versionTag, title: calEvents.title })
+      .from(calEvents).where(and(eq(calEvents.accountId, t.accountId), eq(calEvents.providerId, providerId))))[0]!;
+    const writes = () => w.db.select({ key: calWrites.idempotencyKey, state: calWrites.state, refusal: calWrites.refusal })
+      .from(calWrites).where(eq(calWrites.accountId, t.accountId)).orderBy(asc(calWrites.createdAt));
+    return { ...t, due, stored, writes, turn: () => calendarSyncPass(deps, t.due, never) };
+  }
+  const retitle = (e: { id: string; updatedAt: Date }, title: string) =>
+    ({ kind: "calendar_event_update", eventId: e.id, base: e.updatedAt.toISOString(), scope: { kind: "record" }, change: { title } });
+
+  it("applies a new event once: the writer is asked under the row's own name, the row closes with nothing of the act kept, and the store holds the provider's object in the row the write stood in", async () => {
+    const a = await account();
+    const act = create(a);
+    const recorded = await recordWrite(w, { accountId: a.accountId, key: "press-new", act });
+    const writer = scriptedWriter("google");
+    expect(await run(a, writer)).toEqual({ nextAttemptAt: null });
+    const hex = recorded.id.replaceAll("-", "");
+    expect(writer.calls.map((c) => [c.kind, c.key, c.calendar, c.draft?.summary])).toEqual([["create", hex, `cal-${a.accountId.slice(0, 6)}`, "Glaze firing"]]);
+    expect((await rows(a)).map((r) => [r.state, r.payload, r.attempts])).toEqual([["applied", {}, 1]]);
+    expect((await events(a)).find((e) => e.id === act.eventId)).toEqual({ id: act.eventId, providerId: `made-${hex}`, title: "Glaze firing", versionTag: '"v1"' });
+    // Done once: a second drain asks nothing.
+    await run(a, writer);
+    expect(writer.calls.length).toBe(1);
+  });
+
+  it("leaves ONE event when the drain is cut after the provider took the write and before it was settled, and is run again", async () => {
+    const a = await account();
+    const act = create(a);
+    await press(a.accountId, "press-cut", act);
+    const writer = scriptedWriter("google");
+    // The provider takes the write and its answer is lost on the way: the store learns nothing of it.
+    let cut = true;
+    const cutting = scriptedWriter("google", { answer: async (call): Promise<"default"> => {
+      if (!cut) return "default";
+      await writer.create(call.connection, { id: call.calendar }, { key: { hex: call.key! }, event: call.draft! }, never);
+      throw new Error("the connection dropped after the provider answered");
+    } });
+    expect((await run(a, cutting)).nextAttemptAt).not.toBeNull();
+    expect((await rows(a)).map((r) => [r.state, r.refusal, r.attempts])).toEqual([["pending", null, 1]]);
+    cut = false;
+    await dueNow(a);
+    await run(a, writer);
+    expect(writer.objects.size).toBe(1);
+    expect(writer.calls.map((c) => c.key)).toEqual([cutting.calls[0]!.key, cutting.calls[0]!.key]);
+    expect((await events(a)).filter((e) => e.title === "Glaze firing").length).toBe(1);
+    expect((await rows(a)).map((r) => r.state)).toEqual(["applied"]);
+  });
+
+  it("refuses a change made against a version the provider moved past, overwrites nothing, makes the calendar due, and refuses what waited for it", async () => {
+    const a = await account();
+    await press(a.accountId, "press-1", update(a, "Mine"));
+    await press(a.accountId, "press-2", update(a, "Mine again"), "press-1");
+    const writer = scriptedWriter("google");
+    writer.objects.set("evt-1", { version: 2, summary: "Theirs" });
+    await w.db.update(calCalendars).set({ nextPollAt: sql`now() + interval '1 hour'` }).where(eq(calCalendars.id, a.calendarId));
+    await run(a, writer);
+    expect(writer.objects.get("evt-1")).toEqual({ version: 2, summary: "Theirs" });
+    expect((await rows(a)).map((r) => [r.key, r.state, r.refusal])).toEqual([["press-1", "refused", "version_stale"], ["press-2", "refused", "earlier_refused"]]);
+    expect(writer.calls.length).toBe(1);
+    const [cal] = await w.db.select({ at: calCalendars.nextPollAt }).from(calCalendars).where(eq(calCalendars.id, a.calendarId));
+    expect(cal!.at!.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it("re-bases the writes behind an applied one onto the provider's new version, and sends them in order", async () => {
+    const a = await account();
+    await press(a.accountId, "press-1", update(a, "One"));
+    await press(a.accountId, "press-2", update(a, "Two"), "press-1");
+    const writer = scriptedWriter("google");
+    writer.objects.set("evt-1", { version: 1, summary: "Kiln check" });
+    await run(a, writer);
+    expect(writer.calls.map((c) => [c.change?.summary, c.target?.version])).toEqual([["One", '"v1"'], ["Two", '"v2"']]);
+    expect((await rows(a)).map((r) => r.state)).toEqual(["applied", "applied"]);
+    expect((await events(a)).find((e) => e.id === a.eventId)).toMatchObject({ title: "Two", versionTag: '"v3"' });
+  });
+
+  it("sends a change under the version it was recorded on: a newer copy a reading stored meanwhile makes it stale, never an overwrite", async () => {
+    const a = await account();
+    await press(a.accountId, "press-mine", update(a, "Mine"));
+    const writer = scriptedWriter("google");
+    writer.objects.set("evt-1", { version: 2, summary: "Theirs" });
+    // Someone else changed the event at the provider, and a reading stored that copy before the drain reached the write.
+    await w.db.update(calEvents).set({ versionTag: '"v2"', title: "Theirs", updatedAt: sql`now()` }).where(eq(calEvents.id, a.eventId));
+    await run(a, writer);
+    expect(writer.calls.map((c) => c.target?.version)).toEqual(['"v1"']);
+    expect(writer.objects.get("evt-1")).toEqual({ version: 2, summary: "Theirs" });
+    expect((await rows(a)).map((r) => [r.state, r.refusal, r.base])).toEqual([["refused", "version_stale", '"v1"']]);
+  });
+
+  it("keeps a write that waited behind another on its own version, through whole turns that read the provider's newer copy", async () => {
+    const reader = scriptedReader("caldav", { readings: new Map([
+      ["", [{ items: [upsert("/cal/1.ics", '"v1"', single("u1", 18, "First")), upsert("/cal/2.ics", '"v1"', single("u2", 19, "Kiln check"))] }]],
+      ["t1", [{ items: [upsert("/cal/2.ics", '"v2"', single("u2", 19, "Theirs"))] }]],
+      ["t2", [{ items: [] }]],
+    ]), endToken: (since) => (since === null ? "t1" : "t2") });
+    let down = true;
+    const writer = scriptedWriter("caldav", { answer: () => (down ? { ok: false, reason: "unavailable", retryAfterMs: null } : "default") });
+    const t = await davAccount(reader, writer);
+    expect((await t.turn()).kind).toBe("synced");
+    writer.objects.set("/cal/1.ics", { version: 1, summary: "First" });
+    writer.objects.set("/cal/2.ics", { version: 1, summary: "Kiln check" });
+    await recordWrite(w, { accountId: t.accountId, key: "press-1", act: retitle(await t.stored("/cal/1.ics"), "First, mine") });
+    await recordWrite(w, { accountId: t.accountId, key: "press-2", act: retitle(await t.stored("/cal/2.ics"), "Mine") });
+    // Someone else changes the second event; the first write is answered with a wait, and the reading of that same turn stores the newer copy.
+    writer.objects.set("/cal/2.ics", { version: 2, summary: "Theirs" });
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    expect(await t.stored("/cal/2.ics")).toMatchObject({ versionTag: '"v2"', title: "Theirs" });
+    down = false;
+    await dueNow(t);
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    expect(writer.calls.map((c) => [c.target?.id, c.target?.version])).toEqual([["/cal/1.ics", '"v1"'], ["/cal/1.ics", '"v1"'], ["/cal/2.ics", '"v1"']]);
+    expect(writer.objects.get("/cal/2.ics")).toEqual({ version: 2, summary: "Theirs" });
+    expect((await t.writes()).map((r) => [r.key, r.state, r.refusal])).toEqual([["press-1", "applied", null], ["press-2", "refused", "version_stale"]]);
+  });
+
+  it("writes a change once when its answer was lost and a reading stored the provider's copy before it was sent again", async () => {
+    const pages = new Map<string, ScriptedPage[]>([["", [{ items: [upsert("/cal/1.ics", '"v1"', single("u1", 18, "Kiln check"))] }]], ["t1", [{ items: [] }]], ["t2", [{ items: [] }]]]);
+    const reader = scriptedReader("caldav", { readings: pages, endToken: (since) => (since === null ? "t1" : "t2") });
+    const provider = scriptedWriter("caldav");
+    provider.objects.set("/cal/1.ics", { version: 1, summary: "Kiln check" });
+    let cut = true;
+    const writer = scriptedWriter("caldav", { answer: async (call): Promise<WriteAnswer> => {
+      const done = await provider.change(call.connection, { id: call.calendar }, call.target!, call.change!, never);
+      if (cut) throw new Error("the connection dropped after the provider answered");
+      return done;
+    } });
+    const t = await davAccount(reader, writer);
+    expect((await t.turn()).kind).toBe("synced");
+    await recordWrite(w, { accountId: t.accountId, key: "press-once", act: retitle(await t.stored("/cal/1.ics"), "Mine") });
+    // The provider takes the change and its answer is lost; the reading of that same turn stores the provider's new copy.
+    pages.set("t1", [{ items: [upsert("/cal/1.ics", '"v2"', single("u1", 18, "Mine"))] }]);
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    expect(await t.stored("/cal/1.ics")).toMatchObject({ versionTag: '"v2"', title: "Mine" });
+    cut = false;
+    await dueNow(t);
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    // Sent again under the version it was made on: the provider's compare finds it already there, and nothing is written twice.
+    expect(provider.calls.map((c) => c.target?.version)).toEqual(['"v1"', '"v1"']);
+    expect(provider.objects.get("/cal/1.ics")).toEqual({ version: 2, summary: "Mine" });
+    expect((await t.writes()).map((r) => [r.key, r.state])).toEqual([["press-once", "applied"]]);
+  });
+
+  it("hands a write of one account only that account's connection, and holds a row to its own account's calendar", async () => {
+    const a = await account();
+    const b = await account();
+    await press(a.accountId, "a-press", update(a, "A's"));
+    await press(b.accountId, "b-press", update(b, "B's"));
+    // A second connection of A's account, with a write of its own.
+    const [conn2] = await w.db.insert(calConnections).values({ accountId: a.accountId, provider: "google", label: "", status: "active" }).returning({ id: calConnections.id });
+    const [cal2] = await w.db.insert(calCalendars).values({ accountId: a.accountId, connectionId: conn2!.id, providerId: "other-cal", name: "Other", access: "owner" }).returning({ id: calCalendars.id });
+    await press(a.accountId, "a-press-2", { ...create(a), calendarId: cal2!.id });
+    const writer = scriptedWriter("google");
+    await run(a, writer, { tag: "A" });
+    const seen = await Promise.all(writer.calls.map(async (c) => [c.kind, c.calendar, await (c.connection.credential as { accessToken(s: AbortSignal): Promise<{ token: string }> }).accessToken(never).then((t) => t.token)]));
+    expect(seen).toEqual([["change", `cal-${a.accountId.slice(0, 6)}`, "token-A"]]);
+    expect((await rows(b)).map((r) => r.state)).toEqual(["pending"]);
+    // The store itself refuses a write row that names another account's calendar.
+    const refused = await w.db.insert(calWrites).values({
+      accountId: a.accountId, calendarId: b.calendarId, op: "update", payload: {}, idempotencyKey: "cross",
+    }).then(() => "inserted", (err: { code?: string; cause?: { code?: string } }) => err.code ?? err.cause?.code ?? "threw");
+    expect(refused).toBe("23503");
+  });
+
+  it("sends nothing while the account's calendar is off", async () => {
+    const a = await account();
+    await press(a.accountId, "press-off", update(a, "Off"));
+    await w.db.update(calSettings).set({ enabledAt: null }).where(eq(calSettings.accountId, a.accountId));
+    const writer = scriptedWriter("google");
+    await run(a, writer);
+    expect(writer.calls.length).toBe(0);
+    expect((await rows(a)).map((r) => [r.state, r.attempts])).toEqual([["pending", 0]]);
+  });
+
+  it("waits out a provider's word for time, sends nothing of the connection meanwhile, and refuses after its last attempt", async () => {
+    const a = await account();
+    await press(a.accountId, "press-1", update(a, "One"));
+    const busy: WriteAnswer = { ok: false, reason: "throttled", retryAfterMs: 300_000 };
+    const writer = scriptedWriter("google", { answer: () => busy });
+    const first = await run(a, writer);
+    expect(first.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now() + 290_000);
+    // A write recorded meanwhile waits behind it: nothing of the connection is sent before the wish has passed.
+    await press(a.accountId, "press-new", create(a));
+    await run(a, writer);
+    expect(writer.calls.length).toBe(1);
+    for (let i = 1; i < WRITE_MAX_ATTEMPTS; i++) {
+      await dueNow(a);
+      await run(a, writer);
+    }
+    expect(writer.calls.length).toBe(WRITE_MAX_ATTEMPTS);
+    expect((await rows(a)).map((r) => [r.key, r.state, r.refusal])).toEqual([["press-1", "refused", "throttled"], ["press-new", "pending", null]]);
+  });
+
+  it("ends the turn where a provider asks a write to wait: nothing more of the connection is asked, a reading neither, and the connection says why until the wish has passed", async () => {
+    const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("/cal/1.ics", '"v1"', single("u1", 18, "Kiln check"))] }]], ["t1", [{ items: [] }]]]) });
+    const writer = scriptedWriter("caldav", { answer: () => ({ ok: false, reason: "throttled", retryAfterMs: 300_000 }) });
+    const t = await davAccount(reader, writer);
+    expect((await t.turn()).kind).toBe("synced");
+    await recordWrite(w, { accountId: t.accountId, key: "press-1", act: retitle(await t.stored("/cal/1.ics"), "Mine") });
+    await t.due();
+    const asked = { reads: reader.calls.length, lists: reader.lists };
+    const began = Date.now();
+    expect(await t.turn()).toMatchObject({ kind: "backed_off", word: "throttled" });
+    expect([writer.calls.length, reader.calls.length - asked.reads, reader.lists - asked.lists]).toEqual([1, 0, 0]);
+    const held = await connectionOf(w, t.accountId, t.connectionId);
+    expect(held.errorCode).toBe("throttled");
+    expect(held.nextPollAt!.getTime()).toBeGreaterThanOrEqual(began + 299_000);
+  });
+
+  it("keeps a press that came while its connection's turn was reading: the turn's end leaves the connection due, not at its next regular reading", async () => {
+    const script = scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("/cal/1.ics", '"v1"', single("u1", 18, "Kiln check"))] }]], ["t1", [{ items: [] }]]]) });
+    let during: (() => Promise<void>) | null = null;
+    const reader: typeof script = Object.assign(Object.create(script) as typeof script, {
+      async readChanges(...args: Parameters<typeof script.readChanges>) {
+        const press = during;
+        during = null;
+        if (press !== null) await press();
+        return script.readChanges(...args);
+      },
+    });
+    const writer = scriptedWriter("caldav");
+    const t = await davAccount(reader, writer);
+    expect((await t.turn()).kind).toBe("synced");
+    const event = await t.stored("/cal/1.ics");
+    await recordWrite(w, { accountId: t.accountId, key: "press-1", act: retitle(event, "One") });
+    // A second press arrives while the turn that carries the first is reading: recorded, and its connection woken.
+    during = async () => {
+      await recordWrite(w, { accountId: t.accountId, key: "press-2", act: retitle(event, "Two") });
+      await w.db.update(calConnections).set({ nextPollAt: sql`now()` }).where(eq(calConnections.accountId, t.accountId));
+    };
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    expect(during).toBeNull();
+    expect((await connectionOf(w, t.accountId, t.connectionId)).nextPollAt!.getTime()).toBeLessThanOrEqual(Date.now());
+    expect((await t.writes()).map((r) => [r.key, r.state])).toEqual([["press-1", "applied"], ["press-2", "pending"]]);
+  });
+
+  it("reads on after a write that waits only for the queue's own backoff, so a write's trouble never holds a calendar's reading", async () => {
+    const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("/cal/1.ics", '"v1"', single("u1", 18, "Kiln check"))] }]], ["t1", [{ items: [] }]]]) });
+    const writer = scriptedWriter("caldav", { answer: () => ({ ok: false, reason: "unavailable", retryAfterMs: null }) });
+    const t = await davAccount(reader, writer);
+    expect((await t.turn()).kind).toBe("synced");
+    await recordWrite(w, { accountId: t.accountId, key: "press-1", act: retitle(await t.stored("/cal/1.ics"), "Mine") });
+    await t.due();
+    const reads = reader.calls.length;
+    expect((await t.turn()).kind).toBe("synced");
+    expect([writer.calls.length, reader.calls.length - reads]).toEqual([1, 1]);
+    expect((await connectionOf(w, t.accountId, t.connectionId)).errorCode).toBeNull();
+    expect((await t.writes()).map((r) => r.state)).toEqual(["pending"]);
+  });
+
+  it("gives an attempt back for a word that waits for the person, and answers a writer's throw as unknown without throwing", async () => {
+    const a = await account();
+    await press(a.accountId, "press-1", update(a, "One"));
+    const signedOut = scriptedWriter("google", { answer: () => ({ ok: false, reason: "consent_needed", retryAfterMs: null }) });
+    await run(a, signedOut);
+    expect((await rows(a)).map((r) => [r.state, r.attempts])).toEqual([["pending", 0]]);
+    const throwing = scriptedWriter("google", { answer: () => { throw new Error("a fault of the program"); } });
+    await expect(run(a, throwing)).resolves.toMatchObject({ nextAttemptAt: expect.any(Date) });
+    expect((await rows(a)).map((r) => [r.state, r.attempts])).toEqual([["pending", 1]]);
+  });
+
+  it("refuses at once a write no writer can carry, and one too old to be sent late", async () => {
+    const a = await account();
+    await press(a.accountId, "press-1", update(a, "One"));
+    await run(a, null);
+    expect((await rows(a)).map((r) => [r.state, r.refusal])).toEqual([["refused", "unsupported"]]);
+    const b = await account();
+    await press(b.accountId, "press-old", update(b, "Old"));
+    await w.db.update(calWrites).set({ createdAt: sql`now() - interval '73 hours'` }).where(eq(calWrites.accountId, b.accountId));
+    const writer = scriptedWriter("google");
+    await run(b, writer);
+    expect(writer.calls.length).toBe(0);
+    expect((await rows(b)).map((r) => [r.state, r.refusal])).toEqual([["refused", "expired"]]);
+  });
+
+  it("starts no write once its own time is spent, and asks to be due again as long after", async () => {
+    const a = await account();
+    for (const k of ["p1", "p2", "p3"]) await press(a.accountId, k, create(a, k));
+    let now = Date.now();
+    const writer = scriptedWriter("google", { answer: (): "default" => { now += 6_000; return "default"; } });
+    const asked = await run(a, writer, { clock: () => now, turnMs: 10_000 });
+    expect(writer.calls.length).toBe(2);
+    expect(asked.nextAttemptAt!.getTime()).toBeGreaterThanOrEqual(now + 12_000 - 1);
+    expect((await rows(a)).map((r) => r.state)).toEqual(["applied", "applied", "pending"]);
+  });
+
+  it("lets a refused write go once its event is gone from the store, where no record carries it and the account's bound would count it for good", async () => {
+    const reader = scriptedReader("caldav", { readings: new Map([
+      ["", [{ items: [upsert("/cal/1.ics", '"v1"', single("u1", 18, "Kiln check"))] }]],
+      ["t1", [{ items: [{ kind: "gone" as const, id: "/cal/1.ics" }] }]],
+      ["t2", [{ items: [] }]],
+    ]), endToken: (since) => (since === null ? "t1" : "t2") });
+    const writer = scriptedWriter("caldav", { answer: () => ({ ok: false, reason: "event_gone", retryAfterMs: null }) });
+    const t = await davAccount(reader, writer);
+    expect((await t.turn()).kind).toBe("synced");
+    await recordWrite(w, { accountId: t.accountId, key: "press-gone", act: retitle(await t.stored("/cal/1.ics"), "Mine") });
+    // The provider answers that the event is gone, and the reading of that same turn removes it from the store.
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    expect(await w.db.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, t.accountId))).toEqual([]);
+    expect((await t.writes()).map((r) => [r.key, r.state, r.refusal])).toEqual([["press-gone", "refused", "event_gone"]]);
+    await t.due();
+    expect((await t.turn()).kind).toBe("synced");
+    expect(await t.writes()).toEqual([]);
+    // At most a bound a turn, as the applied rows; a refused write whose event is there stays, for the person to see.
+    const a = await account();
+    await press(a.accountId, "press-kept", update(a, "Kept"));
+    await w.db.update(calWrites).set({ state: "refused", refusal: "read_only" }).where(eq(calWrites.accountId, a.accountId));
+    await w.db.insert(calWrites).values(Array.from({ length: WRITE_PRUNE_PER_TURN + 1 }, (_, i) => ({
+      accountId: a.accountId, calendarId: a.calendarId, eventId: randomUUID(), op: "update", payload: {}, idempotencyKey: `gone-${i}`,
+      state: "refused", refusal: "event_gone",
+    })));
+    await run(a, scriptedWriter("google"));
+    expect((await rows(a)).length).toBe(2);
+    await run(a, scriptedWriter("google"));
+    expect((await rows(a)).map((r) => [r.key, r.state])).toEqual([["press-kept", "refused"]]);
+  });
+
+  it("throws where a close finds no row of its claim: a write is never closed quietly", async () => {
+    const a = await account();
+    await press(a.accountId, "press-1", update(a, "One"));
+    const meddling = scriptedWriter("google", { answer: async (): Promise<"default"> => {
+      await w.db.update(calWrites).set({ attempts: 5 }).where(eq(calWrites.accountId, a.accountId));
+      return "default";
+    } });
+    await expect(run(a, meddling)).rejects.toThrow(/changed 0 rows/);
+  });
+
+  it("keeps a refused new event through a whole reading, which names only the provider's own objects", async () => {
+    const t = await seedConnection(w, { provider: "caldav", credential: { kind: "basic", user: "mila", password: new Secret("pw-x") }, serverUrl: "http://127.0.0.1:1/dav/" });
+    const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("/cal/1.ics", '"e1"', single("u1", 18, "Theirs"))] }]], ["t1", [{ items: [] }]]]) });
+    const deps = depsFor(w, providersOf({ caldav: { reader, http: { request: async () => ({ arrived: false, reason: "unknown" }) } } }));
+    expect((await calendarSyncPass(deps, t.due, never)).kind).toBe("synced");
+    const [cal] = await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, t.accountId));
+    await recordWrite(w, { accountId: t.accountId, key: "press-new", act: { ...create({ calendarId: cal!.id } as Account), calendarId: cal!.id }, state: "refused", refusal: "read_only" });
+    // A whole reading that names only the provider's own object.
+    await w.db.update(calCalendars).set({ syncToken: null, nextPollAt: null }).where(eq(calCalendars.accountId, t.accountId));
+    await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, t.accountId));
+    expect((await calendarSyncPass(deps, t.due, never)).kind).toBe("synced");
+    const titles = async () => (await w.db.select({ title: calEvents.title }).from(calEvents).where(eq(calEvents.accountId, t.accountId)).orderBy(asc(calEvents.title))).map((e) => e.title);
+    // What the person dismisses then goes with its delete: the door's own proof (`calendar-writes.pg.test.ts` in the services).
+    expect(await titles()).toEqual(["Glaze firing", "Theirs"]);
+  });
+
+  it("is where a turn sends its writes: after the sign-in, before the reading, and never with the calendar off", async () => {
+    const t = await seedConnection(w, { provider: "caldav", credential: { kind: "basic", user: "mila", password: new Secret("pw-y") }, serverUrl: "http://127.0.0.1:1/dav/" });
+    const reader = scriptedReader("caldav", { readings: new Map([["", [{ items: [upsert("/cal/1.ics", '"e1"', single("u1", 18, "Theirs"))] }]], ["t1", [{ items: [] }]]]) });
+    const writer = scriptedWriter("caldav");
+    const http = { request: async () => ({ arrived: false as const, reason: "unknown" as const }) };
+    const drain = calendarWriteDrain({ clock: { now: () => Date.now() }, zones: ZONES, log: capturedLog().log });
+    const deps = depsFor(w, providersOf({ caldav: { reader, writer, http } }), { drainWrites: drain });
+    expect((await calendarSyncPass(deps, t.due, never)).kind).toBe("synced");
+    const [cal] = await w.db.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, t.accountId));
+    await recordWrite(w, { accountId: t.accountId, key: "press-turn", act: { ...create({ calendarId: cal!.id } as Account), calendarId: cal!.id } });
+    await w.db.update(calSettings).set({ enabledAt: null }).where(eq(calSettings.accountId, t.accountId));
+    await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, t.accountId));
+    expect((await calendarSyncPass(deps, t.due, never)).kind).toBe("off");
+    expect(writer.calls.length).toBe(0);
+    await w.db.update(calSettings).set({ enabledAt: new Date() }).where(eq(calSettings.accountId, t.accountId));
+    await w.db.update(calConnections).set({ nextPollAt: null }).where(eq(calConnections.accountId, t.accountId));
+    expect((await calendarSyncPass(deps, t.due, never)).kind).toBe("synced");
+    expect(writer.calls.map((c) => c.kind)).toEqual(["create"]);
+    expect((await w.db.select({ state: calWrites.state }).from(calWrites).where(eq(calWrites.accountId, t.accountId))).map((r) => r.state)).toEqual(["applied"]);
+  });
+});

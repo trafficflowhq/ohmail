@@ -777,7 +777,7 @@ describe("a window that is not this account's loads no pictures for it", () => {
 
     /** Open the card the way a reader does, and hand back the document the frame was given. */
     const openTheMessage = async (): Promise<string> => {
-      const row = host!.querySelector<HTMLButtonElement>("button.srow");
+      const row = host!.querySelector<HTMLElement>(":is(button.srow, [role=option])");
       expect(row, "no card to open — the message never reached a pile, so this proves nothing")
         .not.toBeNull();
       await act(async () => { row!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });

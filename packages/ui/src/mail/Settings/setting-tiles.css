@@ -1,0 +1,68 @@
+/* A choice shown as tiles. The tile wears the page's face like any part; its picture wears its own. */
+@layer oh {
+  .oh-settingtiles {
+    /* The least a tile is wide: its name and tag on one line, its picture's two rows whole. */
+    --oh-settingtiles-least: 240px;
+
+    display: grid;
+
+    /* Two side by side where two fit; one under the other in a narrower column, whatever points at it. */
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--oh-settingtiles-least)), 1fr));
+    gap: var(--s3);
+    padding: var(--s1) 0 var(--s3);
+  }
+
+  :root[data-touch="1"] .oh-settingtiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .oh-settingtile {
+    --oh-settingtile-ring: inset 0 0 0 var(--oh-hair) var(--btn-ring);
+
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: var(--s2) var(--s2) 0;
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-settingtile-ring);
+    text-align: left;
+    transition: box-shadow var(--d-fade) var(--e-std);
+  }
+
+  .oh-settingtile[aria-pressed="true"] {
+    --oh-settingtile-ring: inset 0 0 0 var(--oh-focus) var(--solid);
+  }
+
+  /* A tag longer than the line holds goes under the name, a step above the tile's foot. */
+  .oh-settingtile-name {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    min-height: var(--h-m);
+    padding: var(--s1) var(--s2);
+  }
+
+  /* The tag stands on the sheet's own ground, in either face. */
+  .oh-settingtile > .oh-settingtile-name > .oh-tag:not([data-own]) {
+    background: var(--sheet);
+  }
+
+  /* Wider than the tile, the tag wraps by its words inside its capsule: every word stays in the tile and is seen. */
+  .oh-settingtile > .oh-settingtile-name > .oh-tag {
+    flex: 0 1 auto;
+    min-width: 0;
+    height: auto;
+    min-height: var(--oh-tag-h);
+    white-space: normal;
+  }
+
+  .oh-settingtile-word {
+    font-weight: var(--w-mid);
+  }
+
+  .oh-settingtile[aria-pressed="true"] .oh-settingtile-word {
+    font-weight: var(--w-bold);
+  }
+}

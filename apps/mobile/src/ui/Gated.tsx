@@ -116,6 +116,7 @@ export function Gated({ children }: { children: ReactNode }) {
   if (verdict.to === "connecting") return <BootShell migrating={verdict.migrating} />;
   if (verdict.to === "welcome") return <Redirect href="/welcome" />;
   if (verdict.to === "servers") return <Redirect href="/servers" />;
+  if (verdict.to === "shell") return <Redirect href="/shell" />;
   /* THE SENTENCE ABOUT THE APP COMES FIRST: an app too old to speak to its server cannot read that server's
      account verdict, and a server being updated has nothing else to say. The mirror on this phone is
      untouched, and a queued act stays queued. */
