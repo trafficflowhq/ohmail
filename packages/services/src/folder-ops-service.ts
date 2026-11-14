@@ -13,6 +13,7 @@ import type { MoveIdempotency } from "./message-service.js";
 import { foldersEnabled, userFolderById, userFolderExclusion, type UserFolderRow } from "./folders.js";
 import { folderRowToDTO } from "./dto/materialize.js";
 import type { FolderDTO } from "./dto/types.js";
+import type { FolderCreateBody as WireFolderCreateBody, FolderRenameBody as WireFolderRenameBody, UntrustedBody } from "@ohmail/wire";
 
 /**
  * The folder verbs — create / rename / delete, as USER COMMANDS (FOLDERS-SPEC.md stage 2). Every
@@ -63,10 +64,10 @@ async function recheckIdempotency(
   if (stored !== null) throw new IdempotencyRaceLost(ctx.accountId, idem.key);
 }
 
-/** `POST /folders` body. */
-export interface FolderCreateBody { mailboxId?: unknown; name?: unknown }
-/** `PATCH /folders/:id` body — the new full canonical path. */
-export interface FolderRenameBody { name?: unknown }
+/** `POST /folders` body, as it arrives: the wire's, every field still to be judged. */
+export type FolderCreateBody = UntrustedBody<WireFolderCreateBody>;
+/** `PATCH /folders/:id` body — the new full canonical path, as it arrives. */
+export type FolderRenameBody = UntrustedBody<WireFolderRenameBody>;
 
 /** The delete confirm's server-truth numbers ("N messages across M folders move to Trash"). */
 export interface FolderScopeSummary { folders: number; messages: number }

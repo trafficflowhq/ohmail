@@ -66,6 +66,9 @@ import { refuseOwnAddressRule, SHARED_PROVIDER_REFUSAL_SENTENCE } from "./rules-
 import { isSharedProviderDomain, sharedProviderAllowRefusal } from "@trafficflow/core/rule-order";
 import { clampLimit, decodeKeysetCursor, encodeListCursor } from "./pagination.js";
 import type { Folder, Page, RuleDTO, ScreenerItem } from "./dto/types.js";
+import type {
+  ScreenBody, ScreenDecisionMailboxes, ScreenDecisionResult, ScreenerPendingDecision, ScreenRequestedMailbox, ScreenRequestResult,
+} from "@ohmail/wire";
 
 /**
  * ONE SENDER'S REFUSAL, KEPT WHOLE UNTIL THE STATUS IS DECIDED.
@@ -221,26 +224,8 @@ export interface ScreenerSuggestDeps extends ScreenerDeps {
   pricing?: ActionPricing;
 }
 
-export interface ScreenBody {
-  decision: "yes" | "no";
-  /**
-   * WHERE THE USER ASKED FOR IT — one of `DECIDABLE_FOLDERS`. Optional, and absence is the
-   * endpoint's original behaviour: `yes` ⇒ `INBOX`, `no` ⇒ `ohmail/Screened`. Optional because a
-   * shipped desktop mirror and the API's contract tests post `{decision}` alone, and a client
-   * that cannot name a folder should still admit a sender. NOT "the server will guess": present,
-   * it decides the folder outright; absent, the two-folder default stands and `appliedFolder`
-   * says which.
-   */
-  dest?: Destination;
-  scope?: "sender" | "domain";   // default "sender"
-  /**
-   * Also apply the PROMOTED rule to this sender's mail that has already left the gate. Absent is
-   * `true`, the contract `POST /rules` already carries; a non-boolean is a 400 rather than a
-   * coercion, because `"false"` is truthy and reading an attempt to decline as consent to
-   * reorganize a mailbox is the failure that check exists for.
-   */
-  applyRetro?: boolean;
-}
+/** A Screener decision's body: declared with the wire's vocabulary. */
+export type { ScreenBody };
 
 /** Idempotency handle threaded in by the route; the row is written IN the decide tx. */
 export interface ScreenIdempotency {
@@ -249,71 +234,8 @@ export interface ScreenIdempotency {
 }
 
 
-/** One queued half of an account-wide decision — which mailbox waits, on whom, under which request. */
-export interface ScreenRequestedMailbox {
-  mailboxId: string;
-  requestId: string;
-  holder: OrganizedBy;
-}
-
-/**
- * WHERE AN ACCOUNT-WIDE DECISION LANDED, PER MAILBOX (0.20). `filed` re-routed now; `requested`
- * queued on the request road for the named install. A mailbox in neither list either held nothing
- * from this sender or is held by an install that cannot take requests — those rows stay visibly
- * held, which is the truthful rendering. Optional on the wire: an older server omits it.
- */
-export interface ScreenDecisionMailboxes {
-  filed: string[];
-  requested: ScreenRequestedMailbox[];
-  /**
-   * Mailboxes this install was asked to organize and does not yet: the rule is written, the held
-   * mail moves on the first organizing pass after the claim lands. Absent when there are none.
-   */
-  awaiting?: string[];
-}
-
-export interface ScreenDecisionResult {
-  messageId: string;
-  appliedFolder: Folder;
-  createdRuleId: string | null;
-  /**
-   * The rules this decision wrote, as `/sync` carries them: the promoted rule, and every twin it
-   * retargeted. A client whose drain lags the server holds the decision from the confirm on, as
-   * `POST /rules` has always answered with its rule. Absent from an older server.
-   */
-  createdRule?: RuleDTO | null;
-  retargetedRules?: RuleDTO[];
-  /** See {@link ScreenDecisionMailboxes}. Absent from an older server; never absent from this one. */
-  mailboxes?: ScreenDecisionMailboxes;
-  /**
-   * WHAT THIS REQUEST'S UNSUBSCRIBE FAN-OUT DID, and what it left: `done` of `of` is the honest
-   * half of a per-request ceiling, since the hourly drain finishes the rest.
-   *
-   * ABSENT MEANS THIS REQUEST STARTED NO FAN-OUT — a "yes", a deployment with no unsubscribe
-   * port, a decision that re-routed nothing, or an IDEMPOTENT REPLAY, served from the stored row
-   * before `decide` runs and therefore posting to nobody. It never means the fan-out finished.
-   */
-  unsubscribed?: { done: number; of: number };
-}
-
-/**
- * `POST /screener/:id`'s OTHER shape (0.14.1) — a reader's decision, accepted but not
- * yet applied. `202`, never `200`: "Rule saved" is never claimed before the organizer's own pass
- * actually applies it (the ruling's own words). `holder` is who the client names in "Decided —
- * <holder> files it on its next pass."
- */
-export interface ScreenRequestResult {
-  pending: true;
-  requestId: string;
-  holder: OrganizedBy;
-  /**
-   * The account-wide picture (0.20): `filed` is always empty on this shape (nothing was written
-   * here), and `requested` names EVERY queued mailbox — the primary `requestId`/`holder` above
-   * stay what they always were, the TARGET mailbox's, so an older client reads them unchanged.
-   * Where a screen-out filed a list's claims alone they are the target's move, else the first.
-   */
-  mailboxes?: ScreenDecisionMailboxes;
-}
+/** What a decision answers, applied or queued, and where it landed per mailbox: declared with the wire's vocabulary. */
+export type { ScreenRequestedMailbox, ScreenDecisionMailboxes, ScreenDecisionResult, ScreenRequestResult };
 
 /* ── The explicit suggestion purchase ───────────────────────────────────────────────────── */
 
@@ -769,37 +691,8 @@ export interface ScreenerPage extends Page<ScreenerItem> {
   gone?: string[];
 }
 
-/** One entry of {@link ScreenerPage.pendingDecisions}. */
-export interface ScreenerPendingDecision {
-  /** The address (sender scope) or the domain (domain scope) the decision covers, lower-cased. */
-  subject: string;
-  scope: "sender" | "domain";
-  decidedAt: string;
-  /**
-   * Has this install's own cycle appended it to the mailbox yet?
-   *
-   * KEPT ALONGSIDE {@link state} rather than replaced by it: a client written against the 0.14.1
-   * shape reads this field, and `state === "sent"` is exactly what it always meant. Renaming it
-   * would have been a wire break for a rename's worth of benefit.
-   */
-  sent: boolean;
-  /**
-   * WHERE THE DECISION ACTUALLY IS (mail 0090). `pending` — queued here, not yet handed to the
-   * mailbox. `sent` — in the mailbox, waiting for the organizer. `refused` — the organizer said
-   * no; THE SENDER IS BACK IN THE QUEUE, and this entry explains why the decision did not take
-   * effect. `applied` and `expired` never appear: the first needs no explaining, the second
-   * returns the sender to the queue with the ordinary "nobody is organizing this" notice.
-   */
-  state: "pending" | "sent" | "refused";
-  /**
-   * What the organizer said no to — a closed vocabulary this codebase defines (`unauthenticated`,
-   * `conflict`, `wrong_mailbox`, `invalid_payload`, `unhandled_kind`, `stale`, `account_erased`),
-   * never free text and never a stranger's. `null` outside `refused`, and also for a refusal whose
-   * named reason this build does not recognise — a newer organizer's vocabulary reaches an older
-   * reader as "refused, reason unknown" rather than as an unrendered string.
-   */
-  refusedReason: string | null;
-}
+/** One entry of {@link ScreenerPage.pendingDecisions}: declared with the wire's vocabulary. */
+export type { ScreenerPendingDecision };
 
 interface ScreenerRow {
   /**

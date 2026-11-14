@@ -17,6 +17,7 @@
     "@ohmail/client-engine": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
+    "@ohmail/wire": "*",
     "@trafficflow/core": "*"
   }
 }

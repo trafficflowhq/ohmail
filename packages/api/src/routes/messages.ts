@@ -1,11 +1,10 @@
 // The root barrel — see `packages/db/src/ledger-source.ts`. The local engine mounts these routes,
 // so an edge from here into the hosted half would ship it.
 import { clientIdempotencyKey } from "@trafficflow/db";
-import {
-  ServiceError, parseReaderZone, type MarkSeenBody, type MessagePatchBody, type MoveBody,
-} from "@trafficflow/services/mail";
+import { ServiceError, parseReaderZone } from "@trafficflow/services/mail";
+import type { RequestOf, UntrustedBody } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import {
   message, drafting, drafter, readBody, spendOf, accessPortOf, refundObligationsOf,
@@ -25,6 +24,7 @@ export const messageRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/messages",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -46,7 +46,7 @@ export const messageRoutes: Route[] = [
         ...(beforeId ? { before: { date: beforeDate ?? null, id: beforeId } } : {}),
         ...(atId || atDate ? { at: { date: atDate ?? null, ...(atId ? { id: atId } : {}) } } : {}),
       });
-      return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
+      return answer<"GET /messages">()({ items: page.items, nextCursor: page.nextCursor });
     },
   },
   {
@@ -54,12 +54,13 @@ export const messageRoutes: Route[] = [
     // one grouped read of the History index. Static beats `/messages/:id` by the router's rule.
     method: "GET",
     pattern: "/messages/timeline",
+    wire: true,
     relay: true,
     cost: "read",
     // `?zone=` is the reader's IANA zone, so a month is the one the rows' dates are read in.
     handler: async (req, deps) => {
       const zone = parseReaderZone(new URL(req.url).searchParams.get("zone"));
-      return jsonResponse(await message(deps).timeline(serviceContext(deps, req), zone ? { zone } : {}));
+      return answer<"GET /messages/timeline">()(await message(deps).timeline(serviceContext(deps, req), zone ? { zone } : {}));
     },
   },
   {
@@ -74,6 +75,7 @@ export const messageRoutes: Route[] = [
     // placement before `:id` here is readability only.
     method: "GET",
     pattern: "/messages/bodies",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -88,27 +90,29 @@ export const messageRoutes: Route[] = [
       const idsRaw = url.searchParams.get("ids");
       const ids = idsRaw === null ? undefined : idsRaw.split(",").map((s) => s.trim()).filter((s) => s !== "");
       const page = await message(deps).getBodies(serviceContext(deps, req), { after, limit, ids });
-      return jsonResponse({ items: page.items, nextCursor: page.nextCursor });
+      return answer<"GET /messages/bodies">()({ items: page.items, nextCursor: page.nextCursor });
     },
   },
   {
     method: "GET",
     pattern: "/messages/:id",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await message(deps).get(serviceContext(deps, req), params.id!);
-      return jsonResponse(dto);
+      return answer<"GET /messages/:id">()(dto);
     },
   },
   {
     method: "GET",
     pattern: "/messages/:id/body",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps, params) => {
       const dto = await message(deps).getBody(serviceContext(deps, req), params.id!);
-      return jsonResponse(dto);
+      return answer<"GET /messages/:id/body">()(dto);
     },
   },
   {
@@ -121,31 +125,33 @@ export const messageRoutes: Route[] = [
     // value twice is the same end state anyway.
     method: "PATCH",
     pattern: "/messages",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true, pressAge: true },
     handler: async (req, deps) => {
-      const body = await readBody<MarkSeenBody>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"PATCH /messages">>>(req);
       const { items, seq } = await message(deps).markSeen(serviceContext(deps, req), body);
-      return jsonResponse({ items }, { status: 200, seq });
+      return answer<"PATCH /messages">()({ items }, { status: 200, seq });
     },
   },
   {
     method: "PATCH",
     pattern: "/messages/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     options: { pressAge: true },
     handler: async (req, deps, params) => {
-      const body = await readBody<MessagePatchBody>(req);
+      const body = await readBody<RequestOf<"PATCH /messages/:id">>(req);
       const { dto, seq, pending } = await message(deps).patch(serviceContext(deps, req), params.id!, body);
       // A `folder` half that became a request is a 202, exactly as `POST /messages/:id/move` is —
       // this route is the same door under another name. The DTO and `seq` still describe what
       // this store actually did (an `unread` half in the same patch lands locally), and `pending`
       // says what is waiting on the install that organizes the mailbox.
-      if (pending) return jsonResponse({ ...pending, dto }, { status: 202, seq });
-      return jsonResponse(dto, { status: 200, seq });
+      if (pending) return answer<"PATCH /messages/:id">()({ ...pending, dto }, { status: 202, seq });
+      return answer<"PATCH /messages/:id">()(dto, { status: 200, seq });
     },
   },
   {
@@ -198,11 +204,12 @@ export const messageRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/messages/:id/move",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true, pressAge: true },
     handler: async (req, deps, params) => {
-      const body = await readBody<MoveBody>(req);
+      const body = await readBody<RequestOf<"POST /messages/:id/move">>(req);
       const result = await message(deps).move(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
@@ -210,8 +217,8 @@ export const messageRoutes: Route[] = [
       // it is the same rule for the same reason: on a mailbox this install merely reads, nothing
       // has moved and the honest code is 202. `requestMove` stores exactly this status for the
       // idempotent replay, so the first press and its replay agree.
-      if ("pending" in result) return jsonResponse(result, { status: 202 });
-      return jsonResponse(result.dto, { status: 200, seq: result.seq });
+      if ("pending" in result) return answer<"POST /messages/:id/move">()(result, { status: 202 });
+      return answer<"POST /messages/:id/move">()(result.dto, { status: 200, seq: result.seq });
     },
   },
   {
@@ -228,6 +235,7 @@ export const messageRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/messages/:id/restore",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true, pressAge: true },
@@ -236,7 +244,7 @@ export const messageRoutes: Route[] = [
         serviceContext(deps, req), params.id!,
         { idempotency: deps.idempotency ?? null },
       );
-      return jsonResponse({ restoreTo, pending }, { status: 200, seq });
+      return answer<"POST /messages/:id/restore">()({ restoreTo, pending }, { status: 200, seq });
     },
   },
   {
@@ -245,6 +253,7 @@ export const messageRoutes: Route[] = [
     // mirror. 422 `no_trash_folder` when the mailbox has none — the service carries the rule.
     method: "DELETE",
     pattern: "/messages/:id",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true, pressAge: true },
@@ -253,10 +262,10 @@ export const messageRoutes: Route[] = [
         idempotency: deps.idempotency ?? null,
       });
       // 202 when the delete became a request — see the move route above.
-      if ("pending" in result) return jsonResponse(result, { status: 202 });
+      if ("pending" in result) return answer<"DELETE /messages/:id">()(result, { status: 202 });
       // Gone from the server already: nothing was written, so no seq.
-      if ("alreadyGone" in result) return jsonResponse({ ...result.dto, alreadyGone: true }, { status: 200 });
-      return jsonResponse(result.dto, { status: 200, seq: result.seq });
+      if ("alreadyGone" in result) return answer<"DELETE /messages/:id">()({ ...result.dto, alreadyGone: true }, { status: 200 });
+      return answer<"DELETE /messages/:id">()(result.dto, { status: 200, seq: result.seq });
     },
   },
 ];

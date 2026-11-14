@@ -37,6 +37,7 @@ import {
 import type {
   Folder, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, Page, TrashRowDTO, TriageState, WithheldMarker,
 } from "./dto/types.js";
+import type { MarkSeenBody as WireMarkSeenBody, MessagePatchBody, MoveBody, UntrustedBody } from "@ohmail/wire";
 
 /**
  * Where a best-effort filing doorbell reports a throw. Module scope and not injected: it is a
@@ -192,39 +193,11 @@ interface TimelineMonth {
 /** The History page ceiling: a page is one screen, and the index walk is priced per page. */
 const HISTORY_PAGE_MAX = 50;
 
-export interface MessagePatchBody {
-  unread?: boolean;
-  folder?: string;
-  /**
-   * `"glance"` marks the surface's own involuntary read — the dwell commit, the stream sweep —
-   * as opposed to a deliberate act. A glance-read LANDS (a resurfaced message keeps its genuine
-   * read state, and reading it sticks — owner ruling 2026-08-26) but does NOT spend the
-   * resurface pin: placement in Resurface is the attention signal, answered by dealing with the
-   * row, and nobody pressed anything to get here. Absent ⇒ deliberate ⇒ spends.
-   */
-  via?: string;
-}
+/** The bodies of a letter's patch and move: declared with the wire's vocabulary. */
+export type { MessagePatchBody, MoveBody };
 
-/** `PATCH /messages` — one read-state decision applied to up to {@link MARK_SEEN_MAX_IDS} messages. */
-export interface MarkSeenBody {
-  ids?: unknown;
-  unread?: unknown;
-  /** See {@link MessagePatchBody.via} — the batch form carries the same label. */
-  via?: unknown;
-  /**
-   * AN OPEN READ — set by the engine alone (`Engine.enrich`), on a read whose every id is in the
-   * conversation the reader has open. Stamps `open_read_at` on the rows that were unread, when all
-   * ids are one conversation; over several it stamps nothing and the read still lands. Absent ⇒
-   * arrival. `true` beside `unread: true` is refused: nothing an unread does may place a row.
-   */
-  openRead?: unknown;
-  /**
-   * AN UNDO OF A MARK UNREAD: `{ [id]: ISO }`, each row's open read before the press, `{}` for none.
-   * A read only, never beside `openRead`. Restored on a live id that is read, holds no open read and
-   * is in no pile, never later than now; a key outside `ids` is ignored. Its read spends no pin.
-   */
-  restoreOpenReadAt?: unknown;
-}
+/** `PATCH /messages` as it arrives: the wire's body, every field still to be judged here. */
+export type MarkSeenBody = UntrustedBody<WireMarkSeenBody>;
 
 /**
  * The batch cap, and why there is one. The route runs ONE transaction that allocates one
@@ -246,13 +219,6 @@ export interface MarkSeenResult {
 /** Postgres would raise 22P02 on a malformed uuid, which is a 500 for what is plainly a 400. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface MoveBody {
-  folder: string;
-  /** Applied only while the letter is still here; otherwise refused `stale_press` (a card's move). */
-  from?: string;
-  /** The move of a press that also writes the sender's rule: not an override of the route it rewrites, nor a place decided on its own. */
-  pressRule?: boolean;
-}
 
 /** Idempotency handle the route threads in when an `Idempotency-Key` is present. */
 export interface MoveIdempotency {

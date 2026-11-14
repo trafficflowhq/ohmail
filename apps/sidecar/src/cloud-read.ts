@@ -8,6 +8,7 @@ import {
   type AddressSearchOptions,
   type SearchFilters, type SearchOptions, type ServiceContext,
 } from "@trafficflow/services/mail";
+import type { AnswerOf, OnlyNamesOf, RouteName } from "@ohmail/wire";
 
 /**
  * The Cloud-mode local read surface — the full mail READ routes, served from the mirror in PGlite.
@@ -34,6 +35,16 @@ export interface ReadRoute {
 
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+/**
+ * A 2xx OF A ROUTE THE WINDOW'S CLIENT IS BOUND TO through `@ohmail/wire`. On a Cloud account this
+ * door answers that client instead of the account's server, so it answers through the same type
+ * and under the same names (`packages/api`'s `answer`, whose two calls this repeats): a field
+ * renamed on the wire, in the server and in the client together does not compile here until it
+ * is renamed here too. Nothing but the types: the bytes are {@link json}'s.
+ */
+const answer = <R extends RouteName>() =>
+  <B extends AnswerOf<R>>(body: B & OnlyNamesOf<B, AnswerOf<R>>): Response => json(body);
 
 /** A numeric query param, or undefined when absent/blank (the service applies its own default). */
 const num = (v: string | null): number | undefined => (v != null && v !== "" ? Number(v) : undefined);
@@ -134,7 +145,7 @@ export const READ_ROUTES: ReadRoute[] = [
       // The labelled tail alone, a closed set at the read exactly as the local door's route reads
       // it; anything else is the ordinary walk. Dropped, the window's tail rehydrate ran that walk.
       const phase = url.searchParams.get("phase") === "tail" ? "tail" as const : undefined;
-      return json(
+      return answer<"GET /sync/snapshot">()(
         await syncService.getSnapshot(ctx, {
           ...(cursor ? { cursor } : {}),
           ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
@@ -177,19 +188,19 @@ export const READ_ROUTES: ReadRoute[] = [
           const held = await mirroredBodyIds(snap, page.items.map((i) => i.messageId));
           return page.items.filter((i) => held.has(i.messageId));
         });
-        return json({ items, nextCursor: null });
+        return answer<"GET /messages/bodies">()({ items, nextCursor: null });
       }
       const page = await messageService.getBodies(ctx, {
         ...(after ? { after } : {}),
         ...(limit !== undefined ? { limit } : {}),
       });
-      return json({ items: page.items, nextCursor: page.nextCursor });
+      return answer<"GET /messages/bodies">()({ items: page.items, nextCursor: page.nextCursor });
     },
   },
   {
     method: "GET",
     pattern: "/messages/:id",
-    handler: async (_req, ctx, params) => json(await messageService.get(ctx, params.id!)),
+    handler: async (_req, ctx, params) => answer<"GET /messages/:id">()(await messageService.get(ctx, params.id!)),
   },
   /**
    * One body — from the mirror when the mirror has it, and NOT INVENTED when it does not. The
@@ -206,7 +217,7 @@ export const READ_ROUTES: ReadRoute[] = [
     pattern: "/messages/:id/body",
     handler: async (_req, ctx, params) => {
       const id = params.id!;
-      return json(await inSnapshot(ctx, async (snap) => {
+      return answer<"GET /messages/:id/body">()(await inSnapshot(ctx, async (snap) => {
         if (!(await mirroredBodyIds(snap, [id])).has(id)) {
           throw new ServiceError("not_found", 404, "message not found");
         }
@@ -255,7 +266,7 @@ export const READ_ROUTES: ReadRoute[] = [
           direction: directionRaw,
           ...(addrLimit !== undefined ? { limit: addrLimit } : {}),
         };
-        return json(await searchService.searchByAddress(ctx, addrOpts));
+        return answer<"GET /search">()(await searchService.searchByAddress(ctx, addrOpts));
       }
 
       const q = url.searchParams.get("q") ?? "";
@@ -295,7 +306,7 @@ export const READ_ROUTES: ReadRoute[] = [
         ...(partsRaw !== null ? { parts: partsRaw } : {}),
         ...(cursor ? { cursor } : {}),
       };
-      return json(await searchService.search(ctx, opts));
+      return answer<"GET /search">()(await searchService.search(ctx, opts));
     },
   },
   {

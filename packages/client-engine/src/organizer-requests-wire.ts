@@ -1,8 +1,5 @@
 import type { WaitingRequestWire, WaitingTargetWire } from "./types.js";
 
-/** The route the waiting list is read from. */
-export const ORGANIZER_REQUESTS_PATH = "/organizer-requests";
-
 const STATES: ReadonlySet<string> = new Set(["pending", "sent", "applied", "expired", "refused"]);
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 

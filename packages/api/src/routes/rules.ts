@@ -6,9 +6,10 @@ import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { serviceContext } from "../context.js";
 import { lookupIdempotent, replayOf } from "../idempotency.js";
 import { canonicalQuery } from "../middleware.js";
-import { jsonResponse } from "../responses.js";
+import { answer, jsonResponse } from "../responses.js";
 import type { Route } from "../router.js";
 import { rules, readBody } from "./shared.js";
+import type { RequestOf, UntrustedBody } from "@ohmail/wire";
 
 /**
  * Rules CRUD. Mutations emit a `rule` change (X-Sync-Seq echoed); all account-scoped (404
@@ -34,6 +35,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/rules",
+    wire: true,
     relay: true,
     cost: "work",
     // One rule per four-field key: a create over an existing key answers that rule (200), so a
@@ -41,7 +43,7 @@ export const rulesRoutes: Route[] = [
     // press's answer back, 201 included.
     options: { idempotent: true },
     handler: async (req, deps) => {
-      const body = await readBody<CreateRuleBody>(req);
+      const body = await readBody<RequestOf<"POST /rules">>(req);
       const result = await rules(deps).create(
         serviceContext(deps, req), body, { idempotency: deps.idempotency ?? null },
       );
@@ -50,8 +52,8 @@ export const rulesRoutes: Route[] = [
       // organizes, no `rules` row was written and there is nothing to hand back at 201. The
       // service stores exactly this status for the idempotent replay, so a first press and its
       // replay agree. `travel` says which install each request is waiting on.
-      if ("pending" in result) return jsonResponse(result, { status: 202 });
-      return jsonResponse(
+      if ("pending" in result) return answer<"POST /rules">()(result, { status: 202 });
+      return answer<"POST /rules">()(
         // `travel` rides BESIDE the rule on a mixed account, never instead of it: the row exists
         // here AND the same edit is in flight to the installs holding the other mailboxes.
         result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
@@ -73,6 +75,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "PATCH",
     pattern: "/rules/:id",
+    wire: true,
     relay: true,
     cost: "work",
     // A retried edit used to emit a SECOND `rule` change at a DIFFERENT seq, waking
@@ -81,14 +84,14 @@ export const rulesRoutes: Route[] = [
     // its update transaction and materializes the stored DTO there too.
     options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const patch = await readBody<PatchRuleBody>(req);
+      const patch = await readBody<RequestOf<"PATCH /rules/:id">>(req);
       const result = await rules(deps).update(
         serviceContext(deps, req), params.id!, patch, { idempotency: deps.idempotency ?? null },
       );
       // 202 when the edit wrote nothing here — see the create route above. The body carries the
       // UNCHANGED rule, because that is what this install still holds.
-      if ("pending" in result) return jsonResponse(result, { status: 202 });
-      return jsonResponse(
+      if ("pending" in result) return answer<"PATCH /rules/:id">()(result, { status: 202 });
+      return answer<"PATCH /rules/:id">()(
         result.travel === undefined ? result.rule : { ...result.rule, travel: result.travel },
         { status: 200, seq: result.seq },
       );
@@ -97,6 +100,7 @@ export const rulesRoutes: Route[] = [
   {
     method: "DELETE",
     pattern: "/rules/:id",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "handler",
@@ -114,8 +118,8 @@ export const rulesRoutes: Route[] = [
       const accountId = deps.session?.accountId;
 
       /** The revoke's answer: 204, no body, the seq of the delete that actually happened. */
-      const revoked = (seq: number | null): Response =>
-        jsonResponse(null, { status: 204, seq: seq ?? undefined });
+      const revoked = (seq: number | null) =>
+        answer<"DELETE /rules/:id">()(null, { status: 204, seq: seq ?? undefined });
 
       /**
        * ONE VALUE IS BOTH THE ANSWER AND THE STORED RESPONSE — the shape `POST /rules` and
@@ -126,19 +130,19 @@ export const rulesRoutes: Route[] = [
        * request in flight shows on the rules surface instead. What is new is that nothing
        * re-derives which of the two states it holds.
        */
-      const answer = (r: RuleRemoval | RuleRequestResult): Response =>
-        "pending" in r ? jsonResponse(r, { status: 202 }) : revoked(r.seq);
+      const answered = (r: RuleRemoval | RuleRequestResult) =>
+        "pending" in r ? answer<"DELETE /rules/:id">()(r, { status: 202 }) : revoked(r.seq);
 
       // No key ⇒ nothing distinguishes a retry from a probe, so the service's plain 404 for
       // an id that is not there stands. `accountId` is belt-and-braces: `withSession` has
       // already 401'd an unauthenticated caller on this protected route.
       /* The published rule's key, read only at its address; `null` there for a body without one (a 400). */
       const ruleKey = params.id === PUBLISHED_RULE_ID
-        ? ((await req.clone().json().catch(() => null)) as { key?: unknown } | null)?.key ?? null
+        ? ((await req.clone().json().catch(() => null)) as UntrustedBody<RequestOf<"DELETE /rules/:id">> | null)?.key ?? null
         : undefined;
 
       if (!key || !accountId) {
-        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, { key: ruleKey }));
+        return answered(await rules(deps).remove(serviceContext(deps, req), params.id!, { key: ruleKey }));
       }
 
       const url = new URL(req.url);
@@ -155,7 +159,7 @@ export const rulesRoutes: Route[] = [
       if (found) return replayOf(found, requestHash);
 
       try {
-        return answer(await rules(deps).remove(serviceContext(deps, req), params.id!, {
+        return answered(await rules(deps).remove(serviceContext(deps, req), params.id!, {
           idempotency: { key, requestHash }, key: ruleKey,
         }));
       } catch (err) {

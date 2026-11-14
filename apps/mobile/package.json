@@ -44,7 +44,8 @@
     "util": "0.12.5",
     "@ohmail/client-engine": "*",
     "@ohmail/tokens": "*",
-    "@ohmail/ui": "*"
+    "@ohmail/ui": "*",
+    "@ohmail/wire": "*"
   },
   "devDependencies": {
     "@testing-library/react-native": "13.3.3",

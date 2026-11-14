@@ -1,3 +1,5 @@
+import type { AnswerOf, HelloUnavailable } from "@ohmail/wire";
+import type { Answered, Refused } from "../responses.js";
 import { API_VERSION } from "../version.js";
 import type { HelloConfig } from "../deps.js";
 import type { Route } from "../router.js";
@@ -16,6 +18,7 @@ export const helloRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/hello",
+    wire: true,
     relay: true,
     cost: "unauthenticated",
     options: { public: true, raw: true, anonymous: true },
@@ -77,8 +80,13 @@ export const helloRoutes: Route[] = [
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Same discipline as `/health`'s responder: JSON, and never cached. */
-function helloResponse(status: number, body: Record<string, unknown>): Response {
+/**
+ * Same discipline as `/health`'s responder: JSON, and never cached. A 200 is the wire's hello; a
+ * 503 is a host that cannot say what it is, in this route's own two words and not the envelope.
+ */
+function helloResponse(status: 200, body: AnswerOf<"GET /hello">): Answered<"GET /hello">;
+function helloResponse(status: 503, body: HelloUnavailable): Refused;
+function helloResponse(status: number, body: object): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },

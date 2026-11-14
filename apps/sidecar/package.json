@@ -14,6 +14,7 @@
   "dependencies": {
     "@electric-sql/pglite": "0.2.17",
     "drizzle-orm": "0.36.4",
+    "@ohmail/wire": "*",
     "@trafficflow/api": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*",

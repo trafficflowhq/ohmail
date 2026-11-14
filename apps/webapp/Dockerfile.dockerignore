@@ -27,6 +27,9 @@
 !packages/tokens
 !packages/ui
 !packages/core
+# What a client and a server exchange, as types: the type check in `next build` reads its
+# sources, and nothing of it reaches the bundle.
+!packages/wire
 
 # …minus anything inside them that must never be copied in. `.next`/`dist`/`*.tsbuildinfo`
 # keep the image compiling from source; `test` is excluded because `next build` type-checks

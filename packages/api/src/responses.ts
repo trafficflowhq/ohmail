@@ -1,3 +1,5 @@
+import type { AnswerOf, Bytes, ErrorEnvelope, OnlyNamesOf, RouteName, ServiceErrorCode } from "@ohmail/wire";
+
 export interface JsonResponseInit {
   status?: number;
   /** When present, echoed as `X-Sync-Seq` — the change_log seq this mutation emitted (contract §3.4). */
@@ -40,6 +42,45 @@ export function jsonResponse(body: unknown, init: JsonResponseInit = {}): Respon
 }
 
 /**
+ * WHAT A HANDLER BOUND TO THE WIRE MAY RETURN, told apart in the types and nowhere else: each is
+ * a plain `Response` when it runs. A route marked as bound to the wire (`Route.wire`) must
+ * return one of the three, so an answer that went around the wire's type does not compile.
+ *
+ *  · {@link Answered}: a 2xx of route `R`, made by {@link answer} or {@link answerBuilt}.
+ *  · {@link Refused}: the error envelope, made by {@link errorResponse}.
+ *  · {@link Replayed}: a stored response given again as it was first given (`idempotency.ts`).
+ */
+export type Answered<R extends RouteName> = Response & { readonly "~answers": R };
+export type Refused = Response & { readonly "~answers": "refused" };
+export type Replayed = Response & { readonly "~answers": "replayed" };
+
+/**
+ * A ROUTE'S 2xx ANSWER, TYPED BY THE WIRE. `R` is the route's name in `@ohmail/wire`'s `Routes`,
+ * and the body must be what that entry says the route answers, under the entry's names and no
+ * other (`OnlyNamesOf`): a field renamed here alone does not compile, wherever it is written, a
+ * spread member included, and neither does one renamed in a client alone.
+ *
+ * TWO CALLS, `answer<"GET /x">()(body)`, because the compiler infers all of a call's type
+ * arguments or none: the first names the route, the second takes the body with its own type, which
+ * is what the names are read from. Nothing but the types: what comes back is {@link jsonResponse}.
+ */
+export function answer<R extends RouteName>(): <B extends AnswerOf<R>>(
+  body: B & OnlyNamesOf<B, AnswerOf<R>>, init?: JsonResponseInit,
+) => Answered<R> {
+  return jsonResponse as (body: unknown, init?: JsonResponseInit) => Answered<R>;
+}
+
+/**
+ * THE SAME, for a 2xx the route builds itself: bytes with their own headers, or a status with no
+ * body. The wire says so (`Bytes`, `null`), and only such a route may use it.
+ */
+export function answerBuilt<R extends RouteName>(
+  res: Bytes extends AnswerOf<R> ? Response : null extends AnswerOf<R> ? Response : never,
+): Answered<R> {
+  return res as Response as Answered<R>;
+}
+
+/**
  * The `ApiError` envelope: `{ error: { code, message, details?, retryable? } }` at `status`.
  * `retryable` is emitted only when a service stated it, and the omission-by-default is the point:
  * the client reads `wire.error.retryable ?? (status >= 500 || status === 429)`
@@ -49,7 +90,7 @@ export function jsonResponse(body: unknown, init: JsonResponseInit = {}): Respon
  * a mutation queue to retry forever.
  */
 export function errorResponse(
-  code: string, status: number, message: string, details?: unknown, retryable?: boolean,
+  code: ServiceErrorCode, status: number, message: string, details?: unknown, retryable?: boolean,
   /**
    * Extra response headers. Added for `Retry-After` on the 503 a starved connection pool
    * raises: `retryable: true` tells a client it MAY retry, and only a header tells it WHEN —
@@ -57,10 +98,9 @@ export function errorResponse(
    * and every refused caller returning at once.
    */
   headers?: Record<string, string>,
-): Response {
-  const error: { code: string; message: string; details?: unknown; retryable?: boolean } =
-    { code, message };
+): Refused {
+  const error: ErrorEnvelope["error"] = { code, message };
   if (details !== undefined) error.details = details;
   if (retryable !== undefined) error.retryable = retryable;
-  return jsonResponse({ error }, { status, headers });
+  return jsonResponse({ error }, { status, headers }) as Refused;
 }

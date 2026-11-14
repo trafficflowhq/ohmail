@@ -167,6 +167,8 @@ export default defineConfig({
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("./packages/tokens/src/ohmarchy.css") },
       { find: "@ohmail/tokens", replacement: r("./packages/tokens/src/index.ts") },
       { find: "@ohmail/fixtures", replacement: r("./packages/fixtures/src/index.ts") },
+      // Types only, so no run resolves it; listed for the censuses that walk import graphs off this table.
+      { find: "@ohmail/wire", replacement: r("./packages/wire/src/index.ts") },
       // The durable-write door as a leaf, ABOVE the bare name for the ordering reason the core
       // subpaths above give: a string `find` is a prefix match, so the barrel entry would
       // rewrite this specifier to `…/src/index.ts/durable` and resolve nothing.

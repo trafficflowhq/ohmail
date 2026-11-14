@@ -5,13 +5,14 @@ import {
   type ScreenBody,
 } from "@trafficflow/services/mail";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer, jsonResponse } from "../responses.js";
 import {
   listJunk, junkBody, rescueJunk, dismissJunkRescue, searchJunk, junkSweepPreview, requestJunkSweep,
 } from "../junk-window.js";
 import type { Route } from "../router.js";
 import { screener, readBody, refundObligationsOf } from "./shared.js";
 import { pagingNumber } from "../query-bounds.js";
+import type { RequestOf, UntrustedBody } from "@ohmail/wire";
 
 /**
  * The flagship Screener. `GET /screener` is the derived first-contact queue (one entry per held
@@ -43,6 +44,7 @@ export const screenerRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/screener/stayed",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -51,7 +53,7 @@ export const screenerRoutes: Route[] = [
       // Bounded before it is split: an id is 36 characters and a comma.
       if (raw.length > WHY_STAYED_IDS_MAX * 37) throw new ServiceError("validation_failed", 400, "too many ids");
       const ids = raw === "" ? [] : raw.split(",");
-      return jsonResponse({ stayed: await whyStayed(ctx.db, ctx.accountId, ids), max: WHY_STAYED_IDS_MAX });
+      return answer<"GET /screener/stayed">()({ stayed: await whyStayed(ctx.db, ctx.accountId, ids), max: WHY_STAYED_IDS_MAX });
     },
   },
   {
@@ -65,6 +67,7 @@ export const screenerRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/screener/held-releases",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -78,7 +81,7 @@ export const screenerRoutes: Route[] = [
       // and `dismissed` whether the account already said "not now" to exactly this set.
       // `senders` are contacts nobody wrote a rule for; their mail is outside `total`, because an
       // older client reads `total` as the rule groups' figure.
-      return jsonResponse({ groups, senders, total, max: HELD_RELEASE_GROUPS_MAX, fingerprint, dismissed });
+      return answer<"GET /screener/held-releases">()({ groups, senders, total, max: HELD_RELEASE_GROUPS_MAX, fingerprint, dismissed });
     },
   },
   {
@@ -91,13 +94,14 @@ export const screenerRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/screener/held-releases/dismiss",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "state",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ fingerprint?: unknown }>(req);
-      return jsonResponse(await dismissHeldRelease(ctx, { fingerprint: body.fingerprint }));
+      const body = await readBody<UntrustedBody<RequestOf<"POST /screener/held-releases/dismiss">>>(req);
+      return answer<"POST /screener/held-releases/dismiss">()(await dismissHeldRelease(ctx, { fingerprint: body.fingerprint }));
     },
   },
   {
@@ -112,12 +116,13 @@ export const screenerRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/screener/held-releases",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ ruleIds?: unknown; senders?: unknown }>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /screener/held-releases">>>(req);
       // Left `unknown` to the service on purpose: the service refuses a non-array, a non-string
       // member and more than `HELD_RELEASE_GROUPS_MAX` ids or senders, and a route that
       // pre-narrowed them would be a second, weaker copy of that rule. An absent `senders`
@@ -126,7 +131,7 @@ export const screenerRoutes: Route[] = [
         ruleIds: body.ruleIds as readonly string[] | undefined,
         senders: body.senders as readonly string[] | undefined,
       });
-      return jsonResponse(result);
+      return answer<"POST /screener/held-releases">()(result);
     },
   },
   {
@@ -137,12 +142,13 @@ export const screenerRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/screener/auto-filed",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
       const page = await autoFiledSummary(ctx.db, ctx.accountId);
-      return jsonResponse({ ...page, max: AUTO_FILED_PAGE_MAX });
+      return answer<"GET /screener/auto-filed">()({ ...page, max: AUTO_FILED_PAGE_MAX });
     },
   },
   {
@@ -153,14 +159,15 @@ export const screenerRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/screener/auto-filed/undo",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ messageIds?: unknown }>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /screener/auto-filed/undo">>>(req);
       // Left `unknown`: the service refuses a non-array, a bad id and more than the page's bound.
-      return jsonResponse(await undoAutoFiled(ctx, { messageIds: body.messageIds }));
+      return answer<"POST /screener/auto-filed/undo">()(await undoAutoFiled(ctx, { messageIds: body.messageIds }));
     },
   },
   {
@@ -174,6 +181,7 @@ export const screenerRoutes: Route[] = [
      */
     method: "GET",
     pattern: "/screener/unscreened",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -192,7 +200,7 @@ export const screenerRoutes: Route[] = [
       // `complete: false` says the walk stopped at its bound, so `total` is a floor. The pile is
       // said back: a server from before piles answers the Ohbox's offer, and a client reads that
       // answer's missing `pile` as "this door has no such note".
-      return jsonResponse({
+      return answer<"GET /screener/unscreened">()({
         groups, total, complete, max: OHBOX_UNSCREENED_GROUPS_MAX, ...(pile === null ? {} : { pile }),
       });
     },
@@ -256,16 +264,17 @@ export const screenerRoutes: Route[] = [
      */
     method: "POST",
     pattern: "/screener/unscreened",
+    wire: true,
     relay: true,
     cost: "work",
     replay: "guarded",
     handler: async (req, deps) => {
       const ctx = serviceContext(deps, req);
-      const body = await readBody<{ addresses?: unknown; pile?: unknown }>(req);
+      const body = await readBody<UntrustedBody<RequestOf<"POST /screener/unscreened">>>(req);
       // Left `unknown` to the service on purpose: it refuses a non-array, a non-string member, an
       // over-long address and more than `OHBOX_UNSCREENED_GROUPS_MAX` of them, and a pile that is
       // not News or Receipts; a route that pre-narrowed them would be a second, weaker copy.
-      return jsonResponse(await screenUnscreened(ctx, {
+      return answer<"POST /screener/unscreened">()(await screenUnscreened(ctx, {
         addresses: body.addresses as readonly string[] | undefined,
         ...(body.pile === undefined ? {} : { pile: body.pile }),
       }));
@@ -274,6 +283,7 @@ export const screenerRoutes: Route[] = [
   {
     method: "GET",
     pattern: "/screener",
+    wire: true,
     relay: true,
     cost: "read",
     handler: async (req, deps) => {
@@ -294,7 +304,7 @@ export const screenerRoutes: Route[] = [
       // NAME to say "waiting for <holder>" rather than leaving a row it just removed unexplained.
       // Dropping it here is how the exclusion becomes a disappearance, which is why this field is
       // on the wire before any client reads it.
-      return jsonResponse({
+      return answer<"GET /screener">()({
         items: page.items, nextCursor: page.nextCursor, suggestable: page.suggestable,
         pendingDecisions: page.pendingDecisions,
         // The queue's exact size, on the first page only — see `ScreenerPage.total`.
@@ -467,11 +477,12 @@ export const screenerRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/screener/:id",
+    wire: true,
     relay: true,
     cost: "work",
     options: { idempotent: true },
     handler: async (req, deps, params) => {
-      const body = await readBody<ScreenBody>(req);
+      const body = await readBody<RequestOf<"POST /screener/:id">>(req);
       const { result, seq } = await screener(deps).decideAnswered(serviceContext(deps, req), params.id!, body, {
         idempotency: deps.idempotency ?? null,
       });
@@ -486,7 +497,7 @@ export const screenerRoutes: Route[] = [
       // is the one thing an idempotent route may not do. `messages.ts`'s own 202 is the precedent.
       const status = "pending" in result && result.pending === true ? 202 : 200;
       // The seq rides the 200 for the same reason: the replay re-emits the one the claim stored.
-      return jsonResponse(result, { status, ...(status === 200 && seq !== null ? { seq } : {}) });
+      return answer<"POST /screener/:id">()(result, { status, ...(status === 200 && seq !== null ? { seq } : {}) });
     },
   },
 ];

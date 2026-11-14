@@ -867,6 +867,9 @@ export default defineConfig({
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("../../packages/client-engine/src/html-tree-budget.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
+      /* Types only, so no import of it survives to be bundled; listed because `tsconfig.json`'s
+         `paths` carries it and the two maps are held to each other. */
+      { find: "@ohmail/wire", replacement: r("../../packages/wire/src/index.ts") },
 
       /* The calendar reader — with `folder-name` and `drain-policy` below, one of the THREE
          `@trafficflow/*` specifiers that reach this bundle.

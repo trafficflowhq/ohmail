@@ -2,6 +2,7 @@ import { parseMessageIds } from "./threading.js";
 import { authScreens, type AuthVerdict } from "./sender-headers.js";
 import type { IdentityFact } from "./sender-check.js";
 import type { NormalizedMessage, Destination } from "./types.js";
+import type { UnsubscribeHeaderState } from "@ohmail/wire";
 import {
   compareRules, effectForDestination as effectOfDestination, namesAuthor, personConsentRule, personDomainConsentRule,
   placingRule, ruleMatchKey, type RuleEffect,
@@ -929,20 +930,8 @@ export function oneClickUnsubscribeUri(headers: Readonly<Record<string, unknown>
   return null;
 }
 
-/**
- * Why {@link oneClickUnsubscribeUri} answered what it answered — for a message a user is
- * looking at, so the interface can say "this sender offers no way out" instead of going quiet.
- *
- * `"mailto_only"` means the header offered no `https:` URI we may act on — in practice a
- * `mailto:`, and it is a distinct state on purpose: it is the case where the sender DID publish
- * an unsubscribe route and we are refusing it on the user's behalf, which is the one refusal
- * that owes the user an explanation.
- */
-export type UnsubscribeHeaderState =
-  | "one_click"
-  | "no_header"
-  | "mailto_only"
-  | "not_one_click";
+/** Why {@link oneClickUnsubscribeUri} answered what it answered; declared with the wire's vocabulary. */
+export type { UnsubscribeHeaderState };
 
 /** The state, computed from the same header map and the same refusals. */
 export function unsubscribeHeaderState(

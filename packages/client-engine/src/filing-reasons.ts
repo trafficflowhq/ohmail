@@ -1,3 +1,5 @@
+import type { Assert, Complete, FilingRefusalReason } from "@ohmail/wire";
+
 /**
  * The refusal classes a client renders a sentence for, on every surface (the web strip and
  * Settings block, the desktop, the phone).
@@ -9,9 +11,10 @@
  */
 export const FILING_REFUSAL_REASONS = [
   "refused", "no_such_folder", "read_only", "over_quota", "stale_locator", "unconfirmed", "unknown",
-] as const;
+] as const satisfies readonly FilingRefusalReason[];
+type _FilingRefusalReasonsComplete = Assert<Complete<FilingRefusalReason, typeof FILING_REFUSAL_REASONS>>;
 
-export type FilingRefusalReason = (typeof FILING_REFUSAL_REASONS)[number];
+export type { FilingRefusalReason };
 
 /** A wire class narrowed to the set: `null` stays `null` (nothing refused), anything unknown is `unknown`. */
 export function filingRefusalReason(v: string | null): FilingRefusalReason | null {

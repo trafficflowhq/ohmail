@@ -73,7 +73,7 @@ describe("the pipeline a route runs through", () => {
     let handlerRan = false;
     const app = createApp([route({
       public: true, anonymous: true, middleware: [refuse],
-    })].map((r) => ({ ...r, handler: async () => { handlerRan = true; return new Response("ok"); } })));
+    })].map((r) => ({ ...r, handler: async () => { handlerRan = true; return new Response("ok"); } }) as Route));
     const res = await app.handle(
       new Request("https://api.test/x", { method: "POST" }),
       { requestId: "", now: () => new Date() } as never,

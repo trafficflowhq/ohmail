@@ -1,0 +1,6 @@
+{
+  "//": "Types only. `emitDeclarationOnly` is the structural half of that: this project can write a .d.ts and nothing else, so no JavaScript of this package can exist to be bundled. test/types-only.test.ts is the other half.",
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src", "emitDeclarationOnly": true },
+  "include": ["src"]
+}

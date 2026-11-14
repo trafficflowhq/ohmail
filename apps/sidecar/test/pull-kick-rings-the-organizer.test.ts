@@ -56,7 +56,7 @@ describe("withPullKick", () => {
     const runtimes = [{ ring: () => { rung.push("a"); } }, { ring: () => { rung.push("b"); } }];
     const rule = (method: "POST" | "PATCH", status: number): Route => ({
       ...answered(status), method, pattern: method === "POST" ? "/rules" : "/rules/:id",
-    });
+    }) as Route;
     const call = async (route: Route) =>
       (await route.handler(new Request("http://local/rules", { method: route.method }), {} as never, { id: "r1" })).status;
     for (const [method, status] of [["POST", 201], ["PATCH", 200]] as const) {
@@ -78,7 +78,7 @@ describe("withPullKick", () => {
      the hosted worker reads; here the organizer is this process, so its own mailbox rings. */
   it("a 202 on POST /mailboxes/:id/filings/retry rings that mailbox; a 409 rings nothing", async () => {
     const rung: string[] = [];
-    const retry = (status: number): Route => ({ ...answered(status), pattern: "/mailboxes/:id/filings/retry" });
+    const retry = (status: number): Route => ({ ...answered(status), pattern: "/mailboxes/:id/filings/retry" }) as Route;
     const call = async (route: Route) =>
       (await route.handler(new Request("http://local/mailboxes/b/filings/retry", { method: "POST" }), {} as never, { id: "b" })).status;
     const one = (id: string) => ({ ring: () => { rung.push(id); } });
@@ -95,8 +95,8 @@ describe("withPullKick", () => {
   });
 
   it("wraps the pull route alone; every other route passes through untouched", () => {
-    const other: Route = { ...answered(202), pattern: "/sync/snapshot" };
-    const get: Route = { ...answered(202), method: "GET" };
+    const other = { ...answered(202), pattern: "/sync/snapshot" } as Route;
+    const get = { ...answered(202), method: "GET" } as Route;
     const [same, sameGet] = withPullKick([other, get], () => [{ ring: () => { throw new Error("rung"); } }]);
     expect(same).toBe(other);
     expect(sameGet).toBe(get);

@@ -1,5 +1,6 @@
 import { eq, sql, type SQL } from "drizzle-orm";
 import type { PgDatabase, PgTransaction } from "drizzle-orm/pg-core";
+import type { ChangeOp, RecordKind } from "@ohmail/wire";
 /* THE MAIL HALF DIRECTLY, never `./schema.js`. `schema.ts` re-exports both halves, so naming it
  * here would put every Cloud table into the root barrel's closure — and the root barrel is what
  * the desktop engine's bundle follows. Both tables below are mail-domain. */
@@ -59,60 +60,13 @@ export function assertLedgerTx(tx: LedgerTx, fn: string): void {
   }
 }
 
-// The client-visible entity kinds that flow through `/sync`. Growing this union is not free: a
-// type here without a matching case in `materialize` is worse than none — the materializer falls
-// through to `null`, `SyncService` reads a null entity as a TOMBSTONE, and every row of the new
-// kind drains to the client as a `delete`. Add a kind together with its materializer
-// (`packages/services/src/dto/materialize.ts`) in the same change. Tag ASSIGNMENTS are not a type
-// here: they ride the existing `message` entity — one change per toggle; a separate `message_tag`
-// entity would mean two changes at two seqs, with a window where the client has the assignment
-// but not the tag it names.
-export type EntityType =
-  | "message" | "thread" | "routing_decision" | "approval"
-  | "draft" | "rule" | "message_state" | "folder"
-  // Tag identity (name + hue). The assignment rides `message`; see above.
-  | "tag"
-  /**
-   * The account's own settings row — added together with `materializeSettings`
-   * (`packages/services/src/dto/materialize.ts`), the condition the rule above imposes. One row
-   * per account, so `entity_id` is the ACCOUNT id and the op is always `"update"` (created lazily
-   * by whichever knob writes first, never deleted). The change exists so a settings write rings
-   * the wake channel and travels the delta feed: without it, a consent flip made on one surface
-   * reached other signed-in surfaces only at their next full boot. The entity carries the row's
-   * scalars, but the AUTHORITY stays `GET /consent` — clients treat the change as "re-ask now",
-   * not a second consent read, so the two doors cannot drift.
-   */
-  | "settings"
-  /**
-   * A MAILBOX THIS ACCOUNT NO LONGER HOLDS — emitted with op `"delete"` and nothing else, so it
-   * needs no materializer (`getChanges` short-circuits a delete into the tombstone bucket). The
-   * entity id is the MAILBOX's id and the row is the whole receipt; a client cascades its own
-   * dependents from it. ONE ROW FOR A WHOLE MAILBOX: a mirror learns only from this log, so a
-   * removal that appends nothing here leaves every client rendering the mailbox it removed. NOT
-   * written by an ordinary disconnect — a soft `MailboxService.delete` keeps the mail; only the
-   * two acts that take a mailbox's mail off the store emit it (`wipeLocalMirror`,
-   * `sweepMailboxData`).
-   */
-  | "mailbox"
-  /**
-   * A BOUGHT SCREENER SUGGESTION — the narrow verdict entity (owner decision 2026-09-18,
-   * reversing "no model output in /sync": the entity carries the chip's fields, never the
-   * model's text — see `storeScreenerSuggestion`). The entity id is the `routing_decisions`
-   * ROW id; a re-buy emits a delete for the replaced row and a create for the new one in the
-   * same transaction, so a mirror never holds two live rows for one purchase. Materialized by
-   * `materializeScreenerSuggestion` (`packages/services/src/dto/materialize.ts`), which is
-   * provenance-scoped: a pipeline decision's id materializes null under this type.
-   */
-  | "screener_suggestion"
-  /**
-   * THE ORGANIZER'S ARRANGEMENT OF A MAILBOX THIS INSTALL ONLY READS — a projection of the cached
-   * document (`mailbox_profile_mirror`), never a second rule store. The entity id is the MAILBOX
-   * id and the op is always `"update"`; it materializes only while `organizer_role` is not
-   * `organizer`, so a promotion drains it as a tombstone. Rung by {@link recordMailboxProfileChange}.
-   */
-  | "mailbox_profile";
-
-export type ChangeOp = "create" | "update" | "move" | "delete";
+/**
+ * The client-visible entity kinds that flow through `/sync`, and the four things a change can be:
+ * declared once, with the wire's vocabulary (`@ohmail/wire`, `records.ts`), where the rule for
+ * growing the set stands. This package names them as its column does.
+ */
+export type EntityType = RecordKind;
+export type { ChangeOp };
 
 export interface ChangeInput {
   accountId: string;

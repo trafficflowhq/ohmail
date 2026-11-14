@@ -69,7 +69,7 @@ selfhost() {
     patches/* | scripts/apply-patches.mjs | scripts/bundle-host.mjs | scripts/engine-bundle.mjs) return 0 ;;
     apps/server/* | apps/worker/* | apps/webapp/*) return 0 ;;
     packages/core/* | packages/db/* | packages/db-mail/* | packages/services/* | packages/api/*) return 0 ;;
-    packages/client-engine/* | packages/fixtures/* | packages/tokens/* | packages/ui/*) return 0 ;;
+    packages/client-engine/* | packages/fixtures/* | packages/tokens/* | packages/ui/* | packages/wire/*) return 0 ;;
     deploy/selfhost/* | .github/workflows/selfhost-smoke.yml | .github/scripts/selfhost-smoke.sh | .github/scripts/pr-build-scope.sh) return 0 ;;
   esac
   return 1

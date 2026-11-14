@@ -12,5 +12,5 @@
   "compilerOptions": { "outDir": "test/contract/dist", "rootDir": "test/contract" },
   "include": ["test/contract/**/*.ts"],
   "exclude": ["test/contract/dist"],
-  "references": [{ "path": "./tsconfig.json" }]
+  "references": [{ "path": "./tsconfig.json" }, { "path": "../wire" }, { "path": "../client-engine" }]
 }

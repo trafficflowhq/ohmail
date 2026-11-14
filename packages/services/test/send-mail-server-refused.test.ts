@@ -80,7 +80,7 @@ describe("mailServerRefusalOf — what the person's mail server did to a dial", 
   it("CONTROL: our faults and typed refusals stay unclassified", () => {
     expect(mailServerRefusalOf(shaped({ code: "EAUTH" }))).toBeNull();
     expect(mailServerRefusalOf(new TypeError("x is undefined"))).toBeNull();
-    expect(mailServerRefusalOf(Object.assign(new ServiceError("x", 502, "y"), { code: "ECONNREFUSED" }))).toBeNull();
+    expect(mailServerRefusalOf(Object.assign(new ServiceError("upstream_unavailable", 502, "y"), { code: "ECONNREFUSED" }))).toBeNull();
     expect(mailServerRefusalOf("ECONNREFUSED")).toBeNull();
     expect(mailServerRefusalOf(null)).toBeNull();
   });

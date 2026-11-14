@@ -7,11 +7,15 @@
 // code the rules engine and storage gate use, re-exported by `@trafficflow/core/mail` — so
 // `core/dist/ai/` stays, without exception, the private half.
 
-/** The three — and only three — tools a workflow step may declare. */
-export type ToolName = "file_message" | "draft_reply" | "add_kb_entry";
+import type { Assert, Complete, ToolName, TriggerKind, WorkflowPattern, WorkflowStep, WorkflowTrigger } from "@ohmail/wire";
+
+/** The step, trigger and pattern shapes travel to clients, so they are declared with the wire's vocabulary. */
+export type { ToolName, TriggerKind, WorkflowPattern, WorkflowStep, WorkflowTrigger };
 
 /** The allowlist, iterated by {@link validateSteps}. Never add `send`/`forward` here. */
-export const ALLOWED_TOOLS: readonly ToolName[] = ["file_message", "draft_reply", "add_kb_entry"];
+const ALLOWED_TOOL_LIST = ["file_message", "draft_reply", "add_kb_entry"] as const satisfies readonly ToolName[];
+type _AllowedToolsComplete = Assert<Complete<ToolName, typeof ALLOWED_TOOL_LIST>>;
+export const ALLOWED_TOOLS: readonly ToolName[] = ALLOWED_TOOL_LIST;
 
 /**
  * How many steps one workflow may declare. `validateSteps` checked each step's tool and `args`
@@ -40,45 +44,9 @@ export type WorkflowInverse =
   | { tool: "draft_reply"; draftId: string }
   | { tool: "add_kb_entry"; kbEntryId: string };
 
-/**
- * A recurring, redaction-safe routing pattern: METADATA ONLY. The fields below are the COMPLETE
- * allowed surface, enforced at the boundary that serializes one — deliberately no body, snippet
- * or subject field, so raw content cannot reach a model request even by mistake; the assembling
- * caller additionally excludes any pattern whose underlying messages are flagged sensitive.
- * Declared here rather than beside the proposer because the shape is also what the transport
- * layer serializes to a client, and that path is mail-half code; the allowlist that polices the
- * shape stays with the proposer, where the serialization happens.
- */
-export interface WorkflowPattern {
-  /** The pattern axis: 'sender' (a specific address) or 'domain' (a whole domain). */
-  kind: string;
-  senderDomain?: string;
-  senderAddress?: string;
-  destination?: string;
-  /** How many times this pattern recurred (learning signals / rule hits / decisions). */
-  count: number;
-  /** Where the pattern was observed: 'learning' | 'rule' | 'routing'. */
-  provenance: string;
-}
-
-/** One step of a workflow: a typed tool + its opaque args (validated per-tool by the workflow runner). */
-export interface WorkflowStep {
-  tool: ToolName;
-  args: Record<string, unknown>;
-}
-
-/** How a workflow fires. `manual` runs on `POST /run`; `time` carries `nextRunAt`; `event` matches ingested mail. */
-export type TriggerKind = "manual" | "time" | "event";
-
-export interface WorkflowTrigger {
-  kind: TriggerKind;
-  /** ISO timestamp the time-trigger scan compares against `now`. */
-  nextRunAt?: string;
-  /** Event-trigger predicate (sender/domain/…), matched by the event-trigger scan. */
-  match?: Record<string, unknown>;
-}
-
-const TRIGGER_KINDS: readonly TriggerKind[] = ["manual", "time", "event"];
+const TRIGGER_KIND_LIST = ["manual", "time", "event"] as const satisfies readonly TriggerKind[];
+type _TriggerKindsComplete = Assert<Complete<TriggerKind, typeof TRIGGER_KIND_LIST>>;
+const TRIGGER_KINDS: readonly TriggerKind[] = TRIGGER_KIND_LIST;
 
 export type ValidationResult = { ok: true } | { ok: false; error: string };
 

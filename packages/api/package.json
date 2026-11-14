@@ -49,6 +49,7 @@
   },
   "dependencies": {
     "drizzle-orm": "0.36.4",
+    "@ohmail/wire": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*",
     "@trafficflow/services": "*"

@@ -11,6 +11,7 @@ import { bridgeTx, withAccountTx, type ServiceContext } from "./context.js";
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeDraft } from "./dto/materialize.js";
 import type { DraftDTO } from "./dto/types.js";
+import type { CreateDraftBody, PatchDraftBody, SendResolution } from "@ohmail/wire";
 import { draftContentRevision } from "./draft-revision.js";
 import { DRAFT_HTML_CAP_BYTES, htmlByteLength, prepareOutboundBody } from "./outbound-html.js";
 
@@ -98,58 +99,8 @@ export const DRAFT_SUBJECT_MAX_CHARS = 8192;
  */
 export const RECIPIENT_NAME_MAX_CHARS = 100;
 
-export interface CreateDraftBody {
-  mailboxId: string;
-  threadId?: string | null;
-  inReplyToMessageId?: string | null;
-  /**
-   * The message this draft FORWARDS — its original, which the send quotes and whose
-   * attachments it carries. Exclusive with {@link inReplyToMessageId}: both set is a 400.
-   */
-  forwardOfMessageId?: string | null;
-  /**
-   * The original's attachment ids the person kept, only beside {@link forwardOfMessageId} (a 400
-   * otherwise); stored sorted and deduped. Absent or `null` on create: every part goes. On a patch,
-   * absent leaves the row's list, `null` clears it; a patch that moves the forward clears it too.
-   */
-  forwardParts?: string[] | null;
-  subject?: string;
-  /**
-   * The text/plain body.
-   *
-   * Legal on its own â that is a plain draft, and the whole product worked that way until
-   * rich compose. Illegal ALONGSIDE a non-null {@link html}: see {@link DraftsService.richBody}
-   * for why the server derives it instead of accepting it.
-   */
-  body?: string;
-  /**
-   * The rich body, as the editor produced it. Sanitized before it is stored; `body` is then
-   * DERIVED from what survived. Omit or send `null` for a plain-text draft.
-   */
-  html?: string | null;
-  to?: EmailAddress[];
-  cc?: EmailAddress[];
-  /**
-   * Blind-carbon recipients. Stored on the draft and delivered on the SMTP ENVELOPE ONLY â never
-   * written into the message headers of the delivered mail or the Sent-folder copy (see
-   * `SendService.reserve` â `OutboundMessage.bcc`, and `imap.ts#send`). Omit or `[]` for none.
-   */
-  bcc?: EmailAddress[];
-  /** The AI drafter's reasoning (3b). Null/omitted for manual compose. */
-  rationale?: string | null;
-}
-
-/**
- * PUT/PATCH — any subset of the composable fields, `mailboxId` included. `mailboxId` was fixed
- * after create, which froze the sending IDENTITY at the first autosave: the row is born at the
- * first keystroke, so a From picked afterwards — the explicit selector, or the domain-match
- * switch that fires once recipients exist — changed the screen and nothing else, and the mail
- * left under whatever the picker held when typing began. The pick has to reach the row, so the
- * patch may move it: validated exactly like create (owned, not disabled), and refused with a 409
- * the moment the row has left `draft` — a send in flight keeps the identity it was reserved
- * under.
- */
-export type PatchDraftBody = Partial<CreateDraftBody>;
+/** The body of a draft's create and of its patch, and a held send's answer: declared with the wire's vocabulary. */
+export type { CreateDraftBody, PatchDraftBody, SendResolution };
 
 /** A mutation's result: the DTO plus the change_log seq to echo as `X-Sync-Seq`. */
 export interface DraftMutation {
@@ -162,25 +113,6 @@ export interface DraftUpdate {
   draft: DraftDTO;
   seq: number | null;
 }
-
-/**
- * DraftsService â MANUAL compose CRUD for `/drafts`. A draft is STORED and never
- * auto-sent (the AI drafter and the gated send are separate paths). Every
- * client-visible mutation runs ONE `db.transaction` that writes the `drafts` row
- * AND appends a `draft` change through the `change_log` seam SyncService reads
- * (in-tx) â so draft create/edit/delete surface in `/sync`. `materializeDraft`
- * means a `draft` change re-materializes to the live DTO rather than
- * tombstoning. Every query is scoped to `ctx.accountId`; a cross-account id
- * â 404. `create` validates the `mailboxId` belongs to the account.
- */
-/**
- * THE OUTCOMES A PERSON CAN REPORT for a send this server could not confirm.
- *
- * Not a general "set the status" verb: these are the only two things a reader is in a position to
- * know, from the one place they can look. `arrived` means they found it in their Sent folder;
- * `not_arrived` means they looked and it is not there.
- */
-export type SendResolution = "arrived" | "not_arrived";
 
 /**
  * The statuses that mean "an attempt is still on record", and why there is exactly one list.

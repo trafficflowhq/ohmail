@@ -5,6 +5,20 @@ import type {
   EngineMutation, MessageBodyBatchWire, MessageBodyWire, SyncChange, SyncResponse, UnsubscribeResult,
   WaitingRequestWire,
 } from "../types.js";
+import type {
+  AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, HeldReleaseGroupWire, HeldReleaseResultWire,
+  HeldReleaseSenderWire, HeldReleaseWire, MutationAnswer, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
+  ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire,
+  WithdrawSendOutcome,
+} from "@ohmail/wire";
+
+/* What an act comes back as, and the Screener's and the attachment list's answers: from their one home. */
+export type {
+  AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, HeldReleaseGroupWire, HeldReleaseResultWire,
+  HeldReleaseSenderWire, HeldReleaseWire, MutationAnswer, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
+  ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire,
+  WithdrawSendOutcome,
+} from "@ohmail/wire";
 
 /**
  * ONE interface, two implementations (FixturesAdapter for ?demo/UI tests,
@@ -24,102 +38,6 @@ export interface SyncParams {
   /** Optional `?types=` filter (contract §3.1). */
   types?: string[];
 }
-
-export interface MutationOutcome {
-  /**
-   * THE ARM: the server CARRIED THIS OUT. Optional because absence has exactly one meaning —
-   * applied — and every construction site that predates the queued arm is one. The queued arm
-   * below states itself, and it is the only thing that can: a 202 cannot be built without the
-   * holder it is waiting on, which is what makes "a request recorded, read as a move made"
-   * unrepresentable rather than merely censused.
-   */
-  settlement?: "applied";
-  /**
-   * Authoritative changes to apply to the mirror right away (the §3.4
-   * read-your-writes echo). Empty ⇒ the endpoint returned no seq'd DTO —
-   * the engine reconciles via the next /sync drain instead.
-   */
-  changes: SyncChange[];
-  /**
-   * `changes` carry only part of what the verb wrote, so the engine still drains after applying
-   * them. Only `screener_decide` sets it: the rules are echoed, the held mail's moves are not.
-   */
-  partialEcho?: true;
-  /** The X-Sync-Seq of the mutation (null when the endpoint does not echo one). */
-  seq: number | null;
-  /**
-   * The server's own id for a row this mutation created, when the caller
-   * must keep using it. Absent for mutations on something already named and
-   * for creations whose id the caller never needs again (`tag_create` mints
-   * a client-local overlay id; the server's row arrives in {@link changes}).
-   * `draft_save` is the real exception: an autosaving compose must keep
-   * PATCHing the same row and then send that row — one draft from first
-   * keystroke to delivery. Without the id here the surface would hunt the
-   * mirror for a lookalike row, the matching that sends the wrong message.
-   */
-  entityId?: string;
-  /** The version a `draft_save` left the row at (`DraftDTO.contentRevision`), when the server said. */
-  revision?: string;
-  /**
-   * The delivered Message-ID of a send the server confirmed sent — present
-   * only on `mail_send` with status `sent` (never unverified/failed/
-   * in_flight). It is the header the server minted and appended to the Sent
-   * folder, so it is the exact `messageIdHeader` the real Sent copy carries
-   * when the worker ingests it later. That identity lets the engine drop its
-   * optimistic Sent overlay the moment a drain delivers the real row instead
-   * of leaving a fabricated twin. Absent ⇒ no Sent overlay is materialised,
-   * which is an older server's answer, and a Send later's.
-   */
-  providerMessageId?: string | null;
-  /**
-   * THIS SEND WAS ANSWERED FROM A RESERVATION THIS KEY ALREADY HELD — the server's statement
-   * that the press delivered nothing new. Present only on `mail_send` with status `sent` and
-   * only where the server names it; absence reads as the ordinary send it always was. It exists
-   * because the two cases are otherwise one answer: a second press under a resumed key either
-   * finds a reservation (the earlier message went) or does not (its own words go), and a 200 is
-   * the same shape either way — which is how a confirmation came to name the wrong message.
-   */
-  firstSend?: { status: string; at: string } | null;
-  /**
-   * THE PRESS CHANGED THE WORDS AND THE SERVER KEPT THE EARLIER ONES — the resume's save was refused
-   * because a send already holds the row (409), or an older server took it over a row past `draft`.
-   * With `firstSend` it is the earlier message that went. Present only on `mail_send`, only when true.
-   */
-  earlierWordsKept?: boolean;
-  /**
-   * Where a delivered send's Sent copy stands, as the server said it: `filed`, `pending` (still being
-   * retried) or `missing` (delivered, and no copy could be written). Only on a `mail_send` it delivered.
-   */
-  sentCopy?: "filed" | "pending" | "missing";
-  /**
-   * Why a `pending` or `missing` copy is not filed, when the server's answer said: the server would
-   * not keep one this large, the mailbox is full, the server refused it, or could not be reached.
-   */
-  sentCopyReason?: "too_big" | "full" | "refused" | "unreachable";
-  /** A `pending` copy kept without its uploaded files is tried until then (ISO-8601). */
-  sentCopyUntil?: string;
-  /**
-   * The decision was accepted for somebody else to carry out — who, by
-   * name. Only `screener_decide` carries it, and only where the mailbox is
-   * organized by another install: the server records the decision, answers
-   * 202, nothing moved and no rule was written — this is NOT a confirmation
-   * the decision took effect. It travels back because a queued decision
-   * emits no `change_log` row, so this is the only evidence the press
-   * happened. `name` is `null` where the holder is real but unnamed — the
-   * three-state shape every holder sentence renders.
-   */
-  pendingWith?: { name: string | null } | null;
-}
-
-/**
- * WHAT THE SERVER SAID ABOUT A CANCEL — `POST /sends/withdraw` — or why it could not be asked.
- * The first five are the server's words: `withdrawn` (nothing left under the key and nothing
- * will), `already_sent`, `unverified`, `in_flight`, `failed` (nothing left, the key spent).
- * `unsupported`: a server without the route (a 404). `unreachable`: no answer to read — the
- * network, a 5xx, a body that does not parse, a door that refused to ask. Never a throw.
- */
-export type WithdrawSendOutcome =
-  | "withdrawn" | "already_sent" | "unverified" | "in_flight" | "failed" | "unsupported" | "unreachable";
 
 /**
  * WHAT A DOOR SAYS ABOUT KEEPING A LETTER'S FILES FOR SEND LATER (`GET /hello`, mail 0179, 0180).
@@ -142,45 +60,6 @@ export interface WithdrawSendAnswer {
 }
 
 /**
- * THE 202 ARM — the server RECORDED the mutation for the install that organizes the mailbox and
- * did nothing else: nothing moved, no `change_log` row exists, and this answer is the only
- * evidence the press happened. A SEPARATE ARM rather than a flag on {@link MutationOutcome},
- * because read as one thing the engine settles the request as a completion and a reader's Move
- * reports "Moved" over mail that has not moved; a queued answer cannot be built without saying
- * who it waits on. `changes` is always empty and `seq` always null — nothing changed in this
- * account's store, and a seq would advance every cursor past a change that does not exist.
- */
-export interface MutationQueued {
-  settlement: "queued";
-  /**
-   * Who it is waiting on. `name: null` is a real holder without a name — the three-state shape
-   * every holder sentence renders, never "nobody".
-   */
-  queuedWith: { name: string | null };
-  /**
-   * The server's `organizer_requests.id`, or `null` from a door that answers a queued state
-   * without naming one. The first of {@link requestIds}.
-   */
-  requestId: string | null;
-  /**
-   * EVERY request the press made: a rule edit's 202 names none at the top and one per held mailbox
-   * under `travel.pending`, and the server's list settles the press only by these. Absent from an
-   * adapter that names one id at most: `requestId` alone then.
-   */
-  requestIds?: string[];
-  changes: SyncChange[];
-  seq: null;
-}
-
-/**
- * What a mutation comes back as. Two arms RETURN; the third — refused — is the thrown
- * {@link MutationRejectedError}, which is a typed channel of its own with the server's code and
- * sentence on it, and which the engine turns into `rolled_back` at one place. Three answers, one
- * vocabulary: applied, queued, refused.
- */
-export type MutationAnswer = MutationOutcome | MutationQueued;
-
-/**
  * The draft row a send wrote under its key: the revision it answered with, and which words it holds
  * (`sendFingerprint` of the mutation that wrote it, or `null` when that is not known — an older
  * record, or a save that did not land). A resume whose words differ, or are unknown, writes first.
@@ -189,169 +68,6 @@ export interface CreatedDraftRow {
   id: string;
   revision: string | null;
   fingerprint?: string | null;
-}
-
-/**
- * One attachment's metadata as the server sends it
- * (`GET /messages/:id/attachments`). Deliberately the wire shape,
- * field-for-field — `contentType`, not the UI's `mimeType`; a nullable
- * `filename` — because the adapter reads the protocol and exactly one place
- * (`toAttachmentItem` in the engine) decides what the surface sees.
- * `inline` is a `cid:` part referenced by the HTML body (a logo, a signature
- * image), not something a user thinks of as a file; it arrives so the engine
- * can filter on it rather than guess.
- */
-/** One group as `GET /screener/held-releases` sends it. */
-export interface HeldReleaseGroupWire {
-  ruleId: string;
-  kind: "sender" | "domain";
-  match: string;
-  destination: string;
-  count: number;
-}
-
-/** A contact nobody wrote a rule for, whose mail is held at the gate: the address and the count. */
-export interface HeldReleaseSenderWire {
-  /** The address, lower-cased — this line's key, and what a press names in `senders`. */
-  sender: string;
-  count: number;
-}
-
-/** The read's answer: the groups, the DISTINCT message total, and the server's own group ceiling. */
-/** Why a message stayed when its sender's rule moved the rest (`GET /screener/stayed`). */
-export type StayedWhy = "failed-checks" | "set-aside" | "replied" | "filed-elsewhere";
-export interface StayedWire { id: string; why: StayedWhy }
-
-/** One letter ohmail filed out of the Screener on its own and that is still where it put it. */
-export interface AutoFiledItemWire {
-  messageId: string;
-  from: string | null;
-  subject: string | null;
-  /** The pile it was filed to. */
-  to: string;
-  /** When, ISO. */
-  filedAt: string;
-  /** `impersonation`: it claimed a company it cannot be from, and was filed to Spam with no AI. */
-  why: "impersonation" | null;
-  /** The company it claimed, beside `impersonation`. */
-  brand: string | null;
-}
-
-/** `GET /screener/auto-filed`'s answer: the newest filings still in place, and whether more are behind them. */
-export interface AutoFiledWire { items: AutoFiledItemWire[]; more: boolean }
-
-/** Put back's answer: put back here, or sent to the install that organizes the mailbox. */
-export interface AutoFiledUndoWire { putBack: string[]; requested: string[] }
-
-export interface HeldReleaseWire {
-  groups: HeldReleaseGroupWire[];
-  /**
-   * Contact-only senders, one line each. Their mail is claimed by no rule, so it is OUTSIDE
-   * `total`, which stays the rule groups' figure. Absent from an older server: none offered.
-   */
-  senders?: HeldReleaseSenderWire[];
-  /** Distinct messages across every group — never the sum of the counts. */
-  total: number;
-  /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
-  max: number;
-  /** This set's identity — what a dismissal names. Absent/"" from a server that predates it. */
-  fingerprint?: string;
-  /** The account already said "not now" to exactly this set. Absent/false from an older server. */
-  dismissed?: boolean;
-}
-
-/** The press's answer: the groups it released and the distinct messages they held. */
-export interface HeldReleaseResultWire {
-  released: HeldReleaseGroupWire[];
-  /** The contact-only senders the press decided into the Ohbox. Absent from an older server. */
-  releasedSenders?: HeldReleaseSenderWire[];
-  /** Distinct messages across the released groups AND senders. */
-  total: number;
-}
-
-/** One sender group as `GET /screener/unscreened` sends it. */
-export interface UnscreenedGroupWire {
-  /** The sender's address, lower-cased — this group's key, and what a press names. */
-  address: string;
-  count: number;
-  /** The newest of the group's messages, ISO. */
-  newestAt: string;
-}
-
-/** A pile whose letters can come from senders nobody let in, asked by its note. */
-export type UnscreenedPileWire = "news" | "receipts";
-
-/** The read's answer: the groups, the messages they hold, and the server's own group ceiling. */
-export interface UnscreenedWire {
-  groups: UnscreenedGroupWire[];
-  /** Messages the SHOWN groups hold. Every message has one sender, so these do add up. */
-  total: number;
-  /** False when the server's walk stopped at its bound: `total` is then a floor. Absent: an older server, read as whole. */
-  complete?: boolean;
-  /** How many groups one press may name. Read rather than hardcoded, so the client cannot drift. */
-  max: number;
-  /** The pile the answer is about, said back; absent from the Ohbox's offer and from a server before piles. */
-  pile?: UnscreenedPileWire;
-}
-
-/** One waiting sender as `GET /screener` lists it: the representative held message and its author. */
-export interface ScreenerWaitingItemWire {
-  messageId: string;
-  address: string;
-  name: string | null;
-  receivedAt: string;
-  subject: string;
-  snippet: string;
-  mailboxId: string | null;
-  /** The page's `checked`: a held letter of this sender claims a company its address is not, or is `held`. */
-  marked?: true;
-  /** The page's `checked.claimsOnly`: a screen-out of this sender files its claims alone and writes no rule (mail 0150). */
-  claimsOnly?: true;
-}
-
-/** One page of the queue. `total` is stated on the first page only; `null` where none was. */
-export interface ScreenerWaitingWire {
-  items: ScreenerWaitingItemWire[];
-  nextCursor: string | null;
-  total: number | null;
-  /** Decisions the server is still carrying out; their senders are on no page. */
-  inFlight: Array<{ scope: "sender" | "domain"; match: string }>;
-  /** The route's `pendingDecisions` as sent, refused ones included, for a surface that says what became of them. */
-  pendingDecisions?: unknown[];
-  /**
-   * The door's own copy is still taking in the account (a mirror mid-bootstrap), so this page is
-   * ahead of the mail and rules it is read beside. Absent everywhere else.
-   */
-  copyBehind?: true;
-  /**
-   * The mailboxes the queue leaves out (removed with the copy kept, or erased), sorted: their mail
-   * makes nobody waiting, so the page's silence says nothing about it. Absent from an older server,
-   * whose page lists their senders as before.
-   */
-  gone?: string[];
-}
-
-/** The press's answer: the groups it screened and how many messages they held. */
-export interface UnscreenedResultWire {
-  screened: UnscreenedGroupWire[];
-  total: number;
-}
-
-export interface AttachmentWire {
-  id: string;
-  filename: string | null;
-  contentType: string;
-  sizeBytes: number;
-  inline: boolean;
-  /**
-   * The part's `Content-ID` (brackets already stripped server-side), or `null`/absent. It is
-   * the join key between the html body's `cid:<contentId>` references and this part's bytes —
-   * what lets the reader see an embedded signature logo IN the body instead of a blanked box.
-   * OPTIONAL because absence is a real wire state, not a broken one: an older server that does
-   * not send it degrades to the image staying blanked, exactly as it always was.
-   */
-  contentId?: string | null;
-  messageId: string;
 }
 
 export interface EngineAdapter {

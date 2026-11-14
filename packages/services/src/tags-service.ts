@@ -8,6 +8,7 @@ import { bridgeTx, claimOrLose, withAccountTx, type IdempotencyClaim, type Servi
 import { IdempotencyRaceLost, ServiceError } from "./errors.js";
 import { materializeTag, tagRowToDTO } from "./dto/materialize.js";
 import type { TagDTO } from "./dto/types.js";
+import type { TagBody } from "@ohmail/wire";
 
 /** Same shim every write service here uses (`approval-service.ts:43`): a `ServiceContext.db`
  *  is a real transaction host, but the union type does not say so. */
@@ -39,10 +40,8 @@ export { MAX_TAG_NAME_CHARS } from "@trafficflow/core/adapters/organizer-profile
 import { MAX_TAG_NAME_CHARS } from "@trafficflow/core/adapters/organizer-profile-store";
 const MAX_NAME = MAX_TAG_NAME_CHARS;
 
-export interface TagBody {
-  name: string;
-  hue?: string;
-}
+/** A tag's create and patch body: declared with the wire's vocabulary. */
+export type { TagBody };
 
 export interface AssignResult {
   /** The message's full tag id list AFTER the write — what the client renders. */
@@ -149,7 +148,7 @@ export class TagsService {
   }
 
   /** PATCH /tags/:id — rename and/or recolour. A name collision is a 409, as on create. */
-  async update(ctx: ServiceContext, id: string, body: TagBody): Promise<{ dto: TagDTO; seq: number | null }> {
+  async update(ctx: ServiceContext, id: string, body: Partial<TagBody>): Promise<{ dto: TagDTO; seq: number | null }> {
     const patch: { name?: string; hue?: string; updatedAt: Date } = { updatedAt: ctx.now() };
     if (body?.name !== undefined) patch.name = this.validName(body.name);
     if (body?.hue !== undefined) patch.hue = this.validHue(body.hue);

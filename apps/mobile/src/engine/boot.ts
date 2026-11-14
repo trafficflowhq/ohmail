@@ -30,6 +30,7 @@ import { StoreFault } from "../state/servers";
 import type { NetworkState } from "../net/network-door";
 import { sendWaitsForNetwork } from "./send-waits";
 import { logWithdrawUnsupported } from "./engine-log";
+import type { HelloAnswer, Untrusted } from "@ohmail/wire";
 
 /** What the platform must provide — expo modules in the app, node modules in tests. */
 export interface MobileEngineDeps {
@@ -272,10 +273,7 @@ export async function helloFeatures(
     }
     if (!res.ok) return null;
     try {
-      const body = (await res.json()) as {
-        product?: unknown;
-        features?: { forwardParts?: unknown; staging?: unknown; scheduleFiles?: unknown; scheduleFilesDays?: unknown };
-      } | null;
+      const body = (await res.json()) as Untrusted<HelloAnswer> | null;
       if (body?.product !== "ohmail") return null;
       const days = body.features?.scheduleFilesDays;
       const horizon = typeof days === "number" && Number.isInteger(days) && days > 0 ? days : null;

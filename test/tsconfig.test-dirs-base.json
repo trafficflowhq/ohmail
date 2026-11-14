@@ -59,6 +59,7 @@
       "@ohmail/tokens/ohmarchy.css": ["../packages/tokens/src/ohmarchy.css"],
       "@ohmail/tokens": ["../packages/tokens/src/index.ts"],
       "@ohmail/fixtures": ["../packages/fixtures/src/index.ts"],
+      "@ohmail/wire": ["../packages/wire/src/index.ts"],
       "@ohmail/client-engine/durable": ["../packages/client-engine/src/durable.ts"],
       "@ohmail/client-engine/send-fingerprint": ["../packages/client-engine/src/send-fingerprint.ts"],
       "@ohmail/client-engine/html-tree-budget": ["../packages/client-engine/src/html-tree-budget.ts"],

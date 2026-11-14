@@ -10,6 +10,7 @@
  */
 import { and, eq, gte, isNull, lte, not, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import type { Assert, Complete, FilingRefusalReason } from "@ohmail/wire";
 
 import { folderState } from "./schema-mail.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
@@ -133,7 +134,8 @@ export const FILING_REFUSAL_CLASSES = [
   // Mail 0164: not the server's refusal. `stale_locator` — the folder was renumbered and the letter
   // was not found under its new number; `unconfirmed` — our own check could not prove the move.
   "stale_locator", "unconfirmed",
-] as const;
+] as const satisfies readonly Exclude<FilingRefusalReason, "unknown">[];
+type _FilingRefusalClassesComplete = Assert<Complete<Exclude<FilingRefusalReason, "unknown">, typeof FILING_REFUSAL_CLASSES>>;
 
 export type FilingRefusalClass = (typeof FILING_REFUSAL_CLASSES)[number];
 

@@ -4,11 +4,20 @@ import { matchSpec, type RouteParams } from "./match-path.js";
    value import back would be a runtime cycle. `import type` is erased, so the graph is unchanged
    and nothing new enters any bundle. */
 import type { Middleware } from "./middleware.js";
+import type { RouteName } from "@ohmail/wire";
+import type { Answered, Refused, Replayed } from "./responses.js";
 
 /* Re-exported so every existing consumer of this module keeps its import. */
 export { matchSpec, type RouteParams };
 
 export type Handler = (req: Request, deps: ApiDeps, params: RouteParams) => Promise<Response>;
+
+/**
+ * A handler of a route bound to the wire. It answers through the wire's type for `R`, refuses in
+ * the error envelope, or replays a stored answer; a plain `Response` does not compile here.
+ */
+export type WireHandler<R extends RouteName> =
+  (req: Request, deps: ApiDeps, params: RouteParams) => Promise<Answered<R> | Refused | Replayed>;
 
 /**
  * What does this handler cause? Every route declares it, and the declaration is what
@@ -252,9 +261,27 @@ export interface RouteOptions {
   anonymous?: boolean;
 }
 
-export interface Route {
+/**
+ * A route. One that a client is bound to through `@ohmail/wire` says so with `wire: true` and is
+ * then a {@link WireRoute}: its method and pattern must spell a name the wire has, and its handler
+ * must answer through that name's type. Every other route is a {@link PlainRoute}.
+ */
+export type Route = PlainRoute | WireRoute;
+
+/**
+ * A route bound to the wire as `R`. Distributed over every name, so a route literal marked `wire`
+ * is checked against the one entry its method and pattern spell. The mark is a flag and not the
+ * name: the name is already there, and the phone's engine carries every byte of this table.
+ */
+export type WireRoute<R extends RouteName = RouteName> = R extends `${infer M} ${infer P}`
+  ? Omit<PlainRoute, "method" | "pattern" | "wire" | "handler"> & { method: M; pattern: P; wire: true; handler: WireHandler<R> }
+  : never;
+
+export interface PlainRoute {
   method: string;
   pattern: string;             // e.g. "/threads/merge", "/threads/:id", "/messages/:id/move"
+  /** Never set here: a route marked as bound to the wire is a {@link WireRoute}. */
+  wire?: undefined;
   /**
    * REQUIRED. What this handler causes; see {@link CostClass}. There is no default:
    * a new route that declares nothing does not compile, and if one reaches the runtime

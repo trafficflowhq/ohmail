@@ -1,6 +1,7 @@
 import { activeTranslator } from "./locale";
 import { probeCopyKey, refusalAuthHint } from "./local-server-host";
 import { noPortProbeKey } from "./no-port-sentence";
+import type { ServiceErrorCode } from "@ohmail/wire";
 
 /*
  * A SERVER'S REFUSAL IN THE READER'S LANGUAGE. The server writes English in every language (the
@@ -45,7 +46,7 @@ const TABLE: Readonly<Record<string, (d: Details) => Line | null>> = {
   step_up_required: () => ({ key: "refused_step_up_required" }),
   validation_failed: (d) => (typeof d.field === "string" && FIELDS.has(d.field)
     ? { key: `refused_field_${d.field.replace(".", "_")}` } : null),
-};
+} satisfies Partial<Record<ServiceErrorCode, (d: Details) => Line | null>>;
 
 /** The codes {@link refusalCopy} words itself; any other keeps the server's sentence. */
 export const SERVER_REFUSAL_CODES: ReadonlySet<string> = new Set([...Object.keys(TABLE), "mailbox_probe_failed"]);
