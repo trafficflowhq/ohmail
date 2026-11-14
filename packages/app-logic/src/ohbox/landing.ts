@@ -8,6 +8,8 @@ import type { OhboxListInput } from "./types.js";
 export interface AfterVerbLanding {
   verbTook: MutableRefObject<{ id: string; at: number } | null>;
   verbAdvance: MutableRefObject<string | null>;
+  /** The letter the verb's own rest let go of (nothing landed on): no move of the person's either. */
+  verbRested: MutableRefObject<string | null>;
 }
 
 export function useAfterVerbLanding(
@@ -34,6 +36,7 @@ export function useAfterVerbLanding(
   /** The row a verb just took from under the cursor, and where the verb itself put the cursor. */
   const verbTook = useRef<{ id: string; at: number } | null>(null);
   const verbAdvance = useRef<string | null>(null);
+  const verbRested = useRef<string | null>(null);
   /* The previous render's selection, because `selectedId` is DERIVED in the shell
      (`allOhbox.find`): the render in which the acted row leaves the list is the render in
      which the prop already reads null — the stale id is not visible from here. */
@@ -63,8 +66,20 @@ export function useAfterVerbLanding(
     if (columnHidden()) return;
     lastActed.current = null;
     const choice = afterVerb();
-    if (choice === "stay") return;
+    /* WHERE THE SELECTION IS NOT DERIVED FROM THE LIST (a seated list's is the address) it still names the letter the
+       verb took: the column would go on showing a letter that is in no row, its verbs live on it. It is let go
+       wherever nothing is landed on, so the column rests as it does where the selection is derived. */
+    const rest = (): void => {
+      if (selectedId !== acted.id) return;
+      verbRested.current = acted.id;
+      onSelect(null);
+    };
+    if (choice === "stay") {
+      rest();
+      return;
+    }
     if (choice === "close") {
+      verbRested.current = acted.id;
       onSelect(null);
       return;
     }
@@ -77,9 +92,9 @@ export function useAfterVerbLanding(
       // go of the acted row's hold and spend its Undo.
       onSelect(landing);
       setLandedOn(landing);
-    }
+    } else rest();
     /* Keyed on what it reads: a render that changes none of these can neither take the open row out of the list nor
        land anywhere, and the previous render's ids, rows and selection it keeps are the ones it already holds. */
   }, [all, navRows, selectedId, lastActed, columnHidden, afterVerb, suspend, onSelect, setLandedOn]);
-  return { verbTook, verbAdvance };
+  return { verbTook, verbAdvance, verbRested };
 }

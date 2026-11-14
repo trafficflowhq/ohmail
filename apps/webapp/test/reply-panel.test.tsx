@@ -214,7 +214,7 @@ async function mountShell(facts?: MailboxFacts[]): Promise<void> {
   });
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
   await key("j");
-  await waitFor(() => openSubject() !== "", "the Ohbox never opened a message");
+  await waitFor(() => openSubject() !== "", "History never opened a message");
 }
 
 /** Bounded by real time, not a tick count: the editor's cold lazy import outlasts any count under load. */
@@ -252,7 +252,7 @@ function expectClosedClean(how: string): void {
   expect(q(".reply-dock"), `${how} left the dock behind`).toBeNull();
   expect(q(".reply"), `${how} left the panel behind`).toBeNull();
   // The view is unchanged; the open message rides the hash by design (`message-url.test.tsx`).
-  expect(window.location.hash, `${how} changed the route`).toMatch(/^#\/ohbox(\/m\/|$)/);
+  expect(window.location.hash, `${how} changed the route`).toMatch(/^#\/history(\/m\/|$)/);
 }
 
 /** The pill's own label, shorn of the keycap the bar renders beside it. The answer verbs carry
@@ -271,7 +271,7 @@ const pillReply = (): HTMLButtonElement => {
 
 beforeEach(() => {
   setViewport();
-  window.location.hash = "#/ohbox";
+  window.location.hash = "#/history";
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
   try { window.sessionStorage.clear(); } catch { /* storage blocked */ }
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };

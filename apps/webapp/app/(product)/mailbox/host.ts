@@ -66,9 +66,10 @@ export interface WebSupplies {
   };
   readonly reads: { readonly mailboxes: Supplied<HostReads["mailboxes"]>; readonly access: Supplied<HostReads["access"]> };
   /**
-   * Every wire but the switch for a person's own model, which only a desktop on its own has. A browser hands in no
-   * picture fetcher, and the four calls today's views still make themselves are `none` until their first caller. The
-   * review of who you write to is handed where this page has a client.
+   * Every wire but the switch for a person's own model, which only a desktop on its own has. A browser's pictures
+   * come through its own origin's proxy, handed where this page has a client; the four calls today's views still make
+   * themselves are `none` until their first caller. The review of who you write to is handed where this page has a
+   * client.
    */
   readonly wires: Transports<
     | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "consent" | "olderBody" | "junk" | "trash"
@@ -139,7 +140,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       stageCard: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
-      reader: NONE,
+      reader: has.frame.reader,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

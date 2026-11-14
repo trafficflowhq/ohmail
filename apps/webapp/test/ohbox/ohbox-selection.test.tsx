@@ -17,6 +17,7 @@ import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
    costs, are written out in the helper; `anchor-census.test.ts` refuses the hook spelling
    across every test source under this directory. */
 import { shellFramePaths, shellSliceOf, sliceOfDeclaration } from "../source-anchor.js";
+import { ohboxRows, openLetter, reportSays, seatedList } from "./_finders.js";
 
 /**
  * ═══ THE SELECTION'S VERBS ARE THE MESSAGE PILL ═══════════════════════════════════════════
@@ -95,10 +96,24 @@ async function mountShell(): Promise<void> {
   await key("j");
 }
 
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs (the reason this file
+ * already announces a link by hand). A press that moved the address announces it here, as the browser does a frame
+ * later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
+
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 const click = async (el: Element | null | undefined, init: MouseEventInit = {}): Promise<void> => {
@@ -106,12 +121,13 @@ const click = async (el: Element | null | undefined, init: MouseEventInit = {}):
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>('.view-ohbox [role="option"][data-id]')];
+const rows = (): HTMLElement[] => ohboxRows(host!);
 const pickedRows = (): HTMLElement[] => rows().filter((r) => r.hasAttribute("data-picked"));
 /** The selection's bar: a toolbar named for the selection. */
-const pill = (): HTMLElement | null => host!.querySelector('.view-ohbox [role="toolbar"][aria-label="Selection"]');
+const pill = (): HTMLElement | null => seatedList(host!)?.querySelector<HTMLElement>('[role="toolbar"][aria-label="Selection"]') ?? null;
 const barButtons = (): HTMLButtonElement[] => [...(pill()?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
 const labelOf = (b: Element): string => (b.textContent ?? "").trim();
 /** The bar's count: the button that names how many are picked and lets them go. */
@@ -130,16 +146,21 @@ const deleteAsk = (): HTMLElement | null =>
  * AND on one that raised something. Filtering on the text is what makes the count mean what
  * the assertions below say it means.
  */
-const toasts = (): string[] =>
-  [...document.querySelectorAll(".toast")]
-    .map((t) => (t.textContent ?? "").trim())
-    .filter((t) => t.length > 0);
+const toasts = (): string[] => {
+  /* At the seated Ohbox a verb's answer is said in the frame's report at the foot (declared), which says
+     one report at a time: what it says now, or nothing. The set's count in its words is what "one for the set" reads. */
+  const said = reportSays();
+  return said.length > 0 ? [said] : [];
+};
 
 /**
  * A PHONE VIEWPORT — `matchMedia` answering yes to the shell's width questions, which is what
  * `readColumnHidden()` reads. Called after mount, because the shell asks at click time.
  */
 function setPhone(): void {
+  /* The seated place lays out its columns by the window's own width (the frame's plan reads `innerWidth`), as today's
+     view asked its width questions of `matchMedia`: a phone is both. */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
     ({
       matches: query.includes("max-width"), media: query, onchange: null,
@@ -147,6 +168,9 @@ function setPhone(): void {
       addEventListener() {}, removeEventListener() {},
       dispatchEvent() { return false; },
     }) as unknown as MediaQueryList;
+  /* The width is drawn before a case reads a row: on a phone the list stands its rows in a sheet of their own, so a
+     row found before that commit is not the row a finger meets. */
+  void act(() => { window.dispatchEvent(new Event("resize")); });
 }
 
 /** One pointer event on a row, with the fields the gesture actually reads. */
@@ -160,6 +184,7 @@ const pointer = async (
     Object.defineProperty(e, "pointerType", { value: init.pointerType ?? "touch" });
     el.dispatchEvent(e);
   });
+  await hearAddress();
 };
 
 /**
@@ -194,6 +219,8 @@ const pick = async (n: number): Promise<void> => {
 
 beforeEach(() => {
   window.location.hash = "";
+  heardHash = "";
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
   (window as unknown as { matchMedia: (q: string) => MediaQueryList }).matchMedia = (query: string) =>
     ({
       matches: false, media: query, onchange: null,
@@ -987,10 +1014,12 @@ describe("a long press starts a selection on a phone", () => {
     /* THE LIST-SELECTION CONTRACT. Without it the only way to build a set on a phone is one
        long press per row, and the first tap after entering the mode leaves it — opening the
        reader over the selection that has just appeared. */
-    const before = host!.querySelectorAll(".reader, .sheet").length;
+    /* The letter on screen and the address that names it: a tap that opened the row would change both. */
+    const shown = (): [string | null, string] => [openLetter(host!)?.getAttribute("aria-label") ?? null, window.location.hash];
+    const before = shown();
     await tap(rows()[2]!);
     expect(pickedRows(), "the tap did not add the second row").toHaveLength(2);
-    expect(host!.querySelectorAll(".reader, .sheet").length, "the tap opened the reader").toBe(before);
+    expect(shown(), "the tap opened the reader").toEqual(before);
 
     // …and a tap on a picked row takes it back out.
     await tap(rows()[2]!);

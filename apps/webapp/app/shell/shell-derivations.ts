@@ -1,16 +1,23 @@
 "use client";
 
 /**
- * THE SHELL'S WHOLE-MIRROR DERIVATIONS — the consent partition, the projection every pile is read
- * through, and the lists, counts and lookups built over them.
+ * THE SHELL'S WHOLE-MIRROR DERIVATIONS — the projection every pile is read through, and the lists,
+ * counts and lookups built over it.
  *
  * One module because they are one pass: the partition decides where a message is PRESENTED,
  * `presented` IS that mirror, and every memo below is keyed `[presented, derived]` so a new
  * projection is a new derivation and a body landing is not. Lifted out of `AppShell.tsx`
  * unchanged (ARCH-022). It holds no setter, no verb and no `toast`, and imports nothing from
  * `routing-undo.ts`: the held presses arrive as a map.
+ *
+ * The partition itself is no longer derived here: `usePartitionOf` of app-logic's consent folder
+ * derives it (the own addresses, the first imports, the cutline told to the engine, the consent
+ * partition), called once below, and `presented` is composed by the one function the mail ground
+ * composes it with (`presentedOver`). What a place of the frame reads of them, it reads from the
+ * mail ground's contexts, which this shell fills (`todays-ground.tsx`); the piles below are the
+ * old views' own and leave with them.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import {
   NO_WAITING,
   OHBOX_VISIT_ID,
@@ -20,7 +27,6 @@ import {
   filedSinceVisit,
   ohboxView,
   parkedMessageIds,
-  presentAt,
   presentationReader,
   readerWithEffects,
   receiptsByDay,
@@ -34,7 +40,6 @@ import {
   threadMarksIndex,
   threadSubject,
   triagePiles,
-  type ConsentPartition,
   type EngineDraft,
   type EngineMessage,
   type EntityReader,
@@ -43,20 +48,17 @@ import {
   type MailboxScreening,
   type OhboxVisitMeta,
   type OhmailEngine,
-  widestWindowOf,
   type TagDTO,
 } from "@ohmail/client-engine";
-import { readBootCache, writeBootCache } from "@ohmail/app-logic/session/boot-cache";
-import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
-/* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
-import { firstImportsKey, firstImportsOf, shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
-import { hideMessages } from "@ohmail/app-logic/press/delete-undo";
+import { usePartitionOf } from "@ohmail/app-logic/consent/partition";
+import { shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
 import { folderTailVerdict, folderUnreadCounts } from "@ohmail/app-logic/lists/folders";
 import { avatarHue, initialsOf } from "./format";
 import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
-import { ownAddressesOf, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { useOlderMail } from "@ohmail/app-logic/lists/older-mail";
 import { ohboxSurfaceMessages } from "@ohmail/app-logic/reading/ohbox-surface";
+import { presentedOver } from "@ohmail/app-logic/reading";
 import type { ViewId } from "./routing";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useTrashPage } from "@ohmail/app-logic/lists/trash-page";
@@ -68,32 +70,6 @@ export interface ReadsAiChipEntity {
   label: string;
   approvedLabel: string;
   correctedLabel: string;
-}
-
-/** The `boot-cache.ts` scope for the account's own addresses. See `ownAddresses` below. */
-const OWN_ADDRESSES_BOOT_SCOPE = "own-addresses";
-
-/**
- * The memo key for {@link ShellInner}'s `ownAddresses` — see there for why
- * the addresses and not the facts row. Sorted and lower-cased so the same
- * set in a different order, or with different server casing, is one key.
- * JSON, never a join character: a literal NUL join once made `file` report
- * this source as `data` and every grep-family tool skip it in silence.
- * JSON escapes its own delimiters, so no two distinct lists can produce
- * one string, and every byte of the result is printable.
- */
-function ownAddressKey(
-  facts: ReadonlyArray<Pick<MailboxFacts, "address" | "addressIsOwn">> | null,
-  remembered: readonly string[] | null,
-): string {
-  const list = (facts ? ownAddressesOf(facts) : null) ?? remembered ?? [];
-  return JSON.stringify([...list].map((a) => a.trim().toLowerCase()).sort());
-}
-
-/** A cached address list an older build wrote degrades to "no cache", never to mixed types. */
-function acceptAddressList(parsed: unknown): string[] | null {
-  if (!Array.isArray(parsed)) return null;
-  return parsed.every((x): x is string => typeof x === "string") ? parsed : null;
 }
 
 /**
@@ -155,63 +131,12 @@ export function useShellDerivations({
   engine, reader, derived, demo, resolvedDemo, now, facts, seedOwed, consent, route, trashWire,
   deleting, restoring, routing,
 }: ShellDerivationsInput) {
-  /**
-   * The account's own addresses, from `GET /mailboxes` — passed explicitly,
-   * not left to the default. `consentPartition` falls back to the mirror's
-   * `mailbox` entities, and a live `/sync` feed carries none: an empty set
-   * on exactly the surface that matters, so the user is not recognised as
-   * themselves and their own mail (a note to self, a cross-account
-   * forward) queues in their own Screener. The demo's mirror DOES hold
-   * mailbox rows, so no fixture test could have shown this.
-   */
-  /**
-   * …AND THE BOOT USES THE DEVICE'S COPY OF THAT ANSWER. `facts` is a round trip away on every
-   * load, and a partition computed with an empty own-set for that interval would present the
-   * user's own recent self-mail in their own Screener — the same boot-window defect the consent
-   * cache below closes, on this input. So the addresses ride the same per-account boot cache:
-   * written whenever `GET /mailboxes` has answered, read while `facts` is still null, keyed by
-   * the remembered account id, and never applied over a live answer (`facts` wins the `??`).
-   * An address list neither authorises nor loads anything — it only stops the account being
-   * treated as a stranger to itself for the first round trip.
-   */
-  const [rememberedOwn, setRememberedOwn] = useState<string[] | null>(null);
-  useEffect(() => {
-    /* `resolvedDemo`, not `demo`: on a prerendered demo page the raw flag is false for one
-       render, and this one carries a PREVIOUS account's remembered addresses into the fixtures
-       world rather than issuing a request. */
-    if (resolvedDemo) return;
-    const owner = mirrorOwnerOf(engine);
-    if (owner === null) return;
-    if (facts) {
-      writeBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, ownAddressesOf(facts));
-      return;
-    }
-    const cached = readBootCache(OWN_ADDRESSES_BOOT_SCOPE, owner, acceptAddressList);
-    if (cached !== null) setRememberedOwn(cached);
-  }, [engine, resolvedDemo, facts]);
-  /**
-   * Keyed on the addresses, not the facts row. `consentView` depends on nothing else about a
-   * mailbox, and keyed on `facts` it rebuilt the whole-mirror partition whenever ANY field
-   * moved — `pendingMoves` decrements on every poll for hours on a fresh mailbox. A STRING of
-   * the sorted, lower-cased addresses rather than the identity of `facts`: the provider's
-   * equality gate stops the poll that learned nothing, this stops the poll that learned
-   * something the partition does not care about. Sorted and lower-cased is the KEY only — the
-   * value keeps the server's order and case; nothing downstream may see a folded address.
-   */
-  const ownAddresses = useMemo(
-    () => (facts ? ownAddressesOf(facts) : null) ?? rememberedOwn ?? [],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ownAddressKey(facts, rememberedOwn)],
-  );
-  /**
-   * EACH MAILBOX'S FIRST-IMPORT STAMP, for the held-claim term (`firstImportsOf`). Keyed on the
-   * stamps for `ownAddresses`' reason: the partition reads nothing else of a mailbox row here.
-   */
-  const firstImportDoneAt = useMemo(
-    () => firstImportsOf(facts),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [firstImportsKey(facts)],
-  );
+  /* The record itself too: it is what the mail ground's context is filled with (`todays-ground.tsx`), so a seated
+     place reads the very object this shell derived. */
+  const mailPartition = usePartitionOf({
+    engine, reader, derived, demo, resolvedDemo, now, facts, consent,
+  });
+  const { ownAddresses, firstImportDoneAt, consentView } = mailPartition;
   /**
    * THE ACCOUNT'S OWN NAME FOR ONE OF ITS ADDRESSES — what the "me" recipient chip wears
    * (viewer redesign). `GET /mailboxes` carries `displayName` per mailbox (nullable; OAuth connects
@@ -259,49 +184,6 @@ export function useShellDerivations({
   const mailboxStatusOf = useStableCallback((mailboxId: string): string | null =>
     mailboxStatuses.get(mailboxId) ?? null);
   /**
-   * …AND THE ENGINE IS TOLD THE SAME CUTLINE THE PARTITION BELOW IS DRAWN WITH.
-   *
-   * A windowed mirror decides dormancy from the mail it kept, the server from the whole account,
-   * and the dial offers 90, 180 and 365 days against a 90-day window — so two of its three rungs
-   * put the cutline past the window. Past it a sender whose only mail the window evicted is
-   * dormant here and active there: filed in History, never asked about. So the engine widens its
-   * retention to cover the cutline (`maxRows` still decides the size), read from the SAME
-   * `consent` fields the partition is keyed on, so the two cannot be measured differently.
-   */
-  // Each live read is a new object: the partition's memo and the cutline key on what the map SAYS.
-  const screeningByMailboxKey = JSON.stringify(consent.screeningByMailbox ?? null);
-  useEffect(() => {
-    if (demo || !(consent.known || consent.standalone)) return;
-    // Each mailbox's organizer's window where the server says (RULING-026): the reader's own row is inert.
-    engine.setCutline(widestWindowOf(consent.screeningByMailbox)
-      ?? { dormancyDays: consent.dormancyDays, scope: consent.screeningScope });
-  }, [engine, demo, consent.known, consent.standalone, consent.dormancyDays, consent.screeningScope, screeningByMailboxKey]);
-  // Each mailbox's recorded Sent folder, from the last answered read; the engine ignores a repeat.
-  useEffect(() => {
-    if (demo || facts === null) return;
-    engine.setSentFolders(facts);
-  }, [engine, demo, facts]);
-  const consentView: ConsentPartition | null = useMemo(
-    // The demo is not partitioned — consent derives from rules and the fixture world has none, so
-    // the partition would empty the curated world into History. RULES NEVER WAIT FOR THE READ: until
-    // the window is known (`GET /consent`, or the boot's CACHED last answer, `boot-cache.ts`) the
-    // partition runs `rulesOnly` — a ruled sender is decided and their mail stays where the mailbox
-    // has it (a DENY rule's on its shelf), an unruled one stays in its folder, nothing is cut to
-    // History. With no partition at all a paired desktop whose read failed drew screened-out mail
-    // in its Ohbox. The desktop (`consent.standalone`) has no stored window, so the default IS the
-    // truth there.
-    () =>
-      demo
-        ? null
-        // One builder for the lists and a screening press's read-back (`consent-options.ts`).
-        : consentPartition(reader, shellConsentOptions(consent, now, ownAddresses, firstImportDoneAt)),
-    [
-      demo, consent.known, consent.standalone, reader, derived, now, consent.dormancyDays,
-      consent.screeningBaselineAt, consent.screeningScope, screeningByMailboxKey, ownAddresses, firstImportDoneAt,
-      consent.foldersEnabled,
-    ],
-  );
-  /**
    * The same mirror, with every message sitting where it is PRESENTED.
    *
    * Fed to the pile selectors and to nothing else. They group by folder, and after this
@@ -319,10 +201,7 @@ export function useShellDerivations({
        rule, so a press whose rule is waiting out its undo window would move nothing on screen;
        `presentAt` carries the named rows for the length of it and returns the reader unwrapped
        the rest of the time, exactly as `hideMessages` does. */
-    () => presentAt(
-      hideMessages(consentView ? presentationReader(reader, consentView) : reader, deleting.held),
-      routing.places,
-    ),
+    () => presentedOver(reader, consentView, deleting.held, routing.places),
     [reader, consentView, deleting.held, routing.places],
   );
 
@@ -696,6 +575,7 @@ export function useShellDerivations({
   const scheduled = useMemo(() => scheduledSendsList(reader), [reader, derived]);
 
   return {
+    mailPartition,
     ownAddresses,
     firstImportDoneAt,
     ownNameOf,

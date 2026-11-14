@@ -113,7 +113,7 @@ async function openInReader(shape: InviteShape): Promise<HTMLElement> {
   await mountShell([mailbox({ lastSyncAt: ISO, id: "mb_1" })]);
   await tick(30_000);
   await act(async () => {
-    window.location.hash = `#/ohbox/m/${idOf(shape)}`;
+    window.location.hash = `#/history/m/${idOf(shape)}`;
     window.dispatchEvent(new Event("hashchange"));
     await Promise.resolve();
   });

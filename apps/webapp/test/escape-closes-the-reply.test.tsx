@@ -30,7 +30,7 @@ const { EMPTY_RICH } = await import("@ohmail/app-logic/writing/rich-text");
 let roots: Root[] = [];
 
 beforeEach(() => {
-  window.location.hash = "";
+  window.location.hash = "#/history";
   try { window.localStorage.clear(); } catch { /* storage blocked; the shell still boots */ }
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
@@ -54,12 +54,12 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // Off the Ohbox first: its drag hook's cleanup reads `document.body`, which a document root's
+  // Off the view first: a view's drag hook's cleanup reads `document.body`, which a document root's
   // unmount has already taken away.
-  if (document.querySelector(".view-ohbox")) {
+  if (document.querySelector(".view-history")) {
     const { go } = await import("../app/shell/routing");
     await act(async () => { go("drafts"); window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await waitFor(() => document.querySelector(".view-ohbox") == null, "teardown could not leave the Ohbox");
+    await waitFor(() => document.querySelector(".view-history") == null, "teardown could not leave the view");
   }
   for (const root of roots) await act(() => { root.unmount(); });
   roots = [];
@@ -125,7 +125,7 @@ const compose = (): Element | null => document.querySelector(".view-compose");
 const composeSurface = (): HTMLElement | null => document.querySelector(".compose-editor .rte-surface");
 
 async function openReply(): Promise<HTMLElement> {
-  await waitFor(() => document.querySelector(".view-ohbox") != null, "the shell did not open on the Ohbox");
+  await waitFor(() => document.querySelector(".view-history") != null, "the shell did not open on History");
   await press(document, "j");
   await press(document, "r");
   await waitFor(() => replySurface() != null, "`r` did not open the inline reply");

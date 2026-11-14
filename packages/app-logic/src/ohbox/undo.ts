@@ -87,27 +87,30 @@ export function useUndoAnswer(
   { heldRow, hold, setLandedOn }: Hold,
   { suspended, spendSuspended, leftFrom, onSelectRef, onEnterReaderRef, onRestoreHoldRef }: Suspended,
   verbAdvance: MutableRefObject<string | null>,
+  verbRested: MutableRefObject<string | null>,
 ): void {
   const { selectedId, readerId, undoLink } = input;
   useEffect(() => {
     const s = suspended.current;
     if (!s || (selectedId === s.sel && readerId === s.reader0 && heldRow === s.held0)) return;
     // Delete clears the selection; Park and Later leave it on the acted row.
-    if (
-      (s.sel === null || s.sel === s.id) &&
-      selectedId !== null &&
-      selectedId === verbAdvance.current &&
-      readerId === s.reader0 &&
-      heldRow === s.held0
-    ) {
-      s.sel = selectedId;
-      verbAdvance.current = null;
-      return;
+    if ((s.sel === null || s.sel === s.id) && readerId === s.reader0 && heldRow === s.held0) {
+      if (selectedId !== null && selectedId === verbAdvance.current) {
+        s.sel = selectedId;
+        verbAdvance.current = null;
+        return;
+      }
+      /* The verb's own rest: a selection that still named the acted letter was let go, by nobody's move. */
+      if (selectedId === null && verbRested.current === s.id) {
+        s.sel = null;
+        verbRested.current = null;
+        return;
+      }
     }
     leftFrom.current = s.id;
     spendSuspended();
     // The refs and `spendSuspended` keep their identity: it runs when the selection, the sheet or the hold change.
-  }, [selectedId, readerId, heldRow, suspended, verbAdvance, leftFrom, spendSuspended]);
+  }, [selectedId, readerId, heldRow, suspended, verbAdvance, verbRested, leftFrom, spendSuspended]);
 
   /**
    * UNDO PUTS IT BACK AS IT STOOD AT THE PRESS — asked by the shell before the reversal is sent.

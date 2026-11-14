@@ -135,6 +135,38 @@ describe("the Ohbox's list", () => {
     expect(marked()).toEqual([]);
   });
 
+  it("stands what a shell hands over the list's head, and what it hands first as the scroller's first block", () => {
+    const world = ohbox(
+      { newForYou: [msg({ id: "a", from: "Ada Lund", subject: "Kiln" })] },
+      {
+        side: {
+          over: <aside aria-label="An offer">offer</aside>,
+          first: <p role="note">Away until Monday</p>,
+        },
+      },
+    );
+    const over = screen.getByRole("complementary", { name: "An offer" });
+    const first = screen.getByRole("note");
+    const head = screen.getByRole("heading", { level: 1, name: "Ohbox" });
+    const rows = screen.getAllByRole("listbox")[0]!;
+    const before = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const scroller = first.parentElement!;
+    expect(before(over, head), "the offer stands over the list's head").toBe(true);
+    expect(
+      before(head, first) && before(first, rows),
+      "the first block comes after the head, before the rows",
+    ).toBe(true);
+    expect(scroller.contains(rows), "the first block scrolls with the rows").toBe(true);
+    expect(
+      scroller.contains(over) || scroller.contains(head),
+      "the offer and the head stand outside it",
+    ).toBe(false);
+    world.again({}, { over: undefined, first: undefined });
+    expect(screen.queryByRole("complementary", { name: "An offer" })).toBeNull();
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
   it("speaks German where the person reads German", () => {
     ohbox({ newForYou: [msg({ id: "a", from: "Ada Lund", subject: "Ofen" })] }, { lang: "de" });
     expect(screen.getByRole("listbox", { name: "Neu" })).toBeTruthy();

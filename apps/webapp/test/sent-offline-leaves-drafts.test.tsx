@@ -92,8 +92,8 @@ async function setInput(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 async function replyOn(s: DraftShell, id: string, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "the row");
+  await waitFor(() => s.el.querySelector(`.view-history :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+  await press(s.el.querySelector(`.view-history :is(.row, [role=option])[data-id='${id}']`), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -114,7 +114,7 @@ async function offlineReplySent(s: DraftShell, pauses: string[]): Promise<void> 
 
 describe("a reply sent while offline", () => {
   it("1 — goes once on reconnect, and Drafts is back to its count", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     await offlineReplySent(s, ["Sent while offline"]);
@@ -138,7 +138,7 @@ describe("a reply sent while offline", () => {
   }, 30_000);
 
   it("2 — two pauses offline, then Send: neither pause's row is left behind", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
     await offlineReplySent(s, ["First words", "First words and more words"]);
     s.offline.on = false;
@@ -151,7 +151,7 @@ describe("a reply sent while offline", () => {
   }, 40_000);
 
   it("3 — Cancel on the waiting send: nothing goes, and the words are one draft again", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     await offlineReplySent(s, ["Kept, not sent"]);
     // Offline, the server cannot be asked: the Cancel is owed, and the dock holds until it is answered.
     await act(async () => { replyCancel(s.el)!.click(); });
@@ -168,7 +168,7 @@ describe("a reply sent while offline", () => {
   }, 30_000);
 
   it("4 — control: a reply sent online is sent from its row, and leaves no draft", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     await replyOn(s, "m1", "Sent while online");
@@ -181,12 +181,12 @@ describe("a reply sent while offline", () => {
   }, 30_000);
 
   it("a forward sent offline goes once, with no replayable create left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     s.offline.on = true;
-    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-history :is(.row, [role=option])[data-id='m1']"), "the row");
     const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
     await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });
     await press([...panel.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward") ?? null, "Forward");
@@ -207,7 +207,7 @@ describe("a reply sent while offline", () => {
 
 describe("a letter sent while offline", () => {
   it("5 — goes once on reconnect, and Drafts is back to its count", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     s.offline.on = true;
@@ -241,7 +241,7 @@ describe("a create that waited offline lands on the reconnect", () => {
       && ((p.mutation as { inReplyToMessageId?: string | null }).inReplyToMessageId ?? null) === parent);
 
   it("6 — two replies offline: the second reply takes the row its create made, and its Send goes from it", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
     await replyOn(s, "m1", "First reply");
@@ -264,7 +264,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 60_000);
 
   it("7 — a letter paused offline beside a reply sent offline: the composer takes its row, one row in Drafts", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
     await key("c");
@@ -274,7 +274,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     await act(async () => { typeInto(s.el.querySelector<HTMLElement>(".view-compose .rte-surface")! as never, "A letter written offline"); });
     await settleEditor();
     await waitFor(() => createsOf(s, null).length >= 1, "the letter's create waiting", PAUSE_ROUNDS);
-    await act(async () => { window.location.hash = "#/ohbox"; });
+    await act(async () => { window.location.hash = "#/history"; });
     await replyOn(s, "m1", "A reply sent offline");
     await waitFor(() => createsOf(s, "m1").length === 1, "the reply's create waiting", PAUSE_ROUNDS);
     await act(async () => { replySend(s.el)!.click(); });
@@ -289,7 +289,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 60_000);
 
   it("8 — a create taken back while already on the wire is deleted once the send goes from its own row", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     s.offline.on = true;
@@ -323,7 +323,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   };
 
   it("9 — two pauses offline, then a reply to the next message: the first reply's row holds its newest words", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Dear Ann, yes");
     await waitFor(() => createsOf(s, "m1").length === 1, "pause 1 waiting", PAUSE_ROUNDS);
@@ -337,7 +337,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("10 — two pauses offline, the editor open at the reconnect: one row, the newest words", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Dear Ann, yes");
     await waitFor(() => createsOf(s, "m1").length === 1, "pause 1 waiting", PAUSE_ROUNDS);
@@ -350,7 +350,7 @@ describe("a create that waited offline lands on the reconnect", () => {
 
   it("11 — a reply typed offline, then another device's draft of it opened from Drafts: both rows stay", async () => {
     window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Laptop words, written offline");
     await waitFor(() => createsOf(s, "m1").length === 1, "the laptop reply's create waiting", PAUSE_ROUNDS);
@@ -364,7 +364,7 @@ describe("a create that waited offline lands on the reconnect", () => {
   }, 90_000);
 
   it("12 — a press refused at the door is no Send: the reply's waiting row survives the reconnect", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Kept words");
     await waitFor(() => createsOf(s, "m1").length === 1, "the pause's create waiting", PAUSE_ROUNDS);
@@ -394,7 +394,7 @@ describe("a create that waited offline lands on the reconnect", () => {
 
   it("13 — a reply typed offline, then another device's draft of it sent offline: the typed words stay a draft", async () => {
     window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
     await replyOn(s, "m1", "Laptop words, written offline");
@@ -411,7 +411,7 @@ describe("a create that waited offline lands on the reconnect", () => {
 
   it("14 — the same with the typed reply's create on the wire at the press: it stays a draft", async () => {
     window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     s.spendSentRow.on = true;
     s.offline.on = true;
     await replyOn(s, "m1", "Laptop words, written offline");
@@ -461,20 +461,20 @@ describe("a create that waited offline lands on the reconnect", () => {
   const sentFrom = (s: DraftShell): (string | null)[] => sends(s).map((m) => (m as { draftId?: string | null }).draftId ?? null);
 
   it("15 — reopened with Reply onto its own waiting create: one send, from no unconfirmed id, and no draft left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     await reopenedAndSent(s, "Typed offline, sent after a reopen", () => key("r"));
     expect({ from: sentFrom(s), left: rowsOf(s, "m1") }).toEqual({ from: [null], left: [] });
   }, 90_000);
 
   it("16 — reopened from Drafts onto its own waiting create: one send, from no unconfirmed id, and no draft left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     await reopenedAndSent(s, "Typed offline, opened from Drafts", () => openListed(s, "opened from Drafts"));
     expect({ from: sentFrom(s), left: rowsOf(s, "m1") }).toEqual({ from: [null], left: [] });
   }, 90_000);
 
   it("17 — another device's draft opened, then the reply's own waiting create from Drafts and sent: the phone's draft stays", async () => {
     window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")], [replyDraft("d-phone", "m1", "Words from the phone")]);
     await reopenedAndSent(s, "Laptop words, written offline", async () => {
       await openPhoneDraft(s);
       await openListed(s, "written offline");
@@ -506,7 +506,7 @@ describe("a create that waited offline lands on the reconnect", () => {
     await rounds(10);
   };
   const phoneEdited = (): Promise<DraftShell> =>
-    mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("zz-phone", "m1", "Words from the phone")]);
+    mountShell("#/history", [message("m1"), message("m2")], [replyDraft("zz-phone", "m1", "Words from the phone")]);
 
   it("19 — the phone's draft edited, then the reply's own waiting create, then Reply and typed on: the phone's words stay its own", async () => {
     window.localStorage.setItem(replyDraftKey("m1", OWNER), "Laptop words");
@@ -537,7 +537,7 @@ describe("a reply reopened while its first save is in the air", () => {
   const saves = (s: DraftShell): Save[] => s.sent.filter((m): m is Save => m.kind === "draft_save");
 
   it("18 — online, typed on after the reopen: the reply keeps one row, written by the next save", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     let release: () => void = () => {};
     s.saveGate.wait = new Promise<void>((r) => { release = r; });
     await replyOn(s, "m1", "On my way");
@@ -632,7 +632,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
     return { release, local };
   }
   const opened = (deadline: boolean): Promise<DraftShell> =>
-    mountShell("#/ohbox", [message("m1"), message("m2")], [], deadline ? { outboxReplayDeadlineMs: 50 } : {});
+    mountShell("#/history", [message("m1"), message("m2")], [], deadline ? { outboxReplayDeadlineMs: 50 } : {});
 
   async function typedOnAfterTheGate(deadline: boolean, twice: boolean): Promise<DraftShell> {
     const s = await opened(deadline);
@@ -779,7 +779,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   const letters = (s: DraftShell): string[] => unsent(s).filter((d) => d.subject === "Written offline").map((d) => d.body ?? "");
 
   it("29 — a letter paused offline, opened again from Drafts, typed on: one row, the newest words, no write names the local id", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     const local = await letterReopened(s);
     await reconnect(s);
     expect(saves(s).map((m) => m.draftId), "a save named the unconfirmed local id").not.toContain(local);
@@ -787,7 +787,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("30 — the same, then Send: it goes once with the newest words, and no draft of it is left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1")]);
+    const s = await mountShell("#/history", [message("m1")]);
     s.spendSentRow.on = true;
     const local = await letterReopened(s);
     await act(async () => { composeSend(s.el)!.click(); });
@@ -798,7 +798,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("31 — two pauses offline, closed, the older row opened from Drafts, reconnect: one row, the newest words", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Dear Ann, yes");
     await waitFor(() => createsOf(s, "m1").length === 1, "pause 1 waiting", PAUSE_ROUNDS);
@@ -819,7 +819,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("32 — Discard in Drafts of a reply whose first save waits, then of one on the wire: nothing of either is left", async () => {
-    const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const s = await mountShell("#/history", [message("m1"), message("m2")]);
     s.offline.on = true;
     await replyOn(s, "m1", "Never mind this one");
     await waitFor(() => createsOf(s, "m1").length === 1, "the create waiting", PAUSE_ROUNDS);
@@ -832,7 +832,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
 
     let release: () => void = () => {};
     s.saveGate.wait = new Promise<void>((r) => { release = r; });
-    await act(async () => { window.location.hash = "#/ohbox"; });
+    await act(async () => { window.location.hash = "#/history"; });
     await replyOn(s, "m2", "Nor this one");
     await waitFor(() => saves(s).some((m) => m.inReplyToMessageId === "m2"), "m2's create on the wire", PAUSE_ROUNDS);
     await key("Escape");
@@ -846,13 +846,13 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("33 — a reply paused twice offline, the page reloaded online: one row, the newest words", async () => {
-    const first = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const first = await mountShell("#/history", [message("m1"), message("m2")]);
     first.offline.on = true;
     await replyOn(first, "m1", "Before the reload");
     await waitFor(() => createsOf(first, "m1").length === 1, "pause 1 waiting", PAUSE_ROUNDS);
     await act(async () => { typeInto(replySurface(first.el)!, "Before the reload, and after a second pause"); });
     await waitFor(() => createsOf(first, "m1").length === 2, "pause 2 waiting", PAUSE_ROUNDS);
-    const s = await reload(first, "#/ohbox");
+    const s = await reload(first, "#/history");
     await rounds(40);
     await replyOn(s, "m1", "Before the reload, and after a second pause");
     await rounds(PAUSE_ROUNDS);
@@ -862,7 +862,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("34 — a letter paused twice offline, the page reloaded online: one row, the newest words", async () => {
-    const first = await mountShell("#/ohbox", [message("m1")]);
+    const first = await mountShell("#/history", [message("m1")]);
     first.offline.on = true;
     await key("c");
     await waitFor(() => first.el.querySelector(".view-compose .rte-surface") != null, "the composer");
@@ -950,7 +950,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
   }, 120_000);
 
   it("38 — paused twice offline, the first create taken on the reconnect, the page reloaded before the second lands, Reply, Send: no draft left", async () => {
-    const first = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const first = await mountShell("#/history", [message("m1"), message("m2")]);
     first.offline.on = true;
     await replyOn(first, "m1", "Dear Ann, yes");
     await waitFor(() => createsOf(first, "m1").length === 1, "pause 1 waiting", PAUSE_ROUNDS);
@@ -969,7 +969,7 @@ describe("a first save named by its key while it waits — at the gate, behind a
     await rounds(40);
     expect({ rows: rowsOf(first, "m1").length, waiting: createsOf(first, "m1").length }).toEqual({ rows: 1, waiting: 1 });
 
-    const s = await reload(first, "#/ohbox");
+    const s = await reload(first, "#/history");
     s.spendSentRow.on = true;
     await rounds(40);
     await act(async () => { await s.engine.flushPending(); });
@@ -1001,7 +1001,7 @@ describe("a reply's creates replayed by a reload are judged from the boot, befor
     await unmountAll();
     resetComposerForTest();
     stubDom();
-    const next = await mountShell("#/ohbox", [message("m1"), message("m2")], [], { store: s.store });
+    const next = await mountShell("#/history", [message("m1"), message("m2")], [], { store: s.store });
     next.spendSentRow.on = true;
     await rounds(40);
     await act(async () => { await next.engine.flushPending(); });
@@ -1018,7 +1018,7 @@ describe("a reply's creates replayed by a reload are judged from the boot, befor
   };
   /** Case 38's first half: the first create taken on the reconnect, the second lands at the next boot. */
   async function landedAtBoot(): Promise<{ s: DraftShell; stored: string }> {
-    const first = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const first = await mountShell("#/history", [message("m1"), message("m2")]);
     await twoPausesOffline(first);
     let release: () => void = () => {};
     first.saveGate.wait = new Promise<void>((r) => { release = r; });
@@ -1035,7 +1035,7 @@ describe("a reply's creates replayed by a reload are judged from the boot, befor
   }
   /** Both creates land at the boot: the older words take the reply's row, the newer stand beside it. */
   async function bothLandedAtBoot(): Promise<{ s: DraftShell; older: string; copy: string }> {
-    const first = await mountShell("#/ohbox", [message("m1"), message("m2")]);
+    const first = await mountShell("#/history", [message("m1"), message("m2")]);
     await twoPausesOffline(first);
     const s = await reload(first);
     const id = (words: string): string => rowsOf(s, "m1").find(([, b]) => b === words)?.[0] ?? "";

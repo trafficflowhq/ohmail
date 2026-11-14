@@ -6,7 +6,7 @@ import * as React from "react";
 import { useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, threadOf, type EngineAdapter } from "@ohmail/client-engine";
-import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
 import { MessageChromeProvider } from "../../webapp/app/shell/message-chrome.js";
 import { MessageFiles } from "../../webapp/app/shell/MessageFiles.js";
@@ -113,7 +113,7 @@ function engineOverFakeAdapter(): OhmailEngine {
 
 /** The reading pane's strip and `AppShell`'s overlay mount, over one engine. */
 function Desktop({ engine }: { engine: OhmailEngine }) {
-  const attachments = useMessageAttachments(engine, "m1", {
+  const attachments = useMessageAttachments(engine, "m1", { shell: desktopFileShell(),
     conversationOf: (id: string) => threadOf(engine.read(), id),
     onDownloadAllFailed: () => {},
     onSavedToDownloads: (count) => said.push({ saved: count }),

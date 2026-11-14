@@ -72,7 +72,7 @@ let live: Row[] = [];
  * view's own doing.
  */
 async function draw(): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const el = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),

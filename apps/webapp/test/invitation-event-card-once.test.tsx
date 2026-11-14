@@ -23,7 +23,7 @@ import { OWA_STUB } from "../../../packages/core/test/fixtures/owa-invitation-st
 
 const EN_BODY = (en as unknown as Record<string, Record<string, string>>).body!;
 
-/* ── the live shell: the Ohbox reader and an open News card ────────────────────────────────── */
+/* ── the live shell: today's reader (opened from History) and an open News card ────────────── */
 
 let shapes: InviteShape[] = [];
 let stubLetter = false;
@@ -115,7 +115,7 @@ async function settleCards(): Promise<void> {
 }
 
 async function openInReader(id: string): Promise<HTMLElement> {
-  await goHash(`#/ohbox/m/${id}`);
+  await goHash(`#/history/m/${id}`);
   await settleCards();
   const body = document.querySelector<HTMLElement>(".msg-body");
   expect(body, "the reader shows no body").not.toBeNull();
@@ -249,7 +249,7 @@ async function mountSurface(shape: InviteShape, surface: "card" | "screener"): P
       from: "Ada Organizer", subject: message.subject, body: shape.text,
     } as never);
   function WithSeam() {
-    const attachments = useMessageAttachments(engine, null, { conversationOf: () => [], onDownloadAllFailed: () => {} });
+    const attachments = useMessageAttachments(engine, null, { shell: "none", conversationOf: () => [], onDownloadAllFailed: () => {} });
     return h(MessageChromeProvider as never, {
       value: {
         ownAddresses: ["mila@example.test"], absoluteTime: false, onToggleAbsoluteTime: () => {},

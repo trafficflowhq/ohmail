@@ -85,7 +85,7 @@ let host: HTMLDivElement | null = null;
 interface Props { newForYou?: Row[]; previouslySeen?: Row[] }
 
 async function render(props: Props): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const view = h(OhboxView as never, {
     owed: false,

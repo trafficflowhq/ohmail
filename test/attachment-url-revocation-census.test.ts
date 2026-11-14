@@ -55,7 +55,7 @@ const PINNED: Record<string, Role> = {
   // fetch, and its cleanup releases the whole selection — the focused message and its
   // conversation's siblings. Its own `createObjectURL` is a separate thing: a short-lived save
   // handle for `<a download>`, revoked on its own timer and never an engine URL.
-  "apps/webapp/app/shell/attachments.ts": { mints: true, asks: true, releases: true },
+  "packages/app-logic/src/reader/attachments.ts": { mints: true, asks: true, releases: true },
   // The phone's reader ASKS and never mints: React Native has no `URL.createObjectURL`, so no
   // `blob:` URL exists to pin a file. It still RELEASES, and that half is the load-bearing one —
   // the engine holds the list, the inline pictures and every fetched Blob until somebody drops

@@ -73,7 +73,7 @@ let bulkRuns: Array<[string, string[]]> = [];
 
 async function mountOhbox(rows: Row[], locale: "en" | "de" = "en"): Promise<void> {
   setViewport();
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const el = h(NextIntlClientProvider, {
     locale, messages: locale === "de" ? german : messages, timeZone: "UTC",

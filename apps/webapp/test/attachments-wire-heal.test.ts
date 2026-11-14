@@ -46,7 +46,7 @@ function engineOver(listAttachments: EngineAdapter["listAttachments"]): OhmailEn
 }
 
 function Harness({ engine }: { engine: OhmailEngine }) {
-  const a = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const a = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return a ? h(AttachmentStrip, {
     items: a.itemsOf("m1"), onOpen: (id: string) => a.open("m1", id),
     onDownloadAll: () => a.downloadAll("m1"), downloadingAll: a.downloadingAll("m1"),
@@ -113,7 +113,7 @@ describe("an embedded picture the mail server did not serve", () => {
     document.body.appendChild(host);
     root = createRoot(host);
     const Strip = () => {
-      const a = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+      const a = useMessageAttachments(engine, "m1", { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
       return a ? h(AttachmentStrip, { items: a.itemsOf("m1", { includeInlineParts: true }), onOpen: () => {}, onDownloadAll: () => {}, downloadingAll: false }) : null;
     };
     await act(async () => root!.render(h(Strip)));

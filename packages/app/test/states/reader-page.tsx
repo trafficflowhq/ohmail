@@ -360,7 +360,15 @@ const pictures: PictureSeam | "none" = hostile
       needRemote: () => undefined,
     }
   : "none";
-const reader = readerEntry({ body: letterBody, files, pictures, look: () => undefined, reply: "none" });
+const reader = readerEntry({
+  body: letterBody,
+  files,
+  pictures,
+  look: () => undefined,
+  sentCopy: "none",
+  reply: "none",
+  invitation: "none",
+});
 const place: PlaceEntry = {
   id: "ohbox",
   body: "reading",

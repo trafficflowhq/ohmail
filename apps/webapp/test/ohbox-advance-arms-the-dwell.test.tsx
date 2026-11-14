@@ -2,7 +2,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { act, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
-import { arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
+import { arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText, undoPress } from "./fixtures/thread-read-shell.js";
+import { barVerb, cursorRow, letterShown, readingScroller } from "./ohbox/_finders.js";
 import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
 import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
@@ -20,7 +21,7 @@ const ids = (label: string): string[] =>
   [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] :is(.row, [role=option])[data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
 const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
-const selected = (): string | null => document.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null;
+const selected = (): string | null => cursorRow(document)?.getAttribute("data-id") ?? null;
 const naming = (id: string) => patches.filter((p) => p.ids.includes(id));
 /** "first" (08:20) and "old" (08:00) unread over "newer" read (08:30): New ["first", "old"], Earlier ["newer"]. */
 const three = () => [
@@ -32,13 +33,14 @@ const idle = async (): Promise<void> => { for (let i = 0; i < 10; i++) await key
 /** Less than the rest: the cursor moves on before it. */
 const brief = (): Promise<void> => tick(900);
 const four = () => [msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30)];
-const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
+/** The reading column's scroller: the open letter's scrolling box. */
+const col = (): HTMLElement => readingScroller(document)!;
 const press = async (el: Element | null | undefined): Promise<void> => {
   expect(el).toBeTruthy();
   await act(async () => { el!.dispatchEvent(new Event("pointerdown", { bubbles: true })); });
 };
 const GLANCE = { ids: ["old"], unread: false, via: "glance", openRead: true };
-const undo = () => click(document.querySelector(".toast .toast-act"), "Undo");
+const undo = () => click(undoPress(), "Undo");
 
 beforeAll(async () => {
   await import("../app/shell/AppShell.js");
@@ -258,7 +260,7 @@ describe("CONTROLS: a command or a press ends the rest", () => {
   it("a held press on the bar's Later reads nothing", async () => {
     await mountThread(four());
     await key("j");
-    await press(col().querySelector(".abar .abar-later"));
+    await press(barVerb(document, "Later"));
     await tick(5000);
     expect(patches).toEqual([]);
   }, 30_000);
@@ -467,7 +469,7 @@ describe("a Mark unread holds for the visit: no landing reads it back", () => {
     arriveLater([{ ...msg("newer", 30, { threadId: "t-newer", unread: true }), seq: 100_000 }], ["newer"], "t-newer");
     await tick(20_000);
     await settle();
-    expect(col().querySelector('[data-conv-id="newer"]')?.hasAttribute("data-unseen"), "the other device's unread, shown").toBe(true);
+    expect(letterShown(document, "newer")?.hasAttribute("data-unseen"), "the other device's unread, shown").toBe(true);
     expect(selected()).toBe("newer");
     await keyAsBrowser("j");
     expect(selected()).not.toBe("newer");

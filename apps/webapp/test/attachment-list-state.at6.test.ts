@@ -219,7 +219,7 @@ function adapterWith(over: Partial<EngineAdapter> = {}): EngineAdapter {
  * over that one expression, every assertion in this group goes red.
  */
 function Harness({ engine, messageId }: { engine: OhmailEngine; messageId: string }) {
-  const attachments = useMessageAttachments(engine, messageId, { conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
+  const attachments = useMessageAttachments(engine, messageId, { shell: "none", conversationOf: (id: string) => threadOf(engine.read(), id), onDownloadAllFailed: () => {} });
   return attachments
     ? h(AttachmentStrip, {
         items: attachments.itemsOf(messageId),

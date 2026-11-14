@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, type EngineAdapter, threadOf } from "@ohmail/client-engine";
 import { useMessageAttachments } from "../app/shell/attachments.js";
-import { enableDesktopAttachments, saveRefusalOf, type SaveRefusal } from "../app/shell/open-attachment.js";
+import { desktopFileShell, enableDesktopAttachments, saveRefusalOf, type SaveRefusal } from "../app/shell/open-attachment.js";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -52,7 +52,7 @@ function adapter(): EngineAdapter {
 let chrome: ReturnType<typeof useMessageAttachments>;
 let said: Array<{ saved?: number; refused?: [SaveRefusal, number] }>;
 function Harness({ engine }: { engine: OhmailEngine }) {
-  chrome = useMessageAttachments(engine, "m1", { conversationOf: (id: string) => threadOf(engine.read(), id),
+  chrome = useMessageAttachments(engine, "m1", { shell: desktopFileShell(), conversationOf: (id: string) => threadOf(engine.read(), id),
     onDownloadAllFailed: () => {},
     onSavedToDownloads: (count) => said.push({ saved: count }),
     onSaveRefused: (why, count) => said.push({ refused: [why, count] }),

@@ -7,6 +7,7 @@ import { MutationRejectedError, type EngineMutation } from "@ohmail/client-engin
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { barVerb, cursorRow, menuItem, menuItems, pickedRows } from "./ohbox/_finders.js";
 
 /**
  * ═══ A PRESS IS REPORTED FROM ITS ANSWER — THE SHELL'S ONE DISPATCH SEAM ════════════════════
@@ -171,15 +172,22 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 4000): 
 const said = (needle: string): boolean =>
   [...document.querySelectorAll('[role="status"]')]
     .some((n) => (n.textContent ?? "").includes(needle));
-const barButton = (label: string): HTMLButtonElement | undefined =>
+/** A verb on today's bar, in a pile's own reading column, by the label it starts with. */
+const todaysVerb = (label: string): HTMLButtonElement | undefined =>
   [...host!.querySelectorAll<HTMLButtonElement>(".abar button")]
     .find((b) => (b.textContent ?? "").trim().startsWith(label));
+/**
+ * A verb of the open letter, where the place on screen draws it: at the seated Ohbox on the letter's action panel, or
+ * in the menu a verb of the panel opened (Resurface's horizons); in a pile of today's, on today's bar.
+ */
+const barButton = (label: string): HTMLElement | undefined =>
+  barVerb(host!, label) ?? menuItem(label) ?? todaysVerb(label);
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 /** The cursor on the Ohbox's first row, the way every one of these presses reaches a message. */
 async function cursorOnFirstRow(): Promise<string> {
   await key("j");
-  const id = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")?.dataset.id;
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "`j` put the cursor on no row").toBeTruthy();
   return id!;
 }
@@ -320,7 +328,8 @@ describe("the seam: nine families, each refused, each told", () => {
     await cursorOnFirstRow();
     await key("Enter");
     await click(barButton("Tag"));
-    const option = host!.querySelector<HTMLElement>('.tagp li[role="option"]');
+    /* The panel's Tag opens its own menu of the account's tags (today's bar opened the picker). */
+    const option = menuItems()[0];
     expect(option, "the tag picker offered nothing to press").toBeTruthy();
     refusing = true;
     await click(option);
@@ -334,7 +343,7 @@ describe("the seam: nine families, each refused, each told", () => {
     // ⇧↓ starts a selection — the shell's own pick gesture.
     await key("ArrowDown", { shiftKey: true });
     await waitFor(
-      () => host!.querySelectorAll(".view-ohbox :is(.row.picked, [role=option][data-picked]), .view-ohbox :is(.row, [role=option])[aria-selected='true']").length > 0,
+      () => pickedRows(host!).length > 0,
       "nothing was picked",
     );
     refusing = true;

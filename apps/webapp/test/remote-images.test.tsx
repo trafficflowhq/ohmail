@@ -15,7 +15,9 @@ import {
   createProxiedImageQueue,
 } from "../../../packages/letter-body/src/proxied-images";
 import { PROXY_URL_MAX_CHARS as SERVER_URL_MAX } from "@trafficflow/services";
-import { PROXY_URL_MAX_CHARS, type RemoteImagesChrome, useRemoteImages } from "../app/shell/remote-images";
+import { PROXY_URL_MAX_CHARS, type ImageDoor, type RemoteImagesChrome, useRemoteImages } from "../app/shell/remote-images";
+import { apiConfigured } from "../app/api-client";
+import { WEB_IMAGES } from "../app/(product)/mailbox/image-wire";
 import { RemoteImagesRow } from "../app/shell/RemoteImagesRow";
 import { TrackingPixelsRow } from "../app/shell/TrackingPixelsRow";
 import de from "../messages/de.json";
@@ -138,6 +140,14 @@ afterEach(async () => {
  * renderer, and everything that would make this file need a shell is asserted elsewhere.
  * The seam itself is held to `MessagePane`'s source by the last test in this file.
  */
+/**
+ * The wire a case's host hands, as the web's page hands it: its own, through this origin's proxy, where the page has
+ * a server client, and none where it has not; with a fetcher, a pipe that fetches through it and records its press
+ * as this page does.
+ */
+const wireOver = (fetchImage?: (messageId: string, url: string) => Promise<string | null>): ImageDoor | "none" =>
+  (fetchImage ? { fetch: fetchImage, record: WEB_IMAGES.record } : apiConfigured() ? WEB_IMAGES : "none");
+
 function Harness({
   messageId, html, mode, loadPixels = false, fetchImage,
 }: {
@@ -145,7 +155,7 @@ function Harness({
   fetchImage?: (messageId: string, url: string) => Promise<string | null>;
 }) {
   const [failed, setFailed] = React.useState<string | null>(null);
-  const remoteImages = useRemoteImages({ onFailed: setFailed, mode, loadPixels, fetchImage });
+  const remoteImages = useRemoteImages({ onFailed: setFailed, mode, loadPixels, wire: wireOver(fetchImage) });
   // The pipe-door's pair, wired exactly as `MessagePane` wires it; handed down only with a fetcher.
   const onRemoteImages = React.useCallback(
     (urls: string[]) => remoteImages?.needRemote(messageId, urls),
@@ -155,6 +165,7 @@ function Harness({
     "div",
     null,
     h(MessageBody, {
+      owner: null,
       text: "plain",
       html,
       // The THREE-TERM OR the pane uses, copied here on purpose: a harness that only ored the
@@ -591,7 +602,7 @@ describe("mail 0072 — the pixel switch", () => {
     const seen: unknown[] = [];
     function Probe({ n }: { n: number }) {
       // A NEW inline callback every render — exactly the shape the shell passes.
-      const chrome = useRemoteImages({ onFailed: () => void n, mode: "auto", loadPixels: false });
+      const chrome = useRemoteImages({ onFailed: () => void n, mode: "auto", loadPixels: false, wire: WEB_IMAGES });
       seen.push(chrome);
       return null;
     }
@@ -981,7 +992,7 @@ describe("a picture the desktop fetched is never fetched again", () => {
       current: undefined,
       Probe: () => {
         box.current = useRemoteImages({
-          onFailed: () => {}, mode: "auto", loadPixels: false, fetchImage, mayRead,
+          onFailed: () => {}, mode: "auto", loadPixels: false, wire: wireOver(fetchImage), mayRead,
         });
         return null;
       },
@@ -1010,6 +1021,7 @@ describe("a picture the desktop fetched is never fetched again", () => {
     const asked: string[][] = [];
     const three = ICONS.slice(0, 3);
     const body = (held: string[]) => h(MessageBody, {
+      owner: null,
       text: "plain", html: canvas(three), remoteLoaded: true, imageProxy: null,
       resolvedRemoteImages: new Map(held.map((u) => [u, PNG_1X1] as const)),
       onRemoteImages: (urls: string[]) => { asked.push(urls); },
@@ -1097,6 +1109,7 @@ describe("a picture the desktop fetched is never fetched again", () => {
     });
     const held = () => new Map(ICONS.map((u) => [u, PNG_1X1] as const));
     const body = () => h(MessageBody, {
+      owner: null,
       text: "plain", html: canvas(ICONS), remoteLoaded: true, imageProxy: null,
       resolvedRemoteImages: held(), onRemoteImages: () => {},
     });
@@ -1141,7 +1154,7 @@ describe("a measurement whose inputs have not moved writes nothing", () => {
       return heights.filter((v) => /height:\s*600px/.test(v)).length;
     };
     await act(async () => {
-      root!.render(h(MessageBody, { text: "plain", html: HTML, remoteLoaded: false, imageProxy: null }));
+      root!.render(h(MessageBody, { owner: null, text: "plain", html: HTML, remoteLoaded: false, imageProxy: null }));
     });
     for (let i = 0; i < 5; i += 1) await settle();
     expect(probes(), "the open probed the frame more than once").toBe(1);
@@ -1314,7 +1327,7 @@ describe("proxied pictures are asked for a few at a time", () => {
     const chrome = (() => {
       const box: { current: RemoteImagesChrome | undefined } = { current: undefined };
       const Probe = (): null => {
-        box.current = useRemoteImages({ onFailed: () => {}, mode: "auto", loadPixels: false });
+        box.current = useRemoteImages({ onFailed: () => {}, mode: "auto", loadPixels: false, wire: WEB_IMAGES });
         return null;
       };
       return { box, Probe };

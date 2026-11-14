@@ -46,6 +46,12 @@
       "node": "./dist/consent/index.js",
       "default": "./src/consent/index.ts"
     },
+    "./consent/consent-row": {
+      "types": "./src/consent/consent-row.ts",
+      "ohmail-source": "./src/consent/consent-row.ts",
+      "node": "./dist/consent/consent-row.js",
+      "default": "./src/consent/consent-row.ts"
+    },
     "./consent/consent-state": {
       "types": "./src/consent/consent-state.ts",
       "ohmail-source": "./src/consent/consent-state.ts",
@@ -57,6 +63,12 @@
       "ohmail-source": "./src/consent/consent-wire.ts",
       "node": "./dist/consent/consent-wire.js",
       "default": "./src/consent/consent-wire.ts"
+    },
+    "./consent/partition": {
+      "types": "./src/consent/partition.ts",
+      "ohmail-source": "./src/consent/partition.ts",
+      "node": "./dist/consent/partition.js",
+      "default": "./src/consent/partition.ts"
     },
     "./consent/travelled-change": {
       "types": "./src/consent/travelled-change.ts",
@@ -862,6 +874,42 @@
       "node": "./dist/reader/index.js",
       "default": "./src/reader/index.ts"
     },
+    "./reader/attachments": {
+      "types": "./src/reader/attachments.ts",
+      "ohmail-source": "./src/reader/attachments.ts",
+      "node": "./dist/reader/attachments.js",
+      "default": "./src/reader/attachments.ts"
+    },
+    "./reader/doors": {
+      "types": "./src/reader/doors.ts",
+      "ohmail-source": "./src/reader/doors.ts",
+      "node": "./dist/reader/doors.js",
+      "default": "./src/reader/doors.ts"
+    },
+    "./reader/file-retry": {
+      "types": "./src/reader/file-retry.ts",
+      "ohmail-source": "./src/reader/file-retry.ts",
+      "node": "./dist/reader/file-retry.js",
+      "default": "./src/reader/file-retry.ts"
+    },
+    "./reader/files-model": {
+      "types": "./src/reader/files-model.ts",
+      "ohmail-source": "./src/reader/files-model.ts",
+      "node": "./dist/reader/files-model.js",
+      "default": "./src/reader/files-model.ts"
+    },
+    "./reader/letter-seams": {
+      "types": "./src/reader/letter-seams.ts",
+      "ohmail-source": "./src/reader/letter-seams.ts",
+      "node": "./dist/reader/letter-seams.js",
+      "default": "./src/reader/letter-seams.ts"
+    },
+    "./reader/remote-images": {
+      "types": "./src/reader/remote-images.ts",
+      "ohmail-source": "./src/reader/remote-images.ts",
+      "node": "./dist/reader/remote-images.js",
+      "default": "./src/reader/remote-images.ts"
+    },
     "./reading": {
       "types": "./src/reading/index.ts",
       "ohmail-source": "./src/reading/index.ts",
@@ -1041,6 +1089,12 @@
       "ohmail-source": "./src/session/confirm-schedule.ts",
       "node": "./dist/session/confirm-schedule.js",
       "default": "./src/session/confirm-schedule.ts"
+    },
+    "./session/day-clock": {
+      "types": "./src/session/day-clock.ts",
+      "ohmail-source": "./src/session/day-clock.ts",
+      "node": "./dist/session/day-clock.js",
+      "default": "./src/session/day-clock.ts"
     },
     "./session/document-hidden": {
       "types": "./src/session/document-hidden.ts",

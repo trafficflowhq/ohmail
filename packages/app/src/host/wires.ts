@@ -9,7 +9,7 @@
  * five forms connect a mailbox each by its own calls.
  *
  * Until its first caller arrives, a shell answers `none` for a call today's views still make themselves: the seven wires
- * that replace no input, and a browser's `images`. The `none:` sentences below say what a 2.0 view does with that answer.
+ * that replace no input. The `none:` sentences below say what a 2.0 view does with that answer.
  */
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { CalendarPort } from "@ohmail/app-logic/calendar/port";
@@ -89,11 +89,20 @@ export interface ConsentWire {
   readFailed?(report: ConsentReadFailure): void | Promise<void>;
 }
 
-/** A letter's pictures, fetched by this shell. The shell's `ImageDoor`. */
-export interface ImageWire {
+/** A letter's pictures over a shell's pipe: one picture's bytes, and the press that admits them. The shell's `ImagePipe`. */
+export interface ImagePipeWire {
   fetch: (messageId: string, url: string) => Promise<string | null>;
   record: (messageId: string) => Promise<void>;
 }
+
+/** A letter's pictures on a shell's own origin: one picture's address there, and the press. The shell's `ImageOrigin`. */
+export interface ImageOriginWire {
+  address: (messageId: string, url: string) => string;
+  record: (messageId: string) => Promise<void>;
+}
+
+/** A letter's pictures, in one of the two ways a shell reaches them. The shell's `ImageDoor`. */
+export type ImageWire = ImagePipeWire | ImageOriginWire;
 
 /** The Junk window. The shell's `JunkWire`. */
 export interface JunkWire {
@@ -292,7 +301,7 @@ export interface HostWires {
   readonly profileImport: ProfileImportWire | None;
   /** Replaces `consentTransport`. `none`: every consent control is withheld. */
   readonly consent: ConsentWire | None;
-  /** Replaces `imageWire`. `none`: this shell hands in no fetcher. Whether pictures are drawn at all is `capabilities.imagesFrom`. */
+  /** Replaces `imageWire`. `none`: no picture door stands: nothing of a letter's pictures is asked for, and no control is drawn. */
   readonly images: ImageWire | None;
   /** Replaces `olderBodyWire`. */
   readonly olderBody: OlderBodyWire | None;

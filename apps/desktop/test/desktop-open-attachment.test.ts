@@ -166,7 +166,7 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverFile } = await freshSeam();
 
-    void deliverFile(fakeEngine, {
+    void deliverFile(fakeEngine, mod.desktopFileShell(), {
       messageId: "m1", attachmentId: ID1, filename: "Quarterly report.pdf", url: "blob:tauri://localhost/abc",
     }, document);
     await settled();
@@ -194,7 +194,7 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverFile } = await freshSeam();
 
-    void deliverFile(fakeEngine, { messageId: "m1", attachmentId: ID1, filename: "../../.ssh/authorized_keys" }, document);
+    void deliverFile(fakeEngine, mod.desktopFileShell(), { messageId: "m1", attachmentId: ID1, filename: "../../.ssh/authorized_keys" }, document);
     await settled();
 
     const payload = invoked[0]!.payload!;
@@ -233,7 +233,7 @@ describe("the desktop window hands the file to the operating system", () => {
     mod.enableDesktopAttachments();
     const { deliverAll } = await freshSeam();
 
-    const saved = await deliverAll(fakeEngine, [
+    const saved = await deliverAll(fakeEngine, mod.desktopFileShell(), [
       { messageId: "m1", attachmentId: ID1, filename: "Invoice.pdf" },
       { messageId: "m1", attachmentId: ID2, filename: "Photo.jpg" },
       { messageId: "m1", attachmentId: ID3, filename: "Notes.txt" },
@@ -261,7 +261,7 @@ describe("the web app is not touched", () => {
     expect(mod.desktopAttachmentsEnabled()).toBe(false);
     const { deliverFile } = await freshSeam();
 
-    void deliverFile(fakeEngine, { messageId: "m1", attachmentId: ID1, filename: "report.pdf", url: "blob:http://localhost/abc" }, document);
+    void deliverFile(fakeEngine, mod.desktopFileShell(), { messageId: "m1", attachmentId: ID1, filename: "report.pdf", url: "blob:http://localhost/abc" }, document);
     await settled();
 
     expect(invoked, "the web app called a desktop shell command").toEqual([]);
@@ -276,7 +276,7 @@ describe("the web app is not touched", () => {
     expect(mod.desktopAttachmentsEnabled()).toBe(false);
     const { deliverAll } = await freshSeam();
 
-    const saved = await deliverAll(fakeEngine, [
+    const saved = await deliverAll(fakeEngine, mod.desktopFileShell(), [
       { messageId: "m1", attachmentId: ID1, filename: "Invoice.pdf", url: "blob:http://localhost/1" },
       { messageId: "m1", attachmentId: ID2, filename: "Photo.jpg", url: "blob:http://localhost/2" },
     ], document);

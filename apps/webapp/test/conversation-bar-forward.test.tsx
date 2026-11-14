@@ -3,6 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
+import { barVerb, letterShown, menuItems, seatedList } from "./ohbox/_finders.js";
 
 /**
  * FORWARD SENDS THE MESSAGE THE CONVERSATION WAS OPENED AT, through the shipped shell and the real
@@ -71,7 +72,7 @@ const rowOf = (host: HTMLElement, id: string): HTMLElement => {
 const docked = (host: HTMLElement): string | null =>
   host.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? null;
 const pressBarForward = async (host: HTMLElement): Promise<void> => {
-  const button = host.querySelector<HTMLElement>(".read-col .abar-fwd button");
+  const button = barVerb(host, "Forward");
   expect(button, "the bar's Forward").toBeTruthy();
   await click(button!);
 };
@@ -115,10 +116,11 @@ describe("the bar's Forward in a conversation opened from its Ohbox row", () => 
     await pressBarForward(host);
     expect(docked(host)).toBe("a1");
     const panelForward = async (id: string): Promise<string | null> => {
-      const panel = host.querySelector<HTMLElement>(`article.pm[data-conv-id="${id}"]`);
+      const panel = letterShown(host, id);
       expect(panel, `the panel of ${id}`).toBeTruthy();
-      await click(panel!.querySelector<HTMLElement>(".msg-more")!);
-      const item = [...panel!.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward");
+      // The letter's own menu: the button named Message on its head.
+      await click(panel!.querySelector<HTMLElement>('button[aria-label="Message"]')!);
+      const item = menuItems().find((b) => b.textContent?.trim() === "Forward");
       expect(item, `Forward on the panel of ${id}`).toBeTruthy();
       await click(item!);
       return docked(host);
@@ -132,7 +134,7 @@ describe("the bar's Forward in a conversation opened from its Ohbox row", () => 
     const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
     await settle();
     await key("j");
-    expect(host.querySelector(".reader"), "no reader sheet").toBeNull();
+    expect(seatedList(host), "no reader sheet: the list stands").not.toBeNull();
     await key("F", { shiftKey: true });
     expect(docked(host)).toBe("a1");
   }, 30_000);

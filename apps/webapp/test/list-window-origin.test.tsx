@@ -6,8 +6,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { prepareToday } from "./ohbox/_today";
-const OhboxView = await prepareToday();
+import { prepareSeated } from "./ohbox/_today";
+/* The Ohbox as the seated place, its list alone: this file reads no open letter. */
+const OhboxView = await prepareSeated();
 import { KeymapProvider } from "@ohmail/app/keys";
 import { ESTIMATED_ROW_PX, useListWindow, WINDOW_TOP } from "@ohmail/app-logic/lists/list-window";
 

@@ -78,10 +78,13 @@ async function fetchImage(_messageId: string, url: string): Promise<string | nul
   return PNG;
 }
 
+/** The door's pipe: the stub fetcher, and a press that records nothing (no case here presses). */
+const PIPE = { fetch: fetchImage, record: () => Promise.reject(new Error("this harness records no press")) };
+
 function Harness() {
   const [, setTick] = useState(0);
   rf.rerender = () => setTick((t) => t + 1);
-  const remoteImages = useRemoteImages({ onFailed: () => {}, mode: "auto", loadPixels: false, fetchImage });
+  const remoteImages = useRemoteImages({ onFailed: () => {}, mode: "auto", loadPixels: false, wire: PIPE });
   const onRemoteImages = useCallback(
     (urls: string[]) => remoteImages?.needRemote(ID, urls),
     [remoteImages],
@@ -93,6 +96,7 @@ function Harness() {
       <div className="rf-head" style={{ height: Number(params.get("head") ?? "120") }} />
       <div className="msg-body">
         <MessageBody
+          owner={null}
           messageId={ID}
           text=""
           html={html}

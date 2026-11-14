@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { headCount } from "./_today.js";
+import { headCount, letterShown, readSlot } from "./_finders.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -13,7 +13,9 @@ import { stubThreadLayout, type ThreadLayout } from "../fixtures/thread-layout.j
  * go, the open message's verb says "Mark unread" and the read is SAVED in the same moment, so the
  * counts agree with the row. A j/k preview shows the message and changes nothing. The row keeps
  * its PLACE under New until it is left, and `u` re-bolds it in place, puts the verb back and keeps
- * it unread for the visit. The column is laid out (`fixtures/thread-layout.ts`).
+ * it unread for the visit. The column is laid out (`fixtures/thread-layout.ts`). The Ohbox is the
+ * seated place with its reading column (`prepareSeated({ reading: true })`): the open letter is the
+ * reader's, drawn from the letters these inputs name.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -60,7 +62,7 @@ const marked: Array<{ ids: string[]; unread: boolean }> = [];
 const heldLog: Array<string | null> = [];
 
 async function draw(): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated({ reading: true });
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const el = h(NextIntlClientProvider, {
     locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
@@ -108,11 +110,11 @@ function idsInGroup(label: string): string[] {
   return [...box.querySelectorAll("[role=option][data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 
-/** The read-state slot of the open message's action bar — "Mark read" or "Mark unread". */
+/** The read-state slot of the open message's action panel — "Mark read" or "Mark unread". */
 function verb(): string {
-  const b = host!.querySelector(".abar-read-g button.abar-read");
+  const b = readSlot(host!);
   if (!b) throw new Error("no read-state verb on screen — is a message open in the column?");
-  return b.textContent ?? "";
+  return b.getAttribute("aria-label") ?? "";
 }
 
 /** A frame passes: the rule looks at what is on screen. */
@@ -220,7 +222,7 @@ describe("the open message's read state is the account's", () => {
     expect(rowEl("a").dataset.unseen, "a preview is not a reading").toBe("1");
     expect(verb()).toContain("Mark read");
     expect(marked).toEqual([]);
-    expect(host!.querySelector(".read-col [data-conv-id='a']")?.hasAttribute("data-unseen"), "the opened panel wears its unread state").toBe(true);
+    expect(letterShown(host!, "a")?.hasAttribute("data-unseen"), "the opened panel wears its unread state").toBe(true);
     await act(async () => { await vi.advanceTimersByTimeAsync(1100); });
     await draw();
     expect(marked).toEqual([{ ids: ["a"], unread: false }]);

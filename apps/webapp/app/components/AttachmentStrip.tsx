@@ -30,6 +30,9 @@ import "./attachment-strip.css";
 import { formatFileSize, Spinner } from "@ohmail/ui";
 import { attachmentFaultClass, type AttachmentFaultClass } from "@ohmail/client-engine";
 import { activeFormatLocale, liveCopy } from "../shell/locale";
+import { fileRetryIsOffered, isAuthListFailure, listRetryIsOffered } from "@ohmail/app-logic/reader/file-retry";
+
+export { fileRetryIsOffered, isAuthListFailure, listRetryIsOffered };
 
 export interface AttachmentItem {
   id: string;
@@ -222,35 +225,6 @@ const EN = {
  */
 export const COPY: typeof EN = liveCopy("attachments", EN, { count: ["count"], preview: ["name"], download: ["name"], idle: ["size"], tooLarge: ["size"] });
 
-
-/**
- * Is this list failure the SESSION's, not the content's? The engine carries the server's own `code` through
- * unmodified (`AttachmentsOutcome`), and these are the two the auth middleware mints: `unauthorized` for a session it
- * will not serve, `csrf_failed` for a live-looking session whose double-submit token lapsed with it. Both mean "the
- * mail is fine, the session is not" — a different sentence AND a different remedy from every other failure here.
- * Declared in this file rather than the shell seam because the import may only run this way (the shell reads
- * components; a component reading the shell would drag session machinery into the strip's bare test mounts), and
- * `shell/attachments.ts` — which escalates the same codes to the session probe — imports it from here so the two
- * surfaces cannot drift.
- */
-export function isAuthListFailure(code: string | null): boolean {
-  return code === "unauthorized" || code === "csrf_failed";
-}
-
-/**
- * DOES THIS FAILURE GET A "TRY AGAIN"? — and therefore: may anything ask again on its own?
- *
- * One predicate for two decisions that must never disagree. The row below offers the press when
- * this is true; `shell/attachments.ts` re-asks on a later open when it is true and keeps the
- * refusal standing when it is false. A failure with no press is one the server ANSWERED — not
- * this account's message, no such message — and re-asking it on every open polls a refusal that
- * cannot change. `retryable` is the server's flag; the auth arm overrides it for the reason the
- * row's own comment gives.
- */
-export function listRetryIsOffered(code: string | null, retryable: boolean): boolean {
-  return retryable || isAuthListFailure(code);
-}
-
 /** A failed file's sentence for the side that failed, in the reader's language. */
 export function fileFaultSentence(item: Pick<AttachmentItem, "code" | "status">): string {
   const by: Record<AttachmentFaultClass, string> = {
@@ -268,16 +242,6 @@ export function fileFaultSentence(item: Pick<AttachmentItem, "code" | "status">)
     signed_out: COPY.faultSignedOut,
   };
   return by[attachmentFaultClass(item.code, item.status)];
-}
-
-/**
- * MAY A FAILED FILE BE ASKED FOR AGAIN? The list's predicate, so the two never disagree: the
- * refusal's own `retryable` (absent reads as a throw nothing classified, which is retryable), and
- * the session arm, whose refusal expires with the session. The strip's tile, the shell's press
- * and the overlay's Try again all read this.
- */
-export function fileRetryIsOffered(item: Pick<AttachmentItem, "code" | "retryable">): boolean {
-  return listRetryIsOffered(item.code ?? null, item.retryable !== false);
 }
 
 /** The shared formatter, in the reader's own language — see `@ohmail/ui`'s `formatFileSize`. */

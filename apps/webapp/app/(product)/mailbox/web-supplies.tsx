@@ -34,6 +34,7 @@ import { AccountSection } from "./AccountSection";
 import { AiSection } from "./AiSection";
 import { CloudStorageNotice } from "./CloudStorageNotice";
 import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "./consent-over-api";
+import { WEB_IMAGES } from "./image-wire";
 import { DevicesSection } from "./DevicesSection";
 import { webConnectWire } from "./connect-wire";
 import { webHost, type WebSupplies } from "./host";
@@ -184,7 +185,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
       trash: trashWire,
       suggest: SUGGEST_WIRE,
       draftReply: DRAFT_REPLY_WIRE,
-      images: NONE,
+      images: apiConfigured() ? WEB_IMAGES : NONE,
       firstRun: firstRun ?? NONE,
       screening: NONE,
       autoFiled: NONE,
