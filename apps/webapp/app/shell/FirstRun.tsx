@@ -724,12 +724,16 @@ export function FirstRun({
   const stepProblem = confirm === "restart" && forgetRefused ? null : problem;
   const stepUpOpen = stepUp !== null && stepUp.on === step && stepUp.mailboxId === mailboxId
     && host.stepUp !== undefined;
+  /** The question a destructive verb asks in place, while it stands. */
+  const confirmRef = useRef<HTMLDivElement | null>(null);
   /* FOCUS STANDS WHERE ↵ BELONGS, after every commit: on open, on a step change, as the code prompt
      opens and closes and as a shut ↵ control opens. Left on the card, ↵ reached no form. A place the
-     person chose inside the step stays theirs. The decision (its verbs are letters) holds the card. */
+     person chose inside the step stays theirs. The decision (its verbs are letters) holds the card.
+     While a question stands it is the question's first verb: left in the step, ↵ ran the step's verb. */
   const landed = useRef<Element | null>(null);
-  const landingIn = (): HTMLElement | null => (confirm !== null || cardRef.current === null ? null
-    : (stepUpOpen ? stepUpRef.current : null) ?? formRef.current ?? cardRef.current);
+  const landingIn = (): HTMLElement | null => (cardRef.current === null ? null
+    : (stepUpOpen ? stepUpRef.current : null)
+      ?? (confirm !== null ? confirmRef.current : formRef.current ?? cardRef.current));
   useCommitEffect(() => {
     const target = landingIn();
     if (target === null) return;
@@ -1180,7 +1184,7 @@ export function FirstRun({
   const railLabel = (id: string) => t(`rail_${id}` as "rail_mailbox");
 
   const foot = (opts: { primary?: ReactNode; back?: boolean; cancel?: boolean } = {}) => (
-    <div className="ob-foot">
+    <div className="ob-card-foot">
       {opts.cancel === false ? null : (
         <button type="button" className="join-alt" disabled={busy}
           onClick={() => setConfirm("cancel")}>
@@ -2052,22 +2056,22 @@ export function FirstRun({
         )) : null}
 
         {confirm === "cancel" ? (
-          <div className="ob-confirm">
+          <div ref={confirmRef} className="ob-confirm">
             {/* NOTHING AGREED IS NOT "WHAT YOU AGREED TO STAYS AGREED" — a refused Agree stored nothing. */}
             <p>{facts.mailbox && !facts.mailbox.organizeConsentedAt ? t("cancelWhatNothingAgreed") : t("cancelWhat")}</p>
             <SettingsActions>
-              <Button variant="primary" onClick={leave} disabled={busy}>{t("cancelConfirm")}</Button>
+              <Button variant="primary" onClick={leave} disabled={busy} data-focus-entry>{t("cancelConfirm")}</Button>
               <Button variant="ghost" onClick={() => setConfirm(null)}>{t("back")}</Button>
             </SettingsActions>
           </div>
         ) : null}
 
         {confirm === "restart" ? (
-          <div className="ob-confirm">
+          <div ref={confirmRef} className="ob-confirm">
             <p>{t("restartWhat")}</p>
             {forgetRefused && problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
             <SettingsActions>
-              <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy}>
+              <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy} data-focus-entry>
                 {t("restartKeep")}
               </Button>
               {/* AND SO DOES FORGETTING IT — the same rule as the foot's verb above: this run's

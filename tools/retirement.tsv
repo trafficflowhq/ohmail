@@ -654,6 +654,7 @@ apps/webapp/test/first-run-stale-holder.test.tsx	source-text	reads source as tex
 apps/webapp/test/fold-band-ladder-polish.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/folders-rail.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/forward-always-offered.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/frame/first-run-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the web shell in the frame at its first run, run in Chromium	layer 2	frame	
 apps/webapp/test/frame/seam-in-a-browser.test.ts	source-text	reads source as text (css): the shipped sheets, laid out in Chromium	layer 2	frame	
 apps/webapp/test/frame/todays-selection-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the demo's page and the product's sheets, run in Chromium	layer 2	frame	
 apps/webapp/test/freshness-first-frame.test.tsx	behaviour	a copy stale by days says so at the first frame; on a desktop whose host is quiet the host's line speaks instead	layer 1: red with catching up ranked above the host's silence	frame	held:packages/app/test/frame/connection.test.tsx#lets the host's silence quiet the catching up
