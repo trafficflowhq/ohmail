@@ -4,7 +4,8 @@
  *
  * The order of giving up: a verb that gives up its word first; then verbs fold by rank, the highest first
  * and of equals the later one; then a note that need not stay; then the floor's verbs lose their words in
- * their own order; then every other verb that has an icon, the last first. More never leaves.
+ * their own order; then every other verb that has an icon, the last first; and only then a note that is to
+ * stay takes a second line (`data-fold`): it is never taken away. More never leaves.
  */
 export function fitPanel(wrap: HTMLElement): string[] {
   const bar = wrap.firstElementChild as HTMLElement | null;
@@ -16,7 +17,10 @@ export function fitPanel(wrap: HTMLElement): string[] {
     verb.hidden = false;
     delete verb.dataset.short;
   }
-  for (const note of notes) note.hidden = false;
+  for (const note of notes) {
+    note.hidden = false;
+    delete note.dataset.fold;
+  }
   if (more) more.hidden = false;
 
   const folded: string[] = [];
@@ -53,8 +57,13 @@ export function fitPanel(wrap: HTMLElement): string[] {
       continue;
     }
     const last = verbs.filter((v) => shown(v) && worded(v) && signed(v)).pop();
-    if (!last) break;
-    last.dataset.short = "";
+    if (last) {
+      last.dataset.short = "";
+      continue;
+    }
+    const kept = notes.find((n) => !n.hidden && n.dataset.fold === undefined);
+    if (!kept) break;
+    kept.dataset.fold = "";
   }
   if (more) more.hidden = folded.length === 0 && more.dataset.behind === undefined;
   return folded;

@@ -23,7 +23,10 @@ export interface MenuProps {
    * lines and controls. `ask`: a question before an act. Left out: a short list.
    */
   kind?: "context" | "card" | "ask";
-  /** A title over the list, and for a card a note at its right. */
+  /**
+   * A title over the whole list, and for a card a note at its right. A menu of more than one titled group leaves
+   * it out and holds a `MenuGroup` for each, so that each group is said by its own title.
+   */
   title?: string;
   aside?: string;
   /** Open upwards; align its right edge to the anchor's; twice as wide. */
@@ -32,6 +35,13 @@ export interface MenuProps {
   wide?: boolean;
   /** Stay at the anchor on the phone, where a menu otherwise comes up from the foot. */
   anchored?: boolean;
+  /**
+   * The app's own keys over this menu (a card's digits, the key that sends), asked before Esc, Tab and the
+   * arrows. True: the key was taken, and the menu does nothing with it. Taken or not, it never reaches what
+   * lies under the menu. A key it takes keeps its browser default unless it cancels it (Mod+Enter on a focused
+   * item would also press it).
+   */
+  onKey?: (e: KeyboardEvent<HTMLDivElement>) => boolean;
   children: ReactNode;
 }
 
@@ -45,7 +55,8 @@ const firstStop = (el: HTMLElement) =>
  * to what opened it.
  */
 export function Menu(props: MenuProps) {
-  const { open, onClose, anchor, label, kind, title, aside, up, right, wide, anchored, children } = props;
+  const { open, onClose, anchor, label, kind, title, aside, up, right, wide, anchored, onKey, children } =
+    props;
   const box = useRef<HTMLDivElement | null>(null);
   const dialog = kind === "card" || kind === "ask";
   const point = anchor && "x" in anchor ? anchor : null;
@@ -87,6 +98,7 @@ export function Menu(props: MenuProps) {
     const el = e.currentTarget;
     /* A letter typed over an open menu is the menu's, never what lies underneath. A field in it still takes it. */
     e.stopPropagation();
+    if (onKey?.(e)) return;
     if (e.key === "Escape") {
       e.preventDefault();
       closeTopmost();

@@ -31,14 +31,22 @@ interface ButtonRuns {
   /**
    * Under way after its own press: it stays where it is, takes no second press and says that it is busy. It is
    * off to a screen reader and to the eye, yet keeps the keys: a button the browser itself turns off can drop
-   * the keys of the person who pressed it.
+   * the keys of the person who pressed it. A form's submit button stays its submit button while busy and sends
+   * nothing: Enter in a field of the form reaches it and is cancelled there.
    */
   busy?: boolean;
   /** What it opens, said to a screen reader, and whether that stands open. */
   opens?: "menu" | "dialog";
   /** Whether what it opens stands open. Without `opens`: what it shows and hides in place, shown or not. */
   expanded?: boolean;
+  /** The id of what it shows and hides in place: said to a screen reader as what the control acts on. */
+  controls?: string;
   type?: "button" | "submit";
+  /**
+   * Whether Tab stops on it. False for a button of a group that holds one stop of Tab and moves the keys between
+   * its buttons by the arrows. Left out: it is a stop.
+   */
+  stop?: boolean;
   outside?: never;
   onPress?: MouseEventHandler<HTMLButtonElement>;
   ref?: Ref<HTMLButtonElement>;
@@ -50,7 +58,8 @@ interface ButtonGoes {
   href: string;
   /**
    * The address is another site's: it opens beside the app, and that site is told nothing of where the person came
-   * from and is handed no way back into the app's window. The design's sign for a way that leaves is `icon="go"`.
+   * from and is handed no way back into the app's window. It draws the design's sign for a way that leaves after
+   * its word by itself (`go`), unless it is handed another `mark`.
    */
   outside?: boolean;
   pressed?: never;
@@ -59,6 +68,7 @@ interface ButtonGoes {
   opens?: never;
   expanded?: never;
   type?: never;
+  stop?: never;
   onPress?: never;
   ref?: Ref<HTMLAnchorElement>;
 }
@@ -73,7 +83,8 @@ export type ButtonProps = ButtonLook &
 
 /** An ink capsule, a second button, or a word that acts; with an address, a link drawn the same. */
 export function Button(props: ButtonProps) {
-  const { kind = "ink", size, mark, keyHint, keyShown, shortcut, icon, label, children } = props;
+  const { kind = "ink", size, keyHint, keyShown, shortcut, icon, label, children } = props;
+  const mark = props.mark ?? (props.href !== undefined && props.outside ? "go" : undefined);
   const look = {
     className: "oh-control oh-button",
     "data-kind": kind,
@@ -89,7 +100,11 @@ export function Button(props: ButtonProps) {
       {icon ? <Icon name={icon} size={20} /> : null}
       {children === undefined ? null : <span>{children}</span>}
       {mark ? <Icon name={mark} size={16} className="oh-button-mark" /> : null}
-      {keyHint ? <KeyHint shown={keyShown}>{keyHint}</KeyHint> : null}
+      {keyHint ? (
+        <KeyHint shown={keyShown} unsaid>
+          {keyHint}
+        </KeyHint>
+      ) : null}
     </>
   );
   if (props.href !== undefined) {
@@ -105,19 +120,21 @@ export function Button(props: ButtonProps) {
       </a>
     );
   }
-  const { pressed, disabled, busy, opens, expanded, type = "button", onPress, ref } = props;
+  const { pressed, disabled, busy, opens, expanded, type = "button", stop, onPress, ref } = props;
   return (
     <button
       ref={ref}
-      type={busy ? "button" : type}
+      type={type}
       {...look}
       aria-pressed={pressed}
       aria-haspopup={opens}
       aria-expanded={opens ? (expanded ?? false) : expanded}
+      aria-controls={props.controls}
       aria-busy={busy ? true : undefined}
       aria-disabled={busy ? true : undefined}
       disabled={disabled}
-      onClick={busy ? undefined : onPress}
+      tabIndex={stop === false ? -1 : undefined}
+      onClick={busy ? (event) => event.preventDefault() : onPress}
     >
       {inside}
     </button>

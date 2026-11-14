@@ -144,6 +144,71 @@
     visibility: hidden;
   }
 
+  /* A row to tick: the tick stands at the row's end, in the room the row keeps for it. */
+  .oh-row[data-tick] {
+    --oh-row-tick: 22px;
+    --oh-row-tick-ring: inset 0 0 0 2px var(--ink2);
+    --oh-row-tick-rise: calc(var(--oh-row-tick) / -2);
+    --oh-row-tick-dot: 10px;
+    --oh-row-in: 0 calc(var(--s4) + var(--oh-row-tick) + var(--s3)) 0 var(--s1);
+  }
+
+  .oh-row-tick {
+    position: absolute;
+    top: 50%;
+    right: var(--s4);
+    display: grid;
+    place-items: center;
+    width: var(--oh-row-tick);
+    height: var(--oh-row-tick);
+    margin-top: var(--oh-row-tick-rise);
+    border-radius: var(--av-r);
+    background: var(--solid);
+    color: var(--on-solid);
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+
+  .oh-row-tick > .oh-dot {
+    --dot-size: var(--oh-row-tick-dot);
+    margin: 0;
+  }
+
+  .oh-row[aria-checked="false"] .oh-row-tick {
+    background: transparent;
+    box-shadow: var(--oh-row-tick-ring);
+  }
+
+  .oh-row[aria-checked="false"] .oh-row-tick > .oh-icon {
+    visibility: hidden;
+  }
+
+  .oh-row[data-tick][aria-checked="false"] .oh-row-who {
+    color: var(--ink2);
+  }
+
+  /* The ticks taken: the row takes no press, and its tick is the dot of a person let in, or nothing. */
+  .oh-row[data-tick][aria-disabled="true"] {
+    cursor: default;
+  }
+
+  .oh-row[data-tick][aria-disabled="true"]:hover {
+    background: transparent;
+  }
+
+  .oh-row[aria-disabled="true"] .oh-row-tick {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* Under a finger a person's address is set at the size an address has beside a name and may take a second line. */
+  :root[data-touch="1"] .oh-row[data-tick] .oh-row-preview {
+    --oh-row-tick-lh: 1.3;
+    font-size: var(--t-meta);
+    line-height: var(--oh-row-tick-lh);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   /* Line one: who, the address, then at the right the squares, a tag, the paper-clip, the time. */
   .oh-row-first,
   .oh-row-second {
@@ -256,6 +321,21 @@
 
   .oh-row .oh-where {
     color: var(--oh-row-second);
+  }
+
+  /* A place's word gives way before the name is cut, and the time after it never leaves the row. The address
+     gives way a million times sooner than the word: the word is not cut while the address has anything to give. */
+  .oh-row-first:has(> .oh-where) > .oh-row-address {
+    --oh-row-address-yield: 1000000000;
+
+    flex-shrink: var(--oh-row-address-yield);
+  }
+
+  .oh-row-first > .oh-where {
+    flex: 0 1000 auto;
+    overflow: clip;
+    min-width: 0;
+    text-overflow: ellipsis;
   }
 
   /* A tag is whole or not there: it gives way before the name does. */
@@ -530,6 +610,11 @@
     background: var(--soft);
     box-shadow: var(--oh-row-own-ring);
     font-size: var(--t-ui);
+  }
+
+  /* A word alone keeps the same room at both its sides; a sign stands a step closer to its edge. */
+  .oh-row-verb[data-own]:not(:has(> .oh-icon)) {
+    padding-inline: var(--s3);
   }
 
   /* The room is the button's box, kept in the row's third column; the button stands over it, beside the row. */

@@ -53,11 +53,11 @@ export function GroupHeading(props: GroupHeadingProps) {
       {tag ? <Tag>{tag}</Tag> : null}
     </h2>
   );
-  if (!aside) return heading;
+  /* The same box with and without a control: a heading that gains one keeps its node, and the keys on it. */
   return (
-    <div className="oh-groupheading-line">
+    <div className="oh-groupheading-line" data-bare={aside ? undefined : ""}>
       {heading}
-      <span className="oh-groupheading-aside">{aside}</span>
+      {aside ? <span className="oh-groupheading-aside">{aside}</span> : null}
     </div>
   );
 }

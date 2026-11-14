@@ -22,6 +22,12 @@
     "reason": "the reference was taken over a list, and a row's circle shows behind the bar's first corner; the bar itself is equal"
   },
   {
+    "key": "SelectionBar/three",
+    "reason": "The bar's More opens a menu: it says whether that menu stands open (aria-expanded), as every control of the kit that opens one, which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
     "key": "BlankColumn/tile",
     "question": "picture",
     "since": "2026-11-14",
@@ -167,6 +173,24 @@
     "plain": [".oh-settingssheet-title"]
   },
   {
+    "key": "SettingsSheet/aside-seg",
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-17",
+    "plain": [".oh-settingssheet-title"]
+  },
+  {
+    "key": "SettingsSheet/aside-seg",
+    "reason": "The plans are one choice: the kit says so with a group of radios named by what is chosen; the reference's radios stand on the sheet with no group around them. The group is read without its role and name, so each plan's name, state, box, drawing and picture still bind.",
+    "since": "2026-11-17",
+    "plain": [".oh-radiolines"]
+  },
+  {
+    "key": "SettingsSheet/aside-seg@paper-light-phone",
+    "question": "picture",
+    "reason": "The reference was cut from a whole screen: the screen's own floating verb (Subscribe to Plus) stands over the sheet's last line in its picture. It is the screen's, not the sheet's: the sheet's names, boxes and drawn values are the reference's, and the same sheet on a desktop is equal in its picture in both faces.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "SettingsSheet/slot",
     "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
     "since": "2026-11-15",
@@ -185,10 +209,104 @@
     "alike": [{ "role": "button", "unstated": ["collapsed"] }]
   },
   {
+    "key": "FigureLine",
+    "reason": "The mark that says more is the kit's InfoMark: it says whether its card is open (aria-expanded), which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ActionPanel/held",
+    "reason": "The panel's More opens a menu: it says whether that menu stands open (aria-expanded), as every control of the kit that opens one, which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ActionPanel/decision",
+    "reason": "The panel's More opens a menu: it says whether that menu stands open (aria-expanded), as every control of the kit that opens one, which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "GroupHeading/aside",
+    "reason": "The reference names the heading with the group's control inside it (\"Results 8 Best match\"). The kit keeps a control out of a heading's name: a screen reader hears the heading, then the control. The control's own box and drawing still bind.",
+    "since": "2026-11-17",
+    "nodes": [
+      { "role": "heading", "name": "Results 8 Best match" },
+      { "role": "heading", "name": "Results 8" }
+    ]
+  },
+  {
+    "key": "GroupHeading/aside",
+    "reason": "The group's control is the kit's Slot: it says whether its menu is open (aria-expanded), which the reference's plain button does not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "SettingActs/rest",
+    "reason": "The design's sheet draws the first act of the pairing sheet (Copy the link) as an element that is no button to a screen reader, and its acts in no group. The kit's first act is a button, and the row is a group: both are left out of the names; the second act's own box and drawing still bind.",
+    "since": "2026-11-17",
+    "nodes": [
+      { "role": "group", "name": "" },
+      { "role": "button", "name": "Copy the link" }
+    ]
+  },
+  {
+    "key": "ListHead/sections@paper-light-phone",
+    "reason": "On a phone the reference's head holds the frame's switcher before the name, which moves the name 60 to the right; the switcher is the frame's own part and no part of a list's head. The sections' own line on a phone (the head's second line, as wide as the list, each a finger high) is held by the kit's case in a real browser.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Composer/placeholder",
+    "question": "boxes",
+    "reason": "The words for a text not yet written are drawn beside the app's editor and never inside it: the editor is the app's own node, and what it holds is the letter. The reference draws them as the editor box's own generated content. The words, their place and their ink are the same.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "ColumnHandle",
     "reason": "The kit's handle is a separator that says its width (aria-valuenow), so a screen reader hears where the column stands; the reference's says no value.",
     "since": "2026-11-15",
     "alike": [{ "role": "separator", "unstated": ["value 232"] }]
+  },
+  {
+    "key": "ListHead/meta@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference was cut from a whole list: the picture's last pixel row holds the top edge of the first row under the head, the one open in the reading column (390 pixels in the hot colour). It is the row's, not the head's: the head's names, boxes and drawn values are the reference's, and the same head in ohmarchy is equal in its picture too.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ListHead/meta@paper-light-phone",
+    "reason": "On a phone the reference's head holds the frame's switcher before the name, which moves the name 60 to the right; the switcher is the frame's own part and no part of a list's head. The line of segments under the name stands on the reference's box.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "TickList",
+    "reason": "A person's count is a picture named by its words (2 messages for 2×): the reference hangs the same name on a plain box, where a screen reader may never say it. The node, its name, its box and its drawing are the reference's; only its role is the kit's.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "img", "as": "generic" }]
+  },
+  {
+    "key": "TickList/rest@paper-light-desktop",
+    "question": "picture",
+    "reason": "The left arc of the field that finds a person differs by a hair (37 pixels that touch; three hundred-thousandths of the picture). The field's name, box and drawn values are the reference's, the same sheet in ohmarchy is equal in its picture, and so is the same sheet without its field.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "Composer/placeholder",
+    "question": "picture",
+    "reason": "The draft control's word differs by a hair in one letter (43 pixels that touch; under two hundred-thousandths of the picture). Its name, box and drawn values are the reference's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ReadingHead/sentence",
+    "reason": "The place in the sentence and the one the decision is for are the kit's Slot: each says whether its menu is open (aria-expanded), which the reference's plain buttons do not.",
+    "since": "2026-11-17",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Message/clip",
+    "question": "drawn",
+    "reason": "The cut text fades out through a mask. A mask reads only how opaque each stop is, and the kit's sheets write no colour of their own, so the mask's solid stop is the ink token where the reference writes black: the same fade over the same 44.2 px, drawn pixel for pixel alike. The value's text is the one drawn line that differs.",
+    "since": "2026-11-17"
   },
   {
     "key": "Message",
@@ -541,6 +659,12 @@
     "question": "picture",
     "since": "2026-11-16",
     "reason": "the reference was taken in a whole list scrolled to its end, where the button that jumps back to the top stands over the line's right end; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "Row/where",
+    "question": "drawn",
+    "reason": "A place's word is set to end in an ellipsis where a row is too narrow for it (a longer German word at the largest text size), so that the time after it never leaves the row; the reference's word is never cut and says nothing of an ellipsis. It is the one drawn value that differs. Names, boxes and the picture bind, and the picture is equal.",
+    "since": "2026-11-17"
   },
   {
     "key": "Row/waiting",

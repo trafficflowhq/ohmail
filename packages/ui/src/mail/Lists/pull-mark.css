@@ -1,0 +1,21 @@
+/* The mark of a list pulled down at its top: a full stop in the room the pull opens. */
+@layer oh {
+  .oh-pullmark {
+    --oh-pullmark-size: 16px;
+    --oh-pullmark-line: 2.5px;
+    --oh-pullmark-ring: inset 0 0 0 var(--oh-pullmark-line) var(--hot);
+
+    display: block;
+    width: var(--oh-pullmark-size);
+    height: var(--oh-pullmark-size);
+    margin: 0 auto;
+    border-radius: var(--dot-r);
+    box-shadow: var(--oh-pullmark-ring);
+    pointer-events: none;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-pullmark[data-armed] {
+    background: var(--hot);
+  }
+}

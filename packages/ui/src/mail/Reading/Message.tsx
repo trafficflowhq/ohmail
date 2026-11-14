@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../../base/index.js";
 import "./message.css";
 
@@ -52,6 +52,7 @@ export function Message({
   clip,
 }: MessageProps) {
   const text = typeof children === "string" ? <div className="oh-message-body">{children}</div> : children;
+  const cutId = useId();
   const shut = clip ? !clip.open : false;
   const waits = Boolean(lead || after || files);
   const [cut, fits] = useFits(shut);
@@ -69,6 +70,7 @@ export function Message({
       {clip ? (
         <div
           ref={cut}
+          id={cutId}
           className="oh-message-clip"
           data-shut={shut ? "" : undefined}
           data-fits={fits ? "" : undefined}
@@ -87,6 +89,7 @@ export function Message({
             size="s"
             mark={clip.goes ? "go" : "down"}
             expanded={clip.goes ? undefined : clip.open}
+            controls={clip.goes ? undefined : cutId}
             onPress={clip.onPress}
           >
             {clip.word}

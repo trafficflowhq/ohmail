@@ -34,7 +34,12 @@ export type {
   RowProps,
   RowSwipe,
   RowSwipeVerb,
+  RowTick,
 } from "./Lists/Row.js";
+export { TickList } from "./Lists/TickList.js";
+export type { TickListProps, TickPerson } from "./Lists/TickList.js";
+export { PullMark } from "./Lists/PullMark.js";
+export type { PullMarkProps } from "./Lists/PullMark.js";
 export { ListTail } from "./Lists/ListTail.js";
 export type { ListTailProps } from "./Lists/ListTail.js";
 export { ListLine } from "./Lists/ListLine.js";
@@ -56,8 +61,8 @@ export { Message } from "./Reading/Message.js";
 export type { MessageClip, MessageProps } from "./Reading/Message.js";
 export { MessageHead } from "./Reading/MessageHead.js";
 export type { HeadLine, HeadPerson, MessageHeadProps } from "./Reading/MessageHead.js";
-export { ReadingHead } from "./Reading/ReadingHead.js";
-export type { ReadingHeadProps } from "./Reading/ReadingHead.js";
+export { ReadingHead, ReadingLine } from "./Reading/ReadingHead.js";
+export type { ReadingHeadProps, ReadingLineProps } from "./Reading/ReadingHead.js";
 export { BlockedImages } from "./Reading/BlockedImages.js";
 export type { BlockedImagesProps } from "./Reading/BlockedImages.js";
 export { DesignedLetter, LETTER_SANDBOX } from "./Reading/DesignedLetter.js";

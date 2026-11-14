@@ -1,0 +1,73 @@
+/* The square a camera stands in: four corners that frame what is looked at, the hot dot while it looks. */
+@layer oh {
+  .oh-camera {
+    --oh-camera-side: 342px;
+    --oh-camera-in: 22%;
+    --oh-camera-stroke: 3px;
+    --oh-camera-dot: 10px;
+
+    position: relative;
+    display: block;
+    width: 100%;
+    max-width: var(--oh-camera-side);
+    aspect-ratio: 1;
+    border-radius: var(--r-sheet);
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+
+  .oh-camera[data-state="off"] {
+    background: var(--off);
+    color: var(--on-off);
+  }
+
+  /* A corner: two strokes that meet, round where the look rounds a row. */
+  .oh-camera-corner {
+    position: absolute;
+    box-sizing: border-box;
+    width: var(--s6);
+    height: var(--s6);
+    border: var(--oh-camera-stroke) solid currentColor;
+  }
+
+  .oh-camera-corner:nth-child(1) {
+    top: var(--oh-camera-in);
+    left: var(--oh-camera-in);
+    border-right: 0;
+    border-bottom: 0;
+    border-top-left-radius: var(--r-row);
+  }
+
+  .oh-camera-corner:nth-child(2) {
+    top: var(--oh-camera-in);
+    right: var(--oh-camera-in);
+    border-bottom: 0;
+    border-left: 0;
+    border-top-right-radius: var(--r-row);
+  }
+
+  .oh-camera-corner:nth-child(3) {
+    bottom: var(--oh-camera-in);
+    left: var(--oh-camera-in);
+    border-top: 0;
+    border-right: 0;
+    border-bottom-left-radius: var(--r-row);
+  }
+
+  .oh-camera-corner:nth-child(4) {
+    right: var(--oh-camera-in);
+    bottom: var(--oh-camera-in);
+    border-top: 0;
+    border-left: 0;
+    border-bottom-right-radius: var(--r-row);
+  }
+
+  .oh-camera > .oh-dot {
+    --dot-size: var(--oh-camera-dot);
+
+    position: absolute;
+    top: var(--s4);
+    right: var(--s4);
+    margin: 0;
+  }
+}

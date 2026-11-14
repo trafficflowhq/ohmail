@@ -164,7 +164,12 @@ describe("TextNotKept", () => {
       />,
     );
     const act = screen.getByRole("button", { name: "Loading from your mail server…" }) as HTMLButtonElement;
-    expect(act.disabled).toBe(true);
+    /* Off to a press and said so, by the kit's one rule for a press under way: the browser's own switch stays on, so the keys stay. */
+    expect([act.getAttribute("aria-disabled"), act.getAttribute("aria-busy"), act.disabled]).toEqual([
+      "true",
+      "true",
+      false,
+    ]);
     expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
     fireEvent.click(act);
     expect(onLoad).not.toHaveBeenCalled();
@@ -252,7 +257,9 @@ describe("FileNotArrived", () => {
       />,
     );
     expect(screen.getByRole("alert").textContent).toBe("This message's files could not be loaded.");
-    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    const way = screen.getByRole("button", { name: "Try again" });
+    way.focus();
+    fireEvent.click(way);
     expect(onPress).toHaveBeenCalledTimes(1);
     rerender(
       <FileNotArrived
@@ -262,7 +269,10 @@ describe("FileNotArrived", () => {
       />,
     );
     const again = screen.getByRole("button", { name: "Looking again…" }) as HTMLButtonElement;
-    expect(again.disabled).toBe(true);
+    /* The pressed way stays where it is with the keys on it, off to a second press. */
+    expect(again).toBe(way);
+    expect(document.activeElement).toBe(again);
+    expect([again.getAttribute("aria-disabled"), again.disabled]).toEqual(["true", false]);
     fireEvent.click(again);
     expect(onPress).toHaveBeenCalledTimes(1);
   });

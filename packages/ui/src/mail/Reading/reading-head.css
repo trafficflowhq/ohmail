@@ -115,6 +115,92 @@
     text-overflow: ellipsis;
   }
 
+  /* Under a sentence: who it is, the check's sign before the address that leads to the card; then why. Their
+     labels go to a second line on a narrow column; nothing is cut. */
+  .oh-readingline {
+    --oh-readingline-line: 2px;
+    --oh-readingline-under: 0.18em;
+    --oh-readingline-reach: -7px -3px -18px;
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-top: var(--s2);
+    color: var(--ink2);
+  }
+
+  .oh-readingline > * {
+    flex: none;
+  }
+
+  .oh-readingline > .oh-readingline-check {
+    display: inline-flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .oh-readingline-check > .oh-icon {
+    flex: none;
+  }
+
+  .oh-readingline-person {
+    display: inline;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-mid);
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  /* Only an address that opens the card answers the pointer and takes a finger's room: one that opens nothing is words. */
+  .oh-control.oh-readingline-person:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-thickness: var(--oh-readingline-line);
+    text-underline-offset: var(--oh-readingline-under);
+  }
+
+  :root[data-touch="1"] .oh-control.oh-readingline-person {
+    position: relative;
+  }
+
+  :root[data-touch="1"] .oh-control.oh-readingline-person::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-readingline-reach);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"] .oh-readingline {
+    --oh-readingline-reach: -9px -3px -18px;
+  }
+
+  .oh-readingline-warns,
+  .oh-readingline-figure {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-readingline-figure {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Why: a size smaller, the sign and how sure it is at the first line's start, the reason folding beside them. */
+  .oh-readingline[data-why] {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: var(--s2);
+    margin-top: var(--s1);
+    font-size: var(--t-meta);
+  }
+
+  .oh-readingline[data-why] > .oh-readingline-reason {
+    flex: 1 1 0;
+    min-width: 0;
+    white-space: normal;
+  }
+
   /* On touch the squares lie along the head, at the line's end. */
   .oh-readinghead-sub {
     display: flex;
@@ -154,7 +240,8 @@
     margin-top: 0;
   }
 
-  :root[data-face="paper"][data-device="desktop"] .oh-readinghead:not([data-bare]) {
+  /* A subject stands a step closer to the column's top on paper; a sentence keeps the head's own room. */
+  :root[data-face="paper"][data-device="desktop"] .oh-readinghead:not([data-bare], [data-sentence]) {
     --oh-readinghead-top: calc(var(--s1) + var(--oh-hair));
   }
 

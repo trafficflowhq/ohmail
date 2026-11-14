@@ -81,6 +81,42 @@ describe("Button", () => {
     expect(onPress).not.toHaveBeenCalled();
   });
 
+  /**
+   * A browser sends a form by Enter in its one field when the form has no submit button left, and turns Enter into a
+   * click on the submit button while there is one. A busy button stays the form's submit button and cancels that
+   * click, as a button that is off does. `forms-in-a-browser.test.tsx` presses the real key in a real browser.
+   */
+  it("a busy submit button keeps a form with one field from being sent by Enter", () => {
+    const sent = vi.fn();
+    function Code({ busy }: { busy: boolean }) {
+      const [code, setCode] = useState("");
+      return (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            sent();
+          }}
+        >
+          <Field label="Code" value={code} onChange={setCode} />
+          <Button type="submit" busy={busy}>
+            Verify
+          </Button>
+        </form>
+      );
+    }
+    const verify = () => screen.getByRole("button", { name: "Verify" }) as HTMLButtonElement;
+    const busy = render(<Code busy />);
+    /* Still the form's submit button, so the browser's Enter goes to it and not past it. */
+    expect([verify().type, verify().form?.contains(screen.getByLabelText("Code"))]).toEqual(["submit", true]);
+    /* The click the browser makes of that Enter sends nothing. */
+    fireEvent.click(verify());
+    expect(sent).not.toHaveBeenCalled();
+    busy.unmount();
+    render(<Code busy={false} />);
+    fireEvent.click(verify());
+    expect(sent).toHaveBeenCalledTimes(1);
+  });
+
   it("says what it opens and whether that stands open", () => {
     render(
       <>
@@ -130,10 +166,10 @@ describe("Button", () => {
     );
   });
 
-  it("a way to another site opens beside the app and tells that site nothing of where it came from", () => {
+  it("a way to another site opens beside the app, tells that site nothing of where it came from, and draws the sign of a way that leaves by itself", () => {
     render(
       <>
-        <Button kind="quiet" href="https://help.mailprovider.example/app-passwords" outside icon="go">
+        <Button kind="quiet" href="https://help.mailprovider.example/app-passwords" outside>
           App passwords
         </Button>
         <Button kind="quiet" href="/settings/mailboxes">
@@ -145,11 +181,34 @@ describe("Button", () => {
     expect([out.target, out.rel.split(" ").sort()]).toEqual(["_blank", ["noopener", "noreferrer"]]);
     const here = screen.getByRole("link", { name: "Mailboxes" }) as HTMLAnchorElement;
     expect([here.target, here.hasAttribute("rel")]).toEqual(["", false]);
+    /* The sign is drawn after the word and never said; a way inside the app has none. No caller hands it. */
+    const signs = (link: HTMLElement) =>
+      [...link.querySelectorAll("svg")].map((s) => s.getAttribute("aria-hidden"));
+    expect([signs(out), signs(here)]).toEqual([["true"], []]);
+    expect(out.lastElementChild?.tagName.toLowerCase()).toBe("svg");
   });
 
   it("carries its key beside its word", () => {
     render(<Button keyHint="r">Reply</Button>);
     expect(screen.getByRole("button").textContent).toBe("Replyr");
+  });
+
+  it("is named by its words alone: the key beside them is drawn and never said", () => {
+    render(
+      <Button keyHint="↵" keyShown>
+        Sign in
+      </Button>,
+    );
+    expect(
+      screen.getByRole("button", { name: "Sign in" }).querySelector("kbd")?.getAttribute("aria-hidden"),
+    ).toBe("true");
+    cleanup();
+    render(
+      <Button keyHint="c" keyShown href="/join">
+        Connect
+      </Button>,
+    );
+    expect(screen.getByRole("link", { name: "Connect" })).toBeTruthy();
   });
 });
 
@@ -325,6 +384,57 @@ describe("Field", () => {
     expect(onChange).toHaveBeenCalledWith("Mila");
   });
 
+  it("says when it is left and when Enter is pressed in it, apart from what is typed, and cancels neither", () => {
+    const [onChange, onLeave, onEnter, sent] = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+    render(
+      <form onKeyDown={(event) => event.key === "Enter" && sent(event.defaultPrevented)}>
+        <Field
+          label="Email address"
+          type="email"
+          value="mila@"
+          onChange={onChange}
+          onLeave={onLeave}
+          onEnter={onEnter}
+        />
+      </form>,
+    );
+    const box = screen.getByLabelText("Email address");
+    box.focus();
+    fireEvent.keyDown(box, { key: "a" });
+    expect(onEnter).not.toHaveBeenCalled();
+    /* Enter that ends an input method's composition takes the word it composed: it is not the field's Enter. */
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    expect(onEnter).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: "Enter" });
+    expect(onEnter).toHaveBeenCalledTimes(1);
+    /* The key goes on to the form around the field, as it was pressed. */
+    expect(sent).toHaveBeenLastCalledWith(false);
+    expect(onLeave).not.toHaveBeenCalled();
+    fireEvent.blur(box);
+    expect(onLeave).toHaveBeenCalledTimes(1);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("takes no Enter that commits an input method's word where the browser says only the input method's key code", () => {
+    const onEnter = vi.fn();
+    render(<Field label="Email address" type="email" value="mila@" onChange={() => {}} onEnter={onEnter} />);
+    const box = screen.getByLabelText("Email address");
+    /* Safari: the Enter that commits the composition says it is not composing, and carries the key code 229. */
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+    expect(onEnter).not.toHaveBeenCalled();
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 13 });
+    expect(onEnter).toHaveBeenCalledTimes(1);
+  });
+
+  it("a field of several lines says when it is left, and Enter in it is a new line and nothing else", () => {
+    const [onLeave, onEnter] = [vi.fn(), vi.fn()];
+    render(<Field label="Note" lines={3} value="" onChange={() => {}} onLeave={onLeave} onEnter={onEnter} />);
+    const box = screen.getByLabelText("Note");
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.blur(box);
+    expect([onEnter.mock.calls.length, onLeave.mock.calls.length]).toEqual([0, 1]);
+  });
+
   it("says a refusal that appears while the keys are in the field: it lands in a polite live region that stood there", () => {
     const { rerender, container } = render(<Field label="Code" value="12" onChange={() => {}} />);
     const live = container.querySelector("[aria-live='polite']");
@@ -411,12 +521,15 @@ describe("Field", () => {
  * PLANT (the controlled field): in `Field.tsx` or `Blank.tsx`, hand `value` to the `<input>` for a password as for
  * any other kind. The cases "is in no markup while it is typed, nor after the press" and "drawn on a server" are red.
  *
+ * PLANT (the rule read from one draw alone): in `secret.ts`, hand back `secret ? undefined : value` and keep the
+ * property in step only while `secret`. The two cases that show a password as text and hide it again are red.
+ *
  * What was typed is looked for and never printed: each reading is a yes or a no.
  */
 describe.each<[string, (p: SecretProps) => ReactNode]>([
   ["Field", (p) => <Field label="Password" type="password" {...p} />],
   ["Blank", (p) => <Blank label="Password" placeholder="type it" type="password" {...p} />],
-])("a password in a %s", (_, secret) => {
+])("a password in a %s", (kind, secret) => {
   const TYPED = "zq-typed-in-the-case-7c1f";
   const inMarkup = () => document.documentElement.outerHTML.includes(TYPED);
   const box = () => screen.getByLabelText("Password") as HTMLInputElement;
@@ -489,6 +602,62 @@ describe.each<[string, (p: SecretProps) => ReactNode]>([
     expect(inMarkup()).toBe(false);
   });
 
+  /** A form that keeps what is typed and has a control that shows the password as text and hides it again. */
+  function Showing({ start }: { start: boolean }) {
+    const [held, setHeld] = useState("");
+    const [shown, setShown] = useState(start);
+    return (
+      <form>
+        {kind === "Blank" ? (
+          <Blank
+            label="Password"
+            placeholder="type it"
+            type={shown ? "text" : "password"}
+            value={held}
+            onChange={setHeld}
+          />
+        ) : shown ? (
+          <Field label="Password" type="text" value={held} onChange={setHeld} />
+        ) : (
+          <Field label="Password" type="password" value={held} onChange={setHeld} />
+        )}
+        <Button onPress={() => setShown(!shown)}>Show</Button>
+      </form>
+    );
+  }
+  const show = () => fireEvent.click(screen.getByRole("button", { name: "Show" }));
+  const read = () => ({
+    markup: inMarkup(),
+    attribute: box().hasAttribute("value"),
+    holds: box().value === TYPED,
+    type: box().type,
+  });
+
+  it("shown as text and hidden again, it is in no markup in any phase, and the box shows it throughout", () => {
+    render(<Showing start={false} />);
+    type(TYPED);
+    const hidden = read();
+    show();
+    const shown = read();
+    show();
+    const again = read();
+    expect({ hidden, shown, again }).toEqual({
+      hidden: { markup: false, attribute: false, holds: true, type: "password" },
+      shown: { markup: false, attribute: false, holds: true, type: "text" },
+      again: { markup: false, attribute: false, holds: true, type: "password" },
+    });
+  });
+
+  it("drawn as text first and then hidden, what the draw as text wrote into the markup is cleared", () => {
+    render(<Showing start />);
+    type(TYPED);
+    show();
+    expect(read()).toEqual({ markup: false, attribute: false, holds: true, type: "password" });
+    /* Shown again, it stays out of the markup: the rule holds for the element's life. */
+    show();
+    expect(read()).toEqual({ markup: false, attribute: false, holds: true, type: "text" });
+  });
+
   it("drawn on a server with a value in hand, its markup holds none", () => {
     expect(renderToStaticMarkup(secret({ value: TYPED, onChange: () => {} })).includes(TYPED)).toBe(false);
   });
@@ -553,6 +722,44 @@ describe("ChoiceTiles", () => {
     /* One that does not fit what was typed steps back, and can still be pressed. */
     fireEvent.click(within(group).getByRole("button", { name: "iCloud" }));
     expect(onChange.mock.calls).toEqual([["icloud"]]);
+  });
+
+  /* `forms-in-a-browser.test.tsx` walks the same with the real Tab key in a real browser. */
+  it("is one stop of Tab, on the taken tile or else the first; the arrows, Home and End move the keys and take none", () => {
+    const onChange = vi.fn();
+    const drawn = render(
+      <ChoiceTiles label="Mail providers" options={options} value="icloud" onChange={onChange} />,
+    );
+    const tiles = () => screen.getAllByRole("button");
+    /** Which tiles Tab stops on, by their words. */
+    const stops = () =>
+      tiles()
+        .filter((tile) => tile.tabIndex === 0)
+        .map((tile) => tile.querySelector("span")?.textContent);
+    const keysOn = () => document.activeElement?.querySelector("span")?.textContent ?? null;
+    const press = (key: string) => fireEvent.keyDown(document.activeElement!, { key });
+    /* Tab enters on the taken tile, not on the first. */
+    expect(stops()).toEqual(["iCloud"]);
+    tiles()[1]!.focus();
+    press("ArrowRight");
+    expect(keysOn()).toBe("Other (IMAP)");
+    press("ArrowRight");
+    expect(keysOn()).toBe("Gmail");
+    press("End");
+    expect(keysOn()).toBe("Other (IMAP)");
+    press("Home");
+    expect(keysOn()).toBe("Gmail");
+    press("ArrowLeft");
+    expect(keysOn()).toBe("Other (IMAP)");
+    expect(onChange).not.toHaveBeenCalled();
+    /* The one stop is where the keys are, so Tab leaves the group from there. */
+    expect(stops()).toEqual(["Other (IMAP)"]);
+    /* The keys gone, the stop is the taken tile again. */
+    fireEvent.blur(document.activeElement!, { relatedTarget: document.body });
+    expect(stops()).toEqual(["iCloud"]);
+    drawn.unmount();
+    render(<ChoiceTiles label="Mail providers" options={options} value={null} />);
+    expect(stops()).toEqual(["Gmail"]);
   });
 
   it("with none taken, none says it is", () => {

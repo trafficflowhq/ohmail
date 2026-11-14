@@ -1,9 +1,11 @@
 /** @vitest-environment jsdom */
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
+  CameraSquare,
+  Counters,
   Empty,
   Notice,
   NoticeSlot,
@@ -232,6 +234,28 @@ describe("Empty, WaitRow, RefusalLine", () => {
     expect(screen.getByLabelText("oh.")).toBeTruthy();
   });
 
+  it("an empty place's one answer carries the key that runs it beside its word, where the place hands one", () => {
+    const go = vi.fn();
+    render(
+      <Empty
+        mark="oh"
+        label="6 decided"
+        act={{ label: "Ohbox", kind: "ink", keyHint: "g o", onPress: go }}
+      />,
+    );
+    const way = screen.getByRole("button");
+    expect(screen.getByRole("button", { name: "Ohbox" })).toBe(way);
+    expect(within(way).getByText("g o").tagName).toBe("KBD");
+    expect(way.textContent).toBe("Ohboxg o");
+    fireEvent.click(way);
+    expect(go).toHaveBeenCalledTimes(1);
+    /* A way on that goes to an address carries its key the same way. */
+    cleanup();
+    render(<Empty label="No mail yet" act={{ label: "Connect", keyHint: "c", href: "/join" }} />);
+    expect(screen.getByRole("link").textContent).toBe("Connectc");
+    expect(screen.getByRole("link", { name: "Connect" })).toBeTruthy();
+  });
+
   it("a waiting row is a list item with what, about which letter, why and its own answers", () => {
     const again = vi.fn();
     render(
@@ -306,6 +330,26 @@ describe("Page and Opening", () => {
     expect(within(page).getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
+  it("draws a note that stands without a heavy line over it: what explains is never left out unsaid", () => {
+    render(
+      <Page note="Nothing is sent." acts={<Button size="l">Go on</Button>}>
+        <Sentence size="xl" level={1}>
+          Confirm my email address
+        </Sentence>
+      </Page>,
+    );
+    const page = screen.getByRole("main");
+    expect(within(page).getByText("Nothing is sent.")).toBeTruthy();
+    /* It stands between the sentence and the buttons, where the line it would explain stands. */
+    const [said, note, act] = [
+      within(page).getByRole("heading"),
+      within(page).getByText("Nothing is sent."),
+      within(page).getByRole("button", { name: "Go on" }),
+    ];
+    expect(said.compareDocumentPosition(note) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(note.compareDocumentPosition(act) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("a page of two columns whose sentence column is taller than its body says it folded; one that fits says nothing", () => {
     /* jsdom lays nothing out: the body's two columns and its heights are what a browser would answer. */
     let tall = true;
@@ -370,6 +414,75 @@ describe("Page and Opening", () => {
     expect(screen.queryByRole("status")).toBeNull();
     rerender(<Opening kind="phone" status={{ label: "Updating the mail store", count: "3 of 12" }} />);
     expect(screen.getByRole("status").textContent).toBe("Updating the mail store3 of 12");
+  });
+});
+
+describe("Counters", () => {
+  it("is a list of figures, each a numeral said with its words, which end in the dot: hot until it settles", () => {
+    const { container } = render(
+      <Counters
+        size="xl"
+        rows={[
+          { id: "screened", figure: "1,204", words: "screened", end: "hot" },
+          { id: "history", figure: "380", words: "in History", end: "ink" },
+        ]}
+      />,
+    );
+    const figures = [...container.querySelectorAll("dt")].map((dt) => dt.textContent);
+    const words = [...container.querySelectorAll("dd")].map((dd) => dd.textContent);
+    expect(figures).toEqual(["1,204", "380"]);
+    expect(words).toEqual(["screened", "in History"]);
+    /* A figure can be found by the id it was handed. The id is an anchor: a count rises by the figure handed next. */
+    expect(container.querySelector("#screened")?.textContent).toBe("1,204");
+    /* Each line ends in its own dot, and the last word never parts from it. */
+    const dots = [...container.querySelectorAll("dd [aria-hidden='true']")];
+    expect(dots).toHaveLength(2);
+    expect(dots.map((dot) => dot.getAttribute("data-kind"))).toEqual(["hot", "ink"]);
+  });
+
+  it("counts up by the figure it is handed next, in the numeral that stood there", () => {
+    const row = { id: "screened", words: "screened", end: "hot" as const };
+    const { container, rerender } = render(<Counters rows={[{ ...row, figure: "1,204" }]} />);
+    const numeral = container.querySelector("#screened");
+    rerender(<Counters rows={[{ ...row, figure: "1,205" }]} />);
+    expect(container.querySelector("#screened")).toBe(numeral);
+    expect(numeral?.textContent).toBe("1,205");
+  });
+
+  it("holds nothing where there is nothing to count", () => {
+    const { container } = render(<Counters rows={[]} />);
+    expect(container.querySelector("dl")).toBeNull();
+  });
+});
+
+describe("CameraSquare", () => {
+  it("is a picture named by its label, and hands its own box to whoever stands the camera in it", () => {
+    const box = createRef<HTMLDivElement>();
+    render(<CameraSquare state="live" label="Camera" boxRef={box} />);
+    const square = screen.getByRole("img", { name: "Camera" });
+    expect(box.current).toBe(square);
+    /* Its corners and its dot are drawn and never said; it holds no word and nothing the keys could reach. */
+    expect(square.textContent).toBe("");
+    expect([...square.children].every((mark) => mark.getAttribute("aria-hidden") === "true")).toBe(true);
+    expect(square.querySelector("button, a, input, [tabindex]")).toBeNull();
+    expect(square.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("draws four corners in either state, and the hot dot only while the camera looks", () => {
+    const { rerender } = render(<CameraSquare state="live" label="Camera" />);
+    const marks = () => [...screen.getByRole("img").children].map((mark) => mark.getAttribute("data-kind"));
+    expect(marks()).toEqual([null, null, null, null, "hot"]);
+    rerender(<CameraSquare state="off" label="Camera off" />);
+    expect(screen.getByRole("img", { name: "Camera off" })).toBeTruthy();
+    expect(marks()).toEqual([null, null, null, null]);
+  });
+
+  it("keeps its box when its state changes: the camera's place does not move under it", () => {
+    const box = createRef<HTMLDivElement>();
+    const { rerender } = render(<CameraSquare state="off" label="Camera off" boxRef={box} />);
+    const was = box.current;
+    rerender(<CameraSquare state="live" label="Camera" boxRef={box} />);
+    expect(box.current).toBe(was);
   });
 });
 

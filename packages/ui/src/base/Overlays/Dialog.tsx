@@ -105,7 +105,9 @@ export function Dialog(props: DialogProps) {
       {said ? (
         <div className="oh-dialog-said">
           {said.refused ? (
-            <RefusalLine start>{said.line}</RefusalLine>
+            <RefusalLine alert start>
+              {said.line}
+            </RefusalLine>
           ) : (
             <p className="oh-text" role="status">
               {said.line}

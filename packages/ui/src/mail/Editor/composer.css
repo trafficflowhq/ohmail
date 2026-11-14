@@ -149,7 +149,24 @@
     cursor: text;
   }
 
-  /* The words for a text not yet written: on the text's first line, in the second ink, and never in a press's way. */
+  /* The box a screen reader calls the text is the padded one: a press on its edge lands in the text, and what
+     measures the text measures what is drawn. Where the app's editor stands its root or a plain text box here,
+     that box keeps the text's air and its least height, and the room around it holds none of its own. The two
+     names are said one by one: not every reader of a sheet reads a list of names inside `:has()`. */
+  .oh-composer-text:has(.oh-lettertext),
+  .oh-composer-text:has(.oh-lettertext-plain) {
+    padding: 0;
+  }
+
+  .oh-composer-text .oh-lettertext,
+  .oh-composer-text .oh-lettertext-plain {
+    box-sizing: border-box;
+    min-height: var(--oh-composer-text-min);
+    padding: var(--s3) var(--s4);
+  }
+
+  /* The words for a text not yet written: on the text's first line, in the second ink, and never in a press's way.
+     They are drawn from what is handed and written nowhere, so nothing that reads the page's text finds them. */
   .oh-composer-placeholder {
     position: absolute;
     top: var(--s3);
@@ -158,6 +175,10 @@
     color: var(--ink2);
     pointer-events: none;
     user-select: none;
+  }
+
+  .oh-composer-placeholder::before {
+    content: attr(data-words);
   }
 
   .oh-composer-signature {

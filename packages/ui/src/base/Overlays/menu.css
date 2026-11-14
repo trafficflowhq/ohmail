@@ -84,11 +84,12 @@
   .oh-menu-item {
     --oh-menu-item-gap: 10px;
     --oh-menu-item-pad: 0 var(--s3);
+    --oh-menu-item-h: var(--h-m);
     display: flex;
     align-items: center;
     gap: var(--oh-menu-item-gap);
     width: 100%;
-    min-height: var(--h-m);
+    min-height: var(--oh-menu-item-h);
     padding: var(--oh-menu-item-pad);
     border-radius: var(--r-row);
     font-weight: var(--w-mid);
@@ -99,6 +100,20 @@
   .oh-menu-item:focus-visible {
     background: var(--hover);
     outline: none;
+  }
+  /* Words too long for the menu take a second line inside it; the note and the key beside them stay whole. An
+     item of one line is as high as it ever was: its words keep, over and under them, what is left of that height,
+     so every further line of words adds one line to it. The air is around the words' box, never inside it: the
+     box is the words' own, as the design's is. */
+  .oh-menu-item[role^="menuitem"]:not([data-dot]) > .oh-menu-word {
+    --oh-menu-word-lh: 1.2em;
+    --oh-menu-word-air: calc((var(--oh-menu-item-h) - var(--oh-menu-word-lh)) / 2) 0;
+    margin: var(--oh-menu-word-air);
+  }
+  .oh-menu-item[role^="menuitem"] > .oh-menu-word {
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .oh-menu-item[data-sub] {
     --oh-menu-item-pad: 0 var(--s3) 0 var(--s5);
@@ -158,10 +173,13 @@
     --oh-menu-sheet: 1;
     --oh-menu-width: auto;
     --oh-menu-max: none;
+    /* It floats a margin over the edge, or over the system's bar, and on a keyboard that is up. */
+    --oh-menu-foot: calc(max(var(--s2), var(--oh-inset-foot)) + var(--oh-inset-keys));
     top: auto;
     right: var(--s2);
-    bottom: var(--s2);
+    bottom: var(--oh-menu-foot);
     left: var(--s2);
+    max-height: calc(100% - var(--oh-menu-edge) - var(--oh-menu-foot));
     transform-origin: 50% 100%;
   }
   /* One column from 600 wide (an open Duo held upright): the sheet keeps a phone's measure in the middle of the foot. */
@@ -174,7 +192,7 @@
     }
   }
   :root[data-device="phone"] .oh-menu-item {
-    min-height: var(--h-l);
+    --oh-menu-item-h: var(--h-l);
   }
 
   :root[data-face="ohmarchy"] .oh-menu {

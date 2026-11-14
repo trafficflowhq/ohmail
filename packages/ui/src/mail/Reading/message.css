@@ -68,11 +68,14 @@
 
   /* In a stream a letter is cut after a few lines until it is opened, its last line fading. A letter that fits is
      whole. Its control stands in the middle of the sheet's foot; the arrow turns while it stands open. */
+  /* The cut is the text's own box: as wide as the text's measure, and its fade is counted in the text's size. */
   .oh-message-clip {
     --oh-message-clip-lines: 6;
-    --oh-message-clip-fade: 2.6em;
+    --oh-message-clip-fade: calc(2.6 * var(--t-read));
 
     overflow: hidden;
+    width: fit-content;
+    max-width: 100%;
   }
 
   .oh-message-clip[data-shut] {
@@ -96,7 +99,16 @@
     margin-top: var(--s5);
   }
 
+  /* Expand and Collapse: the word a step from its sign, which is drawn whole and turns when the letter opens. */
+  .oh-message-more > .oh-button[data-size="s"] {
+    --oh-button-pad: 0 var(--s3) 0 var(--s4);
+
+    gap: var(--s1);
+  }
+
   .oh-message-more .oh-button-mark {
+    margin-right: 0;
+    opacity: 1;
     transition: transform var(--d-pop) var(--e-std);
   }
 

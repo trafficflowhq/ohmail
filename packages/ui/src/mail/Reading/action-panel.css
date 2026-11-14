@@ -231,6 +231,17 @@
     display: none;
   }
 
+  /* A note that is to stay, once nothing else can give: it takes the room that is left, on as many lines as it needs. */
+  .oh-actionpanel-note[data-fold] {
+    --oh-actionpanel-note-lh: 1.25;
+
+    flex: 0 1 auto;
+    min-width: 0;
+    line-height: var(--oh-actionpanel-note-lh);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
   /* The unfolded phone: closer together, and More as wide as a finger needs. */
   :root[data-device="fold"] .oh-actionpanel-bar {
     --oh-actionpanel-in: var(--s1);

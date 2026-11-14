@@ -5,6 +5,12 @@ import "./folder-shelf.css";
 export interface ShelfFolder {
   id: string;
   name: string;
+  /**
+   * What tells it from another folder of the same name, small after the name: the folder above it, else its
+   * mailbox; for a hit of the find line, its way. Without a `label` it is said with the name, and with the count
+   * the entry shows.
+   */
+  hint?: string;
   /** Its unread mail, and its name with that count for a screen reader: "Team, 3 unread". */
   count?: string;
   label?: string;
@@ -30,6 +36,13 @@ export interface FolderShelfProps {
   children?: ReactNode;
 }
 
+/**
+ * The name a folder with a hint is said by where the app hands none: its name, what tells it apart and the count
+ * it shows, each heard apart. A folder without a hint is named by what it draws.
+ */
+export const hintedName = (folder: { name: string; hint?: string; count?: string }): string | undefined =>
+  folder.hint ? [folder.name, folder.hint, folder.count].filter(Boolean).join(", ") : undefined;
+
 /** The few folders the rail has room for, and the one fold that opens the rest. */
 export function FolderShelf(props: FolderShelfProps) {
   const { label, expanded, onToggle, folders, onOpen, onMenu, all, children } = props;
@@ -45,7 +58,8 @@ export function FolderShelf(props: FolderShelfProps) {
               kind="sub"
               icon="folder"
               count={folder.count}
-              label={folder.label}
+              hint={folder.hint}
+              label={folder.label ?? hintedName(folder)}
               title={folder.name}
               current={folder.current}
               drop={folder.drop}

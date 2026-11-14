@@ -95,6 +95,8 @@ export function RowPlaceFace({ place, room }: { place: RowPlace; room?: boolean 
           onClick={open}
           onKeyDown={quiet}
         >
+          {/* Its name as words too: what reads the control's own text finds what it does. */}
+          <span className="oh-vh">{choose.label}</span>
           <i className="oh-row-place-arrow" aria-hidden="true" />
         </button>
       ) : null}
