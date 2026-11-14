@@ -1,0 +1,32 @@
+{
+  "packages": {
+    "tokens": { "imports": [] },
+    "ui": { "imports": ["tokens"] },
+    "wire": { "imports": [], "exportsNoValue": true },
+    "core": { "imports": ["wire"] },
+    "mail-io": { "imports": ["core", "db-mail", "db", "wire"] },
+    "organizer": { "imports": ["mail-io", "core", "db-mail", "db", "wire", "cal-core", "cal-providers"] },
+    "client-engine": { "imports": ["wire", "core", "cal-core"] },
+    "app-logic": { "imports": ["client-engine", "wire", "core", "cal-core"] },
+    "app": { "imports": ["ui", "tokens", "app-logic", "wire"], "typesOnly": ["client-engine", "cal-core"] },
+    "cal-core": { "imports": ["wire", "core"] },
+    "cal-providers": { "imports": ["cal-core", "wire", "core"] },
+    "db": { "imports": ["db-mail", "wire"] },
+    "db-mail": { "imports": ["wire"] },
+    "services": { "imports": ["core", "mail-io", "db", "db-mail", "wire", "cal-core", "cal-providers"] },
+    "api": { "imports": ["services", "core", "mail-io", "db", "db-mail", "wire", "cal-core"] },
+    "testing": { "folders": ["packages/testing", "packages/fixtures"], "imports": "*" }
+  },
+  "apps": {
+    "webapp": { "never": ["organizer", "cal-providers", "testing"] },
+    "desktop": { "never": ["organizer", "cal-providers", "testing"] },
+    "paired-page": { "never": ["organizer", "cal-providers", "testing"] },
+    "mobile": { "never": ["organizer", "cal-providers", "testing"] },
+    "server": { "never": ["organizer", "testing"] },
+    "worker": { "never": ["testing"] },
+    "sidecar": { "never": ["testing"] },
+    "api-vercel": { "never": ["organizer", "cal-providers", "testing"], "apps": ["server"] }
+  },
+  "tests": { "alsoImport": ["testing"] },
+  "roots": { "folders": [".github", "deploy", "scripts", "test", "tools"] }
+}

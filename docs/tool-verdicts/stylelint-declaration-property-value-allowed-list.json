@@ -1,0 +1,20 @@
+{
+  "id": "stylelint:declaration-property-value-allowed-list",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a literal gap in the kit",
+      "file": "packages/ui/src/planted/gap.css",
+      "line": 2,
+      "refused": "Unexpected value \"4px\" for property \"padding\" (declaration-property-value-allowed-list)"
+    }
+  ],
+  "green": [
+    {
+      "control": "token values in the kit",
+      "file": "packages/ui/src/planted/tokens-only.css"
+    }
+  ]
+}

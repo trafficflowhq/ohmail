@@ -1,0 +1,19 @@
+{
+  "id": "references",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a project the type check does not reach",
+      "file": "packages/planted-unreferenced/tsconfig.json",
+      "refused": "references: packages/planted-unreferenced has a tsconfig that no type check reaches; add it to the root tsconfig.json's references"
+    }
+  ],
+  "green": [
+    {
+      "control": "a project the build references",
+      "file": "packages/core/tsconfig.json"
+    }
+  ]
+}

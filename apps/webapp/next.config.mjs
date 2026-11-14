@@ -684,6 +684,9 @@ const nextConfig = {
   // imported from this app — `MessageBody.tsx` documents that boundary.
   transpilePackages: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/fixtures", "@ohmail/client-engine", "@ohmail/app-logic", "@ohmail/app", "@trafficflow/core"],
 
+  // The one linter of this tree is `node tools/check.mjs`, with its baseline; the build checks the types only.
+  eslint: { ignoreDuringBuilds: true },
+
   // `NEXT_PUBLIC_API_BASE` is DERIVED, never set by hand. The topology wants the browser to call
   // `/api`, which is only true when the rewrite that backs `/api` exists; two independent
   // variables could disagree, and the failure mode of disagreeing (an app fetching `/api`

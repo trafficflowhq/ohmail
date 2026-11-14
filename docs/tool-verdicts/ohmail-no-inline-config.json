@@ -1,0 +1,20 @@
+{
+  "id": "ohmail/no-inline-config",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a lint rule switched off in a file",
+      "file": "packages/app/src/planted/switch-off.ts",
+      "line": 1,
+      "refused": "a lint rule is not switched off in a file; a waiver is a ruling named in the change's message"
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

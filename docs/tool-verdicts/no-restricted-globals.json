@@ -1,0 +1,20 @@
+{
+  "id": "no-restricted-globals",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "browser storage in shared behaviour",
+      "file": "packages/app-logic/src/planted/storage.ts",
+      "line": 1,
+      "refused": "Unexpected use of 'localStorage'. Only a shell touches this; shared code asks the host contract."
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

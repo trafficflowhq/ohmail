@@ -252,6 +252,8 @@ const nextConfig = {
   // replaying bodies) would fail a request our test says works. Skipping the redirect makes the
   // documented canonicalization the one that actually happens.
   skipTrailingSlashRedirect: true,
+  // The one linter of this tree is `node tools/check.mjs`, with its baseline; the build checks the types only.
+  eslint: { ignoreDuringBuilds: true },
   webpack: (config) => {
     // The workspace packages are NodeNext TypeScript and their emitted JS carries explicit
     // `.js` specifiers; the app's own `src/*` does too. Same mapping as apps/webapp.

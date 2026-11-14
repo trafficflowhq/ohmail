@@ -1,0 +1,24 @@
+{
+  "id": "max-lines",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a 401-line file of interface code",
+      "file": "packages/app/src/planted/long.ts",
+      "line": 401,
+      "refused": "File has too many lines (401). Maximum allowed is 400."
+    }
+  ],
+  "green": [
+    {
+      "control": "a 401-line file of the core",
+      "file": "packages/core/src/planted/long.ts"
+    },
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

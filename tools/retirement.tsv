@@ -1,0 +1,1460 @@
+file	kind	holds	home	task	verdict
+apps/api-vercel/test/ai-provider-refused.test.ts	source-text	reads source as text (ts)	layer 1	removals	
+apps/api-vercel/test/release-is-stated.test.ts	data	reads data files (json): a manifest's version	none	removals	
+apps/api-vercel/test/vercel-functions-config.test.ts	source-text	reads source as text (ts)	layer 1	removals	
+apps/desktop/test/ai-provider-draft-disclosure.test.ts	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/attachment-preview-renderer-memory.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	desktop-layer	
+apps/desktop/test/boot-sync-line-frames.test.ts	source-text	reads source as text (css, js, tsx)	layer 2	desktop-layer	
+apps/desktop/test/cargo-lock-carries-manifest-deps.test.ts	data	reads data files (lock, toml)	none	desktop-layer	
+apps/desktop/test/desktop-attach-cap.test.ts	source-text	reads source as text (js, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-attachment-spotlight.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-away.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-boot-status.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	desktop-layer	
+apps/desktop/test/desktop-build-id.test.ts	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-change-says-where.test.tsx	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-cloud-session.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	desktop-layer	
+apps/desktop/test/desktop-devices.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-diagnostic-file.test.tsx	source-text	reads source as text (rs, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-distribution.test.tsx	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-door-copy.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-draft-reply.test.tsx	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-facts-census.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-first-cloud-door.test.tsx	data	reads data files (json, seal, test)	none	desktop-layer	
+apps/desktop/test/desktop-first-run.test.tsx	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-gate-locked.test.tsx	source-text	reads source as text (mjs, rs, ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-gate-restart.test.ts	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-gate-start-over.test.tsx	source-text	reads source as text (mjs, rs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-host-door.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+apps/desktop/test/desktop-hosted-gate.test.tsx	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-icon.test.ts	data	reads data files (icns)	none	desktop-layer	
+apps/desktop/test/desktop-link-refused.test.tsx	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-linux-recipe.test.ts	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/desktop-mailto-link.test.ts	source-text	reads source as text (rs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-messages.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-mirror-is-windowed.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-names-its-sender.test.ts	source-text	reads source as text (js, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-navigation-refusal-line.test.ts	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/desktop-omarchy.test.ts	source-text	reads source as text (css, mjs, ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-open-attachment.test.ts	source-text	reads source as text (rs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-open-external.test.ts	source-text	reads source as text (rs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-pairing-chooser-held.test.tsx	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-platform.test.ts	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-preview-revisit.test.tsx	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/desktop-preview-variant.test.ts	data	reads data files (json): the app's Tauri configurations	none	desktop-layer	
+apps/desktop/test/desktop-profile-import.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-rendered-links.test.tsx	source-text	an import census: reads source as text (mjs, rs, ts, tsx)	ohmail/package-borders	tools	
+apps/desktop/test/desktop-renderer-reloaded.test.tsx	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/desktop-search-supersede.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-sender-sheet-now-in.test.ts	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-sender-sheet-twin-winner.test.ts	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/desktop-shell.test.ts	source-text	an import census: reads source as text (js, mjs, rs, ts, tsx)	ohmail/package-borders	tools	
+apps/desktop/test/desktop-takeover.test.tsx	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-trash-wire.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-update-cadence.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/desktop-update-closing.test.tsx	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/desktop-window-slop.test.ts	data	reads data files (json): the message catalogue	none	desktop-layer	
+apps/desktop/test/first-frame-is-the-scheme.test.ts	source-text	an import census: reads source as text (js, ts, tsx)	ohmail/package-borders	tools	
+apps/desktop/test/host-client-arm.test.ts	source-text	reads source as text (mjs, rs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/host-client-consent.test.tsx	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/host-client-draft-reply.test.tsx	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/host-client-gap-offer.test.tsx	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/host-client-live-windows.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/host-client-no-engine-door.test.ts	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/host-client-secure-context.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/journeys-host.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+apps/desktop/test/local-server-deadline.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/mailto.test.ts	source-text	reads source as text (rs, tsx)	layer 2	desktop-layer	
+apps/desktop/test/mock-factory-census.test.ts	source-text	reads source as text (js, mjs)	layer 2	desktop-layer	
+apps/desktop/test/network-return.test.ts	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/no-api-client-census.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/opencode-go-cloud-guard.test.ts	source-text	reads source as text (tsx)	layer 2	desktop-layer	
+apps/desktop/test/opencode-go-manager.test.ts	data	reads files it wrote itself	none	desktop-layer	
+apps/desktop/test/outbox-survives-the-window.test.ts	data	reads files it wrote itself	none	desktop-layer	
+apps/desktop/test/pairing-link-check-kinds-translated.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/pairing-refusals-translated.test.ts	source-text	reads source as text (ts)	layer 2	desktop-layer	
+apps/desktop/test/renderer-vitals-linux-comm.test.ts	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/smoke-needles-match-catalogues.test.ts	source-text	reads source as text (mjs)	layer 2	desktop-layer	
+apps/desktop/test/text-zoom.test.ts	source-text	reads source as text (ts, tsx)	layer 2	desktop-layer	
+apps/desktop/test/updater-window.test.ts	source-text	reads source as text (rs)	layer 2	desktop-layer	
+apps/desktop/test/window-fits-short-screens.test.ts	data	reads data files (json)	none	desktop-layer	
+apps/desktop/test/window-pdf-preview.test.ts	source-text	reads source as text (js, mjs, rs, ts)	layer 2	desktop-layer	
+apps/desktop/test/window-pdfjs.test.ts	source-text	an import census: reads source as text (mjs, ts, tsx)	ohmail/package-borders	tools	
+apps/mobile/test/a-disarmed-verb-still-says-so.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	phone-screens	
+apps/mobile/test/a11y-role-ios.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/about-states-what-ships.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	phone-screens	
+apps/mobile/test/absent-shim-survives-interop.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
+apps/mobile/test/account-wall-renew.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/account-wall.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/action-bar-fits.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/action-parity.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/actionbar-pane-admission.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/app-permissions.test.ts	data	reads data files (json)	none	phone-shell	
+apps/mobile/test/app-release.test.ts	data	reads data files (json): a manifest's version	none	phone-shell	
+apps/mobile/test/attachment-release.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	phone-screens	
+apps/mobile/test/auto-act-panel.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/away-says-what-is-saved.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/ax-state-is-explicit.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/background-organizing.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/backup-exclusion.test.ts	source-text	reads source as text (js, kt, swift, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/backup-exclusions.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
+apps/mobile/test/bearer-construction-census.test.ts	source-text	an import census: reads source as text (ts, tsx)	ohmail/package-borders	tools	
+apps/mobile/test/body-drawn-under-its-stamp.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/body-note.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/boot-surface.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/build-info.test.ts	source-text	reads source as text (gradle, tsx)	layer 2	phone-screens	
+apps/mobile/test/certificate-refusal-named.test.ts	source-text	reads source as text (js, ts)	layer 2	phone-screens	
+apps/mobile/test/compose-attach-photo-crash.test.ts	source-text	reads source as text (mjs, swift, ts)	layer 2	phone-screens	
+apps/mobile/test/compose-attach-shrinks-photos.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-attach.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-keeps-a-draft.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-keeps-the-caret.test.tsx	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-new-live.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-offline-send.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-one-title.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-route-holds-the-reader.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/compose-unmount-keeps-copies.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/connection-decided-state.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/copy-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/copy-parity.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/cutline-unanswered.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/death-is-the-managers-fact.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/death-nobody-heard.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/diagnostic-file.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/disabled-control-dims.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/domain-card-files-the-domain.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/doorbell-cap.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/doors-answer-under-its-option.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/doors.test.ts	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/drafts-card.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/drafts-live.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/duo-pane-search-once.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/empty-state-shape.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	phone-screens	
+apps/mobile/test/engine-bundle-loads.test.ts	source-text	reads source as text (js, ts)	layer 2	phone-shell	
+apps/mobile/test/engine-log-sink.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	phone-shell	
+apps/mobile/test/engine-packaging.test.ts	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	phone-shell	
+apps/mobile/test/erased-account-forgets-the-pairing.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/files-on-every-card.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/first-sync-continues-said.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/first-sync-said.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/foldable-layout-laws.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/foldable-screens-fit.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/foldable-sheet-over-the-detail-pane.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/folded-row-verbs.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/folders-flag.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/folders-parity.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/forget.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/forward-off-mirror-fetched.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	phone-screens	
+apps/mobile/test/fourth-door.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/frame-ceiling-by-heap.test.ts	source-text	reads source as text (kt, swift, ts)	layer 2	phone-screens	
+apps/mobile/test/frame-height.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/glass-nav-structure.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/hermes-intl-census.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/hidden-list-derives-nothing.test.ts	source-text	reads source as text (tsx): the tab screen	layer 2	phone-screens	
+apps/mobile/test/history-head-beside-rail.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/history-item-layout.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/history-jump-fills.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/history-open-arrival.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/history-slot-rows.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/history-slot.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/history-store.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/history-surface.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/host-pinning.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/huge-body-bounded.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/identity-fact-on-the-phone.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/imapflow-close-behind-connect.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
+apps/mobile/test/invitation-event-card-on-the-phone.test.tsx	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/invitation-note-on-the-phone.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/ios-scene-lifecycle.test.ts	source-text	reads source as text (js, swift)	layer 2	phone-screens	
+apps/mobile/test/junk-folder-said.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/kept-draft-edited-on-the-phone.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/layout-sizes-r2-ipad-and-sheets.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/layout-sizes-r3.test.ts	source-text	reads source as text (gradle, kt, swift, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/list-address-sentence-on-the-phone.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/list-detail-continuity.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/list-insets-shared.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/locale.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/locked-composer-takes-no-edit.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/mail-frame-pictures-bounded.test.tsx	data	through packages/client-engine/test/fixtures/letter-paper-corpus.ts: reads recorded newsletters	none	phone-shell	
+apps/mobile/test/mail-frame-wiring.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/mail-list-census.test.ts	source-text	an import census: reads source as text (mjs, tsx)	ohmail/package-borders	tools	
+apps/mobile/test/mail-list-window.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/mail-row-actions.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/mail-row-badges-spoken.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/mail-row-no-blank-subject.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/mail-row-swipe-surface.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/mailbox-read.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/mark-all-read-live.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/message-actions.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/narrow-cover-attach-hint-and-more.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/narrow-reader-and-sheets.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/network-readers-shape.test.ts	source-text	reads source as text (kt, swift, ts)	layer 2	phone-screens	
+apps/mobile/test/no-global-crypto.test.ts	source-text	reads source as text (mjs, ts)	layer 2	phone-screens	
+apps/mobile/test/no-host-census.test.ts	source-text	the phone app's imports reach no host module	ohmail/package-borders	tools	
+apps/mobile/test/no-node-builtins.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	phone-screens	
+apps/mobile/test/notice-logged.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/notification-permission.test.ts	source-text	reads source as text (kt, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/offline-is-said.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/offline-send-waits.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/ohbox-delete-undo-keeps-the-open-row.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/ohbox-open-row-keeps-its-place.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/ohbox-where.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/ohmarchy-face.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/organizer-session.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/organizer-state-every-phone-line.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/paired-claim-stopped-holder.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	phone-screens	
+apps/mobile/test/pairing-confirm-lands-in-the-mailbox.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/pairing-ended-one-sentence.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/pairing.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/phone-draft-edit.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/phone-draft-left-elsewhere-editor-stays.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/phone-draft-sent-elsewhere.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/phone-engine-bundler-doors.test.ts	artifact	reads what was built (mjs)	layer 5	phone-shell	
+apps/mobile/test/phone-engine-entities-escape-only.test.ts	source-text	an import census: reads source as text (js)	bundle contents	tools	
+apps/mobile/test/phone-engine-leaves-out-blank-repair.test.ts	source-text	reads source as text (js, ts)	layer 2	phone-shell	
+apps/mobile/test/phone-engine-leaves-out-postgres.test.ts	source-text	reads source as text (js, ts)	layer 2	phone-shell	
+apps/mobile/test/phone-engine-sends-over-smtp-only.test.ts	source-text	reads source as text (ts)	layer 2	phone-shell	
+apps/mobile/test/phone-send-answers.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/phone-state-is-the-accounts.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/posture-derived-logged.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/posture-native-duo.test.ts	source-text	reads source as text (swift)	layer 2	phone-shell	
+apps/mobile/test/posture-relayout-on-every-window.test.tsx	source-text	reads source as text (kt)	layer 2	phone-screens	
+apps/mobile/test/press-reader-census.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/privacy.test.ts	source-text	an import census: reads source as text (js, ts, tsx)	bundle contents	tools	
+apps/mobile/test/process-standin-covers-the-bundle.test.ts	source-text	reads source as text (mjs)	layer 2	phone-screens	
+apps/mobile/test/profile-import-card.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/push.test.ts	source-text	reads source as text (ts)	layer 2	phone-shell	
+apps/mobile/test/queued-discard-is-listed.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/quoted-history-fold.test.tsx	data	reads data files (json): the message catalogue	none	phone-shell	
+apps/mobile/test/quoted-history-parity.test.ts	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	phone-shell	
+apps/mobile/test/reader-acts-on-the-row-target.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/reader-open-anchor.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/reader-press-is-told.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/reader-read-slot-covers-the-conversation.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/reader-seen.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/reader-thread-heading.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/reader-verbs-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/refusal.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/release-minification.test.ts	source-text	reads source as text (gradle, js, kt)	layer 2	phone-screens	
+apps/mobile/test/render-error-boundary.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/reply-forward-one-target.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/resurface-chooser-built-when-open.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/resurface-time.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/routing-undo.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/row-swipe.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/safe-area-census.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/screen-out-says-the-unsubscribe-before-the-press.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/screener-gate-partition.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/screener-row-names-the-claim.test.ts	source-text	reads source as text (tsx): the screener screen	layer 2	phone-screens	
+apps/mobile/test/screener-server-parity.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/screener-store-row-presses.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/screening-retro-switch.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/search-estimate.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/search-first-sync-said.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/search-live.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/search-part-reach.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/segment-contrast.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/self-check.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/send-and-done.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/send-cancel-says-it-went.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/send-later-not-on-this-phone.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/send-later.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/send-once-through-cancel.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/sender-page-fits-compact-height.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/sender-sheet-allowed-list-address.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/sender-sheet-first-contact-is-true.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/server-settings-sheet.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/sheet-fits-the-window.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/sheet-has-a-cancel.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/standalone-adopt.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/standalone-app-password-note.test.ts	data	reads data files (json): the message catalogue	none	phone-shell	
+apps/mobile/test/standalone-door.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
+apps/mobile/test/standalone-form-above-keyboard.test.ts	source-text	walks source files	layer 2	phone-screens	
+apps/mobile/test/standalone-server-fields.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/standalone-starttls-certificate.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/starttls-upgrade-arrives.test.ts	source-text	reads source as text (js)	layer 2	phone-screens	
+apps/mobile/test/store-copy-sqlite-jsi-patches.test.ts	data	reads data files (patch)	none	phone-shell	
+apps/mobile/test/strip-follows-payment.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/surfaces-structure.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/synthetic-event-read-is-synchronous.test.ts	source-text	walks source files	layer 2	phone-screens	
+apps/mobile/test/tags-shown.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/text-size-changes-live.test.ts	source-text	reads source as text (js, tsx)	layer 2	phone-screens	
+apps/mobile/test/theme.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/tls-upgrade-reason-on-close.test.ts	source-text	reads source as text (js, mjs)	layer 2	phone-screens	
+apps/mobile/test/toast-before-the-mirror-moves.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
+apps/mobile/test/toast-pill-placement.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/toast-undo-kept.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/ui-marks-logged.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/unified-push.test.ts	source-text	reads source as text (js, ts, tsx)	layer 2	phone-shell	
+apps/mobile/test/unsaved-changes.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/update-verbs.test.ts	data	reads data files (json): the app's manifest and the message catalogue	none	phone-shell	
+apps/mobile/test/use-lists-clock.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/verbs-announce.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/waiting-on-the-organizer.test.ts	data	reads data files (json): the message catalogue	none	phone-shell	
+apps/mobile/test/world-memo-owner.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/mobile/test/world-placement-body.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
+apps/server/test/ai-provider.test.ts	source-text	reads source as text (ts)	layer 1	server-wiring	
+apps/server/test/alert-last-resort.test.ts	source-text	reads source as text (ts)	layer 1	server-wiring	
+apps/server/test/boot-ceremony.pg.test.ts	data	reads data files (json): a manifest's version	none	server-wiring	
+apps/server/test/config-trusted-proxies.test.ts	data	reads data files (caddy)	none	server-wiring	
+apps/server/test/release-is-stated.test.ts	data	reads data files (json): a manifest's version	none	server-wiring	
+apps/server/test/service-address.test.ts	data	reads data files (json): a recorded answer	none	server-wiring	
+apps/sidecar/test/act-admission-retire-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/agree-rings-the-settings-doorbell.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/ai-anthropic-live.e2e.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/ai-local.e2e.test.ts	data	reads files it wrote itself	none	desktop-engine	
+apps/sidecar/test/ai-openai.test.ts	data	reads files it wrote itself	none	desktop-engine	
+apps/sidecar/test/ai-provider.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/ai-transport-one-classifier.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/answer-later-expunge.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/attachment-file.test.ts	data	reads data files (txt)	none	desktop-engine	
+apps/sidecar/test/attachment-open-ceiling-memory.e2e.test.ts	source-text	reads source as text (mjs)	layer 1	desktop-engine	
+apps/sidecar/test/attachment-open-ceiling.e2e.test.ts	data	reads data files (part, txt)	none	desktop-engine	
+apps/sidecar/test/auto-suggest-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/auto-unsubscribe-per-mailbox.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/auto-unsubscribe.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/away-one-door.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/away-reply-asks-the-lease.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/blank-repair-mode.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/boot-host-contract.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/boot-phase-narration.test.ts	data	reads data files (json)	none	desktop-engine	
+apps/sidecar/test/bound-breach-redial.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/calendar-facts-keyed.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/ceiling-named-in-log.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/client-route-coverage.test.ts	source-text	reads source as text (ts, tsx)	layer 1	desktop-engine	
+apps/sidecar/test/clock-step-back.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-account-erased-discards-the-copy.test.ts	source-text	reads source as text (rs)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-account-erased-door.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-approval-verdict.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-auth-answers-are-not-renewed.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-auth.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-auto-reply-flag.test.ts	data	reads data files (json)	none	desktop-engine	
+apps/sidecar/test/cloud-body-gap-is-a-comparison.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-consent-forward.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-door-marks-the-window.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-draft-formatting-cleared.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-echo-tight.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-engine-census.test.ts	source-text	the public desktop engine imports no Cloud module	ohmail/package-borders	tools	
+apps/sidecar/test/cloud-engine-store-stuck.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-follow-up.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-gap-offer.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-hosted-counts.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-hosted-filings.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-hosted-last-sync.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-kick.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-launch-bearer.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mailbox-refresh.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-mirror-apply-order.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-auth-verdict.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-erased-account.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-erased-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-fence-statements.test.ts	data	reads data files (json)	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-fk-holder.test.ts	data	reads data files (json, test)	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-mailbox-refs.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-mirror-open-read.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-organizer-role.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-mirror-owa-invitation.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-page-turns.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-profile.test.ts	data	reads data files (json, test)	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-screener-suggestion.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-sender-check.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/cloud-mirror-settings.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-triage-identity.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror-walled.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-mirror.test.ts	data	reads data files (json, marks, test)	none	desktop-engine	
+apps/sidecar/test/cloud-pair-served-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-paired-search.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-paired-timeline-route.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-pinned-engine.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-probe-both-engines.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-probe-operator-ca.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-quarantine-counts.test.ts	data	reads data files (json)	none	desktop-engine	
+apps/sidecar/test/cloud-queue-ahead-of-the-copy.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-rule-instants.test.ts	data	reads data files (json, test)	none	desktop-engine	
+apps/sidecar/test/cloud-rules-refresh-mid-bootstrap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-seal-state.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-session-durable.test.ts	data	reads data files (marker, seal)	none	desktop-engine	
+apps/sidecar/test/cloud-session-engine.test.ts	data	reads data files (seal, sessionExpired)	none	desktop-engine	
+apps/sidecar/test/cloud-session-expiry.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-session-revoke-at-host.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-session-wait.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-sign-out-ends-server-session.pg.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-signin-renewal.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/cloud-wake-walled-door.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/connection-write-census.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/consent-memo-one-door.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/correspondent-retro-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/credential-paths-clear-refusal.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/credential-seal-atomic.test.ts	data	reads data files (marker, seal, tmp)	none	desktop-engine	
+apps/sidecar/test/credential-seal-census.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/datadir-lock-hold.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/datadir-lock-identity.test.ts	data	reads files it wrote itself	none	desktop-engine	
+apps/sidecar/test/datadir-lock-recovery.test.ts	data	reads files it wrote itself	none	desktop-engine	
+apps/sidecar/test/datadir-template.test.ts	data	reads data files (json, sql)	none	desktop-engine	
+apps/sidecar/test/deleted-while-closed.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/desktop-ai-bridge.e2e.test.ts	source-text	reads source as text (rs)	layer 1	desktop-engine	
+apps/sidecar/test/desktop-store-fault-is-the-devices.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/dial-stored-folders.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/dial-timeouts.test.ts	source-text	walks source files	layer 1	desktop-engine	
+apps/sidecar/test/drain-checkpoint.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/drain-statistics.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/drain-survives-cycle-fault.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/drain-upkeep-turns.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/edits-follow-the-takeover.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/engine-build-commit.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/engine-clock-step-intervals.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/engine-closure-no-cli-entry.test.ts	source-text	walks source files	layer 1	desktop-engine	
+apps/sidecar/test/first-connect-seal.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/first-page-gate.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/first-sync.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/folder-deleted-elsewhere.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/fresh-store-cut-emulated.test.ts	data	through apps/sidecar/test/_cut-disk.ts: reads a data folder it made	none	desktop-engine	
+apps/sidecar/test/gap-catchup-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/gap-pass-waits-for-settled-rules.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/gap-travels-across-installs.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/gin-pending-list.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/hand-back-on-a-live-connection.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/hand-back-wakes-the-gate.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/hello.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/host-lan.e2e.test.ts	source-text	reads source as text (js, ts)	layer 1	desktop-engine	
+apps/sidecar/test/host-listener.e2e.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/host-mode.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/host-pin-probe.test.ts	source-text	reads source as text (rs, ts)	layer 1	desktop-engine	
+apps/sidecar/test/host-static.e2e.test.ts	source-text	reads source as text (js)	layer 1	desktop-engine	
+apps/sidecar/test/hosted-suggest-ceiling.test.ts	data	through apps/sidecar/test/_datadir.ts, packages/services/test/helpers/plane-pricing.ts: reads the migrations and a data folder it made; a recorded answer	none	desktop-engine	
+apps/sidecar/test/idle-doorbell.imap.test.ts	data	reads data files (conf)	none	desktop-engine	
+apps/sidecar/test/idle-drain-cadence.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/idle-drain-is-a-comparison.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/idle-drain-statement-ratchet.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/impersonation-filing-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/launch-arm-shrinks-meta.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/launch-bearer-renewal.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/launch-drain-first-page.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/launch-store-open.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/lease-door-per-write.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/lease-permit-stand-down-and-renew.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/list-address-backfill-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-action-receipt.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-consent-baseline.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-lease-unreadable-said.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/local-meta-undeletable-said.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-mirror-census.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/local-outage-disclosure.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-plaintext-dial-stays-private.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-probe-route-waits-for-loopback.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-probe-smtp.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-probe.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/local-retention.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-roster.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-search-store.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-server-said-apart.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-store-body-vector.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-store-cut-emulated.test.ts	data	through apps/sidecar/test/_cut-disk.ts, apps/sidecar/test/_datadir.ts: reads a data folder it made; the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-store-durability.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/local-store-fsync.test.ts	data	reads data files (conf, json)	none	desktop-engine	
+apps/sidecar/test/local-window-snapshot-cursor.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-write-off-backstop.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/log-census.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/log.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/mirror-owner.test.ts	source-text	reads source as text (rs)	layer 1	desktop-engine	
+apps/sidecar/test/mirror-page-order-converges.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/move-before-the-walk-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/move-expunge-fault.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/multi-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/name-backfill-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/one-message-never-stops-the-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/one-pipeline.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+apps/sidecar/test/organize-here-wakes-the-gate.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/organizer-kind-claim.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/organizer-takeover.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/orphan-shutdown.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/overrun-across-a-reset-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-batch-total-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-batch-total.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-every-folder-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-hold-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-hold-never-strands-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-ladder-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/overrun-set-aside.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/own-mail-at-the-gate.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/pair-undo-latch.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/pairing-local.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/pending-door.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/pglite-concurrent-dispatch.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/pglite-plans.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/pglite-transport.test.ts	data	reads data files (out, wasm)	none	desktop-engine	
+apps/sidecar/test/phone-engine-boot.test.ts	data	through packages/core/test/adapters/_providershape.ts: reads recorded provider shapes	none	desktop-engine	
+apps/sidecar/test/phone-engine-substitutes.test.ts	source-text	an import census: reads source as text (js, mjs, ts)	bundle contents	tools	
+apps/sidecar/test/phone-reads-the-holder-state.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/poll-arm-meta-refused.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/profile-import-card-no-door-clock.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/quit-within-grace.imap.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/quit-within-grace.test.ts	source-text	reads source as text (rs)	layer 1	desktop-engine	
+apps/sidecar/test/reader-cycle-presents-the-organizers-arrangement.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/reader-drain.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/reader-no-auto-resume.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/reader-queue-is-the-gate.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/reconnect-after-close.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/refused-fetch-not-an-outage.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/refused-press-dials-nothing.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/refused-press-purge-census.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/refused-session-keeps-the-write.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
+apps/sidecar/test/release-refusal-sibling.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/removal-across-the-quit.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
+apps/sidecar/test/removal-keeps-the-other-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/request-id-header.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/request-key-agreement.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/restart-keeps-the-claim.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/restored-door-reads-the-lease.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/resurface-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/resurface-launch-window.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/rule-retro-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/scheduled-send-not-on-a-phone.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/scheduled-send-stand-down.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/screener-claim-paired-desktop-parity.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/screener-reads-after-first-page.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/screener-reads-plan.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/screener-sender-date-index.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/screening-parity.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-ahead-of-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-backfill-gate.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+apps/sidecar/test/search-phases-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-phases.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-statistics.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-supersede-service.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-supersede.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-typo-read-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/search-warmup.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/seed-consent-from-its-row.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/seed-password-resupply.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/seed-removed.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/send-draft-create-is-not-the-send.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
+apps/sidecar/test/send-gmail-one-sent-copy.imap.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/send-reconcile-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/send-surface-cap.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/sending-unsettled.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/sidecar.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/sign-in-again-bare-mailbox.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/sign-out-chain-keeps-the-write.test.ts	data	reads data files (seal)	none	desktop-engine	
+apps/sidecar/test/sign-out-race-lands-the-write.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/signed-out-stamp.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/signout-fence.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/ai-ollama-live.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/cloud-approval-adopt.test.ts	data	reads data files (json, seal, test)	none	desktop-engine	
+apps/sidecar/test/slow/cloud-approval-engine.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/cloud-body-before-walk.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/cloud-local-surface.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/cloud-mode.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/cloud-pair-redeem.test.ts	data	reads data files (json, seal)	none	desktop-engine	
+apps/sidecar/test/slow/cloud-signin-one-tail.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/cloud-signin.test.ts	data	reads data files (platform, seal)	none	desktop-engine	
+apps/sidecar/test/slow/cloud-write-through.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/early-kill-store.test.ts	source-text	reads source as text (mjs, ts)	layer 1	desktop-engine	
+apps/sidecar/test/slow/fresh-store.test.ts	data	reads data files (conf)	none	desktop-engine	
+apps/sidecar/test/slow/kill-mid-drain.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/local-db.test.ts	source-text	reads source as text (mjs, rs, ts)	layer 1	desktop-engine	
+apps/sidecar/test/slow/mirror-owner-signin.test.ts	data	reads data files (email, json, seal)	none	desktop-engine	
+apps/sidecar/test/slow/search-budget-local.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/slow/sync-liveness.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/stand-down-mid-drain-is-a-state-change.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/standalone-consent-and-removal.test.ts	source-text	through apps/sidecar/test/_mailbox-rows.ts, apps/sidecar/test/_datadir.ts: reads the mail schema's source and the migrations; the migrations and a data folder it made	layer 1	desktop-engine	
+apps/sidecar/test/standalone-open-read.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/standalone-read-writeback.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-checkpoint-waits-for-the-window.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-close-door.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
+apps/sidecar/test/store-fatal-ends-the-engine.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/store-lanes-person.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/store-lanes.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/stored-login-clear.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/sidecar/test/sync-log-wiring.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/takeover-publishes-beside-the-held-settings.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/takeover-setup-decision.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/two-install-paired-door.e2e.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/unhandled-request-logged.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/unreadable-credential-is-an-outage.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/window-outbox-doors.test.ts	data	reads data files (test)	none	desktop-engine	
+apps/sidecar/test/window-outbox-power-cut.test.ts	data	reads files it wrote itself	none	desktop-engine	
+apps/sidecar/test/window-outbox.test.ts	data	reads data files (example, json)	none	desktop-engine	
+apps/sidecar/test/window-writes-survive-sign-out.test.ts	data	reads the data folder its own run wrote	none	desktop-engine	
+apps/sidecar/test/wire-corpus.gen.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
+apps/webapp/test/access-lock.test.tsx	source-text	walks source files	layer 2	removals	
+apps/webapp/test/account-erase-cancel.test.tsx	source-text	walks source files	layer 2	account	
+apps/webapp/test/account-wall.test.tsx	source-text	reads source as text (css): the wall's selectors in the app's stylesheet	layer 2	account	
+apps/webapp/test/action-bar.test.ts	source-text	reads source as text (css, mjs, ts, tsx)	layer 2	removals	
+apps/webapp/test/ai-answered-posture.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/ai-drafting-is-reachable.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/ai-off-switch.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/api-origin.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/api-rewrite.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/app-version.test.ts	source-text	reads source as text (mjs)	layer 2	removals	
+apps/webapp/test/approve-family-owner-absent-census.test.ts	source-text	an import census: reads source as text (ts, tsx)	ohmail/package-borders	tools	
+apps/webapp/test/attachment-list-state.at6.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/attachment-preview-stage-geometry.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/attachment-preview.test.tsx	source-text	reads source as text (mjs)	layer 2	removals	
+apps/webapp/test/attachments-wired.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/away-mark.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/away-notice.test.tsx	source-text	reads source as text (css, mjs, ts, tsx)	layer 2	notices	
+apps/webapp/test/away-unsaved-leave.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/block-notice-surfaces.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	notices	
+apps/webapp/test/body-open.test.ts	source-text	reads source as text (css, ts)	layer 2	removals	
+apps/webapp/test/boot-skeleton.test.tsx	source-text	reads source as text (css, ts)	layer 2	removals	
+apps/webapp/test/ccbcc-fold.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/claims-match-the-tree.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/closed-drawer-inert.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/cloud-draft-disclosure.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/column-geometry.test.ts	source-text	reads source as text (css, mjs)	layer 2	removals	
+apps/webapp/test/compose-and-held-polish.test.tsx	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/compose-autosave.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/compose-cancel.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/compose-composition.test.ts	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/compose-error-timing.test.ts	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/compose-forward.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	write	
+apps/webapp/test/compose-from-select.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
+apps/webapp/test/compose-names-sender.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
+apps/webapp/test/composer-signature.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/confirm-is-step-up.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/connect-gate-order.test.tsx	source-text	reads source as text (ts)	layer 2	doors	
+apps/webapp/test/contact-chips.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
+apps/webapp/test/conversation.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
+apps/webapp/test/cookie-writer-census.test.ts	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/copy-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/cross-surface-convergence.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/dark-rule-auto-twin.test.ts	source-text	reads source as text (css)	layer 2	removals	
+apps/webapp/test/delete-admission-census.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/delete-key-shell.test.tsx	data	reads data files (reader)	none	removals	
+apps/webapp/test/demo-gate.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
+apps/webapp/test/demo-zero-network.test.ts	source-text	an import census: reads source as text (tsx)	ohmail/package-borders	tools	
+apps/webapp/test/derived-stamp-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/desktop-cta.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/desktop-sync-visibility.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/dispatch-seam-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/drafts-delete-held.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/drafts-discard-confirm.test.tsx	source-text	reads source as text (css, mjs)	layer 2	write	
+apps/webapp/test/drafts-resolve-held.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/drafts-unverified.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/drain-mark.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/durability-notice.test.tsx	source-text	reads source as text (tsx)	layer 2	notices	
+apps/webapp/test/email-verification.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/empty-explainer-gutter.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/engine-armed.test.ts	source-text	reads source as text (mjs, ts)	layer 2	removals	
+apps/webapp/test/filing-refresh-on-decision.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/first-load-defers-editor.test.ts	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/first-load-defers-panes.test.ts	source-text	an import census: reads source as text (ts, tsx)	ohmail/package-borders	tools	
+apps/webapp/test/first-run-agree-waits-for-the-look.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/first-run-mount-census.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/first-run-stage.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/first-run-stale-holder.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/fold-band-ladder-polish.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/folders-rail.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/forward-always-offered.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/freshness-label.test.tsx	source-text	reads source as text (tsx): the mail state provider and the desktop gate	layer 2	removals	
+apps/webapp/test/header-menu-class-unshared.test.ts	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/held-release-one-door-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
+apps/webapp/test/held-send-recheck-window.test.ts	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/history-search-copy-census.test.ts	source-text	reads source as text (ts)	layer 2	search	
+apps/webapp/test/history-search-read-the-store.test.ts	source-text	reads source as text (ts, tsx)	layer 2	search	
+apps/webapp/test/history-toggle-pill.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/history-view.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/history-window.test.tsx	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/html-tree-budget-pin.test.ts	data	reads data files (json)	none	removals	
+apps/webapp/test/ics-event-card.test.tsx	data	reads data files (json): the message catalogue	none	removals	
+apps/webapp/test/idle-polls-hidden-guard.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/idle-renderer-animations.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/inline-pictures-frame-mechanism.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	removals	
+apps/webapp/test/join-finishing-details.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/join-plan-hint.test.tsx	source-text	reads source as text (ts)	layer 2	account	
+apps/webapp/test/junk-rescue-claims.test.ts	source-text	reads source as text (ts, tsx): the route, its client and its view; and the message catalogue	layer 2	removals	
+apps/webapp/test/junk-window-hook.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/lazy-view-retries.test.tsx	source-text	reads source as text (js, tsx)	layer 2	removals	
+apps/webapp/test/letter-focus-browser.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	reader	
+apps/webapp/test/list-older-wired.test.ts	source-text	reads source as text (ts)	layer 2	ohbox	
+apps/webapp/test/list-surface-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	ohbox	
+apps/webapp/test/list-title-size.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
+apps/webapp/test/list-views-mount-a-window.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/list-views-stamp-their-slots.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/lists-and-cards-geometry.test.tsx	source-text	reads source as text (css, ts)	layer 2	ohbox	
+apps/webapp/test/loaders-do-not-rotate.test.ts	source-text	reads source as text (css)	layer 2	removals	
+apps/webapp/test/locale-account.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	account	
+apps/webapp/test/locale-catalog.test.ts	data	reads data files (json, reads, threadMeta)	none	removals	
+apps/webapp/test/locale-shim-parity.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/login-card-centred-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	doors	
+apps/webapp/test/mail-render-rules-parity.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	removals	
+apps/webapp/test/mail-send-states.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/mail-state.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/mailbox-facts-census.test.ts	source-text	reads source as text (ts)	layer 2	mailboxes	
+apps/webapp/test/mailbox-reachable.test.ts	source-text	reads source as text (mjs, rs, ts, tsx)	layer 2	mailboxes	
+apps/webapp/test/mailbox-remove.test.tsx	source-text	reads source as text (ts)	layer 2	mailboxes	
+apps/webapp/test/mailbox-row-width.test.ts	source-text	reads source as text (css): the mailbox row's rules in the app's stylesheet	layer 2	ohbox	
+apps/webapp/test/mailbox-stand-down.test.tsx	source-text	reads source as text (ts)	layer 2	mailboxes	
+apps/webapp/test/mailbox-status-honesty.test.tsx	source-text	reads source as text (ts)	layer 2	mailboxes	
+apps/webapp/test/mailto-over-the-route-mirror.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/message-body-code.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
+apps/webapp/test/message-body-line-spacing.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
+apps/webapp/test/message-body-prose.test.ts	source-text	reads source as text (css, ts)	layer 2	reader	
+apps/webapp/test/message-body-reflow.test.ts	source-text	reads source as text (css, ts)	layer 2	reader	
+apps/webapp/test/message-body-tables.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
+apps/webapp/test/message-body-viewing.test.ts	data	through packages/client-engine/test/fixtures/letter-paper-corpus.ts: reads recorded newsletters	none	removals	
+apps/webapp/test/message-verb-cursor-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/modal-suspends-keymap.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/more-menu-fit.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/newsletter-corpus.test.tsx	data	reads data files (html)	none	removals	
+apps/webapp/test/not-organizing-yet-says-so.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/nothing-organizes-head-and-sheets.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/notifications-gate-census.test.ts	source-text	reads source as text (js, ts, tsx)	layer 2	doors	
+apps/webapp/test/ohbox-header-counts.test.ts	source-text	reads source as text (css, mjs, ts, tsx)	layer 2	ohbox	
+apps/webapp/test/ohbox-undo-puts-the-row-back.test.tsx	source-text	reads source as text (ts)	layer 2	ohbox	
+apps/webapp/test/ohbox-visit-mark.test.tsx	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/ohbox-where-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
+apps/webapp/test/ohbox-where-line.test.tsx	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/onboarding-claims.test.ts	data	reads data files (reads)	none	removals	
+apps/webapp/test/onboarding.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
+apps/webapp/test/one-composer-per-draft.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/one-size-formatter.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/overlay-viewport.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/owner-refusal-renders-once.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/page-body-refused.test.ts	source-text	reads source as text (js)	layer 2	removals	
+apps/webapp/test/password-section.test.tsx	source-text	reads source as text (tsx): the Cloud shell	layer 2	removals	
+apps/webapp/test/pdf-worker-version.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	removals	
+apps/webapp/test/phone-holder-sentence.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/phone-width-screener-rules.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
+apps/webapp/test/pile-nav.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/pill-snapshot.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/pill-verb-fold.test.tsx	source-text	reads source as text (css, mjs, ts)	layer 2	removals	
+apps/webapp/test/plain-text-line-breaks.test.tsx	source-text	reads source as text (css)	layer 2	removals	
+apps/webapp/test/press-reader-census.test.ts	source-text	reads source as text (ts)	layer 2	reader	
+apps/webapp/test/profile-import.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/proxy.e2e.test.ts	source-text	reads source as text (mjs, ts)	layer 2	removals	
+apps/webapp/test/quoted-history-a11y.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
+apps/webapp/test/quoted-history-render.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
+apps/webapp/test/quoted-history-thread.test.tsx	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	removals	
+apps/webapp/test/rail-notice-on-screen.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	notices	
+apps/webapp/test/rail-row-template.test.ts	source-text	reads source as text (css, tsx)	layer 2	ohbox	
+apps/webapp/test/rail-sync-readable.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/rail-tags-persist.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
+apps/webapp/test/read-switch-measure-geometry.test.ts	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/reader-modal-width.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
+apps/webapp/test/reader-programmatic-scroll-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	reader	
+apps/webapp/test/reader-stand-down.test.ts	source-text	reads source as text (ts)	layer 2	reader	
+apps/webapp/test/reads-pill-float.test.ts	source-text	reads source as text (css, mjs)	layer 2	removals	
+apps/webapp/test/reads-recipients.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/recipient-field.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/relative-time.test.ts	data	reads data files (json): the message catalogue	none	removals	
+apps/webapp/test/remote-images.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/render-scope-census.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 2	removals	
+apps/webapp/test/reply-cancel.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	write	
+apps/webapp/test/reply-ergonomics.test.ts	source-text	reads source as text (css, ts)	layer 2	write	
+apps/webapp/test/reply-panel.test.tsx	source-text	reads source as text (css, tsx)	layer 2	write	
+apps/webapp/test/reply-recipients.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/reply-run.test.ts	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/resume-lane-doors.test.ts	source-text	reads source as text (ts, tsx)	layer 2	doors	
+apps/webapp/test/resume-no-blank.test.tsx	source-text	reads source as text (tsx): the resume screen	layer 2	removals	
+apps/webapp/test/resume-owner.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/reuse-sweep-notice.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	notices	
+apps/webapp/test/rich-editor-marks.test.tsx	source-text	reads source as text (mjs, ts, tsx)	layer 2	write	
+apps/webapp/test/rich-editor.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	write	
+apps/webapp/test/routing-plan-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	account	
+apps/webapp/test/routing-window-wiring.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/row-action-slot-geometry.test.tsx	source-text	reads source as text (css, ts)	layer 2	ohbox	
+apps/webapp/test/row-actions-backdrop-band.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
+apps/webapp/test/row-menu-fit.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
+apps/webapp/test/row-participants-wiring.test.ts	source-text	reads source as text (tsx)	layer 2	ohbox	
+apps/webapp/test/row-stamp-wiring.test.ts	source-text	reads source as text (ts, tsx)	layer 2	ohbox	
+apps/webapp/test/row-thread-count.test.ts	source-text	reads source as text (tsx)	layer 2	reader	
+apps/webapp/test/scheme-control.test.tsx	data	reads data files (json): the message catalogue	none	removals	
+apps/webapp/test/screen-press-verdict-actions.test.ts	source-text	reads source as text (ts): the shell's verbs; and the message catalogue	layer 2	screener	
+apps/webapp/test/screener-decision-durable.test.tsx	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	removals	
+apps/webapp/test/screener-dim-wiring.test.ts	source-text	reads source as text (css, tsx)	layer 2	screener	
+apps/webapp/test/screener-held-body-door.test.tsx	source-text	reads source as text (tsx)	layer 2	screener	
+apps/webapp/test/screener-last-decision-narrow.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
+apps/webapp/test/screener-row-actions-overlay.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
+apps/webapp/test/screening-count-is-what-you-gain.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
+apps/webapp/test/search-locate.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	search	
+apps/webapp/test/search-open-exact.test.tsx	source-text	reads source as text (tsx)	layer 2	search	
+apps/webapp/test/search-render-budget.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	removals	
+apps/webapp/test/secondary-ink-contrast.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/security-headers.test.ts	source-text	reads source as text (js, ts)	layer 2	removals	
+apps/webapp/test/seed-offer-needs-a-mailbox.test.tsx	source-text	reads source as text (tsx)	layer 2	mailboxes	
+apps/webapp/test/selection-pill.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
+apps/webapp/test/selection-verb-parity.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/selfhost-account-kept.test.tsx	source-text	reads source as text (ts): a constant of the API's account route	layer 2	account	
+apps/webapp/test/selfhost-hsts.test.ts	data	reads data files (caddy, env, example, yml)	none	removals	
+apps/webapp/test/selfhost-private-origin-tls.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+apps/webapp/test/selfhost-says-this-server-census.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/send-and-done-keeps-its-plan.test.tsx	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/send-and-done.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/send-hold-census.test.ts	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/send-hold-follows-the-outbox.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/send-lock-settled-key-is-spent.test.ts	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/send-record-door-census.test.ts	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/send-record-outlives-its-send.test.tsx	source-text	reads source as text (ts)	layer 2	write	
+apps/webapp/test/sender-address-always-visible.test.tsx	source-text	reads source as text (css, ts)	layer 2	write	
+apps/webapp/test/sender-audit.test.ts	data	reads data files (json): the message catalogue	none	removals	
+apps/webapp/test/sender-screening.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/sender-sheet-now-in.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
+apps/webapp/test/sender-sheet-reachable.test.tsx	source-text	reads source as text (tsx)	layer 2	write	
+apps/webapp/test/sender-sheet-resolve-step.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
+apps/webapp/test/sender-sheet-scope-fits.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
+apps/webapp/test/session-cookie-spellings.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/session-expiry-single-rule.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/session-gate.test.ts	source-text	reads source as text (mjs, ts)	layer 2	doors	
+apps/webapp/test/session-renewal.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/session-resume.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/session-verdict-guard.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/settings-390-reflow.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	settings	
+apps/webapp/test/settings-account-layout.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	settings	
+apps/webapp/test/settings-copy-i18n.test.tsx	data	reads data files (json): the message catalogue	none	removals	
+apps/webapp/test/settings-devices-pane.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	settings	
+apps/webapp/test/settings-pane-rearms-wake.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	settings	
+apps/webapp/test/settings-polish-geometry.test.tsx	source-text	reads source as text (css, ts)	layer 2	settings	
+apps/webapp/test/settings-press-refusal-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	settings	
+apps/webapp/test/settings-section-parity.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	settings	
+apps/webapp/test/shell-boot-reconciles-wake.test.ts	source-text	reads source as text (js)	layer 2	removals	
+apps/webapp/test/shell-composition-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
+apps/webapp/test/shell-hands-the-mailbox-label.test.ts	source-text	reads source as text (tsx)	layer 2	mailboxes	
+apps/webapp/test/shell-verdict-sentence.test.ts	source-text	reads source as text (ts): the shell's verbs	layer 2	screener	
+apps/webapp/test/short-viewport-and-touch-targets.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/shortcut-hint.test.tsx	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/shortcut-sheet-drift.test.tsx	source-text	reads source as text (css, ts)	layer 2	removals	
+apps/webapp/test/sign-out-clears-durable-stores.test.ts	source-text	reads source as text (ts)	layer 2	doors	
+apps/webapp/test/sign-out-pending-gate.test.ts	source-text	reads source as text (ts): the middleware	layer 2	doors	
+apps/webapp/test/sign-out-revisit.e2e.test.ts	artifact	reads what was built (a build folder)	layer 5	removals	
+apps/webapp/test/sign-out.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+apps/webapp/test/signatures-rich.test.tsx	source-text	reads source as text (tsx)	layer 2	doors	
+apps/webapp/test/signup-posture-claims.test.ts	source-text	reads source as text (tsx)	layer 2	doors	
+apps/webapp/test/split-read-column-one-rule.test.ts	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/stable-callback-consumers.test.tsx	source-text	reads source as text (ts, tsx): the callers of a stable callback	layer 2	removals	
+apps/webapp/test/stage-cards-in-the-flow.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/storage-owner-scopes-every-door.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	doors	
+apps/webapp/test/store-row-verb-copy-census.test.ts	source-text	reads source as text (ts)	layer 2	ohbox	
+apps/webapp/test/store-row-verb-gates.test.ts	source-text	reads source as text (ts, tsx)	layer 2	ohbox	
+apps/webapp/test/stream-bar.test.tsx	source-text	reads source as text (tsx): the views	layer 2	removals	
+apps/webapp/test/stream-mount-window.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/stream-scroll.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	removals	
+apps/webapp/test/subject-rule.test.tsx	source-text	reads source as text (css, ts)	layer 2	removals	
+apps/webapp/test/sync-notice-one-copy.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	notices	
+apps/webapp/test/sync-owner-gate.test.ts	source-text	reads source as text (ts)	layer 2	doors	
+apps/webapp/test/tags-admin.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/thread-column-shadow.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
+apps/webapp/test/thread-marks-geometry.test.tsx	source-text	reads source as text (css, mjs, tsx)	layer 2	reader	
+apps/webapp/test/thread-read-browser.test.ts	source-text	reads source as text (css, js, mjs, tsx)	layer 2	reader	
+apps/webapp/test/token-reads-defined.test.ts	source-text	reads source as text (css)	layer 2	removals	
+apps/webapp/test/touch-key-hints.test.ts	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
+apps/webapp/test/trash-window-readonly.test.ts	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/trash.test.tsx	source-text	reads source as text (css, tsx)	layer 2	removals	
+apps/webapp/test/triage-keys.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/ui-vitals-census.test.ts	source-text	reads source as text (rs, ts, tsx)	layer 2	removals	
+apps/webapp/test/view-switch-journey.test.ts	source-text	reads source as text (mjs)	layer 2	removals	
+apps/webapp/test/view-window.test.tsx	source-text	reads source as text (css, ts)	layer 2	removals	
+apps/webapp/test/viewer-tags-and-stamp.test.tsx	source-text	imports a file reader and calls none; through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	removals	
+apps/webapp/test/viewport-reads-census.test.ts	source-text	reads source as text (css, mjs, ts, tsx)	layer 2	removals	
+apps/webapp/test/visible-dom-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/warm-open.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
+apps/webapp/test/waterline-word.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/width-ladder-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/withheld-copy-key-census.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/wordmark.test.ts	source-text	through test/support/wordmark.ts: reads the product folders, for the wordmark's spelling	layer 2	removals	
+apps/webapp/test/zero-layout-purity.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
+apps/webapp/test/zone-links-are-anchors.test.ts	source-text	walks source files	layer 2	removals	
+apps/webapp/test/zone-nav.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
+apps/webapp/test/zone-ring.test.ts	source-text	reads source as text (css, mjs)	layer 2	removals	
+apps/worker/test/ai-circuit-composition.test.ts	source-text	walks source files	layer 1	worker	
+apps/worker/test/ai-provider-config.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/ai-usage-composition.test.ts	source-text	reads source as text (ts): the worker's source	layer 1	worker	
+apps/worker/test/alert-db-outage.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/api-cron.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/attach-line-names-no-server.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/attach-nonblocking.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/auto-reply-not-engagement.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/backfill.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/blank-repair-worker-mode.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/box-journal-drift.pg.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
+apps/worker/test/bubble-up-inline.e2e.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/bubble-up.concurrency.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/ceiling-named-in-log.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/classifier-outage.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/cli-lease-wiring.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	
+apps/worker/test/cli.smoke.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/connection-error.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/cron-logging.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/cycle-authority-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/cycle-tail-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/cycle-tail-yields.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/dead-connection.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/deps.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/desired-intent-one-writer.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/driver-write-race.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/engagement-answers-the-sender.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/entitlements-fault-composition.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/fence-carries-the-status.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/first-import-progress.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/first-recording-release-census.test.ts	data	reads data files (md)	none	worker	
+apps/worker/test/first-sync-priority.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/forged-from-consent.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/gap-catchup-worker.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/gap-close-census.test.ts	source-text	walks source files	layer 1	worker	
+apps/worker/test/gap-travels-worker.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/hand-back-rings-the-pass.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/health-bounds.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/imap-bounds-isolation.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/isolated-db-hook-budget.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/isolated-db-naming.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	
+apps/worker/test/isolated-db-run-slot.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/kek-retirement-gate.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/known-set-budget.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	
+apps/worker/test/known-set-cache.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/lease-not-supplied-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/lease-write-permit-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/list-address-backfill-outage.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/lock-loss.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/mailbox-failure.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/mid-cycle-stand-down-not-a-failure.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/mover-candidate-allowlist.census.test.ts	source-text	reads source as text (mjs, ts)	layer 1	worker	
+apps/worker/test/multi-account.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/new-mailbox-roster-wake.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/no-pass-admits-a-stranger.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/observability.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/ohbox-tidy.no-imap.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
+apps/worker/test/one-shot-readings-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/operator-runner-release-refusal.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/organize-here-wakes-the-pass.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/organizer-lease-worker.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/organizer-lease.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/organizer-profile-worker.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/overrun-batch-total.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/overrun-hold-and-ladder.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/parked-account.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/parked-account.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/pass-registry.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/pipeline-move-cas.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/plane-ops-watch.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/profile-import-ask-worker.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/profile-reencodes-a-plain-message.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/proposal-cron.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/provider-refusal-soft-block.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/push-wake-content-free.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/reader-cycle-authority.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/refund-obligation-composition.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/release-stranded-claim.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/request-drain-host-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/request-drain-sweep-refused.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/roster-detach-mid-cycle.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/roster-isolation.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/roster-parallel-attach.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/roster-preemption.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/roster-serialization.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/roster.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/rule-retro.no-imap.test.ts	source-text	reads source as text (js, ts)	layer 1	worker	
+apps/worker/test/run-cli.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/screener-auto-act-callers.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/screener-auto-suggest-refund-door.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/screener-auto-suggest.pg.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/screener-cron-press.race.pg.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	worker	
+apps/worker/test/search-index-backfill-tail.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/shard.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/shared-db-fault.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/sign-in-retention-pass.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/standby.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/storage-cap-resolver.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/sync-role-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/sync-stamp-first-batch.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/sync-stamp.pg.test.ts	source-text	reads source as text (ts): the worker's entry	layer 1	worker	
+apps/worker/test/tail-stage-db-fault.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/tail-stage-runner-census.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/thread-backfill-placement.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/thread-erasure-backfill-lock.pg.test.ts	source-text	reads source as text (ts)	layer 1	worker	
+apps/worker/test/throttle-hint.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/trash-restore.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/wake-past-cap.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/wake-promotion.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/watch.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/worker-dial-door-attach.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/worker-dial-refusal.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/worker-multimailbox.e2e.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/worker-plaintext-dial-stays-private.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	worker	
+apps/worker/test/workflow-drain.concurrency.pg.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	worker	
+packages/api/test/account-header-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/admin-overview-plane-bound.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/admin-routes.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/admin-sync-roster.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/attachment-staging.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/client-identity.test.ts	source-text	walks source files: where the client's name is spelled	layer 1	services-proof	
+packages/api/test/cloud-health-markers-from-the-journal.test.ts	data	through packages/api/test/journal-marker-derivation.ts: reads the migrations	none	services-proof	
+packages/api/test/db-busy.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/desktop-host.test.ts	source-text	reads source as text (js, ts)	layer 1	services-proof	
+packages/api/test/enrollment-flow.test.ts	source-text	reads its own text: the file seeds no session row	layer 1	services-proof	
+packages/api/test/erased-bearer-pull-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/err-channel-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/folder-window-one-definition.test.ts	source-text	walks source files	layer 1	services-proof	
+packages/api/test/health-markers-from-the-journal.test.ts	data	through packages/api/test/journal-marker-derivation.ts: reads the migrations	none	services-proof	
+packages/api/test/health-markers-pin-every-migration.test.ts	data	through packages/api/test/journal-marker-derivation.ts: reads the migrations	none	services-proof	
+packages/api/test/hello.test.ts	source-text	reads source as text (js, ts)	layer 1	services-proof	
+packages/api/test/imap-probe-google.wprobe.test.ts	data	through packages/core/test/adapters/_providershape.ts: reads recorded provider shapes	none	services-proof	
+packages/api/test/img-route-ships-with-its-resolver.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/img-sizes-every-family.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/input-bounds-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/junk-window-logging.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/local-door-carries-no-admin.test.ts	source-text	an import census: reads source as text (js, ts)	ohmail/package-borders	tools	
+packages/api/test/local-folders-flag.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/mailbox-self-check.dovecot.test.ts	data	reads the mail rig's settings file, named by the environment	none	services-proof	
+packages/api/test/onboarding-flow.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/parse-cookies-one-definition.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/probe-guard-composition-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/query-bounds-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/query-scoping-census.test.ts	source-text	every query site names an account, a mailbox or a user	test on real Postgres: one account never reads another's	lock	
+packages/api/test/relay-allowlist-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/replay-has-one-renderer.test.ts	source-text	walks source files	layer 1	services-proof	
+packages/api/test/request-id-header.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/response-headers.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/retry-after-one-spelling.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/api/test/search-sort.r12.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/selfhost-external-tls-cookie-secure.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/api/test/session-door-busy.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/api/test/session-end-clears-cache.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/session-jar-one-writer.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/staff-token-one-door-census.test.ts	source-text	reads source as text (js, ts)	layer 1	services-proof	
+packages/api/test/staleness-coverage.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
+packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
+packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	
+packages/cal-core/test/pure.test.ts	artifact	reads what was built: the bundle of its own source; and its manifest	layer 5	cal-core	
+packages/cal-providers/test/bundle.test.ts	artifact	reads what was built: the bundle of its own source, its source folder's list and its manifest	layer 5	cal-read	
+packages/cal-providers/test/caldav-multistatus.test.ts	data	reads data files (json): recorded CalDAV answers	none	cal-read	
+packages/cal-providers/test/caldav-reader.test.ts	data	reads data files (json): recorded CalDAV exchanges	none	cal-read	
+packages/cal-providers/test/google-reader.test.ts	data	reads data files (json): recorded Google answers	none	cal-read	
+packages/cal-providers/test/microsoft-reader.test.ts	data	reads data files (json) through its helpers: the Microsoft double's seed	none	cal-read	
+packages/cal-providers/test/providers.test.ts	data	reads data files (json): the apps' manifests	none	cal-read	
+packages/cal-providers/test/support/test/bench-census.test.ts	data	reads data files (json): the recorded exchanges and the Microsoft double's seed	none	cal-read	
+packages/cal-providers/test/support/test/caldav-test-client.test.ts	data	reads data files through its helper calendar-test-accounts.ts: the accounts and bench files an environment variable names	none	cal-read	
+packages/cal-providers/test/support/test/calendar-test-accounts.test.ts	data	reads files it wrote itself	none	cal-read	
+packages/cal-providers/test/support/test/google-test-client.test.ts	data	reads data files through its helper calendar-test-accounts.ts: the accounts and bench files an environment variable names	none	cal-read	
+packages/cal-providers/test/support/test/ms-double.test.ts	data	reads data files (json) through its helpers: the Microsoft double's seed	none	cal-read	
+packages/cal-providers/test/support/test/recorder.test.ts	data	reads files it wrote itself	none	cal-read	
+packages/client-engine/test/body-door-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/consent-index-callers.census.test.ts	source-text	walks source files	layer 1	engine	
+packages/client-engine/test/drain-policy-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/engine-owns-no-timers.test.ts	source-text	reads source as text (ts, tsx)	layer 1	engine	
+packages/client-engine/test/folder-labels.test.ts	data	through test/support/guard-list.ts: reads a list the environment names	none	engine	
+packages/client-engine/test/hour12-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/html-tree-budget-held-text.test.ts	source-text	reads source as text (js)	layer 1	engine	
+packages/client-engine/test/import-corpus-identity.test.ts	source-text	an import census: reads source as text (mjs)	ohmail/package-borders	tools	
+packages/client-engine/test/open-read-flag-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/outbox-hold-ceiling.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	
+packages/client-engine/test/outbox-lifecycle.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/outbox-owner-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/own-address-never-a-queue-row.test.ts	source-text	reads source as text (js, ts)	layer 1	engine	
+packages/client-engine/test/pending-outcome-census.test.ts	source-text	reads source as text (mjs, ts)	layer 1	engine	
+packages/client-engine/test/press-import-census.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
+packages/client-engine/test/providers-corpus.test.ts	data	reads data files (json)	none	engine	
+packages/client-engine/test/published-copy-is-not-a-rules-list.test.ts	source-text	reads source as text (ts, tsx)	layer 1	engine	
+packages/client-engine/test/quoted-history-monotone.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/quoted-history.test.ts	data	through packages/client-engine/test/quoted-history-fixtures.ts: reads recorded letters	none	engine	
+packages/client-engine/test/rule-writes-one-per-key-census.test.ts	source-text	walks source files: one rule write per key	layer 1	engine	
+packages/client-engine/test/send-ambiguity.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/send-staging.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/store-read-reask-census.test.ts	source-text	reads source as text (ts, tsx)	layer 1	engine	
+packages/client-engine/test/surface-completion-census.test.ts	source-text	reads source as text (ts, tsx)	layer 1	engine	
+packages/client-engine/test/triage-pile-order.census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
+packages/client-engine/test/try-again-keeps-the-order.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	
+packages/core/test/adapters/google-auth.test.ts	data	through packages/core/test/adapters/_providershape.ts: reads recorded provider shapes	none	mail-io	
+packages/core/test/adapters/imap-answer-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/adapters/imap-bounds-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/adapters/imap-transport-floor.test.ts	source-text	reads source as text (js, ts)	layer 1	mail-io	
+packages/core/test/adapters/imap-write-door-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/adapters/imap.changes.folder-gone.corpus.test.ts	data	through packages/core/test/adapters/_providershape.ts: reads recorded provider shapes	none	mail-io	
+packages/core/test/adapters/meta-folder.test.ts	source-text	reads source as text (ts): the adapters	layer 1	mail-io	
+packages/core/test/adapters/meta-one-door.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/adapters/organizer-lease-meta-window.test.ts	source-text	reads source as text (js, ts)	layer 1	mail-io	
+packages/core/test/adapters/organizer-lease-provider-shapes.test.ts	data	through packages/core/test/adapters/_providershape.ts: reads recorded provider shapes	none	mail-io	
+packages/core/test/adapters/organizer-profile-bounded.test.ts	source-text	reads source as text (js)	layer 1	mail-io	
+packages/core/test/adapters/organizer-profile-canonical-v2.test.ts	data	reads data files (md, test)	none	mail-io	
+packages/core/test/adapters/organizer-profile-doc.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/adapters/organizer-profile-tidy.test.ts	source-text	walks source files	layer 1	mail-io	
+packages/core/test/adapters/uid-epoch-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/ai/draft.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/core/test/ai/structured-output-schemas-closed.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/ai/transports/provider-env.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/ai/workflows/propose.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/core/test/attachment-sections.test.ts	data	reads data files (json)	none	mail-io	
+packages/core/test/away-eligibility.test.ts	source-text	reads source as text (js, ts)	layer 1	mail-io	
+packages/core/test/epoch.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/html-storage.test.ts	data	reads data files (sql)	none	mail-io	
+packages/core/test/lease-io-doubles.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/message-bodies-headers-write-once.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/message-search-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/organizer-identity-bytes.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/post-round-trip-writes.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/quoted-history-parts.test.ts	data	reads data files (eml)	none	mail-io	
+packages/core/test/route-override-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/screener-admission-census.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/core/test/sensitive.short-code.test.ts	source-text	reads source as text (ts)	layer 1	mail-io	
+packages/db-mail/test/package.test.ts	source-text	reads source as text (js, ts)	layer 1	services-proof	
+packages/db/test/alert-drill-staff-grant.pg.test.ts	data	reads data files (json, sql)	none	services-proof	
+packages/db/test/alert-drill.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/alert-driver-gaps-staff-grant.pg.test.ts	data	reads data files (json, sql)	none	services-proof	
+packages/db/test/alert-false-open.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/alert-kind-arms.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/alert-state-roundtrip.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/alert-state-writers.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/alerts-reliability.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/arrival-order-index.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/arrival-order-setup-order.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/automatic-ai-one-predicate.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/away-piles-closed.pg.test.ts	data	reads data files (json)	none	services-proof	
+packages/db/test/baseline-adoption.pg.test.ts	data	reads data files (json)	none	services-proof	
+packages/db/test/body-tsv-bounded.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/change-notify-chokepoint.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/cli-exit-drain.test.ts	source-text	reads source as text (js, mjs, ts)	layer 1	services-proof	
+packages/db/test/closed-set-parity.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/desktop-engine-closure.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
+packages/db/test/dialect-matrix-wiring.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/entitlements-client.test.ts	data	reads data files (md, until)	none	services-proof	
+packages/db/test/entitlements-fault-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/entitlements-fault-row.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/flag-intent-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/folder-state-outstanding-account.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/folder-state-outstanding-parity.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/inbound-header-index-bounds.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/journal-drops-a-referenced-table.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/journal-lockstep.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/journal-reissue.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/journal-split.pg.test.ts	data	reads data files (columns, json)	none	services-proof	
+packages/db/test/journal-split.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/db/test/kek-rewrap.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	services-proof	
+packages/db/test/list-consent-one-door.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/mailbox-dedup.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/mailbox-error-codes.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/mailbox-smtp-size-probe.pg.test.ts	data	reads data files (md, sql)	none	services-proof	
+packages/db/test/message-instances.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/message-search-migration.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0061.backfill.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0100-reader-window.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0144-person-decided.test.ts	data	reads data files (sql, test)	none	services-proof	
+packages/db/test/migration-0146-person-decided-followup.test.ts	data	reads data files (sql, test)	none	services-proof	
+packages/db/test/migration-0154-recipient-keys.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0160-folder-state-outstanding.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0165-0166-one-pass.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0165-account-storage-recount.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0166-account-storage-facts.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0166-staff-grant.pg.test.ts	data	reads data files (json)	none	services-proof	
+packages/db/test/migration-0181-reconcile-pending-queue.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-allowance-0120.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-breakpoints.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-cloud-0056.roundtrip.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-idempotent-forms.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-lock-cost.test.ts	source-text	reads source as text (mjs)	layer 1	services-proof	
+packages/db/test/migration-provenance-record.test.ts	data	reads data files (sql): the migrations	none	services-proof	
+packages/db/test/migration-replay-idempotence.pg.test.ts	data	through packages/db/test/_migration-forms.ts: reads the migrations	none	services-proof	
+packages/db/test/no-drizzle-kit.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/no-organizer-one-predicate.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/notice-sink.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/organizer-event-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/own-address-one-set-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/pg-harness-brand.test.ts	source-text	walks the Postgres test files as text	layer 1	services-proof	
+packages/db/test/pg-socket-census.test.ts	source-text	walks source files: every place that opens a Postgres connection	layer 1	services-proof	
+packages/db/test/phantom-rollback.pg.test.ts	source-text	reads source as text (js)	layer 1	services-proof	
+packages/db/test/plane-ops.test.ts	data	reads data files (json)	none	services-proof	
+packages/db/test/pool-wedge.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/recipient-keys-index.test.ts	data	reads data files (json, sql)	none	services-proof	
+packages/db/test/released-migrations-are-frozen.test.ts	data	reads data files (json, sql)	none	services-proof	
+packages/db/test/request-apply-by-key-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/retire-billing-functions.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/reverse-charge.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/rule-lock-order-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/rule-state-delta-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/rules-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/schema-split.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/db/test/screener-apply-lift.test.ts	source-text	reads source as text (ts): the worker's screener act	layer 1	services-proof	
+packages/db/test/screening-baseline-backfill.pg.test.ts	data	reads data files (execute, json)	none	services-proof	
+packages/db/test/search-settings-transaction-local.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/sender-date-index.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/server-only-modules.test.ts	source-text	server-only modules are imported by no client package	ohmail/package-borders	tools	
+packages/db/test/settled-press-stamp-census.test.ts	source-text	walks source files	layer 1	services-proof	
+packages/db/test/setup-prod-prepublication.pg.test.ts	data	reads data files (sql): the migrations	none	services-proof	
+packages/db/test/setup-prod-verify.pg.test.ts	data	reads data files (git, sql)	none	services-proof	
+packages/db/test/shared-provider-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/sign-in-horizon-coherence.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/spend-sites-census.test.ts	source-text	a metered act cannot run without its credits: a census of the spend sites	type: a metered act carries its cost	services-proof	
+packages/db/test/sqlite-baseline.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/sqlite-journal-inlined.test.ts	artifact	reads what was built (js)	layer 5	services-proof	
+packages/db/test/staff-channels.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/staff-role-copy-gate.test.ts	data	reads data files (json, sql)	none	services-proof	
+packages/db/test/staff-role.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/stand-down-sends-census.test.ts	source-text	reads source as text (ts, tsx)	layer 1	services-proof	
+packages/db/test/testing-template.test.ts	data	reads data files (json, sql, tar)	none	services-proof	
+packages/db/test/transaction-carries-dialect.test.ts	source-text	an import census: walks source files	ohmail/package-borders	tools	
+packages/db/test/tx-dialect-carry-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/worker-timeouts.pg.test.ts	source-text	reads source as text (ts): the database client and the worker's leader lock	layer 1	services-proof	
+packages/fixtures/test/shape.test.ts	data	through test/support/guard-list.ts: reads a list the environment names	none	engine	
+packages/services/test/admin-freetext-projection.test.ts	source-text	reads source as text (ts): the admin service	layer 1	services-proof	
+packages/services/test/ai-refusal-contradiction.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/attachment-part-id-not-synced.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/auth-crypto-cost.test.ts	data	reads data files (json)	none	services-proof	
+packages/services/test/auth-entry-census.test.ts	source-text	an import census: reads source as text (js, ts)	ohmail/package-borders	tools	
+packages/services/test/auth-fenced-openers.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/away-responder-pass-hosts.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/services/test/away-send-sites-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/brand-surfaces.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/credential-report-commit-side.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/dialect-bridge-census.test.ts	source-text	walks source files: the services' use of the dialect bridge	layer 1	services-proof	
+packages/services/test/dto-away-replied-at.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	services-proof	
+packages/services/test/erasure-coverage-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/erasure-fence-census.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/services/test/filing-doorbell.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/mail-entry-census.test.ts	source-text	an import census: reads source as text (js, ts)	ohmail/package-borders	tools	
+packages/services/test/mail-resend.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/services/test/mailbox-doorbell.test.ts	source-text	walks source files	layer 1	services-proof	
+packages/services/test/mailbox-facts-batched.pg.test.ts	data	reads data files: a recorded query plan	none	services-proof	
+packages/services/test/mailbox-takeover.no-imap.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/migration-0144-shipped-allows.test.ts	data	reads data files (sql)	none	services-proof	
+packages/services/test/new-for-you-one-predicate.pg.test.ts	data	through apps/worker/test/_isolateddb-name.ts: reads the workspace's manifest	none	services-proof	
+packages/services/test/new-for-you-one-predicate.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/services/test/organizer-role-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/outbound-html.test.ts	data	reads data files (sql)	none	services-proof	
+packages/services/test/pinning-writers-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/placement-parity.test.ts	source-text	reads source as text (mjs, ts)	layer 1	services-proof	
+packages/services/test/platform-signals.test.ts	source-text	reads source as text (mjs)	layer 1	services-proof	
+packages/services/test/raw-console-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/read-stamp-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/screener-ai.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-cutline-one-owner.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/services/test/screener-outcomes.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-pricing-port.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-quote-ceiling.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-sender-check.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-sender-identity.pg.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest-correspondent.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest-exclusive.pg.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest-gate.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest-key-before-spend.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/screener-suggest-lanes.pg.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest-refund-obligation.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest-usage.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/screener-suggest.concurrency.pg.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/search-address.pg.test.ts	data	reads data files (execute, id, json)	none	services-proof	
+packages/services/test/search-index-backfill.pg.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+packages/services/test/sender-unverified.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/sensitive-rescreen.no-imap.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/suggest-lane-gate.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/services/test/swallowed-fault-lines.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	
+packages/services/test/unsubscribe-drain-bounds.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/tokens/test/design-compare-sheet.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	tokens	
+packages/tokens/test/design-fonts-bundled.test.ts	source-text	reads source as text (css): every stylesheet's font sources; and the bundled font files and their licences	layer 5	tokens	
+packages/tokens/test/design-generated-identity.test.ts	artifact	reads what was generated: the committed design files are what the generator writes	layer 5	tokens	
+packages/tokens/test/design-not-yet-imported.test.ts	source-text	nothing imports the new design's values yet: holds the kit's border by text	ohmail/package-borders	tools	
+packages/tokens/test/design-omarchy-slots.test.ts	data	reads data files (json)	none	tokens	
+packages/tokens/test/design-one-source.test.ts	source-text	reads source as text (css, ts)	layer 5	tokens	
+packages/tokens/test/faces-paper-purity.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	tokens	
+packages/tokens/test/ohmarchy-regeneration.test.ts	source-text	reads source as text (css, mjs)	layer 5	tokens	
+packages/tokens/test/ohmarchy-spec-identity.test.ts	source-text	reads source as text (js)	layer 5	tokens	
+packages/tokens/test/omarchy-counterpart.test.ts	source-text	reads source as text (ts)	layer 5	tokens	
+packages/tokens/test/omarchy-mapping.test.ts	source-text	reads source as text (js)	layer 5	tokens	
+packages/tokens/test/omarchy-settings.test.ts	data	reads data files (toml)	none	tokens	
+packages/ui/test/avatar-theme.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/banner-form.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	kit	
+packages/ui/test/bulk-strip.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/date-picker.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/doorbell-stack.test.ts	source-text	reads source as text (css, mjs)	layer 2	kit	
+packages/ui/test/interactions.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/motion.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/phone-type-census.test.ts	source-text	reads source as text (css)	layer 2	kit	
+packages/ui/test/reader-close.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/segmented-control.test.tsx	source-text	reads source as text (css, tsx)	layer 2	kit	
+packages/ui/test/segmented-pair-fill.test.tsx	source-text	reads source as text (css, tsx)	layer 2	kit	
+packages/ui/test/smoke.test.tsx	source-text	through test/support/wordmark.ts: reads the product folders, for the wordmark's spelling	layer 2	kit	
+packages/ui/test/spinner.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/text-field.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/touch-strips.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/wire/test/types-only.test.ts	artifact	lists its own modules, then loads and compiles them	layer 5	wire	
+test/ai-usage-stays-in-the-plane.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/alert-handle-per-host.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/alert-pass-callers-name-parked.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/api-never-applies-organization.test.ts	source-text	the API never moves mail: it reads the API's source for the mail adapter's moving verbs	type: the API's mail adapter moves no mail	ext-server	
+test/apply-patches.test.ts	source-text	reads source as text (js, mjs)	layer 5	unassigned	
+test/attachment-open-ceiling.test.ts	source-text	reads source as text (rs, ts, tsx)	layer 5	unassigned	
+test/attachment-url-revocation-census.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/auth-verdict-one-definition.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/auto-reply-engagement-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/bubble-up-scope-census.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/build-workflow-cargo-locked.test.ts	data	reads data files (sh, yml)	none	unassigned	
+test/build-workflow-flatpak-permissions.test.ts	data	reads data files (sh, yml)	none	unassigned	
+test/build-workflow-install-kind.test.ts	artifact	reads what was built (AppImage)	layer 5	unassigned	
+test/build-workflow-mac-signing.test.ts	data	reads data files (dmg, yml)	none	unassigned	
+test/build-workflow-standing-reds.test.ts	data	reads data files (json, sh, yml)	none	unassigned	
+test/build-workflow-tag-trigger.test.ts	data	reads data files (3, yml)	none	unassigned	
+test/cast-hides-a-stale-double.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/census-map-duplicate-keys.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/changelog-fragments.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/changelog-no-unfilled-placeholder.test.ts	data	reads data files (d, md)	none	unassigned	
+test/checkout-line-endings.test.ts	source-text	reads source as text (rs, ts)	layer 5	unassigned	
+test/ci-draft-costs-no-machine.test.ts	data	reads data files (yml): the workflows ci, dco and guard	none	unassigned	
+test/ci-runs-the-gate.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 5	unassigned	
+test/ci-select.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 5	unassigned	
+test/ci-shards-desktop.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/ci-shards.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/ci-smokes-the-engine-bundle.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/clients-name-themselves.test.ts	source-text	walks source files: every client that builds an adapter names itself	layer 5	unassigned	
+test/compose-db-shm-size.test.ts	data	reads data files (json, yml)	none	unassigned	
+test/consent-stamps-the-baseline-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/contributor-route.test.ts	data	reads data files (md, yml)	none	unassigned	
+test/demo-domain-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/desktop-cfg-gated-preconditions.test.ts	source-text	reads source as text (rs)	layer 5	unassigned	
+test/desktop-egress-disclosed.test.ts	data	reads data files (json, md, xml)	none	unassigned	
+test/desktop-first-party-urls.test.ts	source-text	reads source as text (rs)	layer 5	unassigned	
+test/desktop-launch-check.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/desktop-unsubscribe-note.test.tsx	source-text	reads source as text (tsx)	layer 5	unassigned	
+test/dev-compose-binds-loopback.test.ts	data	reads data files (yml)	none	unassigned	
+test/diagnostics-census.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+test/dockerignore-carries-patches.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
+test/drizzle-identifier-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/drop-database-sessions.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/engine-version-baked.test.ts	data	reads data files (json)	none	unassigned	
+test/erase-doors-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/every-dial-is-guarded.test.ts	source-text	an import census: reads source as text (ts)	bundle contents	tools	
+test/every-pass-has-a-producer.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/factor-routes-never-refresh.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/fixtures-name-their-clock-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/flatpak-manifest.test.ts	source-text	reads source as text (mjs, rs)	layer 5	unassigned	
+test/flatpak-metainfo.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/german-says-mail.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/ghcr-images-token-per-job.test.ts	data	reads data files (yml)	none	unassigned	
+test/greenmail-host-one-resolver.test.ts	source-text	reads source as text (js, mjs, ts)	layer 5	unassigned	
+test/guard-list.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
+test/htmlparser2-linear-stack.test.ts	source-text	an import census: reads source as text (cjs, mjs)	ohmail/package-borders	tools	
+test/idle-derivation-registry.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/images-are-multi-arch.test.ts	data	reads data files (md, selfhost, yml)	none	unassigned	
+test/imapflow-upstream-outside-the-phone.test.ts	source-text	reads source as text (js, ts)	layer 5	unassigned	
+test/import-hold-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/invariant-table.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/journeys/guards.test.ts	source-text	reads the journeys' own files as text: a control is found by role and name, and nothing waits for time	lint rule: a journey finds a control by role and name	journeys	
+test/journeys/journeys/compose.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/drafts.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/erase.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/first-run.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/gate.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/history.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/ohbox.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/reader.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/reads.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/receipts.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/screener.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/search.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-about.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-account.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-ai.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-away.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-billing.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-desktop.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-devices.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-folders.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-general.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-help.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-invites.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-mailboxes.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-notifications.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-rules.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-screener.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-security.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-signatures.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-storage.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings-tags.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/settings.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/sign-out.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/trash.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/triage.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/landing-pricing-matches-plan-card.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/macos-update-signing.test.ts	data	reads data files (plist, yml)	none	unassigned	
+test/mail-stamp-census.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/mailboxes-handback-copy.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/message-files-census.test.ts	source-text	reads source as text (tsx)	layer 5	unassigned	
+test/migrated-db-hook-budget-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/mobile-native-worklets.test.ts	data	reads data files (cpp, h)	none	unassigned	
+test/model-name-one-definition.test.ts	source-text	an import census: reads source as text (mjs, ts, tsx)	ohmail/package-borders	tools	
+test/model-sink-screen-census.test.ts	source-text	walks source files	layer 5	unassigned	
+test/news-folder-literal-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/news-pile-name-census.test.ts	source-text	reads source as text (rs, ts)	layer 5	unassigned	
+test/next-version-floor.test.ts	data	reads data files (json)	none	unassigned	
+test/no-control-bytes.test.ts	source-text	through test/support/control-bytes.ts: reads the tree's files, for control bytes	layer 5	unassigned	
+test/no-mailbox-frames-tracked.test.ts	data	reads data files (json, png)	none	unassigned	
+test/no-stripe-workspace.test.ts	data	reads data files (json)	none	unassigned	
+test/node-consumers-avoid-src-leaves.test.ts	source-text	a Node consumer imports a package by its entry, never a src leaf	ohmail/package-borders	tools	
+test/nodemailer-transport-access-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/ohbox-default-bar-l10n.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/organizer-environment-reads.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/organizer-kind-closed-set.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/organizer-lease-seam-registry.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/organizer-window-one-per-mailbox.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/outer-handle-in-transaction-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/perf-budgets.test.ts	source-text	reads source as text (mjs, rs)	layer 5	unassigned	
+test/perf-smoke-check.test.ts	source-text	reads source as text (mjs, rs, ts)	layer 5	unassigned	
+test/perf-smoke-summary.test.ts	data	reads data files (yml)	none	unassigned	
+test/pg-url-one-resolver.test.ts	source-text	reads source as text (mjs, mts, ts)	layer 5	unassigned	
+test/pglite-template-env-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/pin-released-migrations.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/pr-build-scope.test.ts	source-text	reads source as text (mjs, ts, tsx)	layer 5	unassigned	
+test/pr-guard.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/published-images-pin-their-base.test.ts	data	reads data files (selfhost, yml)	none	unassigned	
+test/published-roots-carry-no-plane-staff.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/reader-refusal-one-decider.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/readme-assets.test.ts	source-text	reads source as text (css, ts)	layer 5	unassigned	
+test/refresh-answer-one-classifier.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+test/release-asset-set.test.ts	data	reads data files (sh, yml)	none	unassigned	
+test/release-builds-carry-patches.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/release-feeds-builder-provenance.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/release-feeds-checkout-retry.test.ts	data	reads data files (json, yml)	none	unassigned	
+test/release-feeds-fence.test.ts	data	reads data files (8, json, log, md, sh, yml)	none	unassigned	
+test/release-feeds-workflow.test.ts	data	reads data files (0, 3, 300, 9, log, n, sh, yml)	none	unassigned	
+test/release-gh-transport-retry.test.ts	data	reads data files (gz, log, sh, yml)	none	unassigned	
+test/release-signing-isolation.test.ts	data	reads data files (json, yml)	none	unassigned	
+test/reply-column-has-its-forward-twin.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/retry-infra.test.ts	data	reads data files (npm, sh)	none	unassigned	
+test/rig-append-date-census.test.ts	source-text	reads the test files as text: a rig's letters take their dates from the helper	layer 5	unassigned	
+test/rule-match-key-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/rule-order-one-comparator.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+test/rule-retro-request-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/rustfs-stays-quiet.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/screener-one-destination-list.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/search-rank-census.test.ts	source-text	reads source as text (ts, tsx)	layer 5	unassigned	
+test/selfhost-ai-provider-env.test.ts	data	reads data files (example, md, yml)	none	unassigned	
+test/selfhost-alert-env-parity.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/selfhost-allowance-parity.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/selfhost-blank-repair-env.test.ts	data	reads data files (example, yml)	none	unassigned	
+test/selfhost-compose-pins-its-release.test.ts	data	reads data files (json, yml)	none	unassigned	
+test/selfhost-device-client-parity.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/selfhost-image-promotion.test.ts	data	reads data files (example, sh, yml)	none	unassigned	
+test/selfhost-images-are-ours.test.ts	data	reads data files (lock, sh, yml)	none	unassigned	
+test/selfhost-images-name-their-commit.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/selfhost-organizer-display-name.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/selfhost-proxy-reload.test.ts	data	reads data files (caddy, env, sh)	none	unassigned	
+test/selfhost-smoke.test.ts	data	reads data files (env, example, json, sh, yml)	none	unassigned	
+test/selfhost-store-upgrade.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/selfhost-trusted-proxies-compose.test.ts	data	reads data files (caddy, sh, yml)	none	unassigned	
+test/selfhost-vapid-parity.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/sender-header-census.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
+test/server-images-cap-the-malloc-arenas.test.ts	data	reads data files (selfhost)	none	unassigned	
+test/service-gate-ci.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/service-gate.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/service-needs.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/shipped-binary-inspection.test.ts	data	reads data files (sh, yml)	none	unassigned	
+test/signed-out-meta-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/silent-catch-census.test.ts	source-text	walks source files	layer 5	unassigned	
+test/snapshot-page-1-definition.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/source-scan.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/stored-keys-registry.test.ts	source-text	walks source files: every stored name has a row in the registry	layer 5	wire	
+test/tag-hues.test.ts	source-text	reads source as text (css, ts, tsx)	layer 5	unassigned	
+test/test-budget-census.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/transport-frame-cap-one-home.test.ts	source-text	reads source as text (rs, ts)	layer 5	unassigned	
+test/umbrel-draft-says-it-is-stale.test.ts	data	reads data files (json, md, yml)	none	unassigned	
+test/umbrel-pre-start-upgrade.test.ts	data	reads data files (env)	none	unassigned	
+test/unjudged-write-codes.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/update-answers-not-sent.test.ts	source-text	walks source files: the words of an update answer are sent nowhere	layer 5	unassigned	
+test/update-locator-passes-from.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/vendor-node-offline.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/vercel-install-npm-pin.test.ts	data	reads data files (json)	none	unassigned	
+test/webapp-dockerfile-react-types.test.ts	data	reads data files (json, yml)	none	unassigned	
+test/workflows-cap-their-matrices.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
+test/workflows-pin-every-action.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
+test/workflows-pin-their-toolchains.test.ts	data	reads data files (yml): the workflows and the toolchain files	none	unassigned	
+test/workflows-retry-only-infra.test.ts	source-text	reads source as text (mjs)	layer 5	unassigned	
+test/workflows-route-linux-jobs.test.ts	data	reads data files (3, 6, 9, b, yml)	none	unassigned	
+test/workflows-sign-apart.test.ts	data	reads data files (sh, yml)	none	unassigned	
+test/workflows-under-pull-requests.test.ts	data	reads data files (3)	none	unassigned	
