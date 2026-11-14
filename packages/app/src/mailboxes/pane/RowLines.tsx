@@ -100,6 +100,7 @@ export function RowLines(
         <ConnectForm
           ask={{
             purpose: { kind: form, mailbox: subjectOf(m) },
+            holdLeave: props.holdEdit,
             onDone: (result) => done(result, props, () => setEditing((e) => (e === m.id ? null : e))),
           }}
           door={props.connect}

@@ -1,4 +1,4 @@
-import type { HostAddress } from "./device.js";
+import type { HostAddress, PhysicalLeave } from "./device.js";
 
 type Ask = Parameters<HostAddress["holdLeave"]>[0];
 
@@ -23,16 +23,33 @@ export function leaveHold(changed: (held: boolean) => void = () => {}) {
     // The query and an optional leading hash do not change which Settings pane owns its draft.
     return current?.leaves(next) ?? false;
   }
-  function heldBefore(next: string, resume: () => void): boolean {
+  function heldBefore(
+    next: string,
+    resume: () => void | Promise<boolean>,
+    physical?: PhysicalLeave,
+  ): boolean {
     const hold = current;
     if (hold === null || !leaving(next)) return false;
     const attempt = ++hold.attempt;
-    hold.ask(() => {
-      if (current !== hold || hold.attempt !== attempt) return;
-      current = null;
-      changed(false);
-      resume();
-    });
+    const live = () => current === hold && hold.attempt === attempt && !physical?.signal.aborted;
+    let chosen = false;
+    hold.ask((drop) => {
+      if (chosen || !live()) return;
+      chosen = true;
+      const release = () => {
+        current = null;
+        changed(false);
+        drop?.();
+      };
+      if (physical) {
+        void Promise.resolve(resume()).then((accepted) => {
+          if (accepted && live()) release();
+        });
+      } else {
+        release();
+        void resume();
+      }
+    }, physical);
     return true;
   }
   return { holdLeave, heldBefore, leaving };

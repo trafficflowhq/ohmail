@@ -27,18 +27,35 @@ export function onShellWake(woke: (why: WakeWhy) => void): () => void {
 }
 
 /**
- * The notice permission as the page reads it. The phone's notices are the organizer's, Android's; iOS posts none, so
- * there is nothing to ask for there.
+ * The iPhone's own permission for the calendar's local notifications, where the build carries the calendar's module
+ * (`calendar/calendar-port.ts`): the one kind of notice the iPhone shows.
  */
-export async function noticePermission(host: NotificationPermissionHost): Promise<NoticePermission> {
-  if (host.platform !== "android") return "unsupported";
+export interface LocalNoticePermission {
+  permission?(): Promise<"granted" | "denied" | "default">;
+  request?(): Promise<"granted" | "denied">;
+}
+
+/**
+ * The notice permission as the page reads it. Android's is the app's one notification permission. The iPhone posts
+ * no mail notice: its one notice is the calendar's alert, a local notification, so the permission there is that one,
+ * read through the calendar's module; without it there is nothing to ask for.
+ */
+export async function noticePermission(
+  host: NotificationPermissionHost, local: LocalNoticePermission | null = null,
+): Promise<NoticePermission> {
+  if (host.platform !== "android") return local?.permission === undefined ? "unsupported" : local.permission();
   if (await host.permissionGranted()) return "granted";
   return (await host.readAsked()) ? "denied" : "default";
 }
 
-/** The page asked for the permission: the system's prompt, and the install's record that it asked. */
-export async function askNoticePermission(host: NotificationPermissionHost): Promise<NoticePermission> {
-  if (host.platform !== "android") return "unsupported";
+/**
+ * The page asked for the permission: the system's prompt, and the install's record that it asked. The page asks at
+ * the press that needs it (on the iPhone, turning the calendar's alerts on), never at launch.
+ */
+export async function askNoticePermission(
+  host: NotificationPermissionHost, local: LocalNoticePermission | null = null,
+): Promise<NoticePermission> {
+  if (host.platform !== "android") return local?.request === undefined ? "unsupported" : local.request();
   const answer = await host.request();
   await host.writeAsked().catch(() => undefined);
   return answer === "granted" ? "granted" : "denied";

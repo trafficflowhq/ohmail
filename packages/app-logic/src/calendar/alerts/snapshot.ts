@@ -89,8 +89,9 @@ export function calendarSnapshotOf(input: SnapshotInput): CalendarSnapshot | nul
   const listed: { first: number; last: number; event: SnapshotEvent }[] = [];
   for (const o of shown) {
     const { record } = o;
-    if (record.status === "cancelled" || record.myAnswer === "declined") continue;
-    const label = eventLabel(record, input.widgetTitles);
+    const busyOnly = o.calendar.access === "busy";
+    if (record.status === "cancelled" || (busyOnly ? !record.busy : record.myAnswer === "declined")) continue;
+    const label = busyOnly ? { as: "busy" as const } : eventLabel(record, input.widgetTitles);
     const span = daySpanOf(o.occurrence, input.zone, input.zones);
     const startMs = startMsOf(o.occurrence.start, input.zone, input.zones);
     if (label === null || span === null || startMs === null) continue;
@@ -108,7 +109,7 @@ export function calendarSnapshotOf(input: SnapshotInput): CalendarSnapshot | nul
         startMs,
         endMs: endMs !== null && endMs >= startMs ? endMs : null,
         allDay: span.allDay,
-        toAnswer: waitsForAnswer(record, own),
+        toAnswer: !busyOnly && waitsForAnswer(record, own),
       },
     });
   }

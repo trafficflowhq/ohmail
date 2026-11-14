@@ -38,9 +38,9 @@ export function nativePhoneDiagnosticDeps(): PhoneDiagnosticDeps {
 }
 
 /** Raise the share sheet for the file just written. `false` = the platform refused. */
-export async function shareDiagnosticFile(uri: string): Promise<boolean> {
+export async function shareDiagnosticFile(uri: string, allowed: () => boolean = () => true): Promise<boolean> {
   try {
-    if (!(await Sharing.isAvailableAsync())) return false;
+    if (!allowed() || !(await Sharing.isAvailableAsync()) || !allowed()) return false;
     await Sharing.shareAsync(uri, { mimeType: "application/json" });
     return true;
   } catch {

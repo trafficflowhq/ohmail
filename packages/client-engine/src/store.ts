@@ -1,7 +1,7 @@
 import { calendarSettlementExpiry, type CalendarSettlement } from "./calendar-receipts.js";
 import type { Cursor, EngineMessage } from "@ohmail/wire";
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
-import { cascadeCalendarRemoval } from "./calendar-cascade.js";
+import { cascadeCalendarRemoval, forgetBusyCalendarDetails } from "./calendar-cascade.js";
 import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
 import { CALENDAR_OUTBOX_TYPE, CALENDAR_SETTLEMENT_TYPE, isCalendarQueueType, MAILBOX_TYPE, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { SyncChange, SyncResponse } from "./types.js";
@@ -413,7 +413,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     this.unflushedCursor = null;
     // A claim a mirror kept over a letter it already holds as deleted — written before the
     // cascade below existed — leaves at the first load. A failed write rides the next flush.
-    const healed = this.cascadeGoneLetterClaims(null);
+    const healed = [...this.cascadeGoneLetterClaims(null), ...forgetBusyCalendarDetails(this.records, null)];
     if (healed.length > 0) await this.flush(healed, null, []).catch(() => undefined);
   }
 
@@ -953,7 +953,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
-      ...this.cascadeCalendarRemovals(applied),
+      ...this.cascadeCalendarRemovals(applied), ...forgetBusyCalendarDetails(this.records, applied),
       ...this.cascadeEmptiedThreads(threads, applied), ...this.claimsOfGoneLetters(applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
@@ -1214,7 +1214,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
-      ...this.cascadeCalendarRemovals(applied),
+      ...this.cascadeCalendarRemovals(applied), ...forgetBusyCalendarDetails(this.records, applied),
       ...this.cascadeEmptiedThreads(threads, applied), ...this.claimsOfGoneLetters(applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));

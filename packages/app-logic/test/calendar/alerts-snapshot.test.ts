@@ -136,6 +136,55 @@ describe("the phone's snapshot", () => {
     ]);
   });
 
+  it("replaces the details of retained invitations when the same calendar becomes busy-only", () => {
+    const record = invitation("shared", "20261116", {
+      title: "Planning meeting",
+      place: "Room twelve",
+      notes: "Discuss renewal",
+      start: zurich("20261116", "100000"),
+      end: zurich("20261116", "103000"),
+      alarms: [{ minutesBefore: 10, method: "notice" }],
+    });
+    const ownBlock = event("private", "20261116", {
+      calendarId: "personal",
+      title: "Personal appointment",
+      private: true,
+    });
+    const personal = { ...calendarOf(), id: "personal" };
+    const calendars = [calendarOf(), personal];
+    const before = snapshotOf([record, ownBlock], { calendars, summaryOn: true, summaryAt: 18 * 60 });
+    expect(before.days[0]!.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventId: "shared",
+          label: { as: "title", text: record.title },
+          toAnswer: true,
+        }),
+      ]),
+    );
+    expect(before.summary?.toAnswer).toBe(1);
+
+    const after = snapshotOf([record, ownBlock], {
+      calendars: [{ ...calendars[0]!, access: "busy" }, personal],
+      summaryOn: true,
+      summaryAt: 18 * 60,
+    });
+    expect(after.scope).toBe(before.scope);
+    expect(after.days[0]!.events).toEqual([
+      expect.objectContaining({ eventId: "private", label: { as: "busy" }, toAnswer: false }),
+      expect.objectContaining({
+        eventId: "shared",
+        label: { as: "busy" },
+        toAnswer: false,
+        startMs: Date.UTC(2026, 10, 16, 9),
+        endMs: Date.UTC(2026, 10, 16, 9, 30),
+      }),
+    ]);
+    expect(after.alerts).toEqual([]);
+    expect(after.toAnswer).toBe(0);
+    expect(after.summary?.toAnswer).toBe(0);
+  });
+
   it("twenty events in a day: twelve listed, all day first, the rest counted", () => {
     const records = [
       ...Array.from({ length: 19 }, (_, i) =>

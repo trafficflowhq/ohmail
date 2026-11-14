@@ -5,7 +5,8 @@
  * event standing under a calendar the device no longer has. The same seq guard as the mailbox's
  * cascade: a record written after the delete stays.
  */
-import type { MirrorRecord } from "./apply.js";
+import type { CalendarEventRecord, CalendarRecord } from "@ohmail/wire";
+import { recordKey, type MirrorRecord } from "./apply.js";
 
 export function cascadeCalendarRemoval(
   records: ReadonlyMap<string, MirrorRecord>, applied: readonly MirrorRecord[],
@@ -33,4 +34,42 @@ export function cascadeCalendarRemoval(
   };
   take("calendar", "connectionId", connections, calendars);
   take("calendar_event", "calendarId", calendars);
+}
+
+/** A synced access change can arrive without fresh event rows. Erase cached detail in the same flush. */
+export function forgetBusyCalendarDetails(
+  records: Map<string, MirrorRecord>, applied: readonly MirrorRecord[] | null,
+): MirrorRecord[] {
+  const calendarRows = applied === null ? records.values() : applied;
+  let busy = false;
+  const changedEvents: MirrorRecord[] = [];
+  for (const row of calendarRows) {
+    if (row.type === "calendar" && (row.entity as CalendarRecord | null)?.access === "busy") busy = true;
+    if (applied !== null && row.type === "calendar_event") changedEvents.push(row);
+  }
+  const candidates = busy ? records.values() : changedEvents;
+  const dirty: MirrorRecord[] = [];
+  for (const row of candidates) {
+    if (row.type !== "calendar_event") continue;
+    const key = recordKey(row.type, row.id);
+    if (records.get(key) !== row) continue;
+    const event = row.entity as CalendarEventRecord | null;
+    if (event === null) continue;
+    const calendar = records.get(recordKey("calendar", event.calendarId))?.entity as CalendarRecord | null | undefined;
+    if (calendar?.access !== "busy") continue;
+    const { personalSeries, deleteMembers, deleteScopes, ...retained } = event;
+    if (event.title === "" && event.notes === null && event.place === null && event.callLink === null &&
+        event.organizer === null && event.myAnswer === null && !event.invitees?.length && !event.alarms?.length &&
+        !event.writes?.length && personalSeries === undefined && deleteMembers === undefined && deleteScopes === undefined) continue;
+    const next = {
+      ...row,
+      entity: {
+        ...retained, title: "", notes: null, place: null, callLink: null, organizer: null, myAnswer: null,
+        invitees: [], alarms: [], writes: [],
+      } satisfies CalendarEventRecord,
+    };
+    records.set(key, next);
+    dirty.push(next);
+  }
+  return dirty;
 }

@@ -89,6 +89,8 @@ export interface ConnectForm {
   readonly longWait: boolean;
   /** The field's handle is attached here. */
   readonly password: RefObject<PasswordHandle | null>;
+  /** Only presence and the number of edits to the password field. */
+  readonly passwordInput: Machine["passwordInput"];
   type(field: TypedField, value: string): void;
   choose(id: string): void;
   /** The password field changed: whether it holds anything now. Never what. */
@@ -164,7 +166,7 @@ function askingOf(machine: Machine): ConnectForm["asking"] {
 
 /** Whether the form holds enough to press: an edit its password; a new connection its tile, address, servers and password. */
 function readyOf(machine: Machine, facts: ConnectFacts, door: ConnectFormInput["door"]): boolean {
-  if (!machine.hasPassword) return false;
+  if (!machine.passwordInput.filled) return false;
   if (facts.purpose === "edit" || facts.purpose === "reconnect") return door.edit !== NONE;
   const { typed } = machine.state;
   const preset = presetOf(typed, facts);
@@ -267,6 +269,7 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
     found: found.imap !== null || found.smtp !== null ? found : null,
     longWait,
     password: machine.password,
+    passwordInput: machine.passwordInput,
     type: (field, value) => dispatch({ kind: "typed", field, value }),
     choose: (id) => {
       addressFirst.pick(id);

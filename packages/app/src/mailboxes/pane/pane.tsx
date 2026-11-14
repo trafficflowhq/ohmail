@@ -36,6 +36,9 @@ export interface MailboxesSlots {
   readonly calendar: CalendarHalfSlot | None;
   /** Recovery of a saved settings copy, on a host that offers it. */
   readonly savedSettings?: ComponentType;
+  /** A device's own status at the head of the mailbox list. */
+  readonly head?: ComponentType;
+  readonly holdEdit?: boolean;
   /** A native roster with device-only operations. It occupies the same registered Settings section. */
   readonly device?: ComponentType<
     PaneBodyProps & {
@@ -55,6 +58,7 @@ export type MailboxesParts = Omit<MailboxesSlots, "mailState">;
  */
 export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" | "useSummary"> {
   const SavedSettings = slots.savedSettings;
+  const Head = slots.head;
   function Body(_props: PaneBodyProps): ReactNode {
     const { host, route, commands } = useFrame();
     const engine = useEngine();
@@ -72,6 +76,7 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
     const here = route.place === "settings" && route.sub === "mailboxes";
     return (
       <>
+        {Head ? <Head /> : null}
         <MailboxesPane
           wire={host.wires.mailboxes}
           connect={host.wires.connect}
@@ -79,6 +84,9 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
           capability={host.capabilities.mailboxes}
           service={host.capabilities.service}
           factor={slots.factor}
+          holdEdit={
+            slots.holdEdit ? (ask) => host.device.address.holdLeave(ask, "#/settings/mailboxes") : undefined
+          }
           calendar={slots.calendar}
           opened={here ? (route.words.mailbox ?? null) : null}
           stage={host.features.stages.firstRun !== NONE}

@@ -4,7 +4,13 @@
  * this: the page for what it sends and what it receives, the app's native side for what it sends.
  * (The native module joins what the page sends before anything reads it.)
  */
-import { PIECE_BYTES, type Joined, type Piece } from "./bridge-kinds";
+import type { Joined, Piece } from "./bridge-kinds";
+
+/** The text limit of one bridge frame. */
+export const PIECE_BYTES = 256 * 1024;
+
+/** The time native gives a page to answer an ask. */
+export const ASK_DEADLINE_MS = 700;
 
 /** The texts to post for one message, in order: the message itself, or its pieces and their head. */
 export function framesOf(text: string, id: number, epoch: string): string[] {

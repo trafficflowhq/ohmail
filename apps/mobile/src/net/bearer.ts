@@ -168,11 +168,15 @@ function mayRenewFor(url: string): boolean {
 /** The same loose-init fetch shape the engine's HttpAdapter and the desktop manager ride. */
 export type FetchLike = (url: string, init?: unknown) => Promise<Response>;
 
+/** A native caller can check the credential about to be stamped, including on a replay. */
+export const CREDENTIAL_CHECK = Symbol("credentialCheck");
+
 interface LooseInit {
   method?: string;
   headers?: Record<string, string>;
   body?: unknown;
   signal?: AbortSignal;
+  [CREDENTIAL_CHECK]?: (generation: number | null) => boolean;
 }
 
 export class BearerManagerRN implements SessionRenewalDoor {
@@ -342,6 +346,10 @@ export class BearerManagerRN implements SessionRenewalDoor {
     return this.access !== null ? { ...declared, authorization: `Bearer ${this.access}` } : declared;
   }
 
+  credentialGeneration(): number | null {
+    return this.access === null ? null : this.generation;
+  }
+
   /**
    * End the session locally and tell the connection layer. Never throws, and IDEMPOTENT: the
    * routed logout below can die inside its own recovery (the refresh refused mid-logout), and
@@ -467,17 +475,21 @@ export class BearerManagerRN implements SessionRenewalDoor {
     /* ITS OWN ORIGIN ONLY: a URL elsewhere (a staged upload's grant) is passed through unstamped and
        never renewed, so the bearer cannot leave the server that minted it. */
     if (!this.ownOrigin(url)) return this.fetchImpl(url, init);
-    const options = (init ?? {}) as LooseInit;
+    const { [CREDENTIAL_CHECK]: check, ...options } = (init ?? {}) as LooseInit;
     const stamped = (): LooseInit => ({
       ...options,
       headers: { ...(options.headers ?? {}), ...this.headers() },
     });
+    const send = (): Promise<Response> =>
+      check && !check(this.credentialGeneration())
+        ? Promise.resolve(new Response(null, { status: 503 }))
+        : this.fetchImpl(url, stamped());
     // A press whose 401 is never renewed leaves on a live token: a lapsed window rotates FIRST,
     // then the press is sent once, so a correct code is not refused for a session that only
     // needed renewing. An unstated window with a token held is today's path.
     if (!mayRenewFor(url) && this.refresh !== null && this.windowLapsed()) await this.rotate();
     const stampedIn = this.generation;
-    const first = await this.heard(await this.fetchImpl(url, stamped()));
+    const first = await this.heard(await send());
     if (first.status !== 401 || this.refresh === null || !mayRenewFor(url)) return first;
     // The server named the CREDENTIAL (a wrong code): the answer itself, never a lapsed session.
     if (await isCredentialRefusal(first)) return first;
@@ -487,7 +499,7 @@ export class BearerManagerRN implements SessionRenewalDoor {
     if (options.signal?.aborted) throw options.signal.reason ?? Object.assign(new Error("aborted"), { name: "AbortError" });
     // Either the rotation minted a fresh pair, or one had ALREADY happened since this request
     // was stamped — both mean the same thing: replay once under the current generation.
-    return this.heard(await this.fetchImpl(url, stamped()));
+    return this.heard(await send());
   };
 
   /** Is this request for the origin this pair was minted by. An unreadable URL is not. */

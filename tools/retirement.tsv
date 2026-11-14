@@ -102,6 +102,8 @@ apps/mobile/test/body-drawn-under-its-stamp.test.ts	source-text	reads source as 
 apps/mobile/test/body-note.test.ts	source-text	reads source as text (ts)	layer 2	phone-screens	
 apps/mobile/test/boot-surface.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/build-info.test.ts	source-text	reads source as text (gradle, tsx)	layer 2	phone-screens	
+apps/mobile/test/calendar-native.test.ts	source-text	reads source as text (json, kt, swift, xml): the calendar's native module, its declarations and its words held to the catalogue's	layer 2	unassigned	
+apps/mobile/test/calendar-variants.test.ts	source-text	reads source as text (pbxproj, plist, swift): the app template's Xcode project the widget's extension is added to, and the files a prebuild writes for it	layer 2	unassigned	
 apps/mobile/test/certificate-refusal-named.test.ts	source-text	reads source as text (js, ts)	layer 2	phone-screens	
 apps/mobile/test/compose-attach-photo-crash.test.ts	source-text	reads source as text (mjs, swift, ts)	layer 2	phone-screens	
 apps/mobile/test/compose-attach-shrinks-photos.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	

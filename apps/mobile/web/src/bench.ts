@@ -11,6 +11,8 @@ import { OUTBOX_TYPE } from "./engine-package";
 import { isKept } from "../../src/shell/kept-families";
 import type { LinkInTarget, SwitchPlace } from "../../src/shell/bridge-kinds";
 import type { OtherAppDoor } from "./other-app";
+import type { CalendarHanded } from "./calendar-record";
+import type { CalendarSnapshot } from "./engine-package";
 
 /** The marker a release page must never carry. */
 export const BENCH_MARKER = "ohmail-bench-door";
@@ -33,15 +35,21 @@ export interface BenchDoor {
   switchTo(place: SwitchPlace): Promise<"opened" | "absent">;
   /** The last place the other app opened this one at, held until a seat takes it; null when none came. */
   arrival(): LinkInTarget | null;
+  /** The calendar's record handed to native as the page hands it, until the page's own builder does: what native did. */
+  calendar(record: CalendarSnapshot): Promise<CalendarHanded>;
 }
 
 export function benchDoor(
   engine: OhmailEngine, store: MirrorStore, storage: StorageLike,
-  other: { readonly door: OtherAppDoor; readonly arrival: () => LinkInTarget | null },
+  other: {
+    readonly door: OtherAppDoor; readonly arrival: () => LinkInTarget | null;
+    readonly calendar?: (record: CalendarSnapshot) => Promise<CalendarHanded>;
+  },
 ): BenchDoor {
   return {
     switchTo: (place) => other.door.open(place),
     arrival: other.arrival,
+    calendar: (record) => (other.calendar === undefined ? Promise.resolve("refused") : other.calendar(record)),
     marker: BENCH_MARKER,
     words(key, text) {
       if (!isKept(key)) throw new Error("the bench types into a kept family only");
