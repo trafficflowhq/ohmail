@@ -9,7 +9,7 @@ import type { PaneModel } from "@ohmail/app-logic/mailboxes/pane/use-pane";
 import type { PaneVerbs } from "@ohmail/app-logic/mailboxes/pane/verbs";
 import { NONE, type ConnectWire, type None } from "../../host/index.js";
 import { useText } from "../../text/index.js";
-import type { CalendarHalfSlot, FactorSlot } from "../connect/contract.js";
+import type { CalendarHalfSlot, ConnectAsk, FactorSlot } from "../connect/contract.js";
 import { RowLines } from "./RowLines.js";
 import { useFigure, useSay, useStamps } from "./say.js";
 
@@ -21,6 +21,7 @@ export interface RowProps {
   readonly verbs: PaneVerbs;
   readonly connect: ConnectWire | None;
   readonly factor: FactorSlot | None;
+  readonly holdEdit?: ConnectAsk["holdLeave"];
   readonly calendar: CalendarHalfSlot | None;
   readonly filer: "cloud" | "server";
   readonly importingSole: boolean;

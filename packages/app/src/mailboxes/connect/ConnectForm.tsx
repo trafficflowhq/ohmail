@@ -1,6 +1,8 @@
-import type { ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
+import { Dialog } from "@ohmail/ui/base";
 import { useConnectForm } from "@ohmail/app-logic/mailboxes/connect/use-connect-form";
 import { NONE } from "../../host/contract.js";
+import { useDraftLeave } from "../../settings/use-draft-leave.js";
 import { useTextLookup } from "../../text/index.js";
 import type { ConnectFormProps, ConnectSubject } from "./contract.js";
 import type { Drawn } from "./drawn.js";
@@ -43,6 +45,18 @@ function Opened({
     onDone: ask.onDone,
     ...(ask.onCodeStarted ? { onCodeStarted: ask.onCodeStarted } : {}),
   });
+  const { typed } = form.state;
+  const { imapHost, imapPort, smtpHost, smtpPort, user } = typed;
+  const { filled, revision: passwordRevision } = form.passwordInput;
+  const dirty = filled || [imapHost, imapPort, smtpHost, smtpPort, user].some((value) => value !== "");
+  const revision = useMemo(() => [typed, passwordRevision], [typed, passwordRevision]);
+  const holdLeave = ask.holdLeave;
+  const leave = useDraftLeave(
+    kind === "edit" && holdLeave !== undefined && dirty,
+    (question) => holdLeave!(question),
+    revision,
+  );
+  const leaveWords = text("away");
   const d: Drawn = {
     form,
     ask,
@@ -63,6 +77,25 @@ function Opened({
   const asking = form.asking;
   return (
     <div className="mbx-connect-part">
+      {leave.leaving ? (
+        <Dialog
+          open
+          alert
+          hot
+          keysOn="cancel"
+          title={leaveWords("leaveAsk")}
+          onClose={leave.keep}
+          confirm={{
+            label: leaveWords("leaveDiscard"),
+            onPress: () =>
+              leave.discard(() => {
+                form.password.current?.clear();
+                ask.onDone({ kind: "left" });
+              }),
+          }}
+          cancel={{ label: leaveWords("leaveKeep") }}
+        />
+      ) : null}
       {/* No address to post to and no named field: a press before the page's script sends nothing typed. */}
       <form
         className="mbx-connect-form"

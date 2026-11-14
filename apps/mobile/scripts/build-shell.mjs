@@ -43,7 +43,16 @@ export const BENCH_MARKER = "ohmail-bench-door";
  * The namespaces of the shared catalogue the page carries: the frame's own and the mailbox sentences its connection
  * line borrows. A place registered on the phone adds the namespaces it reads here, in the same change.
  */
-export const PAGE_NAMESPACES = ["frame", "mailboxes"];
+const FRAME_NAMESPACES = ["frame", "mailboxes"];
+const CALENDAR_NAMESPACES = [...FRAME_NAMESPACES, "calendar", "calsettings", "event", "calmail", "relativeTime", "viewError", "place"];
+export const PAGE_NAMESPACES = [
+  ...FRAME_NAMESPACES, "rail", "cursor", "viewError", "sync", "sendingLine", "place", "relativeTime",
+  "ohbox", "markAll", "reader", "body", "message", "mailBody", "bodyText", "attachments", "icsEvent",
+  "attachmentPreview", "aiRefusal", "compose", "draftReply", "sentCopy", "reply", "write",
+  "screener", "seed", "screening", "reads", "stream", "news", "receipts", "triage", "later", "parked", "resurface",
+  "history", "trash", "tag", "tags", "folder", "drafts", "address", "search", "palette", "shortcuts", "rules",
+  "settings", "settingsMenu", "phoneSettings", "about", "away", "calsettings", "phoneRefusal", "onboarding", "providerPicker", "session",
+];
 /**
  * The namespaces the door's page carries: the ways in's own and the phone's refusals, and those the one connect form
  * reads on the purpose `standalone` (the provider table's words, the mailboxes' own). A page of the door adds the
@@ -186,7 +195,7 @@ export async function buildShell({ out = SHELL_OUT, bench = false, app = "ohmail
   const inputs = await page({
     out, name: "shell", entry: join(WEB, "src", "main.tsx"), template: { file: "index.html", markup: template },
     define: { __OHMAIL_BENCH__: bench ? "true" : "false" },
-    plugins: [catalogueOf(join(WEB, "src"), PAGE_NAMESPACES), mounted],
+    plugins: [catalogueOf(join(WEB, "src"), app === "ohmail" ? PAGE_NAMESPACES : CALENDAR_NAMESPACES), mounted],
   });
   const js = readFileSync(join(out, "shell.js"), "utf8");
   if (!bench && js.includes(BENCH_MARKER)) throw new Error("build-shell: the bench's door is in a release page");

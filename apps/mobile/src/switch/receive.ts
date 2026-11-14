@@ -69,7 +69,7 @@ export interface ReceiveDeps {
    */
   readonly minter: () => ((challenge: string) => Promise<string | null>) | undefined;
   /** Go live on the session a handoff made: the connection's own adoption, inside the transition. */
-  readonly adopt: (handed: HandedSession) => void;
+  readonly adopt: (handed: HandedSession, stillCurrent: () => boolean) => void | Promise<void>;
   /** A place inside this app's own account, for the surface that draws it. */
   readonly place: (to: ArrivedPlace) => void;
 }
@@ -231,7 +231,8 @@ function handoff(deps: ReceiveDeps, h: { c: string; l: string; d: string | null;
       await forgetProfile(deps.env, profile.id, { closed: closed.catch(() => undefined) }).catch(() => undefined);
       return "dropped";
     }
-    deps.adopt(outcome);
+    await deps.adopt(outcome, stillCurrent);
+    if (!stillCurrent()) return "superseded";
     const place = decodePlace(p, deps.from);
     if (place !== null && place.to !== "last") deps.place(place);
     return "signedIn";

@@ -4,7 +4,8 @@
  * page two questions (`ask`): whether back was taken (handlers newest first, the first to answer true
  * took it) and how many unsent letters the page holds; the page answers each at once.
  */
-import type { BackSignal, FoldReading, KeyboardReading, LinkIn, LinkedDraft, SafeInsets, Signal, WakeSignal } from "@ohmail/app/host";
+import type { BackSignal, HostAddress, FoldReading, KeyboardReading, LinkIn, LinkedDraft, SafeInsets, Signal, WakeSignal } from "@ohmail/app/host";
+import { closeTopOverlay } from "@ohmail/ui/base";
 import { parseMailto, type MailNotice, type NOTICE_COUNT_MAX, type NoticePermission } from "./engine-package";
 import type * as Wire from "../../src/shell/bridge-kinds";
 import type { ShellConfig } from "../../src/shell/bridge-kinds";
@@ -20,7 +21,6 @@ type Holds<T extends readonly true[]> = T;
 export type BridgeShapesAreTheContracts = Holds<[
   Same<Wire.FoldReading, FoldReading>, Same<Wire.SafeInsets, SafeInsets>, Same<Wire.KeyboardReading, KeyboardReading>,
   Same<Wire.LinkedDraft, LinkedDraft>, Same<Wire.NoticePermission, NoticePermission>,
-  // A notice crosses as the shared kinds have it, a count bounded as theirs is; the phone carries no scheduled send.
   Same<Wire.BridgeNotice, Exclude<MailNotice, { readonly kind: "scheduled" }>>,
   Same<typeof Wire.NOTICE_COUNT_MAX, typeof NOTICE_COUNT_MAX>,
 ]>;
@@ -55,7 +55,7 @@ export interface PhoneSignals {
   readonly linkIn: LinkIn;
 }
 
-export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent: () => number): PhoneSignals {
+export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent: () => number, address?: HostAddress): PhoneSignals {
   const posture = cell(facts.posture);
   const insets = cell(facts.insets);
   const keyboard = cell(facts.keyboard);
@@ -67,6 +67,14 @@ export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent
   const handIn = (draft: LinkedDraft) => {
     drafts.push(draft);
     for (const a of arrivals) a();
+  };
+  let held: { id: number; control: AbortController; keep: () => void } | null = null;
+  // The active WebView can still receive input between posting its final exit and native receiving it.
+  let exitPending: { id: number; release(): void } | null = null;
+  const exitEnded = (id: number) => {
+    if (exitPending?.id !== id) return;
+    exitPending.release();
+    exitPending = null;
   };
   bridge.on((e) => {
     switch (e.type) {
@@ -81,11 +89,74 @@ export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent
         if (draft !== null) handIn(draft);
         return;
       }
+      case "backEnded":
+        exitEnded(e.askId);
+        if (held?.id === e.askId) {
+          held.control.abort();
+          held = null;
+        }
+        return;
       case "ask": {
-        const answer = e.what === "back"
-          ? { askId: e.askId, what: "back" as const, took: back.took() }
-          : { askId: e.askId, what: "unsent" as const, unsent: unsent() };
-        void bridge.request("answer", answer).catch(() => {});
+        if (e.what === "back") {
+          const { askId } = e;
+          // Native retires the previous physical press before issuing another.
+          if (exitPending && exitPending.id !== askId) exitEnded(exitPending.id);
+          const answer = (took: boolean | "held" | "prepare" | "discard") =>
+            bridge.request("answer", { askId: askId, what: "back", took }).then((r) => r.accepted, () => false);
+          if (closeTopOverlay()) { void answer(true); return; }
+          if (held) { held.keep(); void answer(true); return; }
+          if (back.took()) { void answer(true); return; }
+          const control = new AbortController();
+          const at = address?.read();
+          const keep = () => {
+            if (held?.id !== askId) return;
+            held = null;
+            control.abort();
+            // A reply from native also proves that a final exit with a lost receipt was settled.
+            void bridge.request("answer", { askId: askId, what: "back", took: true })
+              .then(() => exitEnded(askId), () => {});
+          };
+          const current = () => held?.id === askId && address?.read() === at;
+          held = { id: askId, control, keep };
+          const reserved = answer("held");
+          let prepared: Promise<boolean> | undefined;
+          const prepare = () => prepared ??= (async () => (
+            await reserved && current() && await answer("prepare") && current() && await answer(false) && current()
+          ))();
+          const askForDraft = () => address?.heldBefore("", () => finish(), { signal: control.signal, keep }) === true;
+
+          async function finish(checkForDraft = false): Promise<boolean> {
+            if (!await prepare() || !current()) {
+              keep();
+              return false;
+            }
+            const body = globalThis.document?.body;
+            const ownInert = body !== undefined && !body.hasAttribute("inert");
+            if (ownInert) body.setAttribute("inert", "");
+            exitPending = { id: askId, release: () => { if (ownInert) body.removeAttribute("inert"); } };
+            // An edit can register its hold while the native acknowledgement is on its way.
+            if (checkForDraft && askForDraft()) {
+              exitEnded(askId);
+              return false;
+            }
+            try {
+              const receipt = await bridge.request("answer", { askId: askId, what: "back", took: "discard" });
+              exitEnded(askId);
+              if (receipt.accepted && current()) {
+                held = null;
+                return true;
+              }
+            } catch {
+              // A missing receipt leaves the hold in place until native acknowledges Keep or retires this press.
+            }
+            keep();
+            return false;
+          }
+
+          if (!askForDraft()) void finish(true);
+        } else {
+          void bridge.request("answer", { askId: e.askId, what: "unsent", unsent: unsent() }).catch(() => {});
+        }
         return;
       }
       default:

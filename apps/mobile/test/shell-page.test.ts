@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpAdapter } from "@ohmail/client-engine";
 import { setStorageOwner, storageOwnerState } from "@ohmail/app-logic/storage/storage-owner";
 import { CANNOT, NONE, type DeviceNotifications, type HostContract } from "@ohmail/app/host";
+import { MailGround, mailPlaces } from "@ohmail/app/mail";
 import type { ShellSetting } from "../src/shell/bridge-kinds";
 import { AccountMismatch, accountGuarded } from "../web/src/account-guard";
 import { BENCH_MARKER, benchDoor } from "../web/src/bench";
@@ -96,6 +97,13 @@ describe("the phone shell's answers, per setting", () => {
   const has: PhoneSupplies = {
     signOut: named("signOut"),
     notifications: named<DeviceNotifications>("notifications"),
+    mailFetch: async (path) => {
+      if (path === "/mailboxes?counts=1") {
+        return Response.json({ items: [{ id: "mailbox", address: "Fixture mailbox", status: "connected", messageCount: 8 }] });
+      }
+      if (path === "/consent") return Response.json({ dormancyDays: 28 });
+      return Response.json({}, { status: 503 });
+    },
     frame: {
       places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
       window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
@@ -111,7 +119,7 @@ describe("the phone shell's answers, per setting", () => {
       setting, scope: "p0123456789abcdef0123456789abcdef", accountId: "acct-1", build: { version: "2.0.0", commit: "abc" },
     }, has);
   const NO_WIRE = Object.fromEntries([
-    "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk", "trash",
+    "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "images", "olderBody", "junk", "trash",
     "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "connect", "mailboxes",
     "calendar",
   ].map((w) => [w, NONE]));
@@ -149,27 +157,39 @@ describe("the phone shell's answers, per setting", () => {
     ["standalone", { session: { state: NONE, account: null, signOut: NONE }, capabilities: { ...capabilities("ownComputer", "computer", NONE), searchBy: "people" } }],
   ];
   for (const [setting, want] of table) {
-    it(`answers the whole record on ${setting}`, () => {
+    it(`answers the whole record on ${setting}`, async () => {
       const w = want as { session: { state: string; account: string | null; signOut: unknown }; capabilities: object };
-      expect(of(setting)).toEqual({
+      const host = of(setting);
+      expect(host).toEqual({
         engine,
         session: {
           resolve: NONE, confirmed: NONE, state: w.session.state, scope: "p0123456789abcdef0123456789abcdef",
           account: w.session.account, mirrorAccount: null, accountAddress: null, signOut: w.session.signOut,
           recover: has.frame.recover, today: NONE,
         },
-        reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
-        wires: NO_WIRE,
+        reads: { mailboxes: expect.any(Function), copyAge: NONE, access: NONE },
+        wires: { ...NO_WIRE, consent: expect.objectContaining({ state: expect.any(Function) }) },
         capabilities: w.capabilities,
         features: NO_FEATURE,
         device: DEVICE,
         signals: SIGNALS,
       });
+      const { mailboxes } = host.reads;
+      const { consent } = host.wires;
+      if (mailboxes === NONE || consent === NONE) throw new Error("The mail page is missing its account reads");
+      await expect(mailboxes({ counts: true })).resolves.toEqual([
+        { id: "mailbox", address: "Fixture mailbox", status: "connected", messageCount: 8 },
+      ]);
+      await expect(mailboxes()).rejects.toThrow(/503/);
+      await expect(consent.state()).resolves.toEqual({ dormancyDays: 28 });
     });
   }
 });
 
 describe("what the page hands the frame", () => {
+  const native = nativeAnswering(() => ({}));
+  const bridge = createBridge(native.port, "e1");
+  const paired = { setting: "managed", scope: "p0", os: "android", build: { version: null, commit: null } } as const;
   /** A window with an address bar: a fragment, its history, and its `hashchange`. */
   function windowWith(hash: string) {
     const listeners = new Set<() => void>();
@@ -189,7 +209,7 @@ describe("what the page hands the frame", () => {
   it("puts the address back where native kept it, then tells native each place it moves to, once", () => {
     const told: string[] = [];
     const win = windowWith("");
-    const frame = phoneFrameSupplies(ohmailMounted, "#/news", (f) => told.push(f), win);
+    const frame = phoneFrameSupplies(ohmailMounted(bridge, paired), "#/news", (f) => told.push(f), win);
     expect(frame.address.read()).toBe("#/news");
     expect(told).toEqual([]);
     frame.address.write("#/ohbox", "push");
@@ -198,18 +218,34 @@ describe("what the page hands the frame", () => {
     expect(told).toEqual(["#/ohbox", "#/ohbox/m/42"]);
   });
 
-  it("mounts no place, no stage and no over in either app, and offers no way back of its own", () => {
-    for (const mounted of [ohmailMounted, ohcalMounted]) {
-      const frame = phoneFrameSupplies(mounted, null, () => {}, windowWith(""));
-      expect(Object.values(mounted.places).every((p) => p === NONE)).toBe(true);
-      expect(Object.values(mounted.stages).every((s) => s === NONE)).toBe(true);
-      expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
-      expect(frame.places).toBe(mounted.places);
-      expect(frame.stages).toBe(mounted.stages);
-      expect(frame.calendar).toBe(NONE);
-      expect(frame.recover).toBe(NONE);
-      expect(frame.address.read()).toBe("");
-    }
+  it("seats the shared places and stages and opens the mail reader over their ground", () => {
+    const mail = ohmailMounted(bridge, paired);
+    const calendar = ohcalMounted(bridge, paired);
+    const frame = phoneFrameSupplies(mail, null, () => {}, windowWith(""));
+    expect(frame.places).toEqual({ ...calendar.places, ...mailPlaces(), settings: expect.any(Object) });
+    expect(frame.stages).toEqual({ firstRun: { id: "firstRun", Body: expect.any(Function) } });
+    expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
+    expect(frame.above).toBe(MailGround);
+    expect(frame.reader).not.toBe(NONE);
+    expect(frame.calendar).toBe(NONE);
+    expect(frame.recover).toBe(NONE);
+    expect(frame.address.read()).toBe("");
+    expect(native.asked).toEqual([]);
+  });
+
+  it("leaves the calendar frame without places, stages, overs or a way back of its own", () => {
+    const mounted = ohcalMounted(bridge, paired);
+    const frame = phoneFrameSupplies(mounted, null, () => {}, windowWith(""));
+    expect(Object.values(mounted.places).every((p) => p === NONE)).toBe(true);
+    expect(Object.values(mounted.stages).every((s) => s === NONE)).toBe(true);
+    expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
+    expect(frame.places).toBe(mounted.places);
+    expect(frame.stages).toBe(mounted.stages);
+    expect(frame.calendar).toBe(NONE);
+    expect(frame.above).toBe(NONE);
+    expect(frame.reader).toBe(NONE);
+    expect(frame.recover).toBe(NONE);
+    expect(frame.address.read()).toBe("");
   });
 
   it("tells the sync loop only of a return to the network", () => {

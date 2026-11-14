@@ -15,7 +15,7 @@ import {
   type MailboxesWire,
   type None,
 } from "../../host/index.js";
-import type { CalendarHalfSlot, FactorSlot } from "../connect/contract.js";
+import type { CalendarHalfSlot, ConnectAsk, FactorSlot } from "../connect/contract.js";
 import { PaneLines } from "./Lines.js";
 import { OutlookConnect } from "./OutlookConnect.js";
 import { Removal } from "./Removal.js";
@@ -35,6 +35,7 @@ export interface MailboxesPaneProps {
   readonly service: HostCapabilities["service"];
   /** The doors' second-factor dialog, as the shell fills it. */
   readonly factor: FactorSlot | None;
+  readonly holdEdit?: ConnectAsk["holdLeave"];
   /** The calendar's half of a mailbox, where a shell has one. */
   readonly calendar: CalendarHalfSlot | None;
   /** The route's word for a mailbox: a claim, opened only where the account's own rows hold it. */
@@ -126,6 +127,7 @@ function Listed(
           verbs={verbs}
           connect={connect}
           factor={factor}
+          holdEdit={props.holdEdit}
           calendar={props.calendar}
           filer={webFilerOf(filer)}
           importingSole={importingSole}

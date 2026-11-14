@@ -38,7 +38,7 @@ import { payShellWipe, type ShellStores } from "../shell/take-back";
 import { oldCopyDoor, type OldCopyDoor } from "../shell/old-copy";
 import { accountRows } from "../state/account-rows";
 import { ServerProfileStore, type PendingSignOut, type ServerProfile } from "../state/servers";
-import type { BearerManagerRN, FetchLike, RefreshVault, SessionDeath, SignOutOutcome } from "./bearer";
+import { CREDENTIAL_CHECK, type BearerManagerRN, type FetchLike, type RefreshVault, type SessionDeath, type SignOutOutcome } from "./bearer";
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
 import { deathRefusal } from "./session-death";
 import { withAccessLock } from "./access-lock";
@@ -253,16 +253,28 @@ export async function resolveAccountId(
   } catch {
     /* fall through to the rows — a dead route and a dead network read the same here */
   }
-  const fromEntity = (entity: unknown): string | null => {
+  const id = await resolveAccountFromRows(fetchImpl, base, authHeaders);
+  return id === null ? null : { accountId: id, via: "rows" };
+}
+
+async function resolveAccountFromRows(
+  fetchImpl: FetchLike,
+  base: string,
+  authHeaders: () => Record<string, string>,
+  expected?: string,
+): Promise<string | null> {
+  const named = (res: Response, entity: unknown) => {
     const id = (entity as { accountId?: unknown } | undefined)?.accountId;
-    return typeof id === "string" && id !== "" ? id : null;
+    const header = expected === undefined ? null : res.headers.get("x-ohmail-account");
+    if (header !== null && header !== expected) return header;
+    return typeof id === "string" && id !== "" ? id : header;
   };
   try {
     const res = await fetchImpl(`${base}/sync/snapshot?limit=1`, { headers: authHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { changes?: Array<{ entity?: unknown }> };
-      const id = fromEntity(body.changes?.[0]?.entity);
-      if (id !== null) return { accountId: id, via: "rows" };
+      const id = named(res, body.changes?.[0]?.entity);
+      if (id !== null) return id;
     }
   } catch {
     /* snapshot unavailable — the delta read below is the last word */
@@ -271,8 +283,7 @@ export async function resolveAccountId(
     const res = await fetchImpl(`${base}/sync?since=0&limit=1&types=message`, { headers: authHeaders() });
     if (res.ok) {
       const body = (await res.json()) as { changes?: { creates?: Array<{ entity?: unknown }> } };
-      const id = fromEntity(body.changes?.creates?.[0]?.entity);
-      if (id !== null) return { accountId: id, via: "rows" };
+      return named(res, body.changes?.creates?.[0]?.entity);
     }
   } catch {
     /* nothing left to ask */
@@ -512,6 +523,11 @@ export interface PairingEnv {
    * `distributor`'s reason (the shell's native module); absent in a build that shows mail in its own screens.
    */
   shell?: ShellStores;
+  calendar?: {
+    open?(id: string): Promise<void>;
+    revoke(id: string): Promise<boolean>;
+    close?(): Promise<boolean>;
+  };
   /** The slot registry (`bearer-registry.ts`). Absent: the process's own — tests pass one. */
   bearers?: BearerRegistry;
   /**
@@ -1247,6 +1263,11 @@ export async function forgetProfile(
     }
   }
 
+  // The wipe remains owed until native revokes the pairing and confirms cleanup.
+  if (env.calendar && !await env.calendar.revoke(profileId).catch(() => false)) {
+    return { kind: "partial", reason: refuse("forgetMailRemains") };
+  }
+
   // The server half is awaited and its answer shapes the result: the logout both revokes the
   // session and (hosted) takes the device's wake registration down, and reporting a forget over a
   // logout that never landed would leave both alive unsaid. A server out of reach is OWED the
@@ -1388,6 +1409,10 @@ export async function drainPendingWipes(env: PairingEnv): Promise<string[]> {
   const rows = await env.profiles.list();
   for (const owed of await env.profiles.pendingWipes()) {
     try {
+      if (owed.id !== "" && env.calendar && !await env.calendar.revoke(owed.id)) {
+        stillOwed.push(owed.owner);
+        continue;
+      }
       // THE SERVER HALF FIRST, while the credential to do it with still exists. A debt whose
       // profile row survives is a forget that died before its logout, and this is the only
       // moment anything can still spend that token — after the removal below there is nothing
@@ -1655,12 +1680,14 @@ export interface ShellSession {
   send(pathAndQuery: string, init: RequestInit): Promise<Response>;
   readonly ownerKey: string;
   readonly standalone: boolean;
-  /**
-   * The bearer's account against the profile's, asked once the session is entered. The drain routes
-   * stay shut at the shell's HTTP door until it has settled without a mismatch (`identityCleared`).
-   */
+  /** Verify the current credential's account over native's transport. */
   verifyIdentity(): Promise<IdentityVerdict>;
-  identityCleared(): boolean;
+  /** The account this session may serve to the page. Null until positively bound. */
+  boundAccount(): string | null;
+  /** Ends synchronously when native leaves this session. */
+  readonly lifetime: AbortSignal;
+  /** Retire the page's binding, including any probe still in flight. */
+  leave(): void;
   /** The screens' old copy of this mailbox, handed to the page once (`shell/old-copy.ts`); null with no engine deps. */
   readonly oldCopy: OldCopyDoor | null;
 }
@@ -1671,6 +1698,9 @@ export function shellSessionOf(
   deadlineMs = IDENTITY_PROBE_DEADLINE_MS,
 ): ShellSession {
   const { profile } = opened;
+  const { accountId } = profile;
+  const lifetime = new AbortController();
+  const leave = () => lifetime.abort();
   if (opened.kind === "local") {
     // A send pressed with no network waits in the page's outbox for it (`engine/send-waits.ts`).
     const fetch = heldWhileOffline(localEngineTransport(opened.door).fetch, networkNow) as FetchLike;
@@ -1685,30 +1715,60 @@ export function shellSessionOf(
       standalone: true,
       // The engine in this app minted the bearer and serves one account: there is nothing to ask.
       verifyIdentity: async () => ({ kind: "unverified" }),
-      identityCleared: () => true,
+      boundAccount: () => lifetime.signal.aborted ? null : accountId,
+      lifetime: lifetime.signal,
+      leave,
     };
   }
   const { bearer, fetch } = opened;
   const base = apiBaseOf(profile.origin, opened.apiBase);
   const ownerKey = mirrorOwnerKey(profile.origin, profile.accountId);
-  let cleared = false;
+  let verified: number | null = null;
+  let checking: Promise<IdentityVerdict> | null = null;
+  const authorized = (generation: number | null) =>
+    !lifetime.signal.aborted && generation !== null && generation === verified;
+  function verifyIdentity(): Promise<IdentityVerdict> {
+    if (lifetime.signal.aborted) return Promise.resolve({ kind: "unverified" });
+    if (checking !== null) return checking;
+    let stamped: number | null = null;
+    const probe: FetchLike = (url, init) => fetch(url, {
+      ...(init as RequestInit), credentials: "omit", signal: lifetime.signal,
+      [CREDENTIAL_CHECK]: (generation: number | null) => {
+        stamped = generation;
+        return !lifetime.signal.aborted;
+      },
+    });
+    const authHeaders = () => bearer.headers();
+    const desktopAccount = profile.flavor === "desktop-host"
+      ? () => resolveAccountFromRows(probe, base, authHeaders, accountId)
+      : undefined;
+    checking = identityProbe(probe, profile.origin, authHeaders, accountId, deadlineMs, desktopAccount)
+      .then((identity): IdentityVerdict => {
+        if (lifetime.signal.aborted || stamped === null || stamped !== bearer.credentialGeneration()) {
+          return { kind: "unverified" };
+        }
+        if (identity.kind === "mismatch") {
+          leave();
+          return { kind: "mismatch", reason: refuse("bootAccountMismatch", identity.serverSays, accountId) };
+        }
+        verified = identity.kind === "verified" ? stamped : null;
+        return { kind: identity.kind };
+      })
+      .finally(() => { checking = null; });
+    return checking;
+  }
   return {
     profile,
     bearer,
     fetch,
-    send: (pathAndQuery, init) => fetch(`${base}${pathAndQuery}`, init),
+    send: (pathAndQuery, init) => fetch(`${base}${pathAndQuery}`, { ...init, [CREDENTIAL_CHECK]: authorized }),
     ownerKey,
     oldCopy: deps === null ? null : oldMirrorOf(deps, ownerKey),
     standalone: false,
-    async verifyIdentity() {
-      const identity = await identityProbe(fetch, profile.origin, () => bearer.headers(), profile.accountId, deadlineMs);
-      if (identity.kind === "mismatch") {
-        return { kind: "mismatch", reason: refuse("bootAccountMismatch", identity.serverSays, profile.accountId) };
-      }
-      cleared = true;
-      return { kind: identity.kind };
-    },
-    identityCleared: () => cleared,
+    verifyIdentity,
+    boundAccount: () => authorized(bearer.credentialGeneration()) ? accountId : null,
+    lifetime: lifetime.signal,
+    leave,
   };
 }
 

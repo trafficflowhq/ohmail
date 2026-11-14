@@ -7,10 +7,10 @@
  * sentence and no view.
  */
 import * as Crypto from "expo-crypto";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import * as SQLite from "expo-sqlite";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AppState, BackHandler, Keyboard, Linking, Platform, StyleSheet, View } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Alert, AppState, BackHandler, Keyboard, Linking, Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Copy } from "../copy";
@@ -21,6 +21,9 @@ import { ENGINE_DB_FILE } from "../engine/local-engine";
 import { nativeNotificationPermission } from "../engine/notification-permission-native";
 import { STORE_COPY_FILE } from "../engine/store-copy";
 import { askNoticePermission, measureShellBackup, noticePermission, onShellWake } from "./doors";
+import { calendarAdmits, calendarNative } from "../calendar/calendar-native";
+import { watchWidgetLinks } from "../calendar/opened";
+import { snapshotDoor } from "../calendar/snapshot-door";
 import { launchVerdict } from "./old-copy";
 import { activeLocale } from "../i18n/locale";
 import { networkNow, onNetworkChange } from "../net/network-door";
@@ -37,6 +40,10 @@ import { BridgeHost } from "./bridge-host";
 import { askDoorAt } from "./door-at";
 import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./bridge-kinds";
 import { HttpDoor } from "./http-door";
+import { onOrganizerState } from "../engine/organizer-session";
+import { phoneDiagnosticsOf } from "./phone-diagnostics-native";
+import { phoneOrganizerOf } from "./phone-organize";
+import { answerPhoneMailbox, readPhoneRoster } from "./phone-mailbox";
 import { answerPhoneName } from "./phone-name";
 import { KEPT_FAMILIES } from "./kept-families";
 import { scopeOf } from "./scope";
@@ -66,6 +73,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
   const native = shellNative();
   const switcher = useMemo(() => switchNative(), []);
   const notices = useMemo(() => noticesNative(), []);
+  const calendar = useMemo(() => calendarNative(), []);
   /* The session this screen stands for, while it stands: a notice is drawn only for the one that still does. */
   const standing = useRef<ShellSession | null>(null);
   useEffect(() => {
@@ -77,6 +85,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
   const wakeNow = useRef(wake);
   wakeNow.current = wake;
   const os = Platform.OS === "ios" ? "ios" : "android";
+  const widget = useRef<string | null>(null);
   const drawnRef = useRef(false);
   const [scope, setScope] = useState<string | null>(null);
   const [drawn, setDrawn] = useState(false);
@@ -99,7 +108,11 @@ export function ShellScreen({ session }: { session: ShellSession }) {
           const at = native.storagePaths(s);
           const dir = String(SQLite.defaultDatabaseDirectory).replace(/\/+$/, "");
           const engine = session.standalone ? [`${dir}/${ENGINE_DB_FILE}`, `${dir}/${STORE_COPY_FILE}`] : [];
-          const state = await measureShellBackup(nativeBackupExclusion(), [at.keeper, at.webData, ...engine]);
+          // The calendar's record for this pairing, where the build keeps one.
+          const record = calendar?.recordPath(session.profile.id) ?? "";
+          const state = await measureShellBackup(
+            nativeBackupExclusion(), [at.keeper, at.webData, ...engine, ...(record === "" ? [] : [record])],
+          );
           recordBackupExclusion(state);
           logBackupExclusion(state, Platform.OS);
         }
@@ -108,19 +121,19 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         if (live) setScope(s);
       });
     return () => { live = false; };
-  }, [native, session]);
+  }, [native, session, calendar]);
 
   /* The notice permission as the phone reads it, kept current for the page's `config`. */
   const permission = useRef<NoticePermission>("default");
   useEffect(() => {
-    void noticePermission(nativeNotificationPermission()).then((p) => { permission.current = p; }).catch(() => undefined);
-  }, []);
+    void noticePermission(nativeNotificationPermission(), calendar).then((p) => { permission.current = p; }).catch(() => undefined);
+  }, [calendar]);
 
   const usable = native !== null && webViewVerdict(native.webViewCheck()) === "usable";
 
   const host = useMemo(() => {
     const http = new HttpDoor({
-      live: () => (scope === null ? null : { session, scope }),
+      live: () => (scope !== null && standing.current === session && !session.lifetime.aborted ? { session, scope } : null),
       ready: () => scope !== null,
     });
     const config = (): ShellConfig | null => scope === null ? null : {
@@ -133,6 +146,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         : session.profile.flavor === "selfhost" ? "selfHosted" : "desktopHost",
       serverName: session.standalone ? "" : hostOf(session.profile.origin),
       build: { version: appRelease() ?? null, commit: buildCommit(process.env.EXPO_PUBLIC_COMMIT) },
+      os,
       language: activeLocale() === "de" ? "de" : "en",
       place: lastPlace.current,
       oldCopy: oldCopy.current,
@@ -162,11 +176,26 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       permission: () => permission.current,
       inFront: () => AppState.currentState === "active",
     });
+    const live = () => scope !== null && standing.current === session && !session.lifetime.aborted;
+    const readRoster = (signal: AbortSignal) => scope === null
+      ? Promise.resolve(null)
+      : readPhoneRoster(http, scope, session.profile, signal);
+    /* THE CALENDAR'S RECORD THE PAGE HANDS OVER: kept natively for this session's pairing only while it stands, and
+       only when it names this page's own scope (`calendar/snapshot-door.ts`). */
+    const days = snapshotDoor({
+      native: calendar, instance: session.profile.id, scope: () => scope,
+      live: () => standing.current === session && calendarAdmits(session.profile.id),
+    });
     const bridge: BridgeHost = new BridgeHost({
-      post: (epoch, text) => void view.current?.post(epoch, text),
+      post: (epoch, text) => {
+        if (!session.lifetime.aborted) void view.current?.post(epoch, text);
+      },
       config,
       app: APP.app,
-      name: (request, signal) => answerPhoneName(request, session, () => scope !== null && standing.current === session, signal),
+      name: (request, signal) => answerPhoneName(request, session, live, signal),
+      diagnostics: APP.app === "ohmail" ? phoneDiagnosticsOf(live, readRoster) : undefined,
+      organize: APP.app === "ohmail" ? phoneOrganizerOf(session, live, readRoster) : undefined,
+      mailbox: (request, signal) => answerPhoneMailbox(request, session, live, signal),
       switch: {
         read: async () => ({ other: otherOf(switcher) }),
         open: async (to) => {
@@ -187,19 +216,22 @@ export function ShellScreen({ session }: { session: ShellSession }) {
             router.push("/door");
             return {};
           case "notifications.permission":
-            return { permission: (permission.current = await noticePermission(nativeNotificationPermission())) };
+            return { permission: (permission.current = await noticePermission(nativeNotificationPermission(), calendar)) };
           case "notifications.request":
-            return { permission: (permission.current = await askNoticePermission(nativeNotificationPermission())) };
+            return { permission: (permission.current = await askNoticePermission(nativeNotificationPermission(), calendar)) };
           case "backup.read":
             return { backup: backupExclusion() };
           // The status bar follows the system's scheme, as the page's look does.
           case "chrome":
             return {};
-          // The diagnostic file's sections are a closed set the shell has none in yet: refused, never an empty file.
-          case "diagnostics.share":
-            return { refused: "notReady" };
           case "notices.post":
             return door.post(a.notice);
+          case "calendar.snapshot":
+            return days.keep(a.snapshot, a.publication);
+          case "calendar.clear":
+            return days.clear(a.publication);
+          case "calendar.resolve":
+            return days.target(a.generation);
           // What the page's two switches say of the wake, for this session's pairing while it is the one
           // that stands: the registration is kept or taken down by it (`state/wake.tsx`).
           case "wake.want":
@@ -213,6 +245,10 @@ export function ShellScreen({ session }: { session: ShellSession }) {
         lastPlace.current = place;
         drawnRef.current = true;
         setDrawn(true);
+        if (widget.current !== null) {
+          bridge.send({ type: "calendarWidget", generation: widget.current });
+          widget.current = null;
+        }
         // A place the other app opened this one at, held by the connection layer until the page could take it.
         const arrived = switchPlaces.take(session.profile.id);
         if (arrived !== null) bridge.send({ type: "linkIn", target: arrived });
@@ -240,11 +276,31 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     return bridge;
     // The host is one per session and scope: a new scope is a new page.
-  }, [session, scope, notices, os]);
+  }, [session, scope, notices, calendar, os]);
+
+  useEffect(() => {
+    const retire = () => host.begin("");
+    if (session.lifetime.aborted) retire();
+    session.lifetime.addEventListener("abort", retire);
+    return () => {
+      session.lifetime.removeEventListener("abort", retire);
+      retire();
+    };
+  }, [host, session]);
 
   useEffect(() => {
     if (APP.app === "ohmail" && wake.session === session) host.send({ type: "wakePane", wake: wakePaneState(wake, os) });
   }, [host, os, session, wake]);
+
+  useEffect(() => APP.app === "ohcal" ? watchWidgetLinks((generation) => {
+    if (drawnRef.current) host.send({ type: "calendarWidget", generation });
+    else widget.current = generation;
+  }) : undefined, [host]);
+
+  useEffect(() => {
+    if (APP.app !== "ohmail" || !session.standalone) return;
+    return onOrganizerState(() => host.send({ type: "organizerChanged" }));
+  }, [host, session]);
 
   /* The facts, as they change: each one an event to the page that is open now. */
   useEffect(() => {
@@ -264,7 +320,7 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     const net = onNetworkChange((s) => host.send({ type: "network", online: s !== "offline" }));
     const app = AppState.addEventListener("change", (s) => {
-      if (s !== "active") return;
+      if (s !== "active") return host.cancelPhysicalBack();
       host.send({ type: "wake", why: "foreground" });
       // The other app may have come or gone while this one was away.
       host.send({ type: "other", state: otherOf(switcher) });
@@ -277,13 +333,24 @@ export function ShellScreen({ session }: { session: ShellSession }) {
     });
     /* A push for this pairing, from the root's wake provider: the page drains now. */
     const pushed = onShellWake((why) => host.send({ type: "wake", why }));
-    /* BACK ASKS THE PAGE, which answers within its deadline or not at all; not taken, the app leaves. */
+    return () => { shown.remove(); hidden.remove(); net(); app.remove(); pushed(); arrivals(); };
+  }, [host, switcher, session]);
+
+  useFocusEffect(useCallback(() => {
+    if (Platform.OS !== "android") return;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      void host.ask("back").then((took) => { if (!took) BackHandler.exitApp(); });
+      if (AppState.currentState !== "active") return false;
+      host.physicalBack(() => BackHandler.exitApp(), (discard, keep) => {
+        Alert.alert(Copy.awayLeaveAsk, undefined, [
+          { text: Copy.awayLeaveKeep, style: "cancel", onPress: keep },
+          { text: Copy.awayLeaveDiscard, style: "destructive", onPress: discard },
+        ], { cancelable: true, onDismiss: keep });
+      });
       return true;
     });
-    return () => { shown.remove(); hidden.remove(); net(); app.remove(); back.remove(); pushed(); arrivals(); };
-  }, [host, switcher, session]);
+    const blur = AppState.addEventListener("blur", () => host.windowBlur());
+    return () => { host.cancelPhysicalBack(); back.remove(); blur.remove(); };
+  }, [host]));
 
   if (!usable || refused?.why === "webview") {
     return <Sentence words={Copy.shellWebViewMissing} />;

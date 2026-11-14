@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Small, Next: 2 x 2 cells, drawn by CalendarWidgets.kt from the signed-in pairing's record alone. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+  android:initialLayout="@layout/ohcal_widget_next"
+  android:minWidth="110dp"
+  android:minHeight="110dp"
+  android:targetCellWidth="2"
+  android:targetCellHeight="2"
+  android:resizeMode="none"
+  android:updatePeriodMillis="1800000"
+  android:widgetCategory="home_screen|not_keyguard" />

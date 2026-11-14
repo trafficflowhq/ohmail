@@ -443,23 +443,23 @@
     color: var(--ink);
   }
 
-  .oh-ev:has([data-cal-resize]) {
+  .oh-ev:where(:not([data-size="block"])):has([data-cal-resize]) {
     position: relative;
     cursor: grab;
   }
-  .oh-ev [data-cal-resize] {
+  .oh-ev:where(:not([data-size="block"])) [data-cal-resize] {
     position: absolute;
     inset-block: 0;
     width: calc(var(--s2) + var(--oh-focus));
     cursor: ew-resize;
   }
-  .oh-ev [data-cal-resize="start"] {
+  .oh-ev:where(:not([data-size="block"])) [data-cal-resize="start"] {
     inset-inline-start: 0;
   }
-  .oh-ev [data-cal-resize="end"] {
+  .oh-ev:where(:not([data-size="block"])) [data-cal-resize="end"] {
     inset-inline-end: 0;
   }
-  .oh-ev [data-cal-resize]::after {
+  .oh-ev:where(:not([data-size="block"])) [data-cal-resize]::after {
     position: absolute;
     inset: 0;
     width: var(--oh-focus);
@@ -470,11 +470,11 @@
     opacity: 0;
     content: "";
   }
-  .oh-ev:is(:hover, :focus-visible, [data-open]) [data-cal-resize]::after {
+  .oh-ev:where(:not([data-size="block"])):is(:hover, :focus-visible, [data-open]) [data-cal-resize]::after {
     opacity: 1;
   }
   @media (pointer: coarse) {
-    .oh-ev [data-cal-resize] {
+    .oh-ev:where(:not([data-size="block"])) [data-cal-resize] {
       width: min(calc(var(--s5) - var(--oh-focus)), 50%);
     }
   }

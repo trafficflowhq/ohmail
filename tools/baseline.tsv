@@ -35,7 +35,6 @@ apps/desktop/src/DoorChooser.tsx	ohmail/package-borders:apps/webapp	6	desktop-la
 apps/desktop/src/DoorProblem.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/src/LinkAsk.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/cloud-suggest.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/src/consent-wire.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/desktop-first-paint.ts	eslint:unused-directive	2	desktop-layer
 apps/desktop/src/door-copy.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/doors.ts	ohmail/package-borders:apps/webapp	2	desktop-layer

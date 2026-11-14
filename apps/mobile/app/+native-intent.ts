@@ -3,9 +3,11 @@
  * module takes it up before the router is asked, so the router is answered with the app's root and the link (its
  * fragment holds the payload) never enters navigation state, history or a log. Every other link is left as it came.
  */
+import { captureWidgetLink } from "../src/calendar/opened";
 import { isSwitchPath } from "../src/switch/link";
 
-export function redirectSystemPath({ path }: { path: string; initial: boolean }): string {
+export function redirectSystemPath({ path, initial }: { path: string; initial: boolean }): string {
+  if (captureWidgetLink(path)) return initial ? "/" : "";
   return switchPathOf(path) ? "/" : path;
 }
 

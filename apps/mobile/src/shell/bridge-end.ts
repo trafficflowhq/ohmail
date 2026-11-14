@@ -7,8 +7,8 @@
  * requests and its asks with it.
  */
 import { admitBridgeMessage } from "./admit";
-import { ASK_DEADLINE_MS, type Refused } from "./bridge-kinds";
-import { framesOf } from "./framing";
+import type { Refused } from "./bridge-kinds";
+import { ASK_DEADLINE_MS, framesOf } from "./framing";
 import type { PageMessage } from "./shell-port";
 
 /** What a handler came back with: the kind's answer, or why the bridge gives none. */
@@ -29,7 +29,7 @@ export interface BridgeEndDeps<Req extends { readonly id: number; readonly kind:
 export class BridgeEnd<Req extends { readonly id: number; readonly kind: string }, Ev extends object> {
   private epoch = "";
   private readonly working = new Map<number, AbortController>();
-  private readonly asked = new Map<number, (value: object | null) => void>();
+  private readonly asked = new Map<number, { what: string; physical: boolean; stage: "open" | "held" | "prepare" | "confirmed"; settle(value: object | null): void; hold(): void }>();
   private nextAsk = 1;
 
   constructor(private readonly deps: BridgeEndDeps<Req>) {}
@@ -43,7 +43,7 @@ export class BridgeEnd<Req extends { readonly id: number; readonly kind: string 
   begin(epoch: string): void {
     for (const c of this.working.values()) c.abort();
     this.working.clear();
-    for (const settle of this.asked.values()) settle(null);
+    for (const ask of this.asked.values()) ask.settle(null);
     this.asked.clear();
     this.epoch = epoch;
   }
@@ -69,10 +69,13 @@ export class BridgeEnd<Req extends { readonly id: number; readonly kind: string 
     this.working.set(req.id, control);
     const at = this.epoch;
     Promise.resolve()
-      .then(() => this.deps.run(req, control.signal))
+      .then((): Ran | Promise<Ran> => {
+        if (at !== this.epoch || control.signal.aborted) return { refused: "cancelled" };
+        return this.deps.run(req, control.signal);
+      })
       .catch((): Ran => ({ refused: control.signal.aborted ? "cancelled" : "unreachable" }))
       .then((ran) => {
-        this.working.delete(req.id);
+        if (this.working.get(req.id) === control) this.working.delete(req.id);
         if (at !== this.epoch) return;
         this.answer(req.id, control.signal.aborted && req.kind !== "cancel" ? { refused: "cancelled" } : ran);
       });
@@ -93,23 +96,49 @@ export class BridgeEnd<Req extends { readonly id: number; readonly kind: string 
    * Asks the page, which answers within {@link ASK_DEADLINE_MS} or not at all: then, and with no page open, null.
    * The page's answer arrives as a request of its own, which the page's handlers hand to {@link settle}.
    */
-  ask(what: string): Promise<object | null> {
-    return new Promise((resolve) => {
-      if (this.epoch === "") return resolve(null);
-      const askId = this.nextAsk++;
-      const timer = setTimeout(() => settle(null), ASK_DEADLINE_MS);
-      const settle = (value: object | null) => {
-        clearTimeout(timer);
-        this.asked.delete(askId);
-        resolve(value);
-      };
-      this.asked.set(askId, settle);
-      this.send({ type: "ask", askId, what } as unknown as Ev);
-    });
+  ask(what: string, signal?: AbortSignal): Promise<object | null> {
+    return new Promise((resolve) => this.question(what, resolve, signal));
   }
 
-  settle(askId: number, value: object): void {
-    this.asked.get(askId)?.(value);
+  question(what: string, resolve: (value: object | null) => void, signal?: AbortSignal, ended?: (id: number) => void): void {
+    if (this.epoch === "" || signal?.aborted) return resolve(null);
+    const askId = this.nextAsk++;
+    const abort = () => settle(null);
+    const timer = setTimeout(abort, ASK_DEADLINE_MS);
+    const settle = (value: object | null) => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+      this.asked.delete(askId);
+      if (value === null) ended?.(askId);
+      resolve(value);
+    };
+    signal?.addEventListener("abort", abort, { once: true });
+    this.asked.set(askId, {
+      what, physical: signal !== undefined && what === "back", stage: "open", settle,
+      hold: () => clearTimeout(timer),
+    });
+    this.send({ type: "ask", askId, what } as unknown as Ev);
+  }
+
+  settle(askId: number, value: object): boolean {
+    const ask = this.asked.get(askId);
+    if (!ask) return false;
+    if (ask.what === "back" && "took" in value) {
+      if (value.took === "held" && ask.physical && ask.stage === "open") {
+        ask.hold();
+        ask.stage = "held";
+      } else if (value.took === "prepare" && ask.stage === "held") {
+        ask.stage = "prepare";
+      } else if (value.took === false && ask.stage === "prepare") {
+        // Acknowledge the choice. Only the still-current page may commit it after this reply.
+        ask.stage = "confirmed";
+      } else if (value.took === "discard" && ask.stage === "confirmed") {
+        ask.settle({ took: false });
+      } else if (value.took === true || (value.took === false && !ask.physical && ask.stage === "open")) ask.settle(value);
+      else return false;
+    } else if (ask.what === "unsent" && "unsent" in value) ask.settle(value);
+    else return false;
+    return true;
   }
 
   private answer(id: number, ran: Ran): void {

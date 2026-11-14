@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The calendar widget's colours, light: the app's paper (the splash's), its two inks, and the hot dot. -->
+<resources>
+  <color name="ohcal_widget_sheet">#fbfaf9</color>
+  <color name="ohcal_widget_ink">#1d1915</color>
+  <color name="ohcal_widget_ink_2">#5c544b</color>
+  <color name="ohcal_widget_hot">#d23c2a</color>
+</resources>

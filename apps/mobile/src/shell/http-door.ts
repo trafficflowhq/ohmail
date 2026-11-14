@@ -6,14 +6,14 @@
  *
  *  1. Scope. The request's scope must be the live session's; a request queued under another
  *     profile is refused, so a send queued under A is never stamped with B's bearer.
- *  2. Not ready, no dial: until the launch order has finished, and while the identity verdict has
- *     not settled for the drain routes.
+ *  2. Not ready, no dial: the launch and the session's account binding must stand.
  *  3. The path in its one spelling (no `//`, no trailing `/`, no `/api` the base already names),
  *     through the relay's own allow-list (`relay-routes.ts`, held equal to it), minus the routes
  *     only native may call. Deny by default.
  *  4. Headers in by allow-list; `authorization`, `cookie` and every other credential are dropped.
  *  5. Bounds: a body and a number in flight, refused past them.
- *  6. Headers out by allow-list; never `set-cookie`.
+ *  6. The same live session must still hold an account binding. Reject foreign account answers.
+ *     Headers out by allow-list.
  */
 import type { ShellSession } from "../net/pairing";
 import type { Body, Headers, Requests } from "./bridge-kinds";
@@ -34,7 +34,7 @@ export const NATIVE_ONLY = [
   "POST /auth/2fa/totp/activate", "POST /auth/2fa/webauthn/register/verify",
 ] as const;
 
-/** The drain routes, by path (both are reads), held shut until the identity verdict settles without a mismatch. */
+/** Keep the engine's existing retry code for the two feed reads. */
 const DRAIN_PATHS = new Set(["/sync", "/sync/snapshot"]);
 
 /** Header names the page may set. `x-ohmail-*` too, but never the two native stamps. */
@@ -76,16 +76,32 @@ function bodyOf(b: Body | null): string | Uint8Array | undefined {
 }
 
 const TEXTUAL = /^(text\/|application\/(json|problem\+json|x-www-form-urlencoded|javascript)|message\/)/i;
+const JSON_TYPE = /^application\/(?:json|[^;\s]+\+json)(?:\s*;|$)/i;
 
 async function answerBody(res: Response): Promise<Body | null> {
   const type = res.headers.get("content-type") ?? "";
   const bytes = new Uint8Array(await res.arrayBuffer());
   if (bytes.length === 0) return null;
   if (bytes.length > BODY_MAX) throw new RangeError("answer too large");
-  if (TEXTUAL.test(type)) return { as: "text", text: new TextDecoder().decode(bytes) };
+  if (TEXTUAL.test(type) || JSON_TYPE.test(type)) return { as: "text", text: new TextDecoder().decode(bytes) };
   let bin = "";
   for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   return { as: "b64", b64: btoa(bin) };
+}
+
+function namesAnotherAccount(text: string, account: string): boolean {
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return false; }
+  const pending = [parsed];
+  while (pending.length > 0) {
+    const entry = pending.pop();
+    if (entry === null || typeof entry !== "object") continue;
+    for (const [key, value] of Object.entries(entry)) {
+      if (key === "accountId" && typeof value === "string" && value !== account) return true;
+      if (value !== null && typeof value === "object") pending.push(value);
+    }
+  }
+  return false;
 }
 
 export class HttpDoor {
@@ -109,9 +125,16 @@ export class HttpDoor {
       count("notRelayed");
       return answerOf(403, "not_relayed");
     }
-    if (method === "GET" && DRAIN_PATHS.has(path) && !live.session.identityCleared()) {
-      return answerOf(503, "sync_held_pre_identity");
+    const account = live.session.boundAccount();
+    if (account === null || account !== live.session.profile.accountId) {
+      return answerOf(503, DRAIN_PATHS.has(path) ? "sync_held_pre_identity" : "account_held_pre_identity");
     }
+    const stillHere = () => {
+      const now = this.deps.live();
+      return !signal.aborted && now?.session === live.session && now.scope === live.scope &&
+        live.session.boundAccount() === account;
+    };
+    if (!stillHere()) return { refused: "foreignScope" };
     const sent = bodyOf(ask.body);
     if (sent !== undefined && (typeof sent === "string" ? sent.length : sent.byteLength) > BODY_MAX) {
       return { refused: "tooLarge" };
@@ -127,11 +150,27 @@ export class HttpDoor {
       const res = await live.session.send(`${path}${query}`, {
         method, headers, body: sent as BodyInit | undefined, signal, credentials: "omit",
       } as RequestInit);
+      if (!stillHere()) return { refused: "foreignScope" };
+      const named = res.headers.get("x-ohmail-account");
+      if (named !== null && named !== account) {
+        live.session.leave();
+        return answerOf(403, "account_mismatch");
+      }
+      const body = await answerBody(res);
+      if (!stillHere()) return { refused: "foreignScope" };
+      if (body?.as === "text" && JSON_TYPE.test(res.headers.get("content-type") ?? "") &&
+          namesAnotherAccount(body.text, account)) {
+        live.session.leave();
+        return answerOf(403, "account_mismatch");
+      }
       const out: [string, string][] = [];
       res.headers.forEach((value, name) => {
         if (HEADERS_OUT.has(name.toLowerCase())) out.push([name.toLowerCase(), value]);
       });
-      return { status: res.status, headers: out as Headers, body: await answerBody(res) };
+      return { status: res.status, headers: out as Headers, body };
+    } catch (fault) {
+      if (!stillHere()) return { refused: "foreignScope" };
+      throw fault;
     } finally {
       this.inFlight -= 1;
     }

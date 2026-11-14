@@ -53,6 +53,7 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
   const guard = useDraftLeave(
     mailboxes.some((mb) => isDirty(drafts[mb.id], mb.stored)),
     model.holdLeave,
+    drafts,
   );
 
   const drop = (id: string, confirmed?: RichValue) =>
@@ -105,10 +106,7 @@ export function SignaturesPane({ model, typed }: SignaturesPaneProps) {
         hot
         confirm={{
           label: t("signatures.revert"),
-          onPress: () => {
-            setDrafts({});
-            guard.discard();
-          },
+          onPress: () => guard.discard(() => setDrafts({})),
         }}
         cancel={{ label: t("signatures.leaveKeep") }}
       />

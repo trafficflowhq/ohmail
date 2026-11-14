@@ -91,6 +91,8 @@ describe("the shell's session", () => {
       const again = await connectShellById(env, id);
       expect(again.kind).toBe("shell");
       expect(opened(), "an engine was booted under the shell").toBe(0);
+      expect((await outcome.session.verifyIdentity()).kind).toBe("verified");
+      expect(outcome.session.boundAccount()).toBe("acct-1");
 
       const before = fake.seen.length;
       const res = await outcome.session.send("/sync?since=0&limit=1&types=message", { method: "GET" });
@@ -113,19 +115,17 @@ describe("the shell's session", () => {
     const { fake, outcome } = await pairedForShell(env, { flavor: "managed", sessionRoute: true, accountId: "acct-1" });
     try {
       if (outcome.kind !== "shell") throw new Error("not a shell session");
-      expect(outcome.session.identityCleared()).toBe(false);
+      expect(outcome.session.boundAccount()).toBeNull();
       expect((await outcome.session.verifyIdentity()).kind).toBe("verified");
-      expect(outcome.session.identityCleared()).toBe(true);
+      expect(outcome.session.boundAccount()).toBe("acct-1");
+      const bearer = outcome.session.bearer!;
+      const profile = { ...outcome.session.profile, accountId: "acct-2" };
+      const mismatched = shellSessionOf({ kind: "paired", profile, bearer, fetch: bearer.fetch, apiBase: null });
+      expect((await mismatched.verifyIdentity()).kind).toBe("mismatch");
+      expect(mismatched.boundAccount()).toBeNull();
     } finally {
       fake.server.close();
     }
-    const answersAs = (accountId: string) => async () =>
-      new Response(JSON.stringify({ user: { accountId } }), { status: 200, headers: { "content-type": "application/json" } });
-    const profile = { ...(await env.profiles.list())[0]!, accountId: "acct-2" };
-    const bearer = { headers: () => ({ authorization: "Bearer t" }) } as unknown as BearerManagerRN;
-    const mismatched = shellSessionOf({ kind: "paired", profile, bearer, fetch: answersAs("acct-1"), apiBase: null });
-    expect((await mismatched.verifyIdentity()).kind).toBe("mismatch");
-    expect(mismatched.identityCleared()).toBe(false);
   });
 
   it("names the phone and its release on every request the page's engine sends, never a name the page set", async () => {
