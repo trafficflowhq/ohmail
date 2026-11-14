@@ -18,6 +18,12 @@ export interface FieldProps {
   row?: boolean;
   name?: string;
   autoComplete?: string;
+  /** The keyboard a phone opens for it: `numeric` for a code. */
+  inputMode?: "none" | "text" | "decimal" | "numeric" | "tel" | "search" | "email" | "url";
+  /** At most this many characters. */
+  maxLength?: number;
+  /** The ids of what else describes it, said after its own hint or refusal. */
+  "aria-describedby"?: string;
   id?: string;
   ref?: Ref<HTMLInputElement | HTMLTextAreaElement>;
 }
@@ -35,12 +41,16 @@ export function Field({
   row,
   name,
   autoComplete = "off",
+  inputMode,
+  maxLength,
+  "aria-describedby": describedBy,
   id,
   ref,
 }: FieldProps) {
   const own = useId();
   const at = id ?? own;
   const said = (refusal ?? hint) ? `${at}-said` : undefined;
+  const described = [said, describedBy].filter(Boolean).join(" ") || undefined;
   const shared = {
     id: at,
     name,
@@ -48,7 +58,9 @@ export function Field({
     value,
     placeholder,
     "aria-invalid": refusal ? true : undefined,
-    "aria-describedby": said,
+    "aria-describedby": described,
+    inputMode,
+    maxLength,
     readOnly: !onChange,
     spellCheck: false,
   } as const;

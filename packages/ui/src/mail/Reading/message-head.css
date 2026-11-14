@@ -222,6 +222,11 @@
     inset: var(--oh-messagehead-reach);
   }
 
+  /* The last one's press area ends at the line's end: it reaches past its letters, never past the line's track. */
+  :root[data-touch="1"] .oh-messagehead-to > :last-child::after {
+    inset-inline-end: 0;
+  }
+
   :root[data-device="phone"] .oh-messagehead-markwhen {
     display: none;
   }

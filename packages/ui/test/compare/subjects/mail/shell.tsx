@@ -237,21 +237,24 @@ export const shell: KitSubject[] = [
           padding: 0,
         }}
       >
-        <FolderShelf
-          label="Folders"
-          expanded
-          folders={[{ id: "rosa", name: "Gartenlokal Rosa" }]}
-          all={{ name: "All folders", label: "All folders, 29 unread", count: "29", expanded: true }}
-        >
-          <FolderFold
-            label="All folders"
-            find={{ label: "Find a folder", value: "" }}
-            groups={[
-              { mailbox: "lichtgrat.example", folders: STUDIO_FOLDERS, add: { label: "New folder" } },
-              { mailbox: "milabrunner.example", folders: OWN_FOLDERS, add: { label: "New folder" } },
-            ]}
-          />
-        </FolderShelf>
+        {/* The places run past the rail's short window, so its scroller fades them at its foot, as the sheet's does. */}
+        <div className="oh-rail-scroll" data-clip="bottom">
+          <FolderShelf
+            label="Folders"
+            expanded
+            folders={[{ id: "rosa", name: "Gartenlokal Rosa" }]}
+            all={{ name: "All folders", label: "All folders, 29 unread", count: "29", expanded: true }}
+          >
+            <FolderFold
+              label="All folders"
+              find={{ label: "Find a folder", value: "" }}
+              groups={[
+                { mailbox: "lichtgrat.example", folders: STUDIO_FOLDERS, add: { label: "New folder" } },
+                { mailbox: "milabrunner.example", folders: OWN_FOLDERS, add: { label: "New folder" } },
+              ]}
+            />
+          </FolderShelf>
+        </div>
       </div>
     ),
   },

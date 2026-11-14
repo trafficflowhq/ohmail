@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { MenuItem, Tag } from "../../../../src/base/index.js";
 import {
   ActionPanel,
@@ -171,6 +171,7 @@ export const reading: KitSubject[] = [
           names="Giulia Ferrari, Ben Arnold"
           tags={<Tag hue={150}>Pottery Project</Tag>}
           mailbox="Studio"
+          under={look.device !== "phone"}
           squares={
             look.device === "desktop" ? undefined : (
               <ReadSquares squares={W.GLAZE} here={4} axis="head" label="5 messages, 2 unread" />
@@ -194,6 +195,16 @@ export const reading: KitSubject[] = [
         }}
       >
         <ReadingHead subject="Your talk is on the programme" people={[]} mailbox="Studio" />
+        {/* On paper the letter's sheet follows the head at once, and its top shows under the head's last line. */}
+        {look.face === "paper" ? (
+          <div
+            style={{
+              height: 24,
+              background: "var(--sheet)",
+              borderRadius: "var(--r-sheet) var(--r-sheet) 0 0",
+            }}
+          />
+        ) : null}
       </div>
     ),
   },
@@ -325,11 +336,60 @@ export const reading: KitSubject[] = [
             background: "#fff",
             color: "#12100E",
             boxShadow: "var(--lift)",
+            position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            gap: 13,
           }}
-        />
+        >
+          {/* The app's page, as the sheet draws its example: the file's name, its lines, the page's number. */}
+          <b style={PAGE_NAME}>Invoice-2291</b>
+          {[85, 88, 91, 94, 97].map((w, i) => (
+            <i key={i} style={{ ...PAGE_LINE, width: `${w}%` }} />
+          ))}
+          <em style={PAGE_RULE} />
+          {[96, 49, 52, 55].map((w, i) => (
+            <i key={`b${i}`} style={{ ...PAGE_LINE, width: `${w}%` }} />
+          ))}
+          <small style={PAGE_NUMBER}>1</small>
+        </span>
       </QuickLook>
     ),
   },
 ];
+/* A page of a file, drawn by the app: the sheet's example of one, in the paper's own colours. */
+const PAGE_INK = "#DDD5C9";
+const PAGE_NAME: CSSProperties = {
+  fontSize: 20,
+  fontWeight: 700,
+  marginBottom: 14,
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+};
+const PAGE_LINE: CSSProperties = {
+  display: "block",
+  flex: "none",
+  height: 7,
+  borderRadius: 4,
+  background: PAGE_INK,
+};
+const PAGE_RULE: CSSProperties = {
+  display: "block",
+  flex: "none",
+  height: 1,
+  margin: "14px 0",
+  background: PAGE_INK,
+};
+const PAGE_NUMBER: CSSProperties = {
+  position: "absolute",
+  left: 0,
+  right: 0,
+  bottom: 22,
+  textAlign: "center",
+  fontSize: 12,
+  color: "#6B645B",
+  fontVariantNumeric: "tabular-nums",
+};
 const NOWHERE = { x: 0, y: 0 };
 const shut = () => {};

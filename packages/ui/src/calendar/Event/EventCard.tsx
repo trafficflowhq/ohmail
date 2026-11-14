@@ -9,6 +9,7 @@ import {
   type Ref,
 } from "react";
 import { Button } from "../../base/Primitives/Button.js";
+import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon } from "../../icons/Icon.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
@@ -80,7 +81,7 @@ const PULL_TO_CLOSE = 80;
 
 /**
  * The open event, read: its head on the event's own colour (title, time, place, what it overlaps,
- * the answers), then its rows. It closes by its close and by Esc; a sheet also by a pull down.
+ * the answers), then its rows. It closes by its close and by Esc; a sheet also by a pull down on its grabber.
  * Where a card stands is the app's to say; the card says which side it was put on.
  */
 export function EventCard(p: EventCardProps) {
@@ -179,19 +180,24 @@ export function EventCard(p: EventCardProps) {
   );
 }
 
-/** The sheet follows the finger down from its grabber, or from anywhere while its content is at its top. */
+/**
+ * The sheet follows a finger or the mouse down from its grabber, and only from there: the rest of the sheet is
+ * the browser's to scroll. A pull from anywhere while its content is at its top needs touch listeners that keep
+ * the pan, and waits for the calendar's views, which bring the sheet's content and its scroll.
+ */
 function useSheetPull(on: boolean, close: Way) {
   const pull = useRef<{ from: number; by: number } | null>(null);
   if (!on) return {};
   return {
     onPointerDown: (event: PointerEvent<HTMLDivElement>) => {
-      const onGrab = (event.target as Element).closest?.(".oh-ecard-grab");
-      if (event.currentTarget.scrollTop > 0 && !onGrab) return;
-      pull.current = { from: event.clientY, by: 0 };
+      if (!(event.target as Element).closest?.(".oh-ecard-grab")) return;
+      /* The pull is heard to its end wherever the pointer goes: a mouse that leaves the sheet and lets go there has let go. */
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      pull.current = { from: cssPoint(event).y, by: 0 };
     },
     onPointerMove: (event: PointerEvent<HTMLDivElement>) => {
       if (!pull.current) return;
-      pull.current.by = Math.max(0, event.clientY - pull.current.from);
+      pull.current.by = Math.max(0, cssPoint(event).y - pull.current.from);
       event.currentTarget.style.translate = `0 ${pull.current.by}px`;
     },
     onPointerUp: (event: PointerEvent<HTMLDivElement>) => {

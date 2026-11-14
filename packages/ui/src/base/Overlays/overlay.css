@@ -23,6 +23,8 @@
     position: absolute;
     inset: 0;
     display: grid;
+    /* One column as wide as the window: what the part holds never widens it past the window's edge. */
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr);
     /* In the middle, unless what holds it says another place (`--oh-scrim-place`). */
     place-items: var(--oh-scrim-place, center);

@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type CSSProperties } from "react";
 import { KeyHint } from "../../base/index.js";
 import { design } from "../../base/tokens.js";
+import { cssRect, type CssRect } from "../../base/ui-zoom.js";
 import { Icon } from "../../icons/Icon.js";
 import { animate } from "../../motion/motion.js";
 import "./switcher.css";
@@ -75,13 +76,13 @@ const COLOURS = dotColours();
 /** Mail or Calendar: the way between the two products, in the same place in both. */
 export function Switcher({ kind, label, current, mail, cal, keysShown, onRail, onSwitch }: SwitcherProps) {
   const knob = useRef<HTMLElement>(null);
-  const stood = useRef<DOMRect | null>(null);
+  const stood = useRef<CssRect | null>(null);
   const sides = { mail, cal };
 
   /* The ink half is one element: it slides to the side you go to. */
   useLayoutEffect(() => {
     const el = knob.current;
-    const now = el ? el.getBoundingClientRect() : null;
+    const now = el ? cssRect(el) : null;
     const was = stood.current;
     stood.current = now;
     if (!el || !now || !was || now.width === 0 || (was.left === now.left && was.width === now.width)) return;

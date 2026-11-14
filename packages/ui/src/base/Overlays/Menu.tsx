@@ -2,6 +2,8 @@ import { useLayoutEffect, useRef, type KeyboardEvent, type ReactNode, type RefOb
 import { animate } from "../../motion/motion.js";
 import "./menu.css";
 import { placeMenu, type Point } from "./menu-place.js";
+import { cssRect } from "../ui-zoom.js";
+import { closeTopmost, useOverlayEscape } from "./overlay-escape.js";
 import { cycleTab, useOverlayFocus } from "./overlay-focus.js";
 import "./overlay.css";
 
@@ -9,7 +11,8 @@ export interface MenuProps {
   open: boolean;
   onClose: () => void;
   /**
-   * What it comes out of: the control that opened it, or a point in the window (a right click).
+   * What it comes out of: the control that opened it, or a point in the window in the page's px (a right
+   * click read through `cssPoint`, as `contextTrigger`, `Row` and `AgendaRow` hand it).
    * Left out: it comes up from the foot, on every device.
    */
   anchor?: RefObject<Element | null> | Point | Element;
@@ -38,7 +41,8 @@ const firstStop = (el: HTMLElement) =>
 
 /**
  * A short list that comes out of the thing you pressed. The arrows, Home and End move; Enter runs;
- * Esc, Tab and a press beside it close it, and the keys go back to what opened it.
+ * Esc (wherever the keys are, the topmost first), Tab and a press beside it close it, and the keys go back
+ * to what opened it.
  */
 export function Menu(props: MenuProps) {
   const { open, onClose, anchor, label, kind, title, aside, up, right, wide, anchored, children } = props;
@@ -49,14 +53,15 @@ export function Menu(props: MenuProps) {
   const y = point?.y;
   const from = anchor && !("x" in anchor) ? anchor : null;
   useOverlayFocus(open, box, firstStop, () => (from && "current" in from ? from.current : from), true);
+  useOverlayEscape(open, box, onClose);
   useLayoutEffect(() => {
     const el = box.current;
     const stage = el?.parentElement;
     if (!open || !el || !stage || getComputedStyle(el).getPropertyValue("--oh-menu-sheet").trim() === "1")
       return;
-    const room = stage.getBoundingClientRect();
+    const room = cssRect(stage);
     const control = from && "current" in from ? from.current : from;
-    const r = control?.getBoundingClientRect();
+    const r = control ? cssRect(control) : undefined;
     const at =
       x !== undefined && y !== undefined
         ? { x: x - room.left, y: y - room.top }
@@ -84,7 +89,7 @@ export function Menu(props: MenuProps) {
     e.stopPropagation();
     if (e.key === "Escape") {
       e.preventDefault();
-      onClose();
+      closeTopmost();
     } else if (e.key === "Tab") {
       if (dialog) cycleTab(e, el);
       else {

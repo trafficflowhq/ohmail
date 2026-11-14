@@ -2,19 +2,27 @@
    Ported from the Blanc prototype. Element-level pieces of the design
    system (keycaps, icons, focus ring, selection) plus the `.mo-canvas`
    app container. Wrap your app (or any showcase panel) in `.mo-canvas`
-   to get the Blanc ground: canvas background, system stack, resets. */
+   to get the Blanc ground: canvas background, system stack, resets.
+
+   TODAY'S ELEMENT RULES NEVER STYLE THE NEW DESIGN'S PARTS. A rule here that names an element (a key,
+   the focus ring, the selection, the resets below) reaches every element of its kind in the document,
+   and an unlayered rule beats the kit's layer whatever its specificity: inside a screen of the new
+   design it drew the kit's key hints at rest and took the fill off its buttons. So each passes over an
+   element that wears a class of the kit's (`oh-…`), which nothing of today's wears. The guard is in
+   `:where()`, so every selector keeps its specificity, and today's screens, and today's views where a
+   new screen stands them, match exactly what they matched before. */
 
 *, *::before, *::after { box-sizing: border-box }
 
-kbd{
+kbd:where(:not([class^="oh-"], [class*=" oh-"])){
   font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:10.5px;color:var(--ink3);
   border:1px solid var(--hair);border-radius:calc(var(--r-ctl) * 6 / 8);padding:1px 5px; /* keycap edge — legibility hairline, kept */
   min-width:18px;display:inline-block;text-align:center;background:var(--panel);
 }
 svg.ic{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}
 .num{font-variant-numeric:tabular-nums}
-:focus-visible{outline:var(--focus-w) solid var(--accent);outline-offset:var(--focus-offset);border-radius:var(--r-ctl)}
-::selection{background:var(--accent-soft)}
+:focus-visible:where(:not([class^="oh-"], [class*=" oh-"])){outline:var(--focus-w) solid var(--accent);outline-offset:var(--focus-offset);border-radius:var(--r-ctl)}
+:where(:not([class^="oh-"], [class*=" oh-"], :is([class^="oh-"], [class*=" oh-"]):not(.oh-root) *))::selection{background:var(--accent-soft)}
 
 .mo-canvas{
   font-family:var(--font-ui);
@@ -43,10 +51,10 @@ svg.ic{width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-wid
 }
 /* :where() keeps these resets at zero specificity so component classes
    (.btn, .ritem, …) always win regardless of import order. */
-:where(.mo-canvas) :where(h1,h2,h3){text-wrap:balance;margin:0}
-:where(.mo-canvas) :where(p,ul){margin:0;padding:0}
-:where(.mo-canvas) :where(button){font:inherit;color:inherit;background:none;border:0;cursor:pointer;margin:0;padding:0;text-align:inherit}
-:where(.mo-canvas) :where(input,textarea){font:inherit;color:inherit}
+:where(.mo-canvas) :where(h1,h2,h3):where(:not([class^="oh-"], [class*=" oh-"])){text-wrap:balance;margin:0}
+:where(.mo-canvas) :where(p,ul):where(:not([class^="oh-"], [class*=" oh-"])){margin:0;padding:0}
+:where(.mo-canvas) :where(button):where(:not([class^="oh-"], [class*=" oh-"])){font:inherit;color:inherit;background:none;border:0;cursor:pointer;margin:0;padding:0;text-align:inherit}
+:where(.mo-canvas) :where(input,textarea):where(:not([class^="oh-"], [class*=" oh-"])){font:inherit;color:inherit}
 
 @keyframes rise{from{transform:translateY(8px) scale(.985);opacity:0}to{transform:none;opacity:1}}
 

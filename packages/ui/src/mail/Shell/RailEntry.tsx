@@ -23,6 +23,8 @@ export interface RailEntryProps {
   countHot?: boolean;
   /** The keys that go there, as they are printed. */
   keyHint?: string;
+  /** The keys that go there in `aria-keyshortcuts`' own spelling ("/"): said to a screen reader, never drawn. */
+  shortcut?: string;
   /** Key hints are switched on: the key is drawn. */
   keyShown?: boolean;
   /** The key also stands at rest in the face that prints keys on its controls. */
@@ -87,6 +89,7 @@ export function RailEntry(props: RailEntryProps) {
       aria-expanded={folds ? Boolean(expanded) : undefined}
       aria-busy={props.busy ? true : undefined}
       aria-label={props.label}
+      aria-keyshortcuts={props.shortcut}
       title={props.title}
       style={style}
       onClick={onPress}

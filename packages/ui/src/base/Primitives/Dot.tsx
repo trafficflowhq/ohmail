@@ -3,8 +3,11 @@ import { design } from "../tokens.js";
 import "./dot.css";
 
 export interface DotProps {
-  /** `hot`: something is open. `ink`: done. `ring`: it came back. `none`: its place, kept empty. */
-  kind: "hot" | "ink" | "ring" | "none";
+  /**
+   * `hot`: something is open. `ink`: done. `ring`: it came back. `todo`: a step still ahead, a ring in the
+   * second ink. `none`: its place, kept empty.
+   */
+  kind: "hot" | "ink" | "ring" | "todo" | "none";
   /** The dot of one of the two apps, in that app's own colour whichever app is open. */
   product?: "mail" | "cal";
 }

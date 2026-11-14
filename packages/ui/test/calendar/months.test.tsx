@@ -154,6 +154,17 @@ describe("the mini month", () => {
     expect(onDayPress).toHaveBeenCalledWith("m12");
   });
 
+  it("says a day that cannot be picked is unavailable, and takes no press on it", () => {
+    const onDayPress = vi.fn();
+    const floor = days.map((d, i) => (i < 12 ? { ...d, disabled: true } : d));
+    render(<MiniMonth weekdays={["M", "T", "W", "T", "F", "S", "S"]} days={floor} onDayPress={onDayPress} />);
+    const early = screen.getByRole("button", { name: "Day 3" }) as HTMLButtonElement;
+    expect(early.disabled).toBe(true);
+    fireEvent.click(early);
+    expect(onDayPress).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "Day 12" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("has a head with the month's name and the two ways on only where it is given one", () => {
     const before = vi.fn(),
       after = vi.fn();

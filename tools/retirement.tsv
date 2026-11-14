@@ -1260,6 +1260,10 @@ packages/tokens/test/omarchy-mapping.test.ts	source-text	reads source as text (j
 packages/tokens/test/omarchy-settings.test.ts	data	reads data files (toml)	none	tokens	
 packages/ui/test/avatar-theme.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/banner-form.test.ts	source-text	reads source as text (css, mjs, tsx)	layer 2	kit	
+packages/ui/test/base/drawn-in-a-browser.test.tsx	artifact	through the comparison's harness: reads what the bundler builds from the kit's stylesheets, and the typefaces, and draws the parts in Chromium	layer 5	kit	
+packages/ui/test/base/scheme-under-the-stamp.test.ts	artifact	through the comparison's harness and the bundler: reads what the bundler builds from the kit's and today's stylesheets, and reads the colour scheme in Chromium with and without the frame's stamp	layer 5	kit	
+packages/ui/test/base/under-text-size.test.tsx	artifact	through the comparison's harness and the bundler: reads what the bundler builds from its page of the kit's parts and from the kit's stylesheets, and the typefaces, and drives the parts in Chromium under the web door's Text size	layer 5	kit	
+packages/ui/test/base/under-todays-sheets.test.ts	artifact	through the comparison's harness: reads what the bundler builds from the kit's and today's stylesheets, and draws every state in Chromium beside them	layer 5	kit	
 packages/ui/test/bulk-strip.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/date-picker.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/doorbell-stack.test.ts	source-text	reads source as text (css, mjs)	layer 2	kit	

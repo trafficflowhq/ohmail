@@ -16,6 +16,8 @@ export interface ReadingHeadProps {
   mailbox?: string;
   /** What ends the line on touch: the squares along the head. */
   squares?: ReactNode;
+  /** Something has scrolled under the head: a short fade of the ground under its edge says so. */
+  under?: boolean;
 }
 
 /** The conversation's subject and who is in it. It stays while the sheets scroll under it. */
@@ -27,6 +29,7 @@ export function ReadingHead({
   tags,
   mailbox,
   squares,
+  under,
 }: ReadingHeadProps) {
   const byline = (
     <p className="oh-text oh-readinghead-byline">
@@ -37,7 +40,11 @@ export function ReadingHead({
     </p>
   );
   return (
-    <header className="oh-readinghead" data-bare={subject ? undefined : ""}>
+    <header
+      className="oh-readinghead"
+      data-bare={subject ? undefined : ""}
+      data-under={under ? "" : undefined}
+    >
       {subject ? <h1 className="oh-text oh-readinghead-subject">{subject}</h1> : null}
       {squares ? (
         <div className="oh-readinghead-sub">

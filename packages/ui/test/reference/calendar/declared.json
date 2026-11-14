@@ -524,19 +524,7 @@
     "question": "picture"
   },
   {
-    "key": "EventCard/found@paper-light-desktop",
-    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
-    "question": "picture"
-  },
-  {
     "key": "EventCard/inline@paper-light-desktop",
-    "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
-    "question": "picture"
-  },
-  {
-    "key": "EventForm/every-row@paper-light-desktop",
     "reason": "The words are rasterised on another fraction of a pixel (the reference's box starts on a fraction in its page); names, boxes and drawn values are equal.",
     "since": "2026-11-14",
     "question": "picture"
@@ -621,32 +609,20 @@
   },
   {
     "key": "QuickAdd/typed@paper-dark-fold",
-    "reason": "The typed line's marks and the close are rasterised on another fraction of a pixel on the unfolded phone; names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15",
     "question": "picture"
   },
   {
     "key": "QuickAdd/typed@ohmarchy-light-fold",
-    "reason": "The typed line's marks and the close are rasterised on another fraction of a pixel on the unfolded phone; names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15",
     "question": "picture"
   },
   {
     "key": "QuickAdd/typed@ohmarchy-dark-fold",
-    "reason": "The typed line's marks and the close are rasterised on another fraction of a pixel on the unfolded phone; names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
-    "question": "picture"
-  },
-  {
-    "key": "QuickAdd/typed@ohmarchy-light-foldl",
-    "reason": "The typed line's marks and the close are rasterised on another fraction of a pixel on the unfolded phone; names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
-    "question": "picture"
-  },
-  {
-    "key": "QuickAdd/typed@ohmarchy-dark-foldl",
-    "reason": "The typed line's marks and the close are rasterised on another fraction of a pixel on the unfolded phone; names, boxes and drawn values are equal.",
-    "since": "2026-11-14",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15",
     "question": "picture"
   },
   {
@@ -674,10 +650,16 @@
     "nodes": [{ "role": "banner", "name": "" }]
   },
   {
-    "key": "CalendarRow",
-    "reason": "The part names the lock (view only); in the reference the lock is decoration without a name.",
-    "since": "2026-11-14",
-    "nodes": [{ "role": "img", "name": "View only" }]
+    "key": "CalendarRow/view-only",
+    "reason": "The part names the lock (view only); in the reference the lock is decoration without a name. The lock is read as that decoration, so its ink and its box still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-calrow-ico"]
+  },
+  {
+    "key": "CalendarRow/neutral",
+    "reason": "The part names the lock (view only); in the reference the lock is decoration without a name. The lock is read as that decoration, so its ink and its box still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-calrow-ico"]
   },
   {
     "key": "QuestionBeforeAct",
@@ -716,8 +698,9 @@
   },
   {
     "key": "InvitationCard/proposed@paper-light-fold",
-    "reason": "The reference was read before the letter's own measure drew the answers closer: the same letter a moment later draws them tight (4 px in from each word, 197.5 px wide, ending inside the card), as the part draws them here and as the reference of the other face does.",
-    "since": "2026-11-14"
+    "reason": "In the reference the reading column's dock (Reply, Forward) lies over the card's foot; the part is drawn alone. The retaken reference reads the letter's tight answers, as the part draws them.",
+    "since": "2026-11-15",
+    "question": "picture"
   },
   {
     "key": "EventChip/block-from-mail-focus@paper-light-desktop",
@@ -796,5 +779,65 @@
     "reason": "A person on the card is the kit's button that says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
     "since": "2026-11-15",
     "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "MonthGrid",
+    "reason": "Today's day is the kit's button that says it is the current date (aria-current, MonthGrid.tsx), and the open event's chip says it is open (aria-expanded, EventChip.tsx); the reference's buttons say no state. Their boxes, words and drawing bind.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["expanded", "current date"] }]
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-light-desktop",
+    "question": "names",
+    "reason": "On this face the answers show their keys. The part draws each key by its stylesheet (AnswerSwitch.tsx: the kbd's ::before reads data-key), so the letter is no part of the answer's name or text; the sheet writes the letter into the button. The boxes bind; the same keys as drawn values are the row beside this one, and the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-dark-desktop",
+    "question": "names",
+    "reason": "On this face the answers show their keys. The part draws each key by its stylesheet (AnswerSwitch.tsx: the kbd's ::before reads data-key), so the letter is no part of the answer's name or text; the sheet writes the letter into the button. The boxes bind; the same keys as drawn values are the row beside this one, and the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-light-desktop",
+    "question": "drawn",
+    "reason": "The same keys, read as drawn values: the kit's letter is the kbd's ::before (its content, colour and type), the sheet's is a word in the button. The boxes bind; the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "AnswerSwitch/rest@ohmarchy-dark-desktop",
+    "question": "drawn",
+    "reason": "The same keys, read as drawn values: the kit's letter is the kbd's ::before (its content, colour and type), the sheet's is a word in the button. The boxes bind; the picture is reported under its own row (the words a fraction of a pixel apart).",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-light-fold",
+    "question": "picture",
+    "reason": "The retaken reference's typed line runs on under the close: the fill of its next mark (1pm) shows behind the close's cross, where the kit's field ends its line at its own edge. The rest of the picture is equal.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-light-fold",
+    "question": "names",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-light-fold",
+    "question": "boxes",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-dark-fold",
+    "question": "names",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "QuickAdd/typed@paper-dark-fold",
+    "question": "boxes",
+    "reason": "The retaken reference's typed line runs on under the close, and the capture reads its next mark (1pm) and that mark's fill there; the kit's field ends its line at its own edge, so the mark is not on screen and not read. The other words and surfaces bind.",
+    "since": "2026-11-15"
   }
 ]

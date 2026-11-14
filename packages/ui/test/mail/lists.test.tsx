@@ -145,6 +145,19 @@ describe("ReadSquares", () => {
     expect(onJump).toHaveBeenCalledWith(2);
   });
 
+  it("marks which square the reader is on, and only that one", () => {
+    const { container } = render(
+      <ReadSquares
+        squares={["seen", "seen", "unseen"]}
+        here={1}
+        axis="column"
+        label="3 messages, 1 unread"
+      />,
+    );
+    const squares = [...container.querySelectorAll("[data-square]")];
+    expect(squares.map((s) => s.hasAttribute("data-here"))).toEqual([false, true, false]);
+  });
+
   it("does not open the row it stands on when a square is pressed", () => {
     const onRow = vi.fn();
     const { container } = render(

@@ -81,6 +81,38 @@ describe("Button", () => {
     expect(screen.getByRole("button", { name: "Delete" }).getAttribute("aria-expanded")).toBe("false");
   });
 
+  it("given an address it is a link there, named once, and takes no press", () => {
+    render(
+      <>
+        <Button kind="two" href="/join">
+          Connect
+        </Button>
+        <Button kind="quiet" icon="back" label="Back" href="/" />
+      </>,
+    );
+    const go = screen.getByRole("link", { name: "Connect" });
+    expect([
+      go.tagName,
+      go.getAttribute("href"),
+      go.hasAttribute("type"),
+      go.hasAttribute("aria-label"),
+    ]).toEqual(["A", "/join", false, false]);
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.getByRole("link", { name: "Back" }).getAttribute("href")).toBe("/");
+    render(
+      // @ts-expect-error a link goes somewhere; it does not also run
+      <Button href="/join" onPress={() => {}}>
+        Connect
+      </Button>,
+    );
+    render(
+      // @ts-expect-error a link is no toggle, holds no menu and is never off
+      <Button href="/join" disabled>
+        Connect
+      </Button>,
+    );
+  });
+
   it("carries its key beside its word", () => {
     render(<Button keyHint="r">Reply</Button>);
     expect(screen.getByRole("button").textContent).toBe("Replyr");
@@ -165,6 +197,31 @@ describe("Sentence and Blank", () => {
     render(<Blank label="email address" placeholder="email address" value="x" refused onChange={() => {}} />);
     expect(screen.getByRole("textbox").getAttribute("aria-invalid")).toBe("true");
   });
+
+  it("a blank can be filled by the browser, sent by a name and open a phone's keyboard for its kind", () => {
+    render(
+      <>
+        <Blank
+          label="email address"
+          placeholder="email address"
+          value=""
+          name="email"
+          autoComplete="username"
+          inputMode="email"
+          onChange={() => {}}
+        />
+        <Blank label="code" placeholder="code" value="" onChange={() => {}} />
+      </>,
+    );
+    const filled = screen.getByRole("textbox", { name: "email address" }) as HTMLInputElement;
+    expect([filled.name, filled.autocomplete, filled.inputMode]).toEqual(["email", "username", "email"]);
+    const plain = screen.getByRole("textbox", { name: "code" }) as HTMLInputElement;
+    expect([plain.name, plain.getAttribute("autocomplete"), plain.hasAttribute("inputmode")]).toEqual([
+      "",
+      "off",
+      false,
+    ]);
+  });
 });
 
 describe("Field", () => {
@@ -191,6 +248,35 @@ describe("Field", () => {
       "Use an app password.",
     );
     expect(screen.queryByText("16 letters")).toBeNull();
+  });
+
+  it("opens a phone's number pad for a code, holds its length, and says what else describes it", () => {
+    render(
+      <>
+        <p id="from-app">From your authenticator app.</p>
+        <Field
+          label="Code"
+          value=""
+          hint="Six digits"
+          inputMode="numeric"
+          maxLength={6}
+          aria-describedby="from-app"
+          onChange={() => {}}
+        />
+        <Field label="Name" value="" hint="As you sign" onChange={() => {}} />
+      </>,
+    );
+    const said = (el: HTMLElement) =>
+      el
+        .getAttribute("aria-describedby")!
+        .split(" ")
+        .map((id) => document.getElementById(id)?.textContent);
+    const code = screen.getByRole("textbox", { name: "Code" }) as HTMLInputElement;
+    expect([code.inputMode, code.maxLength]).toEqual(["numeric", 6]);
+    expect(said(code)).toEqual(["Six digits", "From your authenticator app."]);
+    const name = screen.getByRole("textbox", { name: "Name" }) as HTMLInputElement;
+    expect([name.hasAttribute("inputmode"), name.hasAttribute("maxlength")]).toEqual([false, false]);
+    expect(said(name)).toEqual(["As you sign"]);
   });
 
   it("takes several lines", () => {

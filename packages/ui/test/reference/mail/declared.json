@@ -1,11 +1,5 @@
 [
   {
-    "key": "Row/unread@paper-light-phone",
-    "question": "picture",
-    "since": "2026-11-14",
-    "reason": "3 of 1089 pixels of the paper-clip antialias differently at double scale in this one look; its box, its path and its stroke are the reference's"
-  },
-  {
     "key": "Dock/upright",
     "since": "2026-11-14",
     "reason": "the reference names a place without a count by its hint alone; the dock gives every place its name",
@@ -56,12 +50,6 @@
     ]
   },
   {
-    "key": "QuickLook/page",
-    "question": "picture",
-    "since": "2026-11-14",
-    "reason": "the look itself is the app's: the reference draws a ruled page there, the kit's picture an empty one of the same size; the frame, its head, its tools and its foot are equal"
-  },
-  {
     "key": "BlockedImages/said",
     "since": "2026-11-14",
     "reason": "the kit says the sentence in a card named for what was kept out; the reference holds it in an unnamed menu",
@@ -69,12 +57,6 @@
       { "role": "menu", "name": "" },
       { "role": "dialog", "name": "Tracker blocked" }
     ]
-  },
-  {
-    "key": "DesignedLetter/framed",
-    "question": "picture",
-    "since": "2026-11-14",
-    "reason": "the letter itself is the app's: the reference draws its invented letter in the frame, the kit's picture an empty frame of the same size on the same paper"
   },
   {
     "key": "FileNotArrived/set@paper-light-foldl",
@@ -126,20 +108,15 @@
   },
   {
     "key": "Composer",
-    "since": "2026-11-14",
-    "reason": "the kit names the letter's sheet as a region and each line of people as a group; the text is the app's editor, handed in, so its own box stands inside the frame's padding where the reference's editor is the padded box itself",
-    "nodes": [
-      { "role": "region", "name": "New message" },
-      { "role": "region", "name": "Reply to Giulia Ferrari" },
-      { "role": "group", "name": "To" },
-      { "role": "textbox", "name": "Message" }
-    ]
+    "reason": "The kit names the letter's sheet as a region and each line of people as a group; the reference leaves them unnamed. They are read as the reference's plain boxes, so the sheet, the lines' words and their fields stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-composer", ".oh-recipients-line"]
   },
   {
-    "key": "Composer/blank",
-    "question": "picture",
+    "key": "Composer",
+    "reason": "The text is the app's editor, handed in, so its own box stands inside the frame's padding where the reference's editor is the padded box itself.",
     "since": "2026-11-14",
-    "reason": "the reference's editor shows its placeholder, the kit's frame holds an empty text (the editor is the app's); on the unfolded phone and in ohmarchy the column's own ring for the keys stands along the letter's edge; the frame's names, boxes and drawn values are equal"
+    "nodes": [{ "role": "textbox", "name": "Message" }]
   },
   {
     "key": "Composer/failed",
@@ -149,13 +126,9 @@
   },
   {
     "key": "Recipients",
-    "since": "2026-11-14",
-    "reason": "the kit gives each line of people its group, named by the line; the reference leaves the lines unnamed",
-    "nodes": [
-      { "role": "group", "name": "To" },
-      { "role": "group", "name": "Cc" },
-      { "role": "group", "name": "Bcc" }
-    ]
+    "reason": "The kit gives each line of people its group, named by the line; the reference leaves the lines unnamed. The lines are read as the reference's plain boxes, so their words and fields stand outside every node as the reference's do and still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-recipients-line"]
   },
   {
     "key": "SendStatus",
@@ -171,39 +144,39 @@
   },
   {
     "key": "SettingsSheet/lines",
-    "since": "2026-11-14",
-    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
-    "nodes": [{ "role": "heading", "name": "Notify about" }]
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
   },
   {
     "key": "SettingsSheet/sign",
-    "since": "2026-11-14",
-    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
-    "nodes": [{ "role": "heading", "name": "ohmail on Linux" }]
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
   },
   {
     "key": "SettingsSheet/person",
-    "since": "2026-11-14",
-    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
-    "nodes": [{ "role": "heading", "name": "Mila Brunner" }]
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
   },
   {
     "key": "SettingsSheet/aside",
-    "since": "2026-11-14",
-    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
-    "nodes": [{ "role": "heading", "name": "Diagnostics" }]
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
   },
   {
     "key": "SettingsSheet/slot",
-    "since": "2026-11-14",
-    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
-    "nodes": [{ "role": "heading", "name": "Model" }]
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
   },
   {
     "key": "SettingsSheet/detail",
-    "since": "2026-11-14",
-    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
-    "nodes": [{ "role": "heading", "name": "Signed in" }]
+    "reason": "The kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. The title is read as that text, so its words stand in the sheet's head as the reference's do and its box, weight and ink still bind.",
+    "since": "2026-11-15",
+    "plain": [".oh-settingssheet-title"]
   },
   {
     "key": "ListTail",
@@ -273,5 +246,71 @@
       { "role": "button", "unstated": ["collapsed"] },
       { "role": "switch", "unstated": ["disabled"] }
     ]
+  },
+  {
+    "key": "FolderShelf/open@ohmarchy-light-desktop",
+    "question": "drawn",
+    "reason": "This one reference reads the folders' rows at 13.0001px on an 18.2002px line; its dark twin reads 13px on 18.2px, as ohmarchy's --t-ui (13px) says and the part sets. Names and boxes bind; the picture is read on its own.",
+    "since": "2026-11-15"
+  },
+  {
+    "key": "Composer/blank@ohmarchy-light-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-light-fold",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-light-foldl",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-dark-fold",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "Composer/blank@ohmarchy-dark-foldl",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "In ohmarchy beside the phone the reference's reading column, the app's and not the part, wears its own ring for the keys along the letter's edge. The editor's hint, the frame, its names, boxes and drawn values are the reference's."
+  },
+  {
+    "key": "FolderShelf/open@paper-light-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "FolderShelf/open@paper-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "FolderShelf/open@ohmarchy-light-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
+  },
+  {
+    "key": "FolderShelf/open@ohmarchy-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-15",
+    "reason": "The places run past the rail's short window and its scroller fades them at its foot, staged as the sheet stands it. In the reference that scroller ends a few pixels below the shelf's cut, at the rail's foot, so the last row (Notes) fades a little less. Names, boxes and drawn values bind."
   }
 ]

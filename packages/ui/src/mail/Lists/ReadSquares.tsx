@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, type CSSProperties, type MouseEvent } from "react";
+import { cssRect, type CssRect } from "../../base/ui-zoom.js";
 import { animate } from "../../motion/motion.js";
 import "./read-squares.css";
 
@@ -39,12 +40,12 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
   const after = run ? squares.length - run.to : 0;
   const long = before > 0 || after > 0;
   const ring = useRef<HTMLElement>(null);
-  const last = useRef<DOMRect | null>(null);
+  const last = useRef<CssRect | null>(null);
 
   /* The ring is drawn in the square it stands on; when the reader moves it glides there from where it stood. */
   useLayoutEffect(() => {
     const el = ring.current;
-    const now = el ? el.getBoundingClientRect() : null;
+    const now = el ? cssRect(el) : null;
     const was = last.current;
     last.current = now;
     if (!el || !now || !was) return;
@@ -89,6 +90,7 @@ export function ReadSquares({ squares, here, axis, label, run, onJump }: ReadSqu
             className="oh-readsquares-slot"
             data-kind={kind}
             data-square={index}
+            data-here={index === here ? "" : undefined}
             data-small={k > 0 && k < 1 ? "" : undefined}
             data-off={k === 0 ? "" : undefined}
             style={k === 1 ? undefined : ({ "--oh-readsquares-k": k } as CSSProperties)}

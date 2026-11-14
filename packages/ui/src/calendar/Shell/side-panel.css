@@ -25,6 +25,10 @@
   .oh-calside-scroll::-webkit-scrollbar {
     display: none;
   }
+  /* A day's heading in the calendar ends in a dot of the calendar's own size, in both faces. */
+  .oh-calside .oh-groupheading .oh-dot {
+    --dot-size: 0.36em;
+  }
   /* What stays at the foot lies over the list's end: the list keeps that room and fades under it. */
   .oh-calside[data-foot] > .oh-calside-scroll {
     --oh-calside-end: 0 0 calc(var(--h-xl) + var(--s6));

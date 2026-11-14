@@ -57,11 +57,18 @@ const MORE = { label: "Cc Bcc" };
 const GLAZE = "Re: Would you teach the December glaze evening?";
 const NADJA = [{ id: "to", label: "To", people: [person(W.NADJA)], typed: "" }];
 
-/** The app's editor, handed in: the kit draws its frame. */
-const text = (words = "") => (
-  <div role="textbox" aria-label="Message" aria-multiline="true">
-    {words}
-  </div>
+/**
+ * The app's editor, handed in: the kit draws its frame. An empty one shows its hint as the sheet's does
+ * (the studio's compose.css: `.cw-body:empty::before`, the hint in the second ink).
+ */
+const HINT = "[data-hint]:empty::before{content:attr(data-hint);color:var(--ink2)}";
+const text = (words = "", hint?: string) => (
+  <>
+    {hint ? <style>{HINT}</style> : null}
+    <div role="textbox" aria-label="Message" aria-multiline="true" data-hint={hint}>
+      {words}
+    </div>
+  </>
 );
 
 const draft = (props: Partial<DraftControlProps> & { label: string }) => (
@@ -130,6 +137,7 @@ export const editor: KitSubject[] = [
       <Composer
         fill
         {...letter(look, {
+          children: text("", "Write, or a few words to draft from"),
           head: (
             <Recipients
               from={from("Draft")}
@@ -147,6 +155,7 @@ export const editor: KitSubject[] = [
       {...letter(look, {
         label: "Reply to Giulia Ferrari",
         reply: true,
+        children: text("", "Reply"),
         head: (
           <Recipients
             reply
@@ -243,7 +252,7 @@ export const editor: KitSubject[] = [
     </SendStatus>
   )),
   inside("SendStatus/top", ".oh-sendstatus", () => (
-    <SendStatus place="top" sign="info">
+    <SendStatus place="top">
       This draft was sent from another device. Anything you type now is kept as a new draft.
     </SendStatus>
   )),

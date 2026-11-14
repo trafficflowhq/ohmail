@@ -1,4 +1,5 @@
 import type { KeyboardEvent, MouseEvent, ReactNode, Ref } from "react";
+import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { cx, toneOf, toneStyle, type CalendarTone } from "../tone.js";
 import { CalendarSquare } from "./CalendarSquare.js";
@@ -72,7 +73,7 @@ export function AgendaRow(p: AgendaRowProps) {
   const menu = p.onMenu
     ? (event: MouseEvent<HTMLDivElement>) => {
         event.preventDefault();
-        p.onMenu?.({ x: event.clientX, y: event.clientY });
+        p.onMenu?.(cssPoint(event));
       }
     : undefined;
   const press = p.draft

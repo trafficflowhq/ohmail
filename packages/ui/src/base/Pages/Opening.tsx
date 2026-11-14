@@ -21,7 +21,6 @@ const ROWS = [
   [39, 71, 71],
   [32, 60, 78],
   [28, 68, 66],
-  [36, 56, 82],
 ] as const;
 const wide = (part: number): CSSProperties => ({ "--oh-opening-part": `${part}%` }) as CSSProperties;
 const Bar = ({ part, as }: { part?: number; as?: string }) => (

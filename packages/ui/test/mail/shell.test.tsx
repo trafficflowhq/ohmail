@@ -2,14 +2,18 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ActionPanel,
   ColumnHandle,
   Dock,
   Rail,
   RailEntry,
   RailFoot,
+  Sheet,
   Switcher,
   type DockPlace,
 } from "../../src/mail/index.js";
+import { createRef } from "react";
+import { JumpBack } from "../../src/base/index.js";
 
 afterEach(cleanup);
 
@@ -134,6 +138,21 @@ describe("RailEntry", () => {
     expect(screen.queryByText("g o")).toBeNull();
     expect(screen.getByText("1")).toBeTruthy();
   });
+
+  it("names the key that goes there on the button itself, and none where it has none", () => {
+    render(
+      <>
+        <RailEntry kind="place" icon="search" shortcut="/">
+          Search
+        </RailEntry>
+        <RailEntry kind="place" icon="ohbox">
+          Ohbox
+        </RailEntry>
+      </>,
+    );
+    expect(screen.getByRole("button", { name: "Search" }).getAttribute("aria-keyshortcuts")).toBe("/");
+    expect(screen.getByRole("button", { name: "Ohbox" }).hasAttribute("aria-keyshortcuts")).toBe(false);
+  });
 });
 
 describe("Rail", () => {
@@ -191,9 +210,40 @@ describe("Rail", () => {
         .getAttribute("title"),
     ).toBe("Mailboxes");
   });
+  it("names the way to write's key on its button, from the first draw, and drops it with the model", () => {
+    const groups = [
+      <RailEntry key="o" kind="place" icon="ohbox">
+        Ohbox
+      </RailEntry>,
+    ];
+    const { rerender } = render(
+      <Rail label="Places" write={{ label: "Write", keyHint: "c", shortcut: "c" }} groups={groups} />,
+    );
+    const write = () =>
+      within(screen.getByRole("navigation", { name: "Places" })).getByRole("button", { name: /Write/ });
+    expect(write().getAttribute("aria-keyshortcuts")).toBe("c");
+    rerender(<Rail label="Places" write={{ label: "Write", keyHint: "c" }} groups={groups} />);
+    expect(write().hasAttribute("aria-keyshortcuts")).toBe(false);
+  });
 });
 
 describe("RailFoot", () => {
+  it("stands without an account while nobody is known: no account button, the tools still named", () => {
+    const onPalette = vi.fn();
+    render(
+      <RailFoot
+        pull={{ label: "Pull new mail" }}
+        tools={[{ icon: "command", label: "Command palette · Ctrl K", onPress: onPalette }]}
+      />,
+    );
+    expect(screen.getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent)).toEqual([
+      "Pull new mail",
+      "Command palette · Ctrl K",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Command palette · Ctrl K" }));
+    expect(onPalette).toHaveBeenCalledTimes(1);
+  });
+
   it("runs Pull new mail, opens the account, and names its two tools", () => {
     const [onPull, onAccount, onPalette] = [vi.fn(), vi.fn(), vi.fn()];
     render(
@@ -257,6 +307,44 @@ describe("Switcher", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "ohmail" }));
     expect(onSwitch).toHaveBeenCalledWith("mail");
+  });
+});
+
+describe("Sheet, the reading column", () => {
+  it("hands out the box its sheets scroll in", () => {
+    const scroller = createRef<HTMLDivElement>();
+    render(
+      <Sheet kind="reading" label="Conversation" scroller={scroller} head={<h2>Glaze order</h2>}>
+        <p>The first letter</p>
+      </Sheet>,
+    );
+    const column = screen.getByRole("region", { name: "Conversation" });
+    expect(column.contains(scroller.current)).toBe(true);
+    expect(within(scroller.current!).getByText("The first letter")).toBeTruthy();
+    expect(within(scroller.current!).getByRole("heading", { name: "Glaze order" })).toBeTruthy();
+  });
+
+  it("carries the way back to its start, with the action panel and without one", () => {
+    const jump = <JumpBack label="Back to top" to="top" shown onPress={() => {}} />;
+    const { rerender } = render(
+      <Sheet
+        kind="reading"
+        label="Conversation"
+        jump={jump}
+        foot={<ActionPanel label="Actions" items={[]} />}
+      >
+        <p>The first letter</p>
+      </Sheet>,
+    );
+    const column = () => screen.getByRole("region", { name: "Conversation" });
+    expect(within(column()).getByRole("button", { name: "Back to top" })).toBeTruthy();
+    expect(within(column()).getByRole("toolbar", { name: "Actions" })).toBeTruthy();
+    rerender(
+      <Sheet kind="reading" label="Conversation" jump={jump}>
+        <p>The first letter</p>
+      </Sheet>,
+    );
+    expect(within(column()).getByRole("button", { name: "Back to top" })).toBeTruthy();
   });
 });
 

@@ -15,6 +15,7 @@ import {
   type LetterView,
   type MessageHeadProps,
 } from "../../../../src/mail/index.js";
+import { design } from "../../../../src/base/tokens.js";
 import type { KitSubject, Look } from "../../harness.js";
 import * as W from "./world.js";
 
@@ -100,9 +101,50 @@ const LEDGER = [
 /** How tall the reference's letter stands in each face. */
 const HEIGHT = { paper: 422, ohmarchy: 336 };
 
+/*
+ * The letter itself is the app's: the document it hands the frame. Staged as the sheet makes its example
+ * (the studio's reading.js, at the references' studio commit: `docOf`, `frameCSS` and the Bergbahn Club's letter of
+ * reading-letters.js),
+ * with the look's own measures. A light letter keeps its white paper; in the dark it is adapted, on the sheet.
+ */
+const CLUB =
+  "<h2>Winter pass: the opening days</h2><p>Hello Mila</p><p>The first lifts open on Saturday 28 November, if the snow holds. Your pass is valid from that day.</p><ul><li>S\u00e4ntis side: from 28 November</li><li>Ch\u00e4serrugg: from 5 December</li><li>Night skiing: Fridays from 18 December</li></ul><p>Show the code in <a>your pass</a> at the gate.</p><p>Bergbahn Club</p>";
+const CLUB_PAPER = "#FFFFFF";
+const rgb = (hex: string): number[] => [1, 3, 5].map((i) => Number.parseInt(hex.slice(i, i + 2), 16));
+const hex = (c: number[]): string =>
+  `#${c
+    .map((x) =>
+      Math.max(0, Math.min(255, Math.round(x)))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+/* hue-rotate(180deg) as the browser computes it, and invert(1): the dark filter's two steps. */
+const turn = (c: number[]): number[] => [
+  -0.574 * c[0]! + 1.43 * c[1]! + 0.144 * c[2]!,
+  0.426 * c[0]! + 0.43 * c[1]! + 0.144 * c[2]!,
+  0.426 * c[0]! + 1.43 * c[1]! - 0.856 * c[2]!,
+];
+const inv = (c: number[]): number[] => c.map((x) => 255 - x);
+function clubLetter(look: Look): { document: string; paper?: string } {
+  const own = design.faces[look.face][look.scheme];
+  const dark = look.scheme === "dark";
+  const pad = Number.parseFloat(own["sheet-pad"]);
+  const css =
+    "html{-webkit-text-size-adjust:100%;text-size-adjust:100%;scrollbar-width:thin}:root,:root>body{height:auto !important}" +
+    `body{margin:0;padding:4px ${pad}px 32px;background:var(--paper,#fff);color:var(--ink,#1b1b1b);font:15px/1.62 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;overflow-wrap:break-word}` +
+    "a{color:#1a56db;text-decoration:underline;cursor:pointer}" +
+    `:root[data-dark] body{background:${hex(inv(turn(rgb(own.sheet))))};filter:invert(1) hue-rotate(180deg)}:root[data-dark]{background:${own.sheet}}` +
+    `:root[data-reflow] body{font-size:${own["t-read"]};line-height:${own["lh-read"]};overflow-wrap:anywhere}` +
+    ":root[data-reflow] *{max-width:100% !important}";
+  const document = `<!doctype html><html${dark ? ' data-dark="1"' : ""} data-reflow="1" style="--paper:${CLUB_PAPER}"><head><meta charset="utf-8"><style>${css}</style></head><body>${CLUB}</body></html>`;
+  return dark ? { document } : { document, paper: CLUB_PAPER };
+}
+
 export const letters: KitSubject[] = [
   { key: "BlockedImages/chip", on: "sheet", target: ".oh-blocked", render: () => onSheet(chip(false)) },
-  { key: "BlockedImages/said", place: "window", target: ".oh-menu", render: () => chip(true) },
+  /* It opens over the letter's sheet. */
+  { key: "BlockedImages/said", place: "window", on: "sheet", target: ".oh-menu", render: () => chip(true) },
   part("MessageHead/noted", ".oh-messagehead", () => <MessageHead {...head({ note: chip(false) })} />),
   part("MessageHead/marks", ".oh-messagehead", () => (
     <MessageHead
@@ -115,11 +157,15 @@ export const letters: KitSubject[] = [
   )),
   views("images", { id: "images", label: "Show images", icon: "image" }),
   views("adapted", { id: "adapt", label: "Original", icon: "sun" }),
-  part("DesignedLetter/framed", ".oh-designedletter", (look) => (
-    <Message head={<MessageHead {...head({})} />}>
-      <DesignedLetter title="Message content" document="" height={HEIGHT[look.face]} />
-    </Message>
-  )),
+  /* The letter closes its message's sheet, which stands on the ground: its lower corners show it. */
+  {
+    ...part("DesignedLetter/framed", ".oh-designedletter", (look) => (
+      <Message head={<MessageHead {...head({})} />}>
+        <DesignedLetter title="Message content" {...clubLetter(look)} height={HEIGHT[look.face]} />
+      </Message>
+    )),
+    on: "ground",
+  },
   kept("kept", { act: { label: "Load it now" } }),
   kept("loading", { act: { label: "Loading from your mail server…", busy: true } }),
   kept("gone", {

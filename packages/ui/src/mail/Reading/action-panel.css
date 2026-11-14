@@ -195,6 +195,18 @@
     width: var(--oh-actionpanel-wide);
   }
 
+  /* A quiet verb that gave up its word keeps the padding of a verb with its sign (the sheet's signed verb outranks its
+     slim one), as wide as a control; ohmarchy on touch, away from the unfolded phone, draws it bare. */
+  .oh-actionpanel-verb[data-short][data-signed]:not([data-kind], [data-counted]) {
+    width: var(--oh-actionpanel-slim, var(--oh-actionpanel-bare));
+    padding: var(--oh-actionpanel-pad-signed);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"]:not([data-device="fold"])
+    .oh-actionpanel-verb[data-short][data-signed]:not([data-kind], [data-counted]) {
+    padding: 0;
+  }
+
   /* The count of what is picked: ink, and a press lets go. Short of room it keeps its number. */
   .oh-actionpanel-verb[data-counted],
   .oh-actionpanel-verb[data-counted]:hover {
@@ -298,6 +310,7 @@
   :root[data-face="ohmarchy"][data-touch="0"] .oh-actionpanel-bar {
     --oh-actionpanel-h: 30px;
     --oh-actionpanel-bare: 30px;
+    --oh-actionpanel-slim: var(--h-m);
     --oh-actionpanel-gap: 5px;
     --oh-actionpanel-pad-signed: 0 6px;
     --oh-actionpanel-pad-ink-signed: 0 var(--s2);

@@ -4,7 +4,7 @@ import type { Scene, Variant } from "../../../../test/compare/scene.d.mts";
 export function readAlone(
   page: Page,
   variant: Variant,
-  where: { root: string; selector: string | null },
+  where: { root: string; selector: string | null; plain?: string[] },
 ): Promise<Scene>;
 export function cutScene(
   scene: Scene,
@@ -12,3 +12,5 @@ export function cutScene(
   place: "cell" | "block" | "window",
   mine?: (box: number[]) => boolean,
 ): Scene;
+export function folded(scene: Scene): Scene;
+export const PLAIN_ROLE: string;

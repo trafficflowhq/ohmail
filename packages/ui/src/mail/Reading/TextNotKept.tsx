@@ -13,6 +13,8 @@ export type TextNotKeptProps =
   | {
       /** The text is elsewhere: where it is, why, the one act, and what the act does and does not do. */
       kind: "kept";
+      /** The letter's preview, where one is kept: it stands over the notice, muted, in the letter's face. */
+      preview?: string;
       label: string;
       line?: string;
       /** Why it could not be loaded, as one whole sentence. */
@@ -61,8 +63,8 @@ export function TextNotKept(props: TextNotKeptProps) {
         ) : null}
       </p>
     );
-  const { label, line, warn, act, more, fine } = props;
-  return (
+  const { preview, label, line, warn, act, more, fine } = props;
+  const notice = (
     <div className="oh-notkept" role="status" aria-busy={act?.busy || undefined}>
       <p className="oh-text oh-display oh-notkept-label">
         <EndDot kind="ink">{label}</EndDot>
@@ -85,5 +87,12 @@ export function TextNotKept(props: TextNotKeptProps) {
       ) : null}
       {fine ? <p className="oh-text oh-notkept-fine">{fine}</p> : null}
     </div>
+  );
+  if (!preview) return notice;
+  return (
+    <>
+      <div className="oh-text oh-notkept-preview">{preview}</div>
+      {notice}
+    </>
   );
 }

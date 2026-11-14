@@ -28,6 +28,17 @@
     gap: var(--s2);
     margin-top: var(--s5);
   }
+  /* Other ways to the answer, under it: each on a line of its own, its word in line with the dialog's text. */
+  .oh-dialog-under {
+    display: grid;
+    flex: none;
+    justify-items: start;
+    margin-top: var(--s3);
+  }
+  .oh-dialog-under > .oh-button {
+    --oh-dialog-under-out: calc(var(--s3) * -1);
+    margin-left: var(--oh-dialog-under-out);
+  }
   :root[data-touch="1"] .oh-dialog .oh-button {
     min-height: var(--h-s);
   }
