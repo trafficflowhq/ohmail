@@ -14,7 +14,7 @@ name: ci
 # What runs. The nightly, dispatch (the second line's nightly is a dispatch on `next`: a schedule fires on the default
 # branch alone), a batch branch (pr/batch-*), a fork's or a bot's pull request, a pull request into any branch but
 # `main` and `next`, and a pull request that touches the harness (dependencies, patches, tsconfigs, vitest.config.ts, test/setup,
-# the shard maps, this file, migrations) run the whole suite. Any other maintainer's pull request runs the
+# the shard maps, this file, migrations; into `next` a change that only adds a package's lines to those lists does not count) run the whole suite. Any other maintainer's pull request runs the
 # test files its diff can reach: vitest's module graph, the files that read the changed paths, root
 # test/ and the git-spawning files (.github/scripts/ci-select.mjs states the rules), packed into as few
 # jobs as their measured time needs. Every job keeps its services and checks; the plan's summary says

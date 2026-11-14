@@ -28,9 +28,14 @@
  * the whole reach) and root to the files a reader rule would select. The rest is deferred, not dropped:
  * the plan names each file with its rule (the FAST line and its log group), and the whole suite runs it
  * on next itself after landing. main merged across into next (pr/merge-main-*) runs the reach set.
+ * Into next a harness change that only adds a package's lines (a tsconfig entry, an alias line of
+ * vitest.config.ts, a workspace and its links in the manifests and the lockfile) is deferred the same way,
+ * and named with what it added: THE HARNESS, INTO A DIRECT BASE says what is admitted. Anything else in
+ * the harness is whole there as everywhere.
  *
  * Test hooks: --root, --event <json> (the github context: event_name, actor, triggering_actor,
- * repository, event), --files <name-status file>; select takes its graph as a parameter.
+ * repository, event), --files <name-status file>; select takes its graph and the diff's two sides as
+ * parameters.
  */
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -248,44 +253,431 @@ function canonical(v) {
   return JSON.stringify(v);
 }
 
-/** The diff's whole-suite triggers, and the two narrower ones. */
-export function pathTriggers(root, changes) {
+/* ── THE HARNESS, INTO A DIRECT BASE ─────────────────────────────────────────────────────────── */
+
+/*
+ * A harness path whose change only ADDS A PACKAGE'S LINES does not make a pull request into a direct base
+ * whole: its direct set runs, and the whole suite on the base after landing runs the rest, as for any other
+ * change. What is admitted is read off both sides' text, never off a file name, and each shape is one that a
+ * job of every run proves before landing (the typecheck job and each suite job run `tsc -b`, `npm ci` refuses
+ * a manifest its lockfile does not match, and the direct set runs under the new config):
+ *
+ *   a tsconfig        added in a new app or package, its files and its output inside it (a `tsconfig.json`
+ *                     there must be one of the root's new references); or gaining `references` entries,
+ *                     `compilerOptions.paths` keys that point into apps/ or packages/, `include` entries
+ *                     inside a new one. Never tsconfig.base.json.
+ *   vitest.config.ts  lines inserted into the alias table: a line comment, or one entry on a line whose
+ *                     `find` can match a new package's name alone and whose target is inside it.
+ *   a manifest        added with a new app or package; the root's gaining them as workspaces; a workspace's
+ *                     gaining dependencies on workspaces, or `exports` subpaths.
+ *   the lockfile      gaining those workspaces, their links, and those dependencies. No other entry moves.
+ *
+ * A new app or package is one the base does not hold and the diff only adds to; its name is new when no
+ * entry of the base's lockfile carries it. Everything else is whole as before, and so is every such diff
+ * into any other base. A side that cannot be read admits nothing.
+ */
+const DEPENDENCY = "a dependency change";
+const TSCONFIG = "a tsconfig";
+const VITEST_CONFIG = "the vitest config";
+const DEP_MAPS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+/** A package name the admission will print and match: npm's own shape. */
+const NAME_OK = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/;
+/** A `paths` key, an `exports` subpath, an `include` entry: what the plan's log may print. */
+const KEY_OK = /^[A-Za-z0-9@._/+*-]+$/;
+const isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+/** The same value, key order included: a condition map reads in its order. */
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const json = (text) => { try { return JSON.parse(text); } catch { return undefined; } };
+/** A tsconfig's settings: its comments stripped, its `//` note keys dropped. */
+function jsonc(text) {
+  const plain = (v) => (Array.isArray(v) ? v.map(plain) : isObject(v) ? Object.fromEntries(Object.entries(v).filter(([k]) => !k.startsWith("//")).map(([k, x]) => [k, plain(x)])) : v);
+  try { return plain(JSON.parse(stripComments(text))); } catch { return undefined; }
+}
+/** The entries `after` holds beyond `before`'s, which it keeps in their order; null when one is gone or moved. */
+function gainedEntries(before, after) {
+  const out = [];
+  let i = 0;
+  for (const x of after) {
+    if (i < before.length && same(before[i], x)) i++;
+    else out.push(x);
+  }
+  return i === before.length ? out : null;
+}
+/** The keys `after` holds beyond `before`'s, whose every entry it keeps as it was; null otherwise. */
+function gainedKeys(before, after) {
+  if (!isObject(before) || !isObject(after)) return null;
+  for (const k of Object.keys(before)) if (!(k in after) || !same(before[k], after[k])) return null;
+  return Object.keys(after).filter((k) => !(k in before));
+}
+/** A path written in the file `p`, from the repository's root. */
+const fromDir = (p, rel) => posix.normalize(posix.join(posix.dirname(p), rel)).replace(/\/+$/, "");
+const leaves = (p) => p === ".." || p.startsWith("../") || p.startsWith("/");
+const count = (n, one, many) => (n === 1 ? one : many);
+
+/**
+ * What a tsconfig gained, when gaining is all it did: its new `references` (as written, and from the root),
+ * `compilerOptions.paths` keys and `include` entries. Null for any other change: a compiler option, `extends`,
+ * `files`, an entry removed or moved, `paths` or `include` where there was none (either replaces what the
+ * file inherits), a path that leaves apps/ and packages/.
+ */
+export function tsconfigAdditions(p, before, after) {
+  const b = jsonc(before);
+  const a = jsonc(after);
+  if (!isObject(b) || !isObject(a)) return null;
+  const out = { references: [], paths: [], include: [] };
+  for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
+    if (same(b[k], a[k])) continue;
+    if (k === "references" && (b[k] === undefined || Array.isArray(b[k])) && Array.isArray(a[k])) {
+      const gained = gainedEntries(b[k] ?? [], a[k]);
+      if (!gained) return null;
+      for (const r of gained) {
+        if (!isObject(r) || !same(Object.keys(r), ["path"]) || typeof r.path !== "string" || !PATH_OK.test(r.path) || leaves(fromDir(p, r.path))) return null;
+        out.references.push({ path: r.path, to: fromDir(p, r.path) });
+      }
+    } else if (k === "include" && Array.isArray(b[k]) && Array.isArray(a[k])) {
+      const gained = gainedEntries(b[k], a[k]);
+      if (!gained) return null;
+      for (const x of gained) {
+        if (typeof x !== "string" || !KEY_OK.test(x) || leaves(fromDir(p, x))) return null;
+        out.include.push(fromDir(p, x));
+      }
+    } else if (k === "compilerOptions" && isObject(b[k]) && isObject(a[k])) {
+      for (const o of new Set([...Object.keys(b[k]), ...Object.keys(a[k])])) {
+        if (same(b[k][o], a[k][o])) continue;
+        const gained = o === "paths" && a[k].baseUrl === undefined ? gainedKeys(b[k][o], a[k][o]) : null;
+        if (!gained) return null;
+        for (const key of gained) {
+          const to = a[k][o][key];
+          if (!KEY_OK.test(key) || !Array.isArray(to) || !to.length) return null;
+          if (to.some((v) => typeof v !== "string" || !/^\.\.?\//.test(v) || !/^(?:apps|packages)\/[^/]+\//.test(fromDir(p, v)))) return null;
+          out.paths.push(key);
+        }
+      }
+    } else return null;
+  }
+  return out;
+}
+
+/** What an admitted tsconfig change is, in words, or null. `before` is null for an added file. */
+export function admittedTsconfig(p, before, after, { newAreas = new Set() } = {}) {
+  if (p === "tsconfig.base.json" || typeof after !== "string") return null;
+  const inNew = (x) => [...newAreas].some((n) => under(x, n));
+  if (before === null) {
+    // A new package's own program: its files and what it writes stay in its folder (`paths` only reads).
+    const a = jsonc(after);
+    const out = (v) => (Array.isArray(v) ? v.some(out) : typeof v === "string" && (v.startsWith("/") || v.split("/").includes("..")));
+    const listed = (v) => v === undefined || (Array.isArray(v) && v.every((x) => typeof x === "string"));
+    if (!isObject(a) || !inNew(p) || !listed(a.include) || !listed(a.files) || out(a.include) || out(a.files)) return null;
+    const options = a.compilerOptions ?? {};
+    return isObject(options) && !Object.entries(options).some(([k, v]) => k !== "paths" && out(v)) ? `new with ${areaOf(p)}` : null;
+  }
+  const d = typeof before === "string" && before !== after ? tsconfigAdditions(p, before, after) : null;
+  if (!d || !d.include.every(inNew)) return null;
+  const parts = [];
+  if (d.references.length) parts.push(`${count(d.references.length, "a reference", "references")} to ${d.references.map((r) => r.path).join(", ")}`);
+  if (d.paths.length) parts.push(`paths for ${d.paths.join(", ")}`);
+  if (d.include.length) parts.push(`include of ${d.include.join(", ")}`);
+  return parts.length ? parts.join("; ") : "comments or layout only";
+}
+
+/**
+ * One entry of the alias table on a line of its own, read left to right: `{ find: "name" | /source/,
+ * replacement: r("./path") | `${r("./path")}tail` },` and a line comment after it. Null for any other line.
+ */
+function aliasEntry(line) {
+  if (line.includes("/*") || line.includes("*/")) return null;
+  let rest = line.trim();
+  const eat = (re) => {
+    const m = re.exec(rest);
+    if (m) rest = rest.slice(m[0].length);
+    return m;
+  };
+  if (!eat(/^\{\s*find:\s*/)) return null;
+  const find = {};
+  const text = eat(/^(["'])([A-Za-z0-9@._/-]+)\1/);
+  if (text) find.text = text[2];
+  else {
+    if (rest[0] !== "/") return null;
+    let end = 1;
+    while (end < rest.length && rest[end] !== "/") end += rest[end] === "\\" ? 2 : 1;
+    if (end >= rest.length) return null;
+    find.source = rest.slice(1, end);
+    rest = rest.slice(end + 1);
+  }
+  if (!eat(/^\s*,\s*replacement:\s*/)) return null;
+  const target = /^r\((["'])\.\/([A-Za-z0-9@._/-]+)\1\)/;
+  const template = rest[0] === "`";
+  if (template && !eat(/^`\$\{/)) return null;
+  const to = eat(target);
+  const tail = template ? eat(/^\}([A-Za-z0-9$._/-]*)`/) : [""];
+  if (!to || !tail || !eat(/^\s*\}\s*,\s*/) || (rest !== "" && !rest.startsWith("//"))) return null;
+  return [to[2], tail[1] ?? ""].some((x) => x.split("/").includes("..")) ? null : { ...find, to: to[2] };
+}
+
+/** Whether a regex `find` can match only `name` or a subpath of it: anchored at its start, one arm, the
+ *  name spelled out, then the end or a `/` that must be there. */
+function findsOnly(source, name) {
+  if (!source.startsWith("^") || source.includes("|") || !/^[A-Za-z0-9@_/-]+$/.test(name)) return false;
+  const plain = source.slice(1).split("\\/").join("/");
+  const rest = plain.slice(name.length);
+  return plain.startsWith(name) && (rest === "$" || (rest.startsWith("/") && !"?*+{".includes(rest.charAt(1))));
+}
+
+/**
+ * What an admitted vitest.config.ts change is, in words, or null. Admitted: `after` is `before` with lines
+ * inserted into the alias table, each a line comment or one entry (aliasEntry) for a new package:
+ * `newNames` maps each new name to its folder. Read in one pass over both: a line of `after` that is not
+ * the next line of `before` is an insertion and must be admitted where it stands. A string `find` matches
+ * by prefix, so one that begins a `find` the table already holds is refused.
+ */
+export function admittedVitestAlias(before, after, { newNames = new Map() } = {}) {
+  if (typeof before !== "string" || typeof after !== "string") return null;
+  const b = before.split("\n");
+  const opens = b.flatMap((l, i) => (/^\s*alias:\s*\[\s*$/.test(l) ? [i] : []));
+  if (opens.length !== 1) return null;
+  const [open] = opens;
+  const close = b.findIndex((l, i) => i > open && l.trimEnd() === `${b[open].slice(0, b[open].length - b[open].trimStart().length)}],`);
+  if (close < 0) return null;
+  const held = [...b.slice(open, close).join("\n").matchAll(/find:\s*["']([^"'\\\n]+)["']/g)].map((m) => m[1]);
+  const names = new Set();
+  let inserted = 0;
+  let i = 0;
+  for (const line of after.split("\n")) {
+    if (i < b.length && b[i] === line) { i++; continue; }
+    if (i <= open || i > close) return null;
+    inserted++;
+    if (/^\s*\/\//.test(line) && !line.includes("*/")) continue;
+    const e = aliasEntry(line);
+    const name = e && [...newNames.keys()].find((n) => (e.text !== undefined ? e.text === n || e.text.startsWith(`${n}/`) : findsOnly(e.source, n)));
+    if (!name || !under(posix.normalize(e.to), newNames.get(name))) return null;
+    if (e.text !== undefined && held.some((f) => f.startsWith(e.text))) return null;
+    names.add(name);
+  }
+  if (i !== b.length || !inserted) return null;
+  return names.size ? `${count(names.size, "an alias", "aliases")} for ${[...names].sort().join(", ")}` : "comments in the alias table";
+}
+
+/**
+ * What an admitted manifest change is, in words, or null. `before` is null for an added file. `links` are
+ * the workspace names the lockfile links after the change; `depended` the names some workspace depended on
+ * before it (null when unknown): `exports` made where there was none hides every other file of a package.
+ */
+export function admittedManifest(p, before, after, { newAreas = new Set(), newNames = new Map(), links = new Set(), depended = null } = {}) {
+  const area = areaOf(p);
+  const a = json(after);
+  if (!isObject(a) || p !== (area ? `${area}/package.json` : "package.json")) return null;
+  if (before === null) return newAreas.has(area) && newNames.get(a.name) === area ? `new with ${area}` : null;
+  const b = json(before);
+  if (!isObject(b)) return null;
+  const subpaths = (x) => isObject(x) && Object.keys(x).every((k) => k.startsWith(".") && KEY_OK.test(k));
+  const parts = { workspaces: [], depends: [], exports: [] };
+  for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
+    if (same(b[k], a[k]) || (!area && k === "version")) continue;
+    if (!area && k === "workspaces" && Array.isArray(b[k]) && Array.isArray(a[k])) {
+      const gained = gainedEntries(b[k], a[k]);
+      if (!gained || !gained.every((w) => newAreas.has(w))) return null;
+      parts.workspaces.push(...gained);
+    } else if (area && DEP_MAPS.includes(k)) {
+      const gained = gainedKeys(b[k] ?? {}, a[k]);
+      if (!gained || !gained.every((n) => links.has(n))) return null;
+      parts.depends.push(...gained);
+    } else if (area && k === "exports" && subpaths(a[k])) {
+      // A new subpath can take a specifier a pattern served; exports made from nothing end every deep import.
+      const made = b[k] === undefined && depended !== null && !depended.has(b.name);
+      const gained = made ? Object.keys(a[k]) : subpaths(b[k]) && !Object.keys(b[k]).some((x) => x.includes("*")) ? gainedKeys(b[k], a[k]) : null;
+      if (!gained) return null;
+      parts.exports.push(...gained);
+    } else return null;
+  }
+  const said = [
+    parts.workspaces.length ? `${count(parts.workspaces.length, "a workspace", "workspaces")} ${parts.workspaces.join(", ")}` : "",
+    parts.depends.length ? `depends on ${[...new Set(parts.depends)].join(", ")}` : "",
+    parts.exports.length ? `exports ${parts.exports.join(", ")}` : "",
+  ].filter(Boolean);
+  return said.length ? said.join("; ") : null;
+}
+
+/**
+ * What an admitted root lockfile change is, in words, or null. Admitted: the root gains new workspaces, each
+ * with its own entry and its link, and a workspace's entry gains dependencies on linked workspaces. Every
+ * entry under node_modules/ reads as before, and no other entry is new: a first install or a moved version
+ * is whole.
+ */
+export function admittedLock(before, after, { newAreas = new Set(), newNames = new Map() } = {}) {
+  const b = json(before);
+  const a = json(after);
+  if (!isObject(b) || !isObject(a) || !isObject(b.packages) || !isObject(a.packages)) return null;
+  for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) if (k !== "packages" && k !== "version" && !same(b[k], a[k])) return null;
+  const linked = (k) => k.startsWith("node_modules/") && isObject(a.packages[k]) && a.packages[k].link === true;
+  const depends = new Map();
+  for (const [k, was] of Object.entries(b.packages)) {
+    const now = a.packages[k];
+    if (k.includes("node_modules/") ? !same(was, now) : !isObject(was) || !isObject(now)) return null;
+    if (k.includes("node_modules/")) continue;
+    for (const f of new Set([...Object.keys(was), ...Object.keys(now)])) {
+      if (same(was[f], now[f]) || f === "version") continue;
+      if (k === "" && f === "workspaces" && Array.isArray(was[f]) && Array.isArray(now[f])) {
+        const gained = gainedEntries(was[f], now[f]);
+        if (!gained || !gained.every((w) => newAreas.has(w))) return null;
+      } else if (k !== "" && DEP_MAPS.includes(f)) {
+        const gained = gainedKeys(was[f] ?? {}, now[f]);
+        if (!gained || !gained.every((n) => linked(`node_modules/${n}`))) return null;
+        for (const n of gained) depends.set(n, [...(depends.get(n) ?? []), k]);
+      } else return null;
+    }
+  }
+  const areaName = new Map([...newNames].map(([name, area]) => [area, name]));
+  const workspaces = [];
+  let links = 0;
+  for (const [k, now] of Object.entries(a.packages)) {
+    if (k in b.packages) continue;
+    const name = k.startsWith("node_modules/") ? k.slice("node_modules/".length) : null;
+    if (name === null && isObject(now) && areaName.has(k) && now.name === areaName.get(k)) workspaces.push(k);
+    else if (name !== null && newNames.has(name) && linked(k) && now.resolved === newNames.get(name) && Object.keys(now).length === 2) links++;
+    else return null;
+  }
+  const said = [
+    workspaces.length ? `${count(workspaces.length, "a workspace", "workspaces")} ${workspaces.join(", ")}${links === workspaces.length ? count(links, " and its link", " and their links") : ""}` : "",
+    ...[...depends].map(([n, at]) => `a dependency on ${n} in ${at.length > 2 ? `${at.length} workspaces` : at.join(", ")}`),
+  ].filter(Boolean);
+  return said.length ? said.join("; ") : null;
+}
+
+/* One side of a pull request as the admission reads it: `read(path)` is its text or null, `exists(dir)`
+   whether that side holds the folder. */
+/** The base: the merge commit's first parent. A folder it cannot rule out is there. */
+const baseSide = (root) => ({
+  read: (p) => { try { return git(root, ["show", `HEAD^1:${p}`]); } catch { return null; } },
+  exists: (p) => { try { return git(root, ["ls-tree", "HEAD^1", "--", p]).trim() !== ""; } catch { return true; } },
+});
+/** The head: the checkout, which is the merge commit's own tree and what every job loads. */
+const headSide = (root) => ({ read: (p) => { try { return readFileSync(join(root, p), "utf8"); } catch { return null; } } });
+
+/** For one diff: (path, trigger) → what its admitted change is, in words, or null. Each side is read once. */
+function harnessAdmission(changes, base, head) {
+  const once = (f) => {
+    let v;
+    let done = false;
+    return () => {
+      if (!done) { v = f(); done = true; }
+      return v;
+    };
+  };
+  const status = new Map(changes.map(({ s, p }) => [p, s.charAt(0)]));
+  const lockBefore = once(() => json(base.read("package-lock.json"))?.packages);
+  const lockAfter = once(() => json(head.read("package-lock.json"))?.packages);
+  const newAreas = once(() => {
+    const touched = new Set(changes.filter((c) => c.s.charAt(0) !== "A").map((c) => areaOf(c.p)));
+    const added = new Set(changes.filter((c) => c.s.charAt(0) === "A").map((c) => areaOf(c.p)));
+    return new Set([...added].filter((a) => a && !touched.has(a) && typeof base.exists === "function" && base.exists(a) === false));
+  });
+  const newNames = once(() => {
+    const out = new Map();
+    const twice = new Set();
+    for (const area of isObject(lockBefore()) ? newAreas() : []) {
+      const name = status.get(`${area}/package.json`) === "A" ? json(head.read(`${area}/package.json`))?.name : undefined;
+      if (typeof name !== "string" || !NAME_OK.test(name) || `node_modules/${name}` in lockBefore()) continue;
+      if (out.has(name)) twice.add(name);
+      out.set(name, area);
+    }
+    for (const name of twice) out.delete(name);
+    return out;
+  });
+  const links = once(() => new Set(Object.entries(isObject(lockAfter()) ? lockAfter() : {})
+    .filter(([k, v]) => k.startsWith("node_modules/") && isObject(v) && v.link === true).map(([k]) => k.slice("node_modules/".length))));
+  const depended = once(() => (isObject(lockBefore())
+    ? new Set(Object.entries(lockBefore()).filter(([k, v]) => !k.includes("node_modules/") && isObject(v)).flatMap(([, v]) => DEP_MAPS.flatMap((m) => Object.keys(v[m] ?? {}))))
+    : null));
+  const rootReferences = once(() => (status.get("tsconfig.json") === "M"
+    ? (tsconfigAdditions("tsconfig.json", base.read("tsconfig.json"), head.read("tsconfig.json"))?.references ?? []).map((r) => r.to)
+    : []));
+  return (p, what) => {
+    const st = status.get(p);
+    const before = st === "A" ? null : st === "M" ? base.read(p) : undefined;
+    const after = head.read(p);
+    if ((st !== "A" && typeof before !== "string") || typeof after !== "string") return null;
+    if (what === VITEST_CONFIG) return admittedVitestAlias(before, after, { newNames: newNames() });
+    if (what === TSCONFIG) {
+      // `tsc -b` reaches a new package's program through the root's references alone.
+      if (st === "A" && p === `${areaOf(p)}/tsconfig.json` && !rootReferences().some((to) => to === areaOf(p) || to === p)) return null;
+      return admittedTsconfig(p, before, after, { newAreas: newAreas() });
+    }
+    if (what !== DEPENDENCY) return null;
+    return p === "package-lock.json"
+      ? admittedLock(before, after, { newAreas: newAreas(), newNames: newNames() })
+      : admittedManifest(p, before, after, { newAreas: newAreas(), newNames: newNames(), links: links(), depended: depended() });
+  };
+}
+
+/**
+ * The diff's whole-suite triggers, and the two narrower ones. With `direct` (a pull request into a direct
+ * base; `base` and `head` are its two sides) a diff whose every trigger is an admitted harness change has
+ * none: `deferred` names each path, the trigger it met and what it added. One trigger that is not admitted
+ * keeps them all, as they read for any other base. Without a base nothing is admitted.
+ */
+export function pathTriggers(root, changes, { direct = false, base = null, head = null } = {}) {
+  const sides = direct && base ? { base, head: head ?? headSide(root) } : null;
   const whole = [];
+  const met = [];
+  const trigger = (text, p = null, what = null) => {
+    whole.push(text);
+    met.push({ p, what });
+  };
   let sqliteWhole = false;
   let dovecotAll = false;
   const closure = new Set(setupClosure(root));
   for (const { s, p } of changes) {
-    if (!TREE_PATH_OK.test(p)) { whole.push("a changed path outside [A-Za-z0-9@._/+-] and (group) segments"); continue; }
+    if (!TREE_PATH_OK.test(p)) { trigger("a changed path outside [A-Za-z0-9@._/+-] and (group) segments"); continue; }
     const st = s.charAt(0);
-    if (!["A", "M", "D"].includes(st)) { whole.push(`${p}: change kind ${oneLine(s)}`); continue; }
+    if (!["A", "M", "D"].includes(st)) { trigger(`${p}: change kind ${oneLine(s)}`); continue; }
     // vitest cannot relate a deleted module to what still imports it; a deleted test file has no importer.
-    if (st === "D" && ((/^(apps|packages)\//.test(p) && !inTestDir(p)) || (MODULE.test(p) && !TEST_FILE.test(p)))) whole.push(`${p}: deleted or renamed`);
+    if (st === "D" && ((/^(apps|packages)\//.test(p) && !inTestDir(p)) || (MODULE.test(p) && !TEST_FILE.test(p)))) trigger(`${p}: deleted or renamed`);
     if (MANIFEST.test(p)) {
       let bump = false;
       if (st === "M") {
-        try { bump = versionOnly(git(root, ["show", `HEAD^1:${p}`]), git(root, ["show", `HEAD:${p}`])); } catch { bump = false; }
+        try {
+          bump = sides ? versionOnly(sides.base.read(p), sides.head.read(p)) : versionOnly(git(root, ["show", `HEAD^1:${p}`]), git(root, ["show", `HEAD:${p}`]));
+        } catch { bump = false; }
       }
-      if (!bump) whole.push(`${p}: a dependency change`);
+      if (!bump) trigger(`${p}: ${DEPENDENCY}`, p, DEPENDENCY);
     }
-    for (const [re, what] of TRIGGERS) if (re.test(p)) whole.push(`${p}: ${what}`);
-    if (closure.has(p)) whole.push(`${p}: the test harness`);
+    for (const [re, what] of TRIGGERS) if (re.test(p)) trigger(`${p}: ${what}`, p, what);
+    if (closure.has(p)) trigger(`${p}: the test harness`);
     if (p === "vitest.sqlite.config.ts") sqliteWhole = true;
     if (p.startsWith("test/dovecot/")) dovecotAll = true;
   }
-  return { whole, sqliteWhole, dovecotAll };
+  if (!direct) return { whole, sqliteWhole, dovecotAll };
+  const admit = sides ? harnessAdmission(changes, sides.base, sides.head) : () => null;
+  const deferred = [];
+  for (const { p, what } of met) {
+    const shape = what === null ? null : admit(p, what);
+    if (shape === null) return { whole, sqliteWhole, dovecotAll, deferred: [] };
+    deferred.push({ p, what, shape });
+  }
+  return { whole: [], sqliteWhole, dovecotAll, deferred };
 }
 
-/** Whole or selected, and why. `changes` overrides the diff (a test hook). */
-export function decideScope({ root = ROOT, ctx, changes = null }) {
+/**
+ * Whole or selected, and why. `changes` overrides the diff (a test hook), `base` and `head` the two sides the
+ * harness admission reads for a direct base: by default the merge commit's first parent and the checkout,
+ * and no base at all beside an overridden diff, which then admits nothing.
+ */
+export function decideScope({ root = ROOT, ctx, changes = null, base = null, head = null }) {
   const ev = eventWhole(ctx);
   if (ev) return { scope: "whole", why: ev };
   let list = changes;
   if (!list) {
     try { list = readDiff(root, ctx); } catch { return { scope: "whole", why: "the diff cannot be read" }; }
   }
-  const t = pathTriggers(root, list);
+  const line = directBase(ctx);
+  const t = pathTriggers(root, list, line === null ? {} : { direct: true, base: base ?? (changes ? null : baseSide(root)), head });
   if (t.whole.length) return { scope: "whole", why: t.whole.length > 1 ? `${t.whole[0]} (and ${t.whole.length - 1} more)` : t.whole[0] };
-  return { scope: "selected", why: `${list.length} changed path(s)`, changes: list, sqliteWhole: t.sqliteWhole, dovecotAll: t.dovecotAll };
+  const harness = t.deferred ?? [];
+  if (!harness.length) return { scope: "selected", why: `${list.length} changed path(s)`, changes: list, sqliteWhole: t.sqliteWhole, dovecotAll: t.dovecotAll };
+  return {
+    scope: "selected", why: `${list.length} changed path(s); ${harness.length} harness path(s) deferred to the whole run on ${line}`,
+    changes: list, sqliteWhole: t.sqliteWhole, dovecotAll: t.dovecotAll, harness,
+  };
 }
 
 /* ── THE READERS: test files that read the tree by path, not by import ─────────────────────────── */
@@ -770,11 +1162,13 @@ const RULES = ["changed", "graph", "root", "named", "tree", "area", "always", "s
 
 /**
  * The selected plan, or a whole one with its reason. `graph(root, related, {config})` returns vitest's
- * related set and the project's files; `costs` defaults to test/support/ci-costs.json.
+ * related set and the project's files; `costs` defaults to test/support/ci-costs.json; `base` and `head`
+ * are decideScope's.
  */
-export async function select({ root = ROOT, ctx, changes = null, graph = vitestGraph, costs = null } = {}) {
-  const scope = decideScope({ root, ctx, changes });
+export async function select({ root = ROOT, ctx, changes = null, graph = vitestGraph, costs = null, base = null, head = null } = {}) {
+  const scope = decideScope({ root, ctx, changes, base, head });
   if (scope.scope !== "selected") return { scope: "whole", why: scope.why };
+  const harness = scope.harness ?? [];
   const cs = await import(new URL("../../test/support/ci-shards.mjs", import.meta.url).href);
   const { relativeImports } = await import(new URL("../../test/support/service-needs.mjs", import.meta.url).href);
   const files = cs.testFiles(root);
@@ -790,11 +1184,20 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
   const related = relatedInputs(root, present);
   const deleted = scope.changes.filter((x) => x.s === "D").map((x) => x.p);
   // The direct set reads root test/ as well, in a map of its own: a root reader claims no path from the rest.
-  const base = directBase(ctx);
-  const everyReader = readersOf(root, files, { code: stripComments, relativeImports, deleted, includeRoot: base !== null });
+  const line = directBase(ctx);
+  const everyReader = readersOf(root, files, { code: stripComments, relativeImports, deleted, includeRoot: line !== null });
   const underRoot = ([t]) => t.startsWith("test/");
-  const readers = base === null ? everyReader : new Map([...everyReader].filter((e) => !underRoot(e)));
+  const readers = line === null ? everyReader : new Map([...everyReader].filter((e) => !underRoot(e)));
   const main = await graph(root, related, { config: "vitest.config.ts", entries: sourceEntries(everyReader) });
+  // A deferred vitest.config.ts is the config this plan was collected under: every test file the tree holds
+  // must be in its collection (the desktop's config importers need the desktop's own install), or the run is
+  // whole. A file that stops being collected would be green for ever.
+  if (harness.some((h) => h.p === "vitest.config.ts")) {
+    const collected = new Set(main.all ?? []);
+    const elsewhere = new Set(cs.desktopFiles(root, files, { configOnly: true }));
+    const lost = files.find((f) => !collected.has(f) && !elsewhere.has(f));
+    if (lost !== undefined) return { scope: "whole", why: `the plan is refused: ${lost} is not collected under vitest.config.ts` };
+  }
   for (const f of main.related) add(f, "graph");
   for (const f of files) if (f.startsWith("test/")) add(f, "root");
   const hits = readerHits(root, scope.changes, readers, main.reached ?? []);
@@ -805,8 +1208,12 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
   // Reach: everything a rule selected. Direct: what the change can break in its own workspaces and what
   // names it; the rest is deferred to the whole run on the base, and named.
   const reach = [...rule.keys()].sort();
-  const cut = base === null ? null : directSet({
-    picked: reach, rule, hits, graphRelated: main.related, related, dovecot: new Set(pinned),
+  // A deferred list file of the root (the root manifest, the lockfile, a root tsconfig, vitest.config.ts) is
+  // no module of behaviour: it does not widen the border as a changed root module does.
+  const lists = new Set(harness.filter((h) => !areaOf(h.p)).map((h) => h.p));
+  const near = related.filter((p) => !lists.has(p));
+  const cut = line === null ? null : directSet({
+    picked: reach, rule, hits, graphRelated: main.related, related: near, dovecot: new Set(pinned),
     rootHits: readerHits(root, scope.changes, new Map([...everyReader].filter(underRoot)), main.reached ?? []),
   });
   const picked = cut ? cut.direct : reach;
@@ -828,7 +1235,7 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
     const inProject = new Set(sq.all);
     const ofProject = (graphed, selected) => [...new Set([...graphed, ...selected.filter((f) => inProject.has(f))])].filter((f) => inProject.has(f)).sort();
     // The same border on the second store's graph.
-    sqliteFiles = ofProject(cut ? sq.related.filter(border(related)) : sq.related, picked);
+    sqliteFiles = ofProject(cut ? sq.related.filter(border(near)) : sq.related, picked);
     if (cut) sqliteDeferred = ofProject(sq.related, reach).filter((f) => !sqliteFiles.includes(f));
   }
   const shards = packFiles(mainPicked, suiteMs, MAX_SHARDS, (f) => (cs.dovecotPinned(root, f) ? "dovecot" : null))
@@ -836,7 +1243,7 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
   const sqlite = sqliteFiles === null ? null : packFiles(sqliteFiles, sqliteMs, MAX_SQLITE).map((fs, shard) => ({ shard, files: fs.join("\n") }));
   // The desktop job runs its files on every run: none of them waits for the whole one.
   const deferred = cut ? cut.deferred.filter((d) => !desktop.has(d.file)) : [];
-  const plan = { scope: "selected", why: scope.why, shards, alone: alonePicked, sqlite, ...(cut ? { mode: "direct", deferred, sqliteDeferred } : {}) };
+  const plan = { scope: "selected", why: scope.why, shards, alone: alonePicked, sqlite, ...(cut ? { mode: "direct", deferred, sqliteDeferred } : {}), ...(harness.length ? { harness } : {}) };
   const problems = planProblems(plan, { files, alone, desktop, sqliteAll: sqliteAll ?? [] });
   if (problems.length) return { scope: "whole", why: `the plan is refused: ${problems[0]}` };
   const counts = Object.fromEntries(RULES.map((r) => [r, picked.filter((f) => rule.get(f) === r).length]));
@@ -846,7 +1253,8 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
       changed: scope.changes.length, rules: counts, main: mainPicked.length, alone: alonePicked.length,
       sqlite: sqliteFiles === null ? "whole" : sqliteFiles.length, share: Math.round(share * 1000) / 10,
       costsMeasuredAt: c.measuredAt ?? "none",
-      ...(cut ? { base, deferred: deferred.length, deferredS: Math.round(sum(deferred.map((d) => d.file), suiteMs) / 1000) } : {}),
+      ...(cut ? { base: line, deferred: deferred.length, deferredS: Math.round(sum(deferred.map((d) => d.file), suiteMs) / 1000) } : {}),
+      ...(harness.length ? { harness: harness.map((h) => h.p) } : {}),
     },
   };
 }
@@ -892,6 +1300,7 @@ export function summaryText(out) {
     if (s.rules) lines.push(`- files by rule: ${Object.entries(s.rules).map(([k, v]) => `${k} ${v}`).join(", ")}`);
     if (s.share !== undefined) lines.push(`- ${s.main} main file(s), ${s.share}% of the whole suite's measured time (costs ${oneLine(s.costsMeasuredAt)})`);
     if (s.sqlite === "whole") lines.push("- the SQLite run is whole");
+    if (s.harness?.length) lines.push(`- harness deferred to the whole run on ${oneLine(s.base)}: ${s.harness.map(oneLine).join(", ")}`);
   } else {
     lines.push(`- ${out.shards.length} suite shards, ${out.alone.length} alone file(s), ${out.sqlite.length} sqlite shards`);
   }
@@ -901,7 +1310,8 @@ export function summaryText(out) {
 /**
  * What a direct plan says in the plan job's log, so a red in the whole run can be traced to a deferral:
  * one FAST line with the pull request and its head, then each deferred file under the rule that had
- * selected it, and the second store's list. Any other plan says nothing.
+ * selected it, the second store's list, and each deferred harness path with the trigger it met and what
+ * it added. Any other plan says nothing.
  */
 export function deferredLog(plan, ctx = {}) {
   if (plan?.scope !== "selected" || plan.mode !== "direct") return "";
@@ -917,6 +1327,13 @@ export function deferredLog(plan, ctx = {}) {
     lines.push(
       `FAST ${base} sqlite: runs ${plan.summary.sqlite} file(s) in ${plan.sqlite.length} job(s), defers ${plan.sqliteDeferred.length} file(s) to the whole run on ${base}`,
       ...group(`deferred to the whole run on ${base}, sqlite`, plan.sqliteDeferred),
+    );
+  }
+  if (plan.harness?.length) {
+    const rows = plan.harness.map((h) => ({ p: oneLine(h.p), what: oneLine(h.what), shape: oneLine(h.shape) }));
+    lines.push(
+      `FAST ${base} harness: ${rows.length} path(s) deferred to the whole run on ${base}: ${rows.map((h) => `${h.p} (${h.shape})`).join(", ")}`,
+      ...group(`harness deferred to the whole run on ${base}`, rows.map((h) => `${h.what}\t${h.p}\t${h.shape}`)),
     );
   }
   return `${lines.join("\n")}\n`;
