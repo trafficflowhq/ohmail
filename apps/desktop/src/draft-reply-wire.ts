@@ -71,6 +71,7 @@ export function draftReplyVia(
     read: async (draftId) => answerOf<DraftReplyRead>(
       await fetchImpl(`/drafts/${encodeURIComponent(draftId)}`),
     ),
+    fromText: "none",
     ...(noModel !== undefined ? { noModel } : {}),
   };
 }

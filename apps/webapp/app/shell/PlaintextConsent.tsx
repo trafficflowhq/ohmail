@@ -3,22 +3,9 @@
 import { useTranslations } from "next-intl";
 import { SettingsNote } from "@ohmail/ui";
 
-type Protocols = { imap: boolean; smtp: boolean };
+import { plaintextClaims, sameServerHost, type Protocols } from "@ohmail/app-logic/mailboxes/moved";
 
-/** One server on both legs: the incoming and the outgoing host are the same name, case and spaces aside. */
-export function sameServerHost(incoming: string, outgoing: string): boolean {
-  const a = incoming.trim().toLowerCase();
-  return a !== "" && a === outgoing.trim().toLowerCase();
-}
-
-/**
- * The blocks a press carries `allowInsecure` on: a ticked line the server offered, and with one host
- * for both legs, both — one consent covers that server. Each is a claim its own probe re-proves.
- */
-export function plaintextClaims(offer: Protocols, checked: Protocols, sameHost: boolean): Protocols {
-  const offered = sameHost && (offer.imap || offer.smtp) ? { imap: true, smtp: true } : offer;
-  return { imap: offered.imap && checked.imap, smtp: offered.smtp && checked.smtp };
-}
+export { plaintextClaims, sameServerHost };
 
 /**
  * THE PLAINTEXT CONSENT, one line per protocol the server offered it for (`plaintextOfferOf`),

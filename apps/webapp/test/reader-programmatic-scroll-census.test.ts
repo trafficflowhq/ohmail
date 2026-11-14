@@ -11,7 +11,7 @@ import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from
  * would mark the panels it passed read. Comments and strings are blanked first (one pass,
  * `source-scan.mjs`); a planted raw write and a planted bare focus are the positive controls.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/components, packages/letter-body/src, packages/ui/src/primitives, packages/app-logic/src/keys */
+/* @reads: apps/webapp/app/shell, apps/webapp/app/components, packages/letter-body/src, packages/ui/src/primitives, packages/app-logic/src/keys, packages/app/src/write/editor */
 const ROOT = join(__dirname, "..", "app");
 /** The reader tree: every file whose code runs inside the reading column or the sheet. */
 const FILES = [
@@ -28,6 +28,7 @@ const FILES = [
   "shell/ForwardAsk.tsx",
   "shell/MessageFiles.tsx",
   "shell/RichEditor.tsx",
+  "../../../packages/app/src/write/editor/commands.ts",
   "shell/RecipientField.tsx",
   "../../../packages/ui/src/primitives/DatePicker.tsx",
 ];
@@ -38,7 +39,8 @@ const FILES = [
  * is, and TipTap's `focus()` on an editor that already has it returns without scrolling.
  */
 const ADMITTED: Record<string, { pattern: RegExp; count: number }> = {
-  "shell/RichEditor.tsx": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 10 },
+  "shell/RichEditor.tsx": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 3 },
+  "../../../packages/app/src/write/editor/commands.ts": { pattern: /\.chain\(\)\s*\.focus\(\)/g, count: 7 },
 };
 const RAW = /\.scrollTop\s*(?:=(?!=)|\+=|-=)|\.scrollTo\s*\(|\.scrollBy\s*\(|\.scrollIntoView\b/g;
 

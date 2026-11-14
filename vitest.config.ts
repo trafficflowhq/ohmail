@@ -216,6 +216,7 @@ export default defineConfig({
       { find: "@ohmail/app/keys", replacement: r("./packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("./packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("./packages/app/src/ohbox/index.ts") },
+      { find: "@ohmail/app/screener", replacement: r("./packages/app/src/screener/index.ts") },
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
       { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },

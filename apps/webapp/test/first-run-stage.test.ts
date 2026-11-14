@@ -29,6 +29,8 @@ import { sliceOfDeclaration } from "./source-anchor.js";
 
 const read = (p: string) => readFileSync(resolve(process.cwd(), p), "utf8");
 const STAGE = read("apps/webapp/app/shell/FirstRun.tsx");
+/* The stage's step rule moved beside the new first run's rules; its probe follows it. */
+const STEP_RULE = read("packages/app-logic/src/mailboxes/first-run/step.ts");
 
 /** A run with everything still to do, on the standalone door. */
 const facts = (over: Partial<OnboardingFacts> = {}): OnboardingFacts => ({
@@ -384,7 +386,7 @@ describe("a re-run shows the state it is about to change", () => {
 
 describe("the stage renders the derivation, and holds no step counter", () => {
   it("asks `deriveOnboardingStep` for the step", () => {
-    expect(STAGE).toMatch(/deriveOnboardingStep\(facts\)/);
+    expect(STEP_RULE).toMatch(/deriveOnboardingStep\(facts\)/);
   });
 
   it("never stores a numeric step, and never increments one", () => {

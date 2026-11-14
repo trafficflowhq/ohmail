@@ -5,13 +5,14 @@
  * kit's action panel (the reader's), then laid out in Chromium under every sheet the product page loads.
  */
 import { act, cleanup, render } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ActionPanel } from "@ohmail/ui/mail";
 import { Frame } from "../../src/frame/Frame.js";
 import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
 import { TextProvider } from "../../src/text/index.js";
 import { chromium, entryPageOf, pageOf } from "../support/browser-page.js";
-import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
+import { fakeHost, NO_ENGINE, type FakeHostInput } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 
@@ -49,7 +50,11 @@ const ohbox: PlaceEntry = {
 };
 
 /** The frame's markup in a room at an address, with the root's attributes it stamped. */
-function drawn(room: { width: number; height: number; pointer: "coarse" | "fine" }, at: string) {
+function drawn(
+  room: { width: number; height: number; pointer: "coarse" | "fine" },
+  at: string,
+  above?: FakeHostInput["above"],
+) {
   const { host } = fakeHost({
     engine: NO_ENGINE,
     service: "self",
@@ -58,6 +63,7 @@ function drawn(room: { width: number; height: number; pointer: "coarse" | "fine"
     stages: {},
     window: fakeWindow({ ...room, posture: "flat", reducedMotion: false }),
     address: fakeAddress(at),
+    above,
   });
   const { container } = render(
     <TextProvider
@@ -300,4 +306,63 @@ describe("an entry that mounts the frame in #root (the desktop window, the paire
       expect(seen).toEqual({ parent: "root", frame: room.height, scrolled: 0 });
     },
   );
+});
+
+/**
+ * WHAT A SHELL STANDS ABOVE THE PANES TAKES NO BOX IN THE FRAME'S LAYOUT. A shell's own nodes there are overlays; here
+ * it draws the worst it could beside what it is handed: a block in the flow, 200 px tall, and a sheet over the window.
+ * In every room each landmark of the frame stands exactly where it stands with nothing above.
+ */
+describe("what a shell stands above the panes", () => {
+  function Above({ children }: { children: ReactNode }) {
+    return (
+      <>
+        {children}
+        <div style={{ height: 200 }}>a block in the flow</div>
+        <div role="dialog" aria-label="A sheet of the shell" style={{ position: "fixed", inset: 40 }}>
+          over the window
+        </div>
+      </>
+    );
+  }
+  /** Where the frame's landmarks stand: the rail or the dock, the main landmark, the list and the reading column. */
+  const landmarks = () =>
+    Object.fromEntries(
+      ["nav", "main", "section[aria-label='Messages']", "section[aria-label='Reading']"].flatMap((find) =>
+        [...document.querySelectorAll(find)].map((el, at) => {
+          const box = el.getBoundingClientRect();
+          return [
+            `${find} ${at}`,
+            [box.x, box.y, box.width, box.height].map((n) => Math.round(n * 100) / 100),
+          ];
+        }),
+      ),
+    );
+
+  for (const [name, room, at] of [
+    ["a phone, a letter open", ROOMS.phone, "#/ohbox/m/a1"],
+    ["a phone, at rest", ROOMS.phone, "#/ohbox"],
+    ["a fold", ROOMS.fold, "#/ohbox/m/a1"],
+    ["the desktop", ROOMS.desktop, "#/ohbox/m/a1"],
+  ] as const) {
+    it(`${name}: every landmark stands where it stands with nothing above, and the page is no taller`, async () => {
+      const measure = async (above?: FakeHostInput["above"]) => {
+        const page = await browser!.newPage({ viewport: { width: room.width, height: room.height } });
+        await page.setContent(pageOf(drawn(room, at, above)));
+        const seen = {
+          landmarks: await page.evaluate(landmarks),
+          pageHeight: await page.evaluate(() => document.documentElement.scrollHeight),
+          sheet: await page.getByRole("dialog", { name: "A sheet of the shell" }).count(),
+        };
+        await page.close();
+        return seen;
+      };
+      const bare = await measure();
+      const under = await measure(Above);
+      expect(under.sheet, "the shell's sheet was not drawn").toBe(1);
+      expect(Object.keys(bare.landmarks).length, "no landmark was measured").toBeGreaterThan(2);
+      expect(under.landmarks).toEqual(bare.landmarks);
+      expect(under.pageHeight).toBe(bare.pageHeight);
+    });
+  }
 });

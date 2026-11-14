@@ -1,0 +1,34 @@
+{
+  "address": {
+    "title": "All mail",
+    "loading": "Loading their mail",
+    "count": "{count, plural, one {1 message} other {# messages}}",
+    "side": {
+      "label": "Direction",
+      "all": "All",
+      "from": "From them",
+      "to": "To them"
+    },
+    "sideCount": {
+      "all": "All {count}",
+      "from": "From them {count}",
+      "to": "To them {count}"
+    },
+    "empty": {
+      "all": "Nothing with them",
+      "from": "Nothing from them",
+      "to": "Nothing to them"
+    },
+    "row": {
+      "to": "To {name}",
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "close": "Close"
+  }
+}

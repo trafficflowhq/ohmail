@@ -14,5 +14,35 @@
   },
   "stream": {
     "newSince": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch"
+  },
+  "news": {
+    "title": "News",
+    "waterline": {
+      "label": "Bis hierher gesehen"
+    },
+    "markAll": {
+      "label": "Alles als gelesen markieren",
+      "done": "{count, plural, one {1 Beitrag} other {# Beiträge}} als gelesen markiert",
+      "undo": "Rückgängig"
+    },
+    "list": {
+      "label": "News",
+      "menu": "Liste"
+    },
+    "stream": {
+      "label": "News-Strom",
+      "empty": "Hier ist nichts"
+    },
+    "item": {
+      "expand": "Aufklappen",
+      "collapse": "Zuklappen",
+      "full": "Ganz lesen",
+      "markUnread": "Als ungelesen markieren",
+      "loading": "Wird geladen",
+      "file": "Hat einen Anhang"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    }
   }
 }

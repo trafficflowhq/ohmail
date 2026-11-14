@@ -279,6 +279,7 @@ function Pane({ tauri, failed, notices, html }: { tauri: boolean; failed: string
   const chrome = React.useMemo(() => (real && tauri ? { ...real, proxyFor: tauriProxyFor } : real), [real, tauri]);
   const onRemoteImages = React.useCallback((urls: string[]) => chrome?.needRemote(HELD.id, urls), [chrome]);
   return h(MessageBody, {
+    owner: null,
     messageId: HELD.id, text: "plain", html,
     remoteLoaded: autoLoadsImages(chrome, HELD) || (chrome?.consented(HELD.id) ?? false),
     imageProxy: chrome ? chrome.proxyFor(HELD.id) : null,

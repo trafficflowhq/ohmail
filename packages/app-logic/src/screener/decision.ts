@@ -14,3 +14,36 @@ export const DECISION_QUIET: ReadonlySet<DecisionDestination> = new Set<Decision
   "screened",
   "spam",
 ]);
+
+/** The five decisions in the order every surface lists them: the Ohbox, the two automated piles, the demotions. */
+export const DECISION_ORDER: readonly DecisionDestination[] = [
+  "ohbox",
+  "reads",
+  "receipts",
+  "screened",
+  "spam",
+];
+
+/** Each decision's key; Shift on the first three also marks the sender's letters read. Twin of the kit's table. */
+export const DECISION_KEY: Readonly<Record<DecisionDestination, string>> = {
+  ohbox: "o",
+  reads: "r",
+  receipts: "c",
+  screened: "n",
+  spam: "x",
+};
+
+/** The pile's name as a PLACE (titles, reports, hints), a key of the `screener` namespace. */
+export const PILE_KEY: Readonly<Record<DecisionDestination, string>> = {
+  ohbox: "pileOhbox",
+  reads: "pileReads",
+  receipts: "pileReceipts",
+  screened: "pileScreened",
+  spam: "pileSpam",
+};
+
+/** The pile's name as the ACT on a decision's button ("Screen out", never "Screened out"). */
+export const PILE_VERB_KEY: Readonly<Record<DecisionDestination, string>> = {
+  ...PILE_KEY,
+  screened: "pileScreenOut",
+};

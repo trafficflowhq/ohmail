@@ -12,7 +12,21 @@
     "storeRetry": "Erneut versuchen",
     "railLabel": "Zu einem Monat springen",
     "railUndated": "Ohne Datum",
+    "month": "Monat",
+    "year": "Jahr",
     "railCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
-    "placeChip": "Historie"
+    "placeChip": "Historie",
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "list": {
+      "menu": "Liste"
+    }
   }
 }

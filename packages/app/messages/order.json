@@ -108,6 +108,12 @@
   "appError",
   "mailboxFilings",
   "frame",
+  "news",
+  "later",
+  "parked",
+  "resurface",
+  "tags",
+  "address",
   "stepUp",
   "deleteAccount",
   "week",
@@ -132,5 +138,6 @@
   "settingsRules",
   "settingsTags",
   "settingsSignatures",
-  "settingsAbout"
+  "settingsAbout",
+  "write"
 ]

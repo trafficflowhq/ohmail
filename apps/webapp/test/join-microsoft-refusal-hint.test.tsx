@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { launchRefused } from "@trafficflow/services/mail";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 const AUTHORIZE = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize?x=2";
 const FULL = {
@@ -105,20 +106,16 @@ async function refusedOn(tile: "Microsoft 365" | "Gmail") {
     await act(async () => { b!.click(); });
     await settle();
   };
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
-  };
-  const pick = [...host.querySelectorAll<HTMLElement>('[role="radio"]')].find((b) => (b.textContent ?? "").startsWith(tile));
-  await act(async () => { pick!.click(); });
+  /* The step is the one connect form: its fields by their labels, its tiles by their names, its refusal by its role. */
+  const probes = mailboxProbes(host, en, act);
+  const { type } = probes;
+  await probes.choose(tile);
   await settle();
   if (button(en.mailboxes.microsoftUseAppPassword)) await press(en.mailboxes.microsoftUseAppPassword);
   await type("join-mb-address", "pat@outlook.test");
   await type("join-mb-pass", "an-app-password");
   await press(en.join.connectMailbox);
-  const refusal = () => host.querySelector(".join-error.at-press")?.textContent ?? null;
+  const { refusal } = probes;
   return { host, button, press, refusal };
 }
 

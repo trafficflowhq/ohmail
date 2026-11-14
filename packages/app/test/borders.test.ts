@@ -46,7 +46,31 @@ describe("app's borders, read off its bundle", () => {
       .toContain("apps/webapp/app/shell/routing.ts");
     expect(await reach('export * from "./frame/index.js";\nexport { panesOf } from "./host/panes.js";\n')).toEqual([]);
   });
+
+  it("keeps the connect form to itself: no file of the pane's or the first run's folder, no other feature and no app file", async () => {
+    const reach = async (planted: string) => (await readPlanted(BORDERS, planted)).inputs.filter(outsideTheForm);
+    const form = 'export * from "./mailboxes/connect/index.js";\nexport * from "./mailboxes/connect/from-thrown.js";\n';
+    expect(await reach(form)).toEqual([]);
+    expect(await reach(`${form}export { firstRunStage } from "./mailboxes/first-run/index.js";\n`))
+      .toContain("packages/app/src/mailboxes/first-run/stage.tsx");
+    expect(await reach(`${form}export { MailboxesPane } from "./mailboxes/index.js";\n`))
+      .toContain("packages/app/src/mailboxes/pane/MailboxesPane.tsx");
+    expect(await reach(`${form}export { VIEWS } from "../../../apps/webapp/app/shell/routing";\n`))
+      .toContain("apps/webapp/app/shell/routing.ts");
+    // The pane and the first run mount the form; the form's folder stays the only one of the three they share.
+    const firstRun = (await readPlanted(BORDERS, 'export * from "./mailboxes/first-run/index.js";\n')).inputs;
+    expect(firstRun.filter((input) => input.startsWith("packages/app/src/mailboxes/pane/"))).toEqual([]);
+    const pane = (await readPlanted(BORDERS, 'export * from "./mailboxes/index.js";\n')).inputs;
+    expect(pane.filter((input) => input.startsWith("packages/app/src/mailboxes/first-run/"))).toEqual([]);
+  });
 });
+
+/** What the connect form may reach of the product: its own folder, the host contract (not a shell's browser door) and the text reader. */
+function outsideTheForm(input: string): boolean {
+  if (input.includes("node_modules/") || input === "<stdin>") return false;
+  if (input.startsWith("packages/app/src/host/browser/")) return true;
+  return !["packages/app/src/mailboxes/connect/", "packages/app/src/host/", "packages/app/src/text/"].some((own) => input.startsWith(own));
+}
 
 describe("the reader's two entries", () => {
   it("the frame reaches no file of the reader", async () => {
@@ -68,6 +92,36 @@ describe("the reader's two entries", () => {
       (await readPlanted(WHOLE, planted)).inputs.filter((input) => input.startsWith("packages/app-logic/src/ohbox/") || input.startsWith("packages/app/src/ohbox/"));
     expect(await reach('export * from "./reader/index.js";\n')).toEqual([]);
     expect(await reach('export * from "./reader/index.js";\nexport * from "@ohmail/app-logic/ohbox";\n')).not.toEqual([]);
+  });
+});
+
+describe("write's three entries", () => {
+  const editorEngine = (input: string) => input.includes("node_modules/@tiptap/") || input.includes("node_modules/prosemirror-");
+  it("the door loads no editor engine and nothing of the letter's body; neither does the plain entry", async () => {
+    for (const entry of ["./write/index.js", "./write/plain/index.js"]) {
+      const { inputs, refused } = await readPlanted(BORDERS, `export * from "${entry}";\n`);
+      expect(refused, entry).toEqual([]);
+      expect(inputs.filter(editorEngine), entry).toEqual([]);
+      expect(inputs.filter((input) => input.startsWith("packages/letter-body/")), entry).toEqual([]);
+    }
+    expect((await readPlanted(BORDERS, 'export * from "./write/index.js";\n')).inputs).toContain(
+      "packages/app/src/write/entry.tsx",
+    );
+  });
+
+  it("the editor's entry is the one that loads the editor engine, and it too reaches nothing of the body", async () => {
+    const { inputs, refused } = await readPlanted(BORDERS, 'export * from "./write/editor/index.js";\n');
+    expect(refused).toEqual([]);
+    expect(inputs.filter(editorEngine)).not.toEqual([]);
+    expect(inputs).toContain("packages/app/src/write/editor/schema.ts");
+    expect(inputs.filter((input) => input.startsWith("packages/letter-body/"))).toEqual([]);
+  });
+
+  it("the frame reaches no file of write", async () => {
+    const { inputs } = await readPlanted(BORDERS, 'export * from "./frame/index.js";\n');
+    expect(inputs.filter((input) => input.startsWith("packages/app/src/write/"))).toEqual([]);
+    const planted = await readPlanted(BORDERS, 'export * from "./frame/index.js";\nexport * from "./write/index.js";\n');
+    expect(planted.inputs.filter((input) => input.startsWith("packages/app/src/write/"))).not.toEqual([]);
   });
 });
 

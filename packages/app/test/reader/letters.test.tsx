@@ -7,8 +7,12 @@ import { hideMessages } from "@ohmail/app-logic/press/delete-undo";
 import { presentedOver } from "@ohmail/app-logic/reading";
 import type { ConsentPartition, EntityReader } from "@ohmail/client-engine";
 import { markSessionAlive, markSessionDead } from "@ohmail/app-logic/session/session-truth";
+import type { ReactNode } from "react";
+import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
+import type { ListVisit } from "@ohmail/app-logic/reading";
+import { useRoomHandOver, type ResurfaceTime } from "../../src/frame/room.js";
 import { fakeAppearance } from "../support/fake-window.js";
-import { letter, mountReader, READER_PLACE } from "./support/mail.js";
+import { freshRecord, letter, mountReader, READER_PLACE } from "./support/mail.js";
 
 /**
  * A CONVERSATION'S LETTERS, each handed to the shell's body with its own pictures, the app's scheme and the session's
@@ -102,6 +106,36 @@ describe("each letter's body", () => {
     fireEvent.click(screen.getByRole("button", { name: "Show original" }));
     expect(press).toHaveBeenCalledTimes(1);
     expect(screen.getByText("Images blocked")).toBeTruthy();
+  });
+});
+
+describe("what the shell says of a letter's invitation", () => {
+  const LETTERS2 = [
+    letter("m1", { ...thread, date: "2026-11-10T09:00:00.000Z" }),
+    letter("m2", { ...thread, date: "2026-11-11T09:00:00.000Z" }),
+  ];
+  function Note({ messageId }: { readonly messageId: string }) {
+    return <p>{`the invitation of ${messageId}`}</p>;
+  }
+
+  it("stands over each letter's text and outside it, handed that letter's id", () => {
+    mountReader({ letters: LETTERS2, open: "m2", parts: { invitation: Note } });
+    const said = screen.getAllByText(/^the invitation of /).map((n) => n.textContent);
+    expect(said).toEqual(["the invitation of m1", "the invitation of m2"]);
+    for (const id of ["m1", "m2"]) {
+      const at = document.querySelector<HTMLElement>(`[data-conv-id="${id}"]`)!;
+      const note = within(at).getByText(`the invitation of ${id}`);
+      const text = at.querySelector("[data-read-body]")!;
+      expect(text.contains(note), "the note stands outside the letter's text").toBe(false);
+      const after = note.compareDocumentPosition(text) & Node.DOCUMENT_POSITION_FOLLOWING;
+      expect(after, "the text follows the note").toBeTruthy();
+    }
+  });
+
+  it("where the shell says nothing of invitations, nothing stands there", () => {
+    mountReader({ letters: LETTERS2, open: "m2" });
+    expect(screen.queryAllByText(/^the invitation of /)).toEqual([]);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
   });
 });
 
@@ -557,6 +591,24 @@ describe("the head", () => {
     expect(names.slice(0, 3)).toEqual(["Reply", "Reply all", "Forward"]);
   });
 
+  it("one set of the account's own addresses decides Reply all: a letter to two of them alone offers none", async () => {
+    const office = { id: "mb-2", address: "office@studio.example", addressIsOwn: true, status: "active" };
+    const BOTH = [...ME, office];
+    const to = [
+      { name: null, address: "me@studio.example" },
+      { name: null, address: "Office@Studio.example" },
+    ];
+    mountReader({ letters: [letter("m1", { to })], open: "m1", host: { mailboxes: async () => BOTH } });
+    const panel = () => screen.getByRole("toolbar", { name: "Actions" });
+    expect(await screen.findAllByRole("button", { name: "you" })).toHaveLength(2);
+    expect(within(panel()).queryByRole("button", { name: "Reply all" })).toBeNull();
+    cleanup();
+    const cc = [{ name: "Ada", address: "ada@kiln.example" }];
+    mountReader({ letters: [letter("m1", { to, cc })], open: "m1", host: { mailboxes: async () => BOTH } });
+    expect(await screen.findAllByRole("button", { name: "you" })).toHaveLength(2);
+    expect(within(panel()).getByRole("button", { name: "Reply all" })).toBeTruthy();
+  });
+
   it("a letter's own menu answers that letter: Reply all hands write a draft, and nothing is sent", () => {
     const { mail, address } = mountReader({
       letters: [letter("m1", { cc: [{ name: "Ada", address: "ada@kiln.example" }] })],
@@ -566,6 +618,35 @@ describe("the head", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Reply all" }));
     expect(address.read()).toBe("#/compose");
     expect(mail.mutations).toEqual([]);
+  });
+
+  it("a letter's own menu offers Reply all only where its audience differs from Reply's, and Mark unread only on a read letter of somebody else's", () => {
+    const thread = { threadId: "t-menu" };
+    mountReader({
+      letters: [
+        /* Unread, to the account alone: nothing to mark, nobody else to answer. */
+        letter("m1", { ...thread, date: "2026-11-10T09:00:00.000Z" }),
+        /* Read, and Ada has it too. */
+        letter("m2", {
+          ...thread,
+          date: "2026-11-10T10:00:00.000Z",
+          unread: false,
+          cc: [{ name: "Ada", address: "ada@kiln.example" }],
+        }),
+        /* The account's own answer: read as every own letter is, and never to be marked unread. */
+        letter("m3", { ...thread, date: "2026-11-10T11:00:00.000Z", unread: false, local: true }),
+      ],
+      open: "m2",
+    });
+    const offered = (at: number): string[] => {
+      fireEvent.click(within(screen.getAllByRole("article")[at]!).getByRole("button", { name: "Message" }));
+      const names = screen.getAllByRole("menuitem").map((item) => item.textContent ?? "");
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+      return names;
+    };
+    expect(offered(0), "unread, to the account alone").toEqual(["Reply", "Forward"]);
+    expect(offered(1), "read, with Ada on it").toEqual(["Reply", "Reply all", "Forward", "Mark unread"]);
+    expect(offered(2), "the account's own letter").not.toContain("Mark unread");
   });
 
   it("on a phone the way back names the place it goes back to, and goes there", () => {
@@ -584,6 +665,134 @@ describe("the head", () => {
     const head = screen.getByRole("heading", { name: "Kiln schedule" }).closest("header")!;
     expect(within(head).getByText("Studio")).toBeTruthy();
     expect(head.textContent).not.toContain("Ben Kiln");
+  });
+
+  const MILA = { name: "Mila Brunner", address: "me@studio.example" };
+  const GIULIA = { name: "Giulia Ferrari", address: "giulia@terracotta.example" };
+  const BEN = { name: "Ben Arnold", address: "ben@terracotta.example" };
+
+  it("names who is in the conversation, oldest voice first; the account's own is not one of them", async () => {
+    const t1 = { threadId: "t1" };
+    mountReader({
+      letters: [
+        letter("c1", { ...t1, date: "2026-11-05T15:20:00.000Z", from: MILA, to: [GIULIA] }),
+        letter("c2", { ...t1, date: "2026-11-06T08:05:00.000Z", from: GIULIA }),
+        letter("c3", { ...t1, date: "2026-11-09T16:30:00.000Z", from: BEN }),
+        letter("c4", { ...t1, date: "2026-11-10T08:12:00.000Z", from: GIULIA }),
+      ],
+      open: "c4",
+      host: { mailboxes: async () => ME },
+    });
+    const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
+    expect(await within(head).findByText("Giulia Ferrari, Ben Arnold")).toBeTruthy();
+    expect(head.textContent).not.toContain("Mila Brunner");
+  });
+
+  it("names a conversation by its own subject, the one its thread carries; a single letter by its own", () => {
+    const t1 = { threadId: "t1" };
+    const glaze = [
+      letter("g1", { ...t1, subject: "Glaze order #2291", date: "2026-11-05T15:20:00.000Z" }),
+      letter("g2", { ...t1, subject: "Re: Glaze order #2291", date: "2026-11-10T08:12:00.000Z" }),
+    ];
+    mountReader({
+      letters: glaze,
+      open: "g2",
+      rows: { "thread:t1": { id: "t1", subject: "Glaze order #2291" } },
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Glaze order #2291");
+    cleanup();
+    // Before its thread has synced, the opened letter's own.
+    mountReader({ letters: glaze, open: "g2" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Re: Glaze order #2291");
+    cleanup();
+    mountReader({
+      letters: [letter("s1", { threadId: "t2", subject: "Re: Kiln schedule" })],
+      open: "s1",
+      rows: { "thread:t2": { id: "t2", subject: "Kiln schedule" } },
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Re: Kiln schedule");
+  });
+
+  it("prints You for the sender of a letter of the account's own, once the room has read the mailboxes", async () => {
+    mountReader({
+      letters: [letter("y1", { from: MILA, to: [{ name: "Ben Kiln", address: "ben@kiln.example" }] })],
+      open: "y1",
+      host: { mailboxes: async () => ME },
+    });
+    expect(await screen.findByRole("button", { name: /You\s*me@studio\.example$/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Mila Brunner/ })).toBeNull();
+  });
+
+  it("the recipients' line says to and cc as the head says them", async () => {
+    mountReader({
+      letters: [letter("k1", { cc: [{ name: "Ada Kiln", address: "ada@kiln.example" }] })],
+      open: "k1",
+      host: { mailboxes: async () => ME },
+    });
+    await screen.findByRole("button", { name: "you" });
+    const line = screen.getByRole("button", { name: "Ada Kiln" }).closest("p")!;
+    expect(line.textContent).toBe("to you · cc Ada Kiln details");
+  });
+
+  it("Later, Park and Resurface are toggles that say whether the letter is filed there", () => {
+    const filed = (state: "reply_later" | "set_aside" | "bubbled_up" | null) =>
+      letter("f1", {
+        triage:
+          state === null
+            ? null
+            : {
+                messageId: "f1",
+                state,
+                bubbleUpAt: state === "bubbled_up" ? "2026-11-13T08:00:00.000Z" : null,
+                setAt: "2026-11-10T09:00:00.000Z",
+                updatedAt: "2026-11-10T09:00:00.000Z",
+              },
+      });
+    const pressed = () => {
+      const panel = screen.getByRole("toolbar", { name: "Actions" });
+      return ["Later", "Park", "Resurface"].map((name) =>
+        within(panel).getByRole("button", { name }).getAttribute("aria-pressed"),
+      );
+    };
+    for (const [state, held] of [
+      ["reply_later", ["true", "false", "false"]],
+      ["set_aside", ["false", "true", "false"]],
+      ["bubbled_up", ["false", "false", "true"]],
+      [null, ["false", "false", "false"]],
+    ] as const) {
+      mountReader({ letters: [filed(state)], open: "f1" });
+      expect(pressed(), String(state)).toEqual(held);
+      cleanup();
+    }
+  });
+});
+
+describe("a letter the account sent", () => {
+  const SAID =
+    "The copy for your Sent folder could not be saved. The message went out; nothing to send again.";
+  const t1 = { threadId: "t1" };
+  const SENT = [
+    letter("s1", { ...t1, date: "2026-11-09T10:00:00.000Z" }),
+    letter("s2", {
+      ...t1,
+      date: "2026-11-10T10:00:00.000Z",
+      from: { name: "Mila Brunner", address: "me@studio.example" },
+      to: [{ name: "Ben Kiln", address: "ben@kiln.example" }],
+    }),
+  ];
+
+  it("carries what the shell says of its copy in Sent as a note under its recipients; the others carry none", () => {
+    mountReader({
+      letters: SENT,
+      open: "s2",
+      parts: { sentCopy: (id: string) => (id === "s2" ? SAID : null) },
+    });
+    const notes = screen.getAllByRole("note");
+    expect(notes.map((n) => n.textContent)).toEqual([SAID]);
+    expect(notes[0]!.closest("[data-conv-id]")!.getAttribute("data-conv-id")).toBe("s2");
+    cleanup();
+    mountReader({ letters: SENT, open: "s2", parts: { sentCopy: "none" } });
+    expect(screen.queryAllByRole("note")).toEqual([]);
   });
 });
 
@@ -677,6 +886,85 @@ describe("the panel's menus", () => {
       openMenu();
       expect(screen.getByRole("menuitem", { name: /^Tomorrow/ })).toBeTruthy();
       expect(screen.queryByRole("menuitem", { name: /^Next week/ })).toBeNull();
+    });
+
+    describe("the account's hour, as the shell hands it to the room", () => {
+      /** What the list's path heard, and what was kept, in the order it happened. */
+      const heard: string[] = [];
+      beforeEach(() => {
+        heard.length = 0;
+      });
+      const store = vi.fn(async (hhmm: string) => void heard.push(`kept ${hhmm}`));
+      function handing(resurface: ResurfaceTime) {
+        /* A shell above the panes hands the room its seam and the account's hour; the list's visit runs the verbs. */
+        const seam = {
+          deleting: { held: new Set<string>() },
+          routing: { places: new Map<string, string>() },
+        } as unknown as ShellDispatch;
+        function Shell({ children }: { children: ReactNode }) {
+          useRoomHandOver({ seam, rows: null, resurface });
+          return <>{children}</>;
+        }
+        const visit: ListVisit = {
+          openId: "m1",
+          unread: false,
+          readSet: [],
+          act: (action) => void heard.push(String(action)),
+          wiring: {
+            look: "tint",
+            record: freshRecord(),
+            onRead: vi.fn(),
+            onEnter: vi.fn(),
+            onMarkUnread: vi.fn(),
+          },
+          step: {
+            up: { disabled: true, run: vi.fn(), label: "Previous message" },
+            down: { disabled: true, run: vi.fn(), label: "Next message" },
+          },
+        };
+        const meeting = { visit, blank: null };
+        mountReader({ letters: [letter("m1")], open: "m1", meeting, host: { above: Shell } });
+      }
+      const time = () => screen.getByLabelText("Time", { selector: "input" }) as HTMLInputElement;
+      const press = async (name: RegExp) => {
+        await act(async () => {
+          fireEvent.click(screen.getByRole("menuitem", { name }));
+        });
+      };
+
+      it("offers the stored hour; a changed one is kept once, after the letter is booked", async () => {
+        store.mockClear();
+        handing({ stored: "07:30", store });
+        openMenu();
+        expect(time().value).toBe("07:30");
+        fireEvent.change(time(), { target: { value: "10:15" } });
+        await press(/^Tomorrow/);
+        const tomorrow = resurfaceHorizonsIn(NOW, "10:15", zone).tomorrow;
+        expect(heard).toEqual([`resurface:${tomorrow.iso}`, "kept 10:15"]);
+        expect(store).toHaveBeenCalledTimes(1);
+      });
+
+      it("an hour left as stored is no decision, and Now keeps nothing", async () => {
+        store.mockClear();
+        handing({ stored: "07:30", store });
+        openMenu();
+        await press(/^Next week/);
+        openMenu();
+        fireEvent.change(time(), { target: { value: "10:15" } });
+        await press(/^Now$/);
+        const week = resurfaceHorizonsIn(NOW, "07:30", zone).nextWeek!;
+        expect(heard).toEqual([`resurface:${week.iso}`, "resurface_now"]);
+        expect(store).not.toHaveBeenCalled();
+      });
+
+      it("where nothing can be kept, the product's 09:00 is offered and a changed hour books, kept nowhere", async () => {
+        handing({ stored: null, store: null });
+        openMenu();
+        expect(time().value).toBe("09:00");
+        fireEvent.change(time(), { target: { value: "10:15" } });
+        await press(/^Tomorrow/);
+        expect(heard).toEqual([`resurface:${resurfaceHorizonsIn(NOW, "10:15", zone).tomorrow.iso}`]);
+      });
     });
   });
 

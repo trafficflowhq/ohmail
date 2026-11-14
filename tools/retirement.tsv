@@ -1045,6 +1045,7 @@ packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text 
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
+packages/app/test/compare/write-declared.test.ts	data	reads data files (json): the comparison's registry and write's declared rows	none	write	
 packages/app/test/doors/own-classes.test.tsx	source-text	reads source as text (css): the classes today's sheets style, against every class the doors draw	layer 2	removals	
 packages/app/test/doors/under-todays-sheets.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium against the doors' own	layer 2	removals	
 packages/app/test/frame/notice-bar-in-a-browser.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium	layer 2	frame	
@@ -1052,10 +1053,13 @@ packages/app/test/frame/own-classes.test.tsx	source-text	reads source as text (c
 packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	frame	
 packages/app/test/frame/seam.test.ts	artifact	reads generated files (css): the seam sheets against what their script writes	layer 5	frame	
 packages/app/test/month/range-fit-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts and the views' own sheets: laid out in Chromium	layer 2	cal-views	
+packages/app/test/states/connect-states.test.tsx	data	reads data files (json): the comparison's registry and its declared rows; its opener's page builder is never called here	none	mailboxes	
 packages/app/test/states/ohbox-window-in-a-browser.test.ts	artifact	builds the Ohbox's states page (the feature bundled, the tokens' sheets) and reads its list window in a real browser	none	ohbox	
+packages/app/test/states/places-in-a-browser.test.ts	artifact	builds the places' states page (the places bundled, the tokens' sheets), reads the comparison's registry and manifest for every place state's window, and draws each in English and in German in a real browser	none	places	
 packages/app/test/states/reader-german-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and reads the comparison's manifest for every reading state's window, and draws each in German and English in a real browser	none	reader	
 packages/app/test/states/reader-read-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and reads the read rule and the wide window in a real browser	none	reader	
 packages/app/test/states/reader-requests-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and records what it asks for in a real browser	none	reader	
+packages/app/test/states/streams-read-in-a-browser.test.ts	artifact	builds the streams' states page (the place bundled, the tokens' sheets) and reads the read rule in a real browser	none	places	
 packages/app/test/states/touch-in-a-browser.test.ts	artifact	builds the touch layer's page (the feature bundled, the tokens' sheets) and reads its list under a finger in a real browser	none	phone-touch	
 packages/app/test/week/time-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	cal-views	
 packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	

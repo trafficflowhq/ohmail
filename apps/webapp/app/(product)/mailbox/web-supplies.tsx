@@ -13,7 +13,7 @@ import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { mirrorOwnerOf } from "@ohmail/app-logic/session/sync-scheduler";
-import { ApiError, account, api, apiConfigured, away, mailboxes as mailboxApi } from "../../api-client";
+import { ApiError, account, api, apiConfigured, away, boundApiOwner, mailboxes as mailboxApi } from "../../api-client";
 import { SELF_HOST_BUILD } from "../../hello";
 import { signOut } from "../../sign-out";
 import { CLOUD_WIRE as DRAFT_REPLY_WIRE } from "../../shell/draft-reply";
@@ -35,6 +35,7 @@ import { AiSection } from "./AiSection";
 import { CloudStorageNotice } from "./CloudStorageNotice";
 import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "./consent-over-api";
 import { DevicesSection } from "./DevicesSection";
+import { webConnectWire } from "./connect-wire";
 import { webHost, type WebSupplies } from "./host";
 import { InvitesSection } from "./InvitesSection";
 import { useLifecycleNotice } from "./lifecycle-notice";
@@ -78,6 +79,9 @@ const signOutHere = async (): Promise<void> => {
 const accessHere: Exclude<WebSupplies["reads"]["access"], typeof NONE> = () => account.access() as Promise<unknown> as ReturnType<Exclude<WebSupplies["reads"]["access"], typeof NONE>>;
 
 /** A feature that draws nothing of its own in today's views. */
+/** The connect form's calls on the app's page: a sign-in started here is for the account this window is bound to. */
+const CONNECT_WIRE = webConnectWire({ owner: () => boundApiOwner(), returned: "page" });
+
 const drawsNothing = (): ReactNode => null;
 const entryOf = (name: FeatureEntry["name"], node: ReactNode, notice?: FeatureEntry["notice"]): FeatureEntry =>
   ({ name, render: () => node, ...(notice ? { notice } : {}) });
@@ -186,6 +190,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
       autoFiled: NONE,
       seedReview: apiConfigured() ? CLOUD_SEED_REVIEW : NONE,
       folderSummary: NONE,
+      connect: CONNECT_WIRE,
       mailboxes: NONE,
     },
     features,

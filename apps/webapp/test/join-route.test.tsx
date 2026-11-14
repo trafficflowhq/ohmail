@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { fixturePassword } from "../../../test/support/fixture-credentials.js";
+import { PROVIDERS } from "../app/shell/providers.js";
 
 const J = en.join;
 const PASSWORD = fixturePassword("join-route");
@@ -29,6 +30,10 @@ const NEVER_STARTED = {
 };
 
 let session: () => Response = () => NO_SESSION;
+/** What the service says of the account's plan: refused until a case says the account may add a mailbox. */
+let entitled = false;
+/** What the next `POST /mailboxes` answers. */
+let create: () => Response = () => json(201, {});
 let sent: Array<{ path: string; body: unknown }> = [];
 let went: string[] = [];
 let unmount: (() => Promise<void>) | null = null;
@@ -37,6 +42,8 @@ const realLocation = window.location;
 
 beforeEach(() => {
   session = () => NO_SESSION;
+  entitled = false;
+  create = () => json(201, {});
   sent = [];
   went = [];
   window.history.replaceState(null, "", "/join");
@@ -61,9 +68,14 @@ beforeEach(() => {
     if (path === "/auth/register") return json(202, { status: "ok" });
     if (path === "/auth/2fa/totp/enroll") return json(200, { secret: SEED, otpauthUrl: `otpauth://totp/ohmail:pat?secret=${SEED}` });
     if (path === "/auth/2fa/totp/activate") return json(422, { error: { code: "unprocessable", message: "invalid TOTP code" } });
-    if (path === "/account/access") return json(200, { access: "refused", metered: true, canAddMailbox: false, mailboxes: 0, lifecycle: NEVER_STARTED });
+    if (path === "/account/access") {
+      return entitled
+        ? json(200, { access: "open", metered: true, canAddMailbox: true, mailboxes: 1, lifecycle: NEVER_STARTED })
+        : json(200, { access: "refused", metered: true, canAddMailbox: false, mailboxes: 0, lifecycle: NEVER_STARTED });
+    }
     if (path === "/account/manage-link") return json(200, { url: "https://plane.example/manage?token=t" });
     if (path === "/auth/2fa/recovery-codes") return json(200, { codes: CODES });
+    if (path === "/mailboxes" && (init?.method ?? "GET").toUpperCase() === "POST") return create();
     if (path.startsWith("/mailboxes")) return json(200, { items: [] });
     return json(200, {});
   }) as unknown as typeof globalThis.fetch;
@@ -188,3 +200,86 @@ describe("the join's page over its ceremony", () => {
     expect(sent.length, "the codes went somewhere").toBe(before);
   });
 });
+
+/**
+ * THE MAILBOX STEP IS THE ONE CONNECT FORM, UNDER THE WIZARD. The form sends and says what the step sent and said; the
+ * wizard stays what asks whose browser this is before a credential leaves, what a refused connect means for the
+ * setup, and where a connected mailbox ends.
+ */
+describe("the join's mailbox step: the one connect form under the wizard", () => {
+  const ADDRESS = "pat@fastmail.example";
+  const FASTMAIL = PROVIDERS.find((p) => p.id === "fastmail")!;
+  const posts = () => sent.filter((s) => s.path === "/mailboxes");
+  /** The wizard resumed on the mailbox step, the Fastmail tile chosen, an address and a password typed. */
+  const typed = async () => {
+    entitled = true;
+    session = () => json(200, { user: user({ totp: true, recoveryCodes: true }), scope: "full" });
+    const ui = await mount();
+    expect(ui.heading()).toBe(J.step_mailbox_title);
+    await ui.type(J.mailboxAddress, ADDRESS);
+    await ui.press(FASTMAIL.label);
+    await ui.type(J.appPasswordLabel, PASSWORD);
+    return ui;
+  };
+
+  it("connected: one request, the body the step always sent, and the done step names the row the server answered", async () => {
+    create = () => json(201, { id: "mb1", address: ADDRESS, provider: "fastmail", organizeConsentedAt: null });
+    const ui = await typed();
+    await ui.press(J.connectMailbox);
+    expect(posts().map((s) => s.body)).toEqual([{
+      provider: "fastmail",
+      address: ADDRESS,
+      imap: { host: FASTMAIL.imap.host, port: FASTMAIL.imap.port, secure: FASTMAIL.imap.secure, user: ADDRESS, pass: PASSWORD },
+      smtp: { host: FASTMAIL.smtp.host, port: FASTMAIL.smtp.port, secure: FASTMAIL.smtp.secure, user: ADDRESS, pass: PASSWORD },
+    }]);
+    expect(ui.heading()).toBe(J.step_connected_title);
+    expect(ui.host.textContent).toContain(J.mailboxConnected.replace("{address}", ADDRESS));
+  });
+
+  it("a browser now signed in as somebody else sends nothing, says the wizard's sentence, and keeps what was typed", async () => {
+    const ui = await typed();
+    session = () => json(200, { user: { ...user({ totp: true, recoveryCodes: true }), accountId: "b2", email: "sam@family.example" }, scope: "full" });
+    await ui.press(J.connectMailbox);
+    expect(posts(), "a credential typed for one account left under another").toEqual([]);
+    expect(ui.heading()).toBe(J.step_mailbox_title);
+    expect(ui.host.textContent).toContain(J.accountChanged.replace("{email}", "sam@family.example"));
+    expect(ui.blank(J.mailboxAddress)!.value).toBe(ADDRESS);
+    expect(ui.blank(J.appPasswordLabel)!.value).toBe(PASSWORD);
+  });
+
+  it("a refusal for payment is the wizard's: the plan step, with the server's sentence", async () => {
+    const said = "This account needs a plan before it can connect a mailbox.";
+    create = () => json(402, { error: { code: "payment_required", message: said, details: { reason: "payment_required" } } });
+    const ui = await typed();
+    // The plan step reads the account once as it opens; while it says no mailbox may be added, the step stands.
+    entitled = false;
+    await ui.press(J.connectMailbox);
+    expect(posts()).toHaveLength(1);
+    expect(ui.heading()).toBe(J.step_plan_title);
+    expect(ui.host.textContent).toContain(said);
+  });
+
+  it("what was typed survives a trip to another step and the wizard's sentence stands at the form; the password does not travel", async () => {
+    const said = "This account needs a plan before it can connect a mailbox.";
+    create = () => json(402, { error: { code: "payment_required", message: said, details: { reason: "payment_required" } } });
+    const ui = await typed();
+    // The account reads as entitled when the plan step opens, so the wizard comes straight back to the mailbox step.
+    await ui.press(J.connectMailbox);
+    expect(posts()).toHaveLength(1);
+    expect(ui.heading()).toBe(J.step_mailbox_title);
+    expect(ui.blank(J.mailboxAddress)!.value, "the address typed before the trip").toBe(ADDRESS);
+    expect(ui.blank(J.appPasswordLabel), "the tile chosen before the trip").not.toBeNull();
+    expect(ui.blank(J.appPasswordLabel)!.value, "a password kept across steps").toBe("");
+    expect(ui.host.textContent).toContain(said);
+  });
+
+  it("a session nobody can read any more sends nothing, and the wizard says why where the press was", async () => {
+    const ui = await typed();
+    session = () => NO_SESSION;
+    await ui.press(J.connectMailbox);
+    expect(posts(), "a credential left with nobody known to be signed in").toEqual([]);
+    const said = [...ui.host.querySelectorAll('[role="alert"]')].map((a) => a.textContent ?? "").join("");
+    expect(said.trim(), "the press ended with nothing said").not.toBe("");
+  });
+});
+

@@ -12,7 +12,21 @@
     "storeRetry": "Try again",
     "railLabel": "Jump to a month",
     "railUndated": "No date",
+    "month": "Month",
+    "year": "Year",
     "railCount": "{count, plural, one {1 message} other {# messages}}",
-    "placeChip": "History"
+    "placeChip": "History",
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "list": {
+      "menu": "List"
+    }
   }
 }

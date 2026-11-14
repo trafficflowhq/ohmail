@@ -336,7 +336,7 @@ describe("the seams", () => {
     const root = createRoot(host);
     roots.push(root);
     await act(async () => {
-      root.render(h(MessageBody, { messageId: "bare", text: "hello", html: PIXEL_ONLY }));
+      root.render(h(MessageBody, { owner: null, messageId: "bare", text: "hello", html: PIXEL_ONLY }));
     });
     await settle();
     const bar = host.querySelector(".mb-bar");

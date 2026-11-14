@@ -26,5 +26,48 @@
     "renameAria": "Tag umbenennen",
     "deleteAsk": "„{name}“ löschen?",
     "deleteWhat": "{count, plural, =0 {Nichts trägt ihn. } one {Er hängt an 1 deiner Nachrichten. } other {Er hängt an # deiner Nachrichten. }}Die Nachrichten bleiben, wo sie sind."
+  },
+  "tags": {
+    "title": "Tags",
+    "loading": "Deine Tags werden geladen",
+    "gone": "Diesen Tag gibt es nicht mehr",
+    "empty": {
+      "none": "Noch keine Tags",
+      "tag": "Nichts trägt diesen Tag"
+    },
+    "count": {
+      "tags": "{count, plural, one {1 Tag} other {# Tags}}",
+      "letters": "{count, plural, one {1 Nachricht} other {# Nachrichten}}"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "menu": {
+      "rename": "Umbenennen",
+      "delete": "Löschen"
+    },
+    "rename": {
+      "title": "{name} umbenennen.",
+      "field": "Name",
+      "save": "Sichern",
+      "cancel": "Abbrechen",
+      "taken": "Du hast schon einen Tag namens {name}."
+    },
+    "delete": {
+      "title": "{name} löschen.",
+      "stay": "{count, plural, one {1 Nachricht trägt ihn und bleibt, wo sie ist.} other {# Nachrichten tragen ihn und bleiben, wo sie sind.}}",
+      "nothing": "Nichts trägt ihn.",
+      "confirm": "Löschen",
+      "cancel": "Behalten"
+    },
+    "list": {
+      "menu": "Liste"
+    }
   }
 }

@@ -21,6 +21,7 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { UNDO_MS } from "@ohmail/app-logic/press/delete-undo";
 import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
+import { cursorRow, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * UNDO PUTS THE LIST BACK AS IT STOOD AT THE PRESS — the row's place in New, the cursor on it.
@@ -70,6 +71,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* jsdom draws no animation: the kit's report and rows ask `animate` (the lead's stub, `frame/seated-ohbox.test.tsx`). */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -102,7 +105,8 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: DATES[id] ?? "2026-09-03T09:00:00.000Z", unread: UNREAD.has(id),
+  to: [], cc: [], date: DATES[id] ?? "2026-09-03T09:00:00.000Z", unread: UNREAD.has(id),
+  labels: [],
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -330,7 +334,8 @@ const settle = async (): Promise<void> => {
 
 const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
+/* A verb's answer at the seated Ohbox is said in the frame's report, with its Undo (declared). */
+const toastText = (): string => reportSays();
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
 
@@ -360,7 +365,7 @@ const where = (el: HTMLElement, id: string): string => {
 };
 /** The CURSOR's row (`sel`), not the pick: a picked row publishes `aria-selected` too. */
 const selectedRow = (el: HTMLElement): string =>
-  el.querySelector(":is(.row.sel, [role=option][data-open])[data-id]")?.getAttribute("data-id") ?? "none";
+  (cursorRow(el) ?? el.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]"))?.getAttribute("data-id") ?? "none";
 const sleep = (ms: number) => act(async () => { await new Promise((r) => setTimeout(r, ms)); });
 const seen = (): number => sent.filter((m) => m.kind === "mark_seen").length;
 
@@ -376,7 +381,7 @@ async function pressAndUndo(ms: number, k: string, how: "open" | "preview" = "op
   await sleep(ms);
   await key(k);
   await waitFor(() => !rowIds(c).includes("w8"), "the row to leave");
-  const undo = document.querySelector<HTMLButtonElement>(".toast-act");
+  const undo = reportPress();
   expect(undo, "the toast carried no Undo").not.toBeNull();
   await act(async () => { undo!.click(); });
   await waitFor(() => rowIds(c).includes("w8"), "the row to come back");
@@ -473,7 +478,8 @@ describe("a split view keeps its own cursor (measured: no Ohbox placement there)
     const at = selectedRow(c);
     await key("Backspace");
     await waitFor(() => !rowIds(c).includes(at), "the row to leave");
-    await act(async () => { document.querySelector<HTMLButtonElement>(".toast-act")!.click(); });
+    /* History is today's place: its Undo is today's capsule. */
+    await act(async () => { (reportPress() ?? document.querySelector<HTMLButtonElement>(".toast-act"))!.click(); });
     await sleep(400);
     expect(selectedRow(c)).toBe(at);
     expect(deletes()).toEqual([]);
@@ -487,7 +493,7 @@ async function goHash(hash: string): Promise<void> {
   await sleep(300);
 }
 const clickUndo = async (): Promise<void> => {
-  const undo = document.querySelector<HTMLButtonElement>(".toast-act");
+  const undo = reportPress();
   expect(undo, "the toast carried no Undo").not.toBeNull();
   await act(async () => { undo!.click(); });
 };

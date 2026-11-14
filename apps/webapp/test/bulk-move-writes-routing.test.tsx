@@ -8,6 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
+import { pickedRows as seatedPicked } from "./ohbox/_finders.js";
 
 /**
  * ═══ "MOVE TO <PLACE>" OVER A SELECTION WRITES ROUTING, NOT FOLDER MOVES ════════════════════
@@ -114,9 +115,7 @@ const toastText = (): string =>
   [...document.querySelectorAll('[role="status"]')].map((n) => n.textContent ?? "").join(" ");
 
 /** The rows the selection holds, read off the rendered list: a picked option says so (`data-picked`, the kit's row). */
-const pickedRows = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")]
-    .filter((r) => r.classList.contains("picked") || r.hasAttribute("data-picked"));
+const pickedRows = (): HTMLElement[] => seatedPicked(host!);
 
 /** The ids the selection holds, read off the rendered rows. */
 function pickedIds(): string[] {
@@ -154,6 +153,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* jsdom draws no animation: the kit's report and rows ask `animate` (the lead's stub, `frame/seated-ohbox.test.tsx`). */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}

@@ -18,8 +18,10 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import type { AnswerOf, RequestOf } from "@ohmail/wire";
+import { NONE, type None } from "@ohmail/app/host";
 import { ApiError, api, apiConfigured } from "../api-client";
-import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
+import { isRichEmpty, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { aiRefusalKey, draftFailureKey } from "./ai-refusal-copy";
 
 /**
@@ -30,6 +32,11 @@ import { aiRefusalKey, draftFailureKey } from "./ai-refusal-copy";
 export type DraftReplyPhase = "closed" | "offered" | "running";
 
 export interface DraftReplyControl {
+  /**
+   * The host handed a draft wire: the reply's draft control is drawn. False (a host that answers `none`, the demo):
+   * no control is drawn, nothing is offered and nothing can be asked.
+   */
+  offered: boolean;
   phase: DraftReplyPhase;
   /** The message the offer is about, so a stale offer cannot be confirmed against another. */
   messageId: string | null;
@@ -42,6 +49,50 @@ export interface DraftReplyControl {
   cancel: () => void;
   /** Spend, and hand the result to `onDraft`. */
   confirm: () => void;
+  /**
+   * The offer and the purchase in one press, for a control that states its cost on itself. Pressed again for the
+   * same message after a failure it retries that purchase with its key; a press while one runs does nothing. `own` is
+   * the person's own text in that reply as the press found it: kept as {@link own} once the draft lands over it.
+   */
+  press: (messageId: string, own: RichValue) => void;
+  /**
+   * A draft made of the person's own words in the reply to this message, in one press, as {@link press} is: one key
+   * per press, the same words pressed again after a failure retry that purchase, a press while one runs does nothing.
+   * `none` where the host has no door for it: the control does not offer it.
+   */
+  fromText: ((messageId: string, text: string, own: RichValue) => void) | None;
+  /**
+   * A new letter drafted from the person's own words: the words, the address it goes from and its subject, as
+   * {@link fromText} is pressed, kept under {@link NEW_LETTER}. `none` exactly when {@link fromText} is.
+   */
+  letter: ((words: { text: string; mailboxId: string | null; subject: string }, own: RichValue) => void) | None;
+  /** {@link NEW_LETTER}: the new letter's `messageId` while its draft is out, and its entry of `own`. */
+  letterId: string;
+  /**
+   * The person's own text in each reply a draft landed over, and that draft: the reply's two tabs, by the letter's
+   * id. Kept here, in memory only, until a send of that reply settles or the reply is discarded (a reload drops it);
+   * a draft on another letter never touches it.
+   */
+  own: ReadonlyMap<string, OwnText>;
+  /** The two texts as they stand now, kept for their letter when the person changes tabs. */
+  keep: (own: OwnText) => void;
+  /** That reply was sent or discarded: its own text is let go. */
+  forget: (messageId: string) => void;
+  /**
+   * The new letter left the composer (another letter took its place, or it was sent or discarded): its own text is let
+   * go, and a draft still out for it fills no letter; it stays in Drafts, and the notice says so.
+   */
+  moved: (messageId: string) => void;
+  /** A discard of that reply or letter was undone: a draft still out for it lands, keeping the words its press handed. */
+  restore: (messageId: string) => void;
+}
+
+/** The person's own text beside the draft that landed over it, and which of the two the reply shows. */
+export interface OwnText {
+  readonly messageId: string;
+  readonly yours: RichValue;
+  readonly draft: RichValue;
+  readonly shown: "yours" | "draft";
 }
 
 /** One draft, in the shape the editor holds. */
@@ -75,6 +126,13 @@ export interface DraftReplyWire {
   /** `GET /drafts/:id`, the draft that purchase wrote. A read; it spends nothing. */
   read: (draftId: string) => Promise<DraftReplyRead>;
   /**
+   * `POST /drafts/from-text`, a purchase made of the person's own words, under the caller's key as {@link create}.
+   * `none`: this host has no door for it.
+   */
+  fromText:
+    | ((body: RequestOf<"POST /drafts/from-text">, idempotencyKey: string) => Promise<AnswerOf<"POST /drafts/from-text">>)
+    | None;
+  /**
    * The `draftReply` sentence for 503 `drafter_unconfigured` on a door where the person can fix
    * it: a desktop install's model is chosen in its own settings. Absent (the web, a desktop on an
    * account): the server's sentence, since only its operator can connect a drafter.
@@ -94,6 +152,11 @@ export const CLOUD_WIRE: DraftReplyWire = {
     headers: { "Idempotency-Key": idempotencyKey },
   }),
   read: (draftId) => api<DraftReplyRead>(`/drafts/${draftId}`),
+  fromText: (body, idempotencyKey) => api<AnswerOf<"POST /drafts/from-text">>("/drafts/from-text", {
+    method: "POST",
+    headers: { "Idempotency-Key": idempotencyKey },
+    body,
+  }),
 };
 
 /**
@@ -105,25 +168,34 @@ export const CLOUD_WIRE: DraftReplyWire = {
  */
 export const DRAFT_REPLY_COST_CREDITS = 15;
 
+/** The new letter's place among the letters a draft is bought for: no message's id has this shape. */
+export const NEW_LETTER = "letter:new";
+
 export function useDraftReply(opts: {
   /**
    * Where the answer goes. Called with the drafted reply and the message it answers; the
    * CALLER decides whether it replaces or is appended to whatever is already typed, because
-   * only the caller can see the editor.
+   * only the caller can see the editor. `letter`: a new letter's draft, under the id its press named.
    */
-  onDraft: (draft: DraftedReply, messageId: string) => void;
-  /** Absent on the web: keep using its Cloud API client. Desktop supplies the private engine wire. */
+  onDraft: (draft: DraftedReply, messageId: string, of: "reply" | "letter") => void;
+  /**
+   * The host's wire: the web hands {@link CLOUD_WIRE}, the desktop and the paired page their engine's. Absent (a host
+   * that answers `none`, the demo): nothing is offered to the reply's control and Draft from your text is `none`; the
+   * old card's verb keeps the hosted client.
+   */
   wire?: DraftReplyWire;
 }): DraftReplyControl {
   const t = useTranslations("draftReply");
   /** The three AI refusals both surfaces share — see `ai-refusal-copy.ts`. */
   const tAi = useTranslations("aiRefusal");
   const { onDraft } = opts;
+  const hosted = opts.wire !== undefined;
   const wire = opts.wire ?? CLOUD_WIRE;
 
   const [phase, setPhase] = useState<DraftReplyPhase>("closed");
   const [messageId, setMessageId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [own, setOwn] = useState<ReadonlyMap<string, OwnText>>(() => new Map());
 
   /**
    * The press counter, and the key of the press in flight.
@@ -132,10 +204,18 @@ export function useDraftReply(opts: {
    * `screener-suggest.ts` keeps for its dry runs. `key` is minted ONCE per press and reused if
    * that press has to be retried at the transport level, which is what makes a lost response
    * replay instead of buying a second draft; a second deliberate press is a different purchase
-   * and gets a different key.
+   * and gets a different key. `flight` is the letter of the purchase out; `letGo`: that reply was sent or discarded
+   * since the press, so the words the press handed are no longer the person's text to keep; `away`: the new letter the
+   * press was made for left the composer since, so its answer fills no letter.
    */
-  const io = useRef<{ run: number; key: string | null }>({ run: 0, key: null });
+  const io = useRef<{
+    run: number; key: string | null; of: string | null; busy: boolean; flight: string | null; letGo: boolean;
+    away: boolean;
+  }>({
+    run: 0, key: null, of: null, busy: false, flight: null, letGo: false, away: false,
+  });
 
+  /* Neither `open` nor `cancel` clears `busy`: only the answer of the request in flight does (a purchase is out). */
   const open = useCallback((id: string) => {
     io.current.run += 1;
     io.current.key = null;
@@ -151,17 +231,30 @@ export function useDraftReply(opts: {
     setNotice(null);
   }, []);
 
-  const confirm = useCallback(() => {
-    const id = messageId;
-    if (!id || phase === "running") return;
+  /**
+   * `of` names the purchase the kept key belongs to: the same purchase pressed again after a failure reuses it, any
+   * other is a new one. `busy` holds a press while one runs, read before React has drawn the first: two presses in one
+   * moment send one request.
+   */
+  const spend = useCallback((
+    id: string, of: string, buy: (key: string) => Promise<{ draftId: string }>, typed: RichValue | null,
+    lands: "reply" | "letter",
+  ) => {
+    if (io.current.busy) return;
     if (!wire.configured()) {
       // No route is available. Saying so beats a spinner that never resolves.
       setNotice(t("unavailable"));
       return;
     }
+    if (io.current.of !== of) io.current.key = null;
+    io.current.of = of;
     const run = ++io.current.run;
     io.current.key ??= newKey();
     const key = io.current.key;
+    io.current.busy = true;
+    io.current.flight = id;
+    io.current.letGo = false;
+    io.current.away = false;
     setPhase("running");
     setNotice(t("running"));
 
@@ -178,17 +271,38 @@ export function useDraftReply(opts: {
        */
       let bought = false;
       try {
-        const { draftId } = await wire.create(id, key);
+        const { draftId } = await buy(key);
         bought = true;
         // `GET /drafts/:id` rather than the mirror — see the header. `cost: read`, spends
         // nothing, and the row was written inside the request that answered above.
         const draft = await wire.read(draftId);
+        const letGo = io.current.letGo;
+        const away = io.current.away;
+        io.current.busy = false;
         if (io.current.run !== run) return;
         io.current.key = null;
         setPhase("closed");
+        /* The new letter it was made for left the composer: no letter takes it, it stays in Drafts, and that is said. */
+        if (lands === "letter" && away) {
+          setOwn((all) => without(all, id));
+          setNotice(t("letterLeft"));
+          return;
+        }
         setNotice(null);
-        onDraft({ text: draft.body ?? "", html: draft.html ?? "" }, id);
+        const landed = { text: draft.body ?? "", html: draft.html ?? "" };
+        /*
+         * This letter's entry alone. Over the person's own words: they stay one tab away. Over none (or words let go
+         * with their reply since the press): the draft is kept with no text of theirs, so it is drafted again as a
+         * draft. The old card's confirm hands nothing: its entry is let go.
+         */
+        setOwn((all) => typed === null
+          ? without(all, id)
+          : withEntry(all, {
+            messageId: id, yours: letGo || isRichEmpty(typed) ? NO_TEXT : typed, draft: landed, shown: "draft",
+          }));
+        onDraft(landed, id, lands);
       } catch (err) {
+        io.current.busy = false;
         if (io.current.run !== run) return;
         /**
          * BACK TO THE OFFER, AND NO RETRY LOOP. Every refusal on this path already has a true sentence written by the
@@ -218,9 +332,61 @@ export function useDraftReply(opts: {
               : tAi(key));
       }
     })();
-  }, [messageId, phase, onDraft, t, tAi, wire]);
+  }, [onDraft, t, tAi, wire]);
+
+  const confirm = useCallback(() => {
+    if (!messageId || phase === "running") return;
+    spend(messageId, messageId, (key) => wire.create(messageId, key), null, "reply");
+  }, [messageId, phase, spend, wire]);
+
+  const press = useCallback((id: string, typed: RichValue) => {
+    if (phase === "running" || io.current.busy) return;
+    setMessageId(id);
+    spend(id, id, (key) => wire.create(id, key), typed, "reply");
+  }, [phase, spend, wire]);
+
+  const textWire = wire.fromText;
+  const pressText = useCallback((id: string, text: string, typed: RichValue) => {
+    if (!hosted || textWire === NONE || io.current.busy) return;
+    setMessageId(id);
+    spend(id, `${id}\n${text}`, (key) => textWire({ text, inReplyToMessageId: id }, key), typed, "reply");
+  }, [hosted, spend, textWire]);
+
+  const pressLetter = useCallback((
+    words: { text: string; mailboxId: string | null; subject: string }, typed: RichValue,
+  ) => {
+    const id = NEW_LETTER;
+    if (!hosted || textWire === NONE || io.current.busy) return;
+    setMessageId(id);
+    const body = {
+      text: words.text,
+      ...(words.mailboxId !== null ? { mailboxId: words.mailboxId } : {}),
+      ...(words.subject.trim() !== "" ? { subject: words.subject } : {}),
+    };
+    spend(id, `${id}\n${words.mailboxId ?? ""}\n${words.subject}\n${words.text}`, (key) => textWire(body, key), typed, "letter");
+  }, [hosted, spend, textWire]);
+
+  const keep = useCallback((o: OwnText) => setOwn((all) => withEntry(all, o)), []);
+  const forget = useCallback((id: string) => {
+    if (io.current.busy && io.current.flight === id) io.current.letGo = true;
+    setOwn((all) => without(all, id));
+  }, []);
+  const moved = useCallback((id: string) => {
+    if (io.current.busy && io.current.flight === id) {
+      io.current.letGo = true;
+      io.current.away = true;
+    }
+    setOwn((all) => without(all, id));
+  }, []);
+  const restore = useCallback((id: string) => {
+    if (io.current.busy && io.current.flight === id) {
+      io.current.letGo = false;
+      io.current.away = false;
+    }
+  }, []);
 
   return {
+    offered: hosted,
     phase,
     messageId,
     cost: DRAFT_REPLY_COST_CREDITS,
@@ -228,6 +394,15 @@ export function useDraftReply(opts: {
     open,
     cancel,
     confirm,
+    press,
+    fromText: hosted && textWire !== NONE ? pressText : NONE,
+    letter: hosted && textWire !== NONE ? pressLetter : NONE,
+    letterId: NEW_LETTER,
+    own,
+    keep,
+    forget,
+    moved,
+    restore,
   };
 }
 
@@ -269,6 +444,21 @@ function isRefusal(err: unknown): err is Error & { status: number; code: string 
   if (err instanceof ApiError) return true;
   const e = err as { status?: unknown; code?: unknown } | null;
   return err instanceof Error && typeof e?.status === "number" && typeof e.code === "string" && e.code !== "";
+}
+
+const NO_TEXT: RichValue = { text: "", html: "" };
+
+/** The kept texts with `o` for its letter; no other letter's entry changes. */
+function withEntry(all: ReadonlyMap<string, OwnText>, o: OwnText): ReadonlyMap<string, OwnText> {
+  return new Map(all).set(o.messageId, o);
+}
+
+/** The kept texts without `id`'s; the same map when it held none. */
+function without(all: ReadonlyMap<string, OwnText>, id: string): ReadonlyMap<string, OwnText> {
+  if (!all.has(id)) return all;
+  const next = new Map(all);
+  next.delete(id);
+  return next;
 }
 
 /** A fresh idempotency key — see `screener-suggest.ts` for why the fallback exists. */

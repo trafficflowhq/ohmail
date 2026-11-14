@@ -7,6 +7,7 @@ import { FOLDER_OF_VIEW, type EngineMutation } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { menuItem, moreButton, ohboxRows, pickedRows } from "./ohbox/_finders.js";
 
 /**
  * DRAG-AND-DROP FILING TO THE RAIL — one semantic, new gesture.
@@ -94,10 +95,24 @@ async function mountShell(): Promise<void> {
   await key("j");
 }
 
+/**
+ * THE ADDRESS AS A BROWSER ANNOUNCES IT. At the seated Ohbox the selection is the address, and the frame hears a move
+ * of it by its `hashchange`; jsdom queues that event on a task this file's fake clock never runs (the reason this file
+ * already announces a link by hand). A press that moved the address announces it here, as the browser does a frame
+ * later.
+ */
+let heardHash = "";
+const hearAddress = async (): Promise<void> => {
+  if (window.location.hash === heardHash) return;
+  heardHash = window.location.hash;
+  await act(async () => { window.dispatchEvent(new HashChangeEvent("hashchange")); });
+};
+
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 const click = async (el: Element | null | undefined, init: MouseEventInit = {}): Promise<void> => {
@@ -105,6 +120,7 @@ const click = async (el: Element | null | undefined, init: MouseEventInit = {}):
   await act(async () => {
     el!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
   });
+  await hearAddress();
 };
 
 /** A pointer event by NAME — see the header for why the constructor is MouseEvent. */
@@ -119,6 +135,7 @@ const pointer = async (
       new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y }),
     );
   });
+  await hearAddress();
 };
 
 /** What `document.elementFromPoint` answers while the pointer is "over" `el`. */
@@ -126,7 +143,7 @@ const hovering = (el: Element | null): void => {
   (document as unknown as { elementFromPoint: () => Element | null }).elementFromPoint = () => el;
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")];
+const rows = (): HTMLElement[] => ohboxRows(host!);
 /** The row the cursor stands on: today's `.sel`, the Ohbox's open option (`data-open`). */
 const isOpen = (row: HTMLElement): boolean => row.classList.contains("sel") || row.hasAttribute("data-open");
 /** Rows standing for ONE message — no `⤷ N` fold — so a per-row assert names one id. */
@@ -153,6 +170,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   setViewport(false);
   window.location.hash = "#/ohbox";
+  heardHash = "";
   sent = [];
   // The demo adapter IS the transport — see `shell-screening-bulk.test.ts` for why the spy
   // calls through with every argument.
@@ -179,21 +197,10 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
 
     // ── the pill's own Move on the cursor row, as the reference dispatch ──────────────────
     const pillRowId = rows()[0]!.dataset.id!;
-    const byText = (text: string): HTMLButtonElement => {
-      // The verb's LABEL, without the keycap the button also wears (`<Key chord>` prints the
-      // registry's cap into the button — `Move` reads "Move m" in textContent terms). The
-      // dispatch assertions below are untouched; only the finder learned the bar's anatomy.
-      const label = (x: HTMLButtonElement): string => {
-        const kbd = x.querySelector("kbd")?.textContent ?? "";
-        return (x.textContent ?? "").replace(kbd, "").trim();
-      };
-      const b = [...host!.querySelectorAll<HTMLButtonElement>(".read-col .abar button")]
-        .find((x) => label(x) === text);
-      expect(b, `no "${text}" control in the pill`).toBeTruthy();
-      return b!;
-    };
-    await click(byText("Move"));
-    await click(byText(`→ ${messages.place.reads}`));
+    /* At the seated Ohbox the open letter's Move is an item of More's menu, and its places are items of Move's menu. */
+    await click(moreButton(host!) ?? undefined);
+    await click(menuItem("Move") ?? undefined);
+    await click(menuItem(messages.place.reads) ?? undefined);
     const pillMove = kinds("move");
     expect(pillMove).toHaveLength(1);
     // The Move writes the sender's rule, so its move is marked as that press's (`pressRule`).
@@ -269,7 +276,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await key("x");
     await key("j");
     await key("x");
-    const picked = host!.querySelectorAll('.view-ohbox :is(.row, [role=option])[aria-selected="true"]');
+    const picked = pickedRows(host!);
     expect(picked.length).toBeGreaterThanOrEqual(2);
     // The count the bar states is MESSAGES (a folded row picks its members), so it is the
     // number of moves a drop must dispatch — and the number the ghost badge must wear.
@@ -310,7 +317,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     await pointer("pointerup", window, 60, 60);
     // The release's click arrives in the same task in a browser — before any timer runs.
     await click(row);
-    expect(row.classList.contains("sel"), "the cancelled drag's release still clicked").toBe(false);
+    expect(isOpen(row), "the cancelled drag's release still clicked").toBe(false);
     await settle();
     expect(sent.filter((m) => m.kind !== "mark_seen")).toHaveLength(0);
     expect(ghost()).toBeNull();

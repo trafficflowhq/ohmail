@@ -37,7 +37,7 @@ import { forgetPlanHint, recalledPlanHint, rememberPlanHint, type PlanHint } fro
 import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { usePendingSignOut } from "../login/pending-sign-out";
 import { registerRefusal, totpRefusal } from "./signup-refusals";
-import { useMailboxForm } from "./MailboxStep";
+import { useConnectKept } from "@ohmail/app/mailboxes/connect";
 import { awaitHandoff } from "./handoff";
 import { refreshSettled } from "../../session-refresh";
 import { checkAnswered, revokedWipeSettled } from "../../revoked-door";
@@ -199,7 +199,7 @@ export function useJoinDoor({ initialCode, billingReturn, publicSignup = false, 
   const [resent, setResent] = useState(false);
 
   /** The mailbox step's form (`MailboxStep.tsx`), held here for the same reason. */
-  const mailboxForm = useMailboxForm();
+  const mailboxForm = useConnectKept();
   const [connected, setConnected] = useState<MailboxDTO | null>(null);
 
 
