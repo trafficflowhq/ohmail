@@ -29,12 +29,12 @@ import type {
   ScreenerPendingDecision, ScreenRequestResult, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, WaitingRequestWire,
 } from "./screener-answers.js";
 import type { AddressSearchResult, SearchResult } from "./search.js";
-import type { AttachmentWire, DraftDTO } from "./drafts.js";
+import type { AttachmentWire, DraftDTO, DraftWrittenAnswer } from "./drafts.js";
 import type { InvitationAnswerBody, InvitationAnswerResult } from "./invitations.js";
 import type { QueuedAnswer, RuleQueuedAnswer, RuleTravel, WithdrawSendOutcome } from "./act-answers.js";
 import type { UnboundCall } from "./unbound-calls.js";
 import type {
-  CreateDraftBody, CreateRuleBody, FolderCreateBody, FolderRenameBody, MarkSeenBody, MessagePatchBody, MoveBody,
+  CreateDraftBody, CreateRuleBody, DraftFromTextBody, FolderCreateBody, FolderRenameBody, MarkSeenBody, MessagePatchBody, MoveBody,
   PatchDraftBody, PatchRuleBody, ScreenBody, SendResolution, TagAssignBody, TagBody, TriageWireBody,
 } from "./requests.js";
 
@@ -321,6 +321,8 @@ export interface Routes {
   "GET /drafts/:id": { params: Id; body: never; answer: DraftDTO };
   "PUT /drafts/:id": { params: Id; body: PatchDraftBody & { ifContentRevision?: string }; answer: DraftDTO };
   "DELETE /drafts/:id": { params: Id; body: never; answer: null };
+  /** A draft written from the person's own words, stored and never sent; 202 with the stored row's id. */
+  "POST /drafts/from-text": { params: None; body: DraftFromTextBody; answer: DraftWrittenAnswer };
   "POST /drafts/:id/resolve": { params: Id; body: { outcome: SendResolution }; answer: DraftDTO };
   "POST /drafts/:id/schedule": { params: Id; body: { sendAt: ISODateTime }; answer: DraftDTO };
   "DELETE /drafts/:id/schedule": { params: Id; body: never; answer: DraftDTO };

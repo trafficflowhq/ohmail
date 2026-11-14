@@ -2,7 +2,7 @@ import { clientIdempotencyKey } from "@trafficflow/db";
 import { ServiceError } from "@trafficflow/services/mail";
 import type { DraftFromTextBody, UntrustedBody } from "@ohmail/wire";
 import { serviceContext } from "../context.js";
-import { jsonResponse } from "../responses.js";
+import { answer } from "../responses.js";
 import type { Route } from "../router.js";
 import { drafting, drafter, readBody, spendOf, accessPortOf, refundObligationsOf } from "./shared.js";
 
@@ -17,6 +17,7 @@ export const draftFromTextRoutes: Route[] = [
   {
     method: "POST",
     pattern: "/drafts/from-text",
+    wire: true,
     relay: true,
     cost: "paid",
     options: { idempotent: true },
@@ -43,7 +44,7 @@ export const draftFromTextRoutes: Route[] = [
             }
           : undefined,
       });
-      return jsonResponse({ draftId }, { status: 202, seq });
+      return answer<"POST /drafts/from-text">()({ draftId }, { status: 202, seq });
     },
   },
 ];

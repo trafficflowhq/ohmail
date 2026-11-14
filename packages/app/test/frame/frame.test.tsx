@@ -176,6 +176,40 @@ describe("the frame", () => {
     expect(screen.getByRole("button", { name: "Write" })).toBeTruthy();
   });
 
+  it("draws a place's held reading column with nothing open, gives it the keys, and draws no dock on a phone", () => {
+    const seen: { list: boolean[]; reading: boolean[] } = { list: [], reading: [] };
+    function KeyedList({ keysHere }: PaneProps) {
+      seen.list.push(keysHere);
+      return <p>the drafts</p>;
+    }
+    function Writing({ keysHere }: PaneProps) {
+      seen.reading.push(keysHere);
+      return <p>a letter being written</p>;
+    }
+    const write: PlaceEntry = {
+      id: "write",
+      body: "drafts",
+      rail: null,
+      panes: { kind: "columns", List: KeyedList, Reading: Writing, holds: "always" },
+    };
+    for (const room of ["phone", "desktop"] as const) {
+      seen.list.length = 0;
+      seen.reading.length = 0;
+      mount({ window: fakeWindow(room), address: fakeAddress("#/compose") }, { ohbox, write });
+      expect(screen.getByRole("region", { name: "Reading" }).textContent, room).toBe(
+        "a letter being written",
+      );
+      expect(seen.reading.at(-1), room).toBe(true);
+      expect(seen.list.at(-1) ?? false, room).toBe(false);
+      if (room === "phone")
+        expect(
+          screen.queryByRole("navigation", { name: "Places" }),
+          "the dock stands over the letter",
+        ).toBeNull();
+      cleanup();
+    }
+  });
+
   it("on a phone's width draws no dock while a wide place's address carries an open letter (today's views)", () => {
     const { address } = mount({ window: fakeWindow("phone"), address: fakeAddress("#/reads/m/r1") });
     expect(screen.getByText("today at news")).toBeTruthy();

@@ -15,6 +15,7 @@ import { launchRefused } from "@trafficflow/services/mail";
 import { fixturePassword, personalAt } from "../../../test/support/fixture-credentials.js";
 import { PROVIDERS } from "../app/shell/providers.js";
 import { LOOKUP_PAUSE_MS } from "../app/shell/address-first.js";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 
 type Answer = { status: number; body: unknown } | Promise<{ status: number; body: unknown }>;
 
@@ -102,12 +103,13 @@ async function mount() {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  const field = (id: string) => host.querySelector<HTMLInputElement>(`#${id}`);
+  /* The step is the one connect form: its fields by their labels, its tiles by their names. The account step's
+     own field keeps its id. */
+  const probes = mailboxProbes(host, en, act);
+  const field = (id: string) => probes.input(id);
   const type = async (id: string, value: string) => {
-    const input = field(id);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
-    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
-    await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
+    expect(field(id), `#${id} is not on screen`).toBeTruthy();
+    await probes.typeInto(field(id), value, id);
   };
   /** Type the address and leave the field, as a person does before the tiles. */
   const address = async (value: string) => {
@@ -115,11 +117,9 @@ async function mount() {
     await act(async () => { field("join-mb-address")!.dispatchEvent(new FocusEvent("focusout", { bubbles: true })); });
     await settle();
   };
-  const tiles = () => [...host.querySelectorAll<HTMLElement>('[role="radio"]')];
-  const checked = () => tiles().filter((b) => b.getAttribute("aria-checked") === "true")
-    .map((b) => b.querySelector(".pvp-name")?.textContent);
+  const { tiles, checked } = probes;
   const tile = async (label: string) => {
-    const b = tiles().find((t) => t.querySelector(".pvp-name")?.textContent === label);
+    const b = tiles().find((t) => t.textContent === label);
     expect(b, `no ${label} tile`).toBeTruthy();
     await act(async () => { b!.click(); });
   };
@@ -130,7 +130,7 @@ async function mount() {
     await settle();
   };
   const lookups = () => sent.filter((s) => s.path === "/mailboxes/discover").map((s) => s.body);
-  return { host, act, settle, field, type, address, tiles, checked, tile, press, lookups };
+  return { host, act, settle, field, type, address, tiles, checked, tile, press, lookups, alerts: probes.alerts };
 }
 
 describe("the address comes first and chooses the tile", () => {
@@ -139,7 +139,11 @@ describe("the address comes first and chooses the tile", () => {
     expect(ui.host.querySelector("h1")?.textContent).toBe(en.join.step_mailbox_title);
     expect(ui.checked()).toEqual([]);
     expect(ui.field("join-mb-address")).toBeTruthy();
-    const order = [...ui.host.querySelectorAll('#join-mb-address, [role="radiogroup"]')].map((n) => n.id || "tiles");
+    const address = ui.field("join-mb-address")!;
+    const group = ui.tiles()[0]!.closest('[role="group"]')!;
+    const order = [...ui.host.querySelectorAll("input, [role=group]")]
+      .filter((n) => n === address || n === group)
+      .map((n) => (n === address ? "join-mb-address" : "tiles"));
     expect(order).toEqual(["join-mb-address", "tiles"]);
   });
 
@@ -156,7 +160,22 @@ describe("the address comes first and chooses the tile", () => {
   it("the preset's note opens with what you'll need", async () => {
     const ui = await mount();
     await ui.address(at("web.de"));
-    expect(ui.host.querySelector(".pvp-note")?.textContent).toContain(en.providerPicker.need_webde);
+    expect(ui.host.textContent).toContain(en.providerPicker.need_webde);
+  });
+
+  it("a provider's help link opens beside the sign-up, never in its place, and carries no referrer, as the shipped picker's links did", async () => {
+    const ui = await mount();
+    await ui.address(at("gmail.com"));
+    expect(ui.checked()).toEqual(["Gmail"]);
+    const links = [en.providerPicker.help_gmail, en.providerPicker.prereq_gmail].map(
+      (name) => [...ui.host.querySelectorAll("a")].find((a) => a.textContent === name) ?? null,
+    );
+    for (const a of links) {
+      expect(a, "the help link is drawn").not.toBeNull();
+      expect(a!.getAttribute("href")).toMatch(/^https:\/\/myaccount\.google\.com\//);
+      expect(a!.getAttribute("target"), "the link opens in a tab of its own").toBe("_blank");
+      expect(a!.getAttribute("rel") ?? "", "the link carries no referrer").toMatch(/noreferrer/);
+    }
   });
 
   it("a domain on Google Workspace goes to Gmail, one on Microsoft 365 to Microsoft; only the domain is sent", async () => {
@@ -252,7 +271,7 @@ describe("after a refusal", () => {
     await ui.address(at("web.de"));
     await ui.type("join-mb-pass", fixturePassword("join-address-first"));
     await ui.press(en.join.connectMailbox);
-    expect(ui.host.querySelector(".join-error")?.textContent).toBe(en.mailboxes.probe_auth_webde);
+    expect(ui.alerts().map((a) => a.textContent)).toEqual([en.mailboxes.probe_auth_webde]);
     expect(ui.tiles().length).toBe(PROVIDERS.length);
   });
 
@@ -280,6 +299,32 @@ describe("after a refusal", () => {
     expect(ui.field("join-imap")?.value).toBe("imap.acme-srv.example");
     expect(ui.field("join-smtp")?.value).toBe("smtp.acme-srv.example");
     expect(creates(), "the press fills the fields and dials nothing").toBe(1);
+  });
+
+  it("taking the hosts the lookup found takes the wizard's sentence away too, as the step's press did", async () => {
+    discover["acme-srv.example"] = found(null, {
+      imap: { host: "imap.acme-srv.example", port: 993, secure: true },
+      smtp: { host: "smtp.acme-srv.example", port: 587, secure: false },
+    });
+    create = {
+      status: 422,
+      body: { error: { code: "mailbox_probe_failed", message: "unreachable", details: { reason: "connect", transport: "imap" } } },
+    };
+    const ui = await mount();
+    await ui.address(at("acme-srv.example"));
+    await ui.tile(en.providerPicker.otherLabel);
+    await ui.type("join-imap", "mail.acme-srv.example");
+    await ui.type("join-smtp", "mail.acme-srv.example");
+    await ui.type("join-mb-pass", fixturePassword("join-address-first"));
+    await ui.press(en.join.connectMailbox);
+    // Another tab signs this browser in as somebody else: the next press sends nothing and the wizard says so.
+    session = { status: 200, body: { ...FULL, user: { ...FULL.user, accountId: "b2", email: "sam@family.example" } } };
+    await ui.press(en.join.connectMailbox);
+    const changed = en.join.accountChanged.replace("{email}", "sam@family.example");
+    expect(ui.host.textContent).toContain(changed);
+    await ui.press(en.providerPicker.discoveredUse);
+    expect(ui.field("join-imap")?.value).toBe("imap.acme-srv.example");
+    expect(ui.host.textContent).not.toContain(changed);
   });
 });
 

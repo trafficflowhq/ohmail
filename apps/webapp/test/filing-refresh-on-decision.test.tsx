@@ -91,7 +91,11 @@ describe("every filing dispatch in the shell goes through one place", () => {
    * check — the vacuous shape the positive control below exists to refuse — so the verb list is
    * checked against BOTH sources and the injected dispatcher is pinned by name.
    */
-  const DOORS = [...SHELL_FRAMES.map(shellFramePath), "packages/app-logic/src/press/delete-undo.ts"];
+  const DOORS = [
+    ...SHELL_FRAMES.map(shellFramePath),
+    "packages/app-logic/src/press/delete-undo.ts",
+    "packages/app-logic/src/folder/move.ts",
+  ];
 
   /**
    * WHERE A `move` IS MINTED, which is no longer this file. Both Move arms — one row and a
@@ -194,6 +198,12 @@ describe("every filing dispatch in the shell goes through one place", () => {
        when it stopped being true, and this is that: every screening dispatch is wrapped. */
     const bare = dispatches.filter((d) => !d.includes("fileAndRefresh"));
     expect(bare, "a screening dispatch that does not re-read the facts behind the strip").toEqual([]);
+    /* AND THE MOVE INTO A FOLDER, a door outside the shell's frames (`folder/move.ts`): its press reaches the seam's
+       `dispatchPress` handed in, never `engine.mutate`, so the offender census cannot see it. Asserted verbatim, as
+       the injected delete and restore dispatchers are. */
+    const move = readFileSync(resolve(process.cwd(), "packages/app-logic/src/folder/move.ts"), "utf8");
+    expect(move, "the move into a folder does not re-read the facts")
+      .toContain("seam.fileAndRefresh(seam.dispatchPress(mutation))");
     // Every filing verb is dispatched SOMEWHERE across the doors, so a rename cannot make the
     // offender census above vacuous by moving a verb out of this file.
     const across = [...DOORS, ...PLANNERS]

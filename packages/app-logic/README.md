@@ -30,6 +30,14 @@ New code imports a folder's door. A door is the folder's `index.ts` and names wh
 | `@ohmail/app-logic/writing` | sending once, the send lock, the composer's and the reply's drafts, the rich text |
 | `@ohmail/app-logic/text` | the catalogue's reader as behaviour takes it, how an address is shown, and the interface's languages |
 | `@ohmail/app-logic/geometry` | geometry under the text size |
+| `@ohmail/app-logic/mailboxes/connect/<file>` | connecting a mailbox: the sealed password, what a connect, a test and an edit send, a refusal and its sentence, the two consents, the second factor's machine, the one form's machine and hook |
+| `@ohmail/app-logic/mailboxes/first-run/<file>` | the first run: its rules and its pull rate moved out of the shell's stage, the seed offer (the scope required), the readers of the wire's answers and of a refused write, its hooks one a step, its states |
+| `@ohmail/app-logic/mailboxes/pane/<file>` | the Mailboxes pane: its rows' rules (moved out of the shell's pane), the verbs by capability, the list, the one slot of gated presses, the take-over check, the plain presses, the readers of the check and the filings (moved out of the shell's two files), the row's sentences and its times |
+| `@ohmail/app-logic/mailboxes/contract`, `/pane-contract`, `/moved` | the connect form's and the pane's types as the host contract names them, and the moved rules as the old shell's files still import them: each one path of two names, which every shell's bundle resolves |
+
+`mailboxes/` has no door of its own: its files are imported one by one, each by its own line of `package.json`. A
+path of two names under this package is read by the test runner as a file, so a folder's door one level down would not
+resolve there.
 
 Behaviour is handed its words: a hook that speaks takes a `Translator` (or a small record of them) from its mount,
 never a catalogue of its own.

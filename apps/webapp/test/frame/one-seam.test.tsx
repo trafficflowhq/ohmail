@@ -65,7 +65,7 @@ const STUB: PlaceEntry = {
   rail: null,
   panes: { kind: "columns", List: () => null, Reading: "reader" },
 };
-const READER = readerEntry({ body: () => h("p", null, "a body"), files: "none", pictures: "none", look: "none" });
+const READER = readerEntry({ body: () => h("p", null, "a body"), files: "none", pictures: "none", look: "none", reply: "none" });
 
 let root: Root | null = null;
 

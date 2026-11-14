@@ -457,10 +457,13 @@ describe("the gate's copy is the CLIENT's, and the refusal stays the server's", 
        must not introduce. */
     expect(src).toMatch(/account\.access\(\{ fresh: true \}\)/);
     expect(src).toMatch(/canAddMailbox/);
+    // The rule itself moved beside the pane's other rules; the probe follows it there.
+    const rule = read("packages/app-logic/src/mailboxes/pane/rows.ts");
     // …and does not reimplement the plan table or the status machine.
     expect(src).not.toMatch(/"trialing"|"past_due"|"incomplete"|PLAN_LIMITS/);
+    expect(rule).not.toMatch(/"trialing"|"past_due"|"incomplete"|PLAN_LIMITS/);
     // …and an unbounded limit is skipped rather than compared against an invented ceiling.
-    expect(src).toMatch(/a\.mailboxes !== null/);
+    expect(rule).toMatch(/a\.mailboxes !== null/);
   });
 
   it("the pane still runs the step-up itself — the gate did not become a redirect", () => {

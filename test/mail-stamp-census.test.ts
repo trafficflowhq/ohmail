@@ -184,6 +184,12 @@ const PINNED: Record<string, { calls: number; why: string }> = {
     calls: 1,
     why: "A build/version date in the About pane. An account-and-app date, not mail.",
   },
+  "packages/app-logic/src/mailboxes/pane/stamps.ts": {
+    calls: 2,
+    why: "The new Mailboxes pane's twin of `format.ts`'s `agoStamp` tooltip and `dayStamp`, over the locale and zone "
+      + "the shell hands in: when a MAILBOX last synced, and the day a standing fact became true. Neither is a "
+      + "message's date; the twin in `format.ts` leaves with the old pane.",
+  },
   "packages/ui/src/primitives/DatePicker.tsx": {
     calls: 3,
     why: "The picker's own month and weekday NAMES for a calendar grid — a date being chosen, "

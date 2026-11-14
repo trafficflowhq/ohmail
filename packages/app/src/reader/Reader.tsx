@@ -26,6 +26,7 @@ import { useVerbs } from "./actions/use-verbs.js";
 import { Blank } from "./blank/Blank.js";
 import { Contact, type ContactOf } from "./contact/Contact.js";
 import { Letter } from "./Letter.js";
+import { useParts } from "./parts.js";
 import { READER_DOM, scrollerOf } from "./read-dom.js";
 import { useReaderKeys } from "./keys.js";
 import { Squares } from "./Squares.js";
@@ -103,6 +104,9 @@ function Conversation({
     anchor: true,
   });
   const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null);
+  const { reply } = useParts();
+  const useReplyVerbs = reply === "none" ? noReplyVerbs : reply.useVerbs;
+  const replyVerbs = useReplyVerbs();
   useReaderKeys(keysHere && opened !== null, root, { verbs, visit });
   const [person, setPerson] = useState<ContactOf | null>(null);
   const mailboxWord = useMailboxWord();
@@ -144,7 +148,7 @@ function Conversation({
             squares={phone ? squares : undefined}
           />
         }
-        foot={<ActionBar verbs={verbs} room={room} />}
+        foot={<ActionBar verbs={verbs} room={room} reply={replyVerbs} />}
       >
         {messages.map((m) => (
           <Letter
@@ -158,11 +162,16 @@ function Conversation({
             onPerson={setPerson}
           />
         ))}
+        {/* The reply, one more sheet after the conversation's last letter: `write`'s, where the shell handed it. */}
+        {reply === "none" ? null : <reply.Sheet letters={messages.map((m) => m.id)} />}
       </Sheet>
       <Contact person={person} onClose={() => setPerson(null)} />
     </div>
   );
 }
+
+/** A reader with no reply of `write`'s: the panel is always the letter's. */
+const noReplyVerbs = (): null => null;
 
 /** On a phone the column's way back, naming the place it returns to where the place has a word. */
 function WayBack({ from }: { from: string }) {
