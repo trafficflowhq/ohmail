@@ -6,8 +6,8 @@ import { SETTLE_DEADLINE_MS } from "./session-refresh";
 import {
   ERASED_KEY, accountErasedOwner, markAccountErased, registerErasedDoor, subscribeAccountErased,
   type ErasedVerdict,
-} from "./shell/account-erased";
-import { isOwnerShaped, readOwnerMarker, type OwnerMarker } from "./shell/owner-cookie";
+} from "@ohmail/app-logic/session/account-erased";
+import { isOwnerShaped, readOwnerMarker, type OwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * THE WEB'S ONE DOOR FOR AN ACCOUNT ERASED ELSEWHERE. The server named the account in its 410;

@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost, FirstRunProbeOk } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import type { FirstRunHost, FirstRunProbeOk } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /** The hosted door's probe, as `POST /mailboxes/probe` answers it; every body it was sent. */
 const mockProbe = vi.fn();

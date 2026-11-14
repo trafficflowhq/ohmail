@@ -29,7 +29,7 @@ import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
 import { apiConfigured } from "../api-client";
 import { useMailState } from "./MailStateProvider";
-import { useDrainInFlight } from "./drain-mark";
+import { useDrainInFlight } from "@ohmail/app-logic/session/drain-mark";
 // The strip names a mailbox in every arm that has one, and every one of those is a sentence a
 // person reads — so the address is decoded for display (`idn.ts`). `MailState` itself keeps the
 // stored form, which is what the settings link and the probe compare against.
@@ -39,7 +39,7 @@ import { displayAddress } from "./idn";
 import { waterlineStamp } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
-import { POLL_MS } from "./sync-scheduler";
+import { POLL_MS } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * "14:32" in the reader's own zone — the `as of` and `next try at` halves of the filing sentences.
@@ -63,13 +63,14 @@ function clockTime(iso: string): string | null {
  */
 const readable = (address: string | null): string | null =>
   address === null ? null : displayAddress(address);
-import { stripSpeaks, type MailState } from "./mail-state";
-import { useBrowserOnline } from "./browser-online";
+import { stripSpeaks, type MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
-import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "./reader-holder";
-import { useManagedService } from "./managed-service";
-import { readingAlong } from "./reading-along";
-import { MIRROR_STORE_REFUSED_DETAIL, mailboxErrorKey, storeRefusalsFigure } from "./mailbox-error-key";
+import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "@ohmail/app-logic/reading/reader-holder";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
+import { readingAlong } from "@ohmail/app-logic/reading/reading-along";
+import { MIRROR_STORE_REFUSED_DETAIL, mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
+import { storeRefusalsFigure } from "./store-refusals-figure";
 
 /**
  * Rendered twice, in two shapes. The rail carries everything that acts on the app rather than on mail, so

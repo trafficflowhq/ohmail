@@ -45,7 +45,7 @@ import {
   type JunkItemWire, type JunkMailboxWire, type JunkPageWire, type JunkRescueWire,
   type JunkSearchWire, type JunkSweepWire,
 } from "../api-client";
-import { durableSet } from "./durable";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
 import { useDerivedVersion, useEngine } from "./engine";
 
 /**

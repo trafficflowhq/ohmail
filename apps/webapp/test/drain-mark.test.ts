@@ -11,10 +11,10 @@ import {
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { startSyncScheduler } from "../app/shell/sync-scheduler.js";
+import { startSyncScheduler } from "@ohmail/app-logic/session/sync-scheduler";
 import {
   DRAIN_MARK_HOLD_MS, drainInFlight, markDrain, subscribeDrain,
-} from "../app/shell/drain-mark.js";
+} from "@ohmail/app-logic/session/drain-mark";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
 
 /**
@@ -149,6 +149,6 @@ describe("the wiring", () => {
     expect(src).toContain("onDraining: markDrain");
     /* The import is read off the RAW source: the scanner blanks string bodies, so a module
        specifier is invisible to it — which is the right behaviour and the wrong reader. */
-    expect(read("../app/shell/engine.tsx")).toContain('from "./drain-mark"');
+    expect(read("../app/shell/engine.tsx")).toContain('from "@ohmail/app-logic/session/drain-mark"');
   });
 });

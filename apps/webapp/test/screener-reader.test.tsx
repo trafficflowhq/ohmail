@@ -17,7 +17,7 @@ import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import de from "../messages/de.json";
 import { screenerIntentsKey, type ScreenerIntent } from "../app/shell/screener-intents";
-import { screenerMode, type ScreenerRole } from "../app/shell/mail-state";
+import { screenerMode, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import { ScreenerView } from "../app/views/ScreenerView";
 import { KeymapProvider } from "../app/shell/keymap";
 import type { ScreenerState } from "../app/shell/screener-state";

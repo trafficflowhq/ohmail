@@ -7,8 +7,8 @@ import { NextIntlClientProvider } from "next-intl";
 import { MemoryMirrorStore, type EngineMessage, type Folder, type RuleDTO, type StayedWhy, type SyncChange } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
-import { screeningReadBack } from "../app/shell/press-verdict";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { screeningReadBack } from "@ohmail/app-logic/press/press-verdict";
 
 /**
  * A MESSAGE ANOTHER MAIL APP FILED IS NOT AT THE RULE'S PLACE. With "also move"

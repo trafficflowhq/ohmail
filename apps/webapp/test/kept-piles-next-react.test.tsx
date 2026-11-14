@@ -26,8 +26,8 @@ vi.mock("react/jsx-dev-runtime", async () => asBundled(await import("next/dist/c
 const React = await import("react");
 const { createRoot } = (await import("next/dist/compiled/react-dom/client" as string)) as typeof import("react-dom/client");
 const { KeptPiles } = await import("../app/shell/kept-piles");
-const { useVisit } = await import("../app/shell/visit");
-const { queryVisible } = await import("../app/shell/visible-dom");
+const { useVisit } = await import("@ohmail/app-logic/lists/visit");
+const { queryVisible } = await import("@ohmail/app-logic/lists/visible-dom");
 type KeptPileName = import("../app/shell/kept-piles").KeptPileName;
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

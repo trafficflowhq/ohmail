@@ -8,8 +8,8 @@ import messages from "../messages/en.json";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
 import { KeymapProvider } from "../app/shell/keymap";
-import { STREAM_CARD_ESTIMATE_PX, openingCount } from "../app/shell/stream-window";
-import { NEAR_SEED } from "../app/shell/stream-near";
+import { STREAM_CARD_ESTIMATE_PX, openingCount } from "@ohmail/app-logic/lists/stream-window";
+import { NEAR_SEED } from "@ohmail/app-logic/lists/stream-near";
 
 /**
  * A CARD BUILDS ITS RENDERED VIEWER ONLY NEAR THE SCREEN (`stream-near.ts`, `StreamCardMemo.viewer`).

@@ -9,7 +9,7 @@
  * own English constant — which keeps a bare component render in a unit test deterministic without a provider.
  */
 import { createTranslator } from "next-intl";
-import { durableSet } from "./durable";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
 
 /**
  * THE CLOSED SET, and it is closed in four places that must agree: here, the CHECK on

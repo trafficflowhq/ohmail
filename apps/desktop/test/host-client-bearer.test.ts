@@ -6,7 +6,7 @@ import {
   PAIR_SCOPE_STORAGE_KEY, REFRESH_ATTEMPT_DB, REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
 } from "../src/host-client/bearer.js";
 
-import { currentUpdateOffer, resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+import { currentUpdateOffer, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 
 /* The engine's own devDependency, reached through its package: the desktop does not carry one. */
 const { IDBFactory: FakeIDBFactory, IDBDatabase: FakeIDBDatabase } = createRequire(

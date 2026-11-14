@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * SETTINGS → MAILBOXES SAYS WHO FILES THE MAILBOX. On the web the organizer is the server the page
@@ -182,7 +182,7 @@ describe.each([
 
 describe("the sentence set is in both catalogues", () => {
   it("every key the filer table answers is a translated sentence", async () => {
-    const { FILER_KEY_SET } = await import("../app/shell/mail-state.js");
+    const { FILER_KEY_SET } = await import("@ohmail/app-logic/mail-state/mail-state");
     expect(FILER_KEY_SET.length, "the table is empty").toBeGreaterThanOrEqual(16);
     for (const key of FILER_KEY_SET) {
       expect(typeof copy[key], `${key} is missing from en.json`).toBe("string");

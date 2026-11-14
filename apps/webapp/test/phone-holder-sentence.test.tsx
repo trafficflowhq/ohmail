@@ -11,11 +11,11 @@ import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   PHONE_HOLDER_WHY_KEY, filingElsewhereKey, holderSentence, phoneHolder, phoneHolderKey,
-} from "../app/shell/reader-holder";
-import { holderFingerprint, readingAlong, setReadingAlong, clearReadingAlong } from "../app/shell/reading-along";
-import type { MailState } from "../app/shell/mail-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+} from "@ohmail/app-logic/reading/reader-holder";
+import { holderFingerprint, readingAlong, setReadingAlong, clearReadingAlong } from "@ohmail/app-logic/reading/reading-along";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ═══ A PHONE HOLDS THE MAILBOX AND NO SURFACE SAID SO ═══════════════════════════════════════
@@ -132,8 +132,8 @@ describe("the one derivation", () => {
  */
 describe("nowhere else composes the phone's words", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/desktop/src"];
-  const DERIVATION = "apps/webapp/app/shell/reader-holder.ts";
+  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/letter-body", "packages/app-logic/src", "apps/desktop/src"];
+  const DERIVATION = "packages/app-logic/src/reading/reader-holder.ts";
 
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {

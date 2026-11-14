@@ -12,12 +12,12 @@ import {
   readComposeDraft,
   writeComposeDraft,
 } from "../app/shell/compose";
-import { dropLocalStorageKeys } from "../app/shell/boot-cache";
+import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_SEND_KEY, clearLaneScratch, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
   sentCopyNotesKey, writeReplyDraft, writeReplyMeta,
 } from "../app/shell/mail-send";
-import { searchSortKey } from "../app/shell/persisted-ui";
+import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import {
   armScreenerIntent,
   screenerIntentsKey,
@@ -25,7 +25,7 @@ import {
   type ScreenerIntent,
 } from "../app/shell/screener-intents";
 import { claimSendLock, readSendLock, releaseSendLock, sendLocksKey } from "../app/shell/send-lock";
-import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "../app/shell/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 /** The claims below are sends still in flight: owed, the one state a record resumes in. */

@@ -39,7 +39,7 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  * could be drawn without anybody noticing, so the scan reaches it too.
  */
 const ROOTS = [
-  "apps/desktop/src", "apps/webapp/app", "apps/mobile/src", "apps/webapp/public",
+  "apps/desktop/src", "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/webapp/public",
 ] as const;
 
 /** Extensions worth scanning. `.js` is here for the service worker and nothing else today. */

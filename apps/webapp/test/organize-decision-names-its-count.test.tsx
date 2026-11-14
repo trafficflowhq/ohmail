@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider, useKeyBindings } from "../app/shell/keymap";
-import type { FirstRunDecisionCount, FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+import type { FirstRunDecisionCount, FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * THE AGREE SCREEN NAMES WHAT AGREEING SCREENS. "How far back" says how many letters

@@ -31,16 +31,16 @@ import {
   type AccountAccess, type MailboxDTO,
 } from "../../api-client";
 import { neverStarted } from "../../access-verdict";
-import { markSessionAlive, sessionIsDead } from "../../shell/session-truth";
+import { markSessionAlive, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 import { displayAddress } from "../../shell/idn";
 import { QrCode } from "../../shell/QrCode";
 import { addressSuggestion } from "./address-hint";
-import { useRefusalAtThePress } from "../../shell/refusal-at-the-press";
+import { useRefusalAtThePress } from "@ohmail/app-logic/press/refusal-at-the-press";
 import { SELF_HOST_BUILD } from "../../hello";
 import { JOIN_INVITE_KEY, signupPosture } from "../../invite-posture";
 import { confirmAccountReturn } from "../../account-return";
 import { PLAN_NAMES, forgetPlanHint, recalledPlanHint, rememberPlanHint, type PlanHint } from "../../plan-hint";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";
 import { registerRefusal, totpRefusal } from "./signup-refusals";
 import { MailboxStep, useMailboxForm } from "./MailboxStep";

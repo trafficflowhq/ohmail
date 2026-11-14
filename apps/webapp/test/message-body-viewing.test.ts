@@ -53,8 +53,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 /** Mount the component inside a theme, which is the only way the dark path engages at all. */
 async function renderIn(

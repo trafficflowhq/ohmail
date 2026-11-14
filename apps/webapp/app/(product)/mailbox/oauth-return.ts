@@ -12,8 +12,8 @@
  */
 
 import { ApiError, apiConfigured, codeOf, mailboxes as mailboxApi, messageOf, pendApiOwner } from "../../api-client";
-import { readOwner, readOwnerMarker } from "../../shell/owner-cookie";
-import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
+import { readOwner, readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { durableSessionRemove, durableSessionSet } from "@ohmail/app-logic/storage/durable";
 import { resolveOwnerOutcome } from "../session-outcome";
 
 /**

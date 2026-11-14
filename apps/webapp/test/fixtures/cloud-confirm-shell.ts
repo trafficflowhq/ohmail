@@ -28,7 +28,7 @@ import { vi } from "vitest";
 import { clearSessionCookies, csrfTokenFor, sessionCookies } from "@trafficflow/api";
 import { makeAuthConfig } from "@trafficflow/services/auth";
 import messages from "../../messages/en.json";
-import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
+import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 import { act as fencedAct, caseLive, endCase, tracked } from "../_case-fence";
 
 (globalThis as unknown as { React: unknown }).React = React;

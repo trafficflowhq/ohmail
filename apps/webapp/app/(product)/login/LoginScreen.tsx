@@ -22,8 +22,8 @@ import {
 } from "../../api-client";
 import { SELF_HOST_BUILD, serverHello } from "../../hello";
 import { LOGIN_INVITE_KEY, anyoneCanSignUp, signupPosture } from "../../invite-posture";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { refreshSettled } from "../../session-refresh";
 import { checkAnswered, revokedWipeSettled } from "../../revoked-door";
 import { resolveOwnerOutcome } from "../session-outcome";

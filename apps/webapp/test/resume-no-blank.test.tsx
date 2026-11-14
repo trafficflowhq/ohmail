@@ -15,7 +15,7 @@ import { renderToString } from "react-dom/server";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { LOADING_GRACE_MS } from "../app/shell/loading-grace.js";
+import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import * as scan from "../../../scripts/lib/source-scan.mjs";
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -36,7 +36,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-18T14:00:00.000Z"));
   refreshes = 0;

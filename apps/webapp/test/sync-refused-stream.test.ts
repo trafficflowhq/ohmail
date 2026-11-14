@@ -17,7 +17,7 @@ import {
   WAKE_STREAM_SILENCE_MS,
   startSyncScheduler,
   type WakeStreamLike,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * A REFUSED STREAM IS ASKED FOR AGAIN, ONCE A MINUTE. The per-account cap refuses a tab while dead

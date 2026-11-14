@@ -76,7 +76,7 @@ vi.mock("../app/api-client", async () => {
 });
 
 const { ApiError, apiOwnerBinding, bindApiOwner, blockApiOwner } = await import("../app/api-client");
-const { markSessionAlive } = await import("../app/shell/session-truth");
+const { markSessionAlive } = await import("@ohmail/app-logic/session/session-truth");
 const { takeApprovalReturn } = await import("../app/(product)/approve/approval-return");
 const refusal = (status: number, code: string): Error => new ApiError(status, code, `server words for ${code}`);
 const busy = (): Error =>
@@ -326,7 +326,7 @@ describe("the ways a request ends, and the ways the server says wait", () => {
   it("a signed-out browser goes to the ordinary sign-in with the request kept in this tab", async () => {
     // Signed out = the refresh door's coded refusal, which the real client writes before the 401
     // reaches the page (`resumeSession` → `markSessionDead`).
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     readAnswers = [() => { truth.markSessionDead(); return Promise.reject(refusal(401, "unauthorized")); }];
     await mount();
     await waitFor(() => replaced.length > 0, "the sign-in");
@@ -551,7 +551,7 @@ describe("the page settles whose browser this is before it asks for the request"
     document.cookie = `tf_owner=${ACCT}; path=/`;
     // The mint is now, so the renewal the revival arms is minutes away rather than due.
     localStorage.setItem("ohmail.session.mintedAt", String(Date.now()));
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     truth.markSessionDead();
     wire((_m, url) => {
       if (url === "/api/auth/session") return { status: 200, body: session(ACCT) };

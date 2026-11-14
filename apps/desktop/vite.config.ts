@@ -859,7 +859,7 @@ export default defineConfig({
          construction, not merely unimported. */
       /* The durable-write door, BEFORE the bare package name: `find` matches as a path prefix,
          so the barrel entry below would swallow this subpath if it came first. It is a real
-         edge in this program — `apps/webapp/app/shell/durable.ts` re-exports it and the desktop
+         edge in this program — `packages/app-logic/src/storage/durable.ts` re-exports it and the desktop
          compiles that file — and the leaf keeps the engine barrel out of the marketing bundle
          over in the web app. `tsconfig.json`'s `paths` carries the same pair. */
       { find: "@ohmail/client-engine/durable", replacement: r("../../packages/client-engine/src/durable.ts") },
@@ -867,6 +867,11 @@ export default defineConfig({
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("../../packages/client-engine/src/html-tree-budget.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
+      /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
+         `paths` carries the same pair, and the host contract's line under it. */
+      { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
+      { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       /* Types only, so no import of it survives to be bundled; listed because `tsconfig.json`'s
          `paths` carries it and the two maps are held to each other. */
       { find: "@ohmail/wire", replacement: r("../../packages/wire/src/index.ts") },

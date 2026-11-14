@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { KeymapProvider as KeymapProviderRaw } from "../app/shell/keymap";
 import { WithListGone } from "./_list-gone";
 import { TrashView } from "../app/views/TrashView";
-import type { TrashPage } from "../app/shell/trash-page";
+import type { TrashPage } from "@ohmail/app-logic/lists/trash-page";
 import type { TrashWindowControl, TrashLiveBodyPhase } from "../app/shell/trash-window";
 import type { TrashWindowItemWire, TrashWindowMailboxWire } from "../app/api-client";
 import en from "../messages/en.json";

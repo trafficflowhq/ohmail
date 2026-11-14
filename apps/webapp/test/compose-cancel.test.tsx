@@ -13,7 +13,7 @@ import {
   composeDraftKey, clearComposeDraft, readComposeDraft, writeComposeDraft,
   EMPTY_COMPOSE, LEGACY_COMPOSE_DRAFT_KEY, type ComposeFields,
 } from "../app/shell/compose";
-import { resetStorageOwnerForTest } from "../app/shell/storage-owner";
+import { resetStorageOwnerForTest } from "@ohmail/app-logic/storage/storage-owner";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**

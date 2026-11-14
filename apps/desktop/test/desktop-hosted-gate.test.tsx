@@ -9,7 +9,7 @@ import path from "node:path";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
-import { resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+import { resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import messages from "../../webapp/messages/en.json";
 
 /**

@@ -269,10 +269,15 @@ describe("SOURCE CENSUS — one gated way to arm, and no obvious ungated one", (
      * reaches for the still-exported import, and a fixed list cannot see one arrive.
      */
     const owner = "shell/notification-settings.ts";
+    /** The behaviour moved out of the shell, read with it (a path from the app's folder). */
+    const LOGIC = "../../../packages/app-logic/src";
     const files = readdirSync(APP, { recursive: true, encoding: "utf8" })
       .filter((f) => /\.tsx?$/.test(f))
       .map((f) => f.split(sep).join("/"))
-      .filter((f) => f !== owner);
+      .filter((f) => f !== owner)
+      .concat(readdirSync(`${APP}/${LOGIC}`, { recursive: true, encoding: "utf8" })
+        .filter((f) => /\.tsx?$/.test(f))
+        .map((f) => `${LOGIC}/${f.split(sep).join("/")}`));
     // The sweep must actually be sweeping: a glob that silently matched nothing would pass.
     expect(files.length, "the census walked no files").toBeGreaterThan(50);
     expect(files, "the census skipped the pane it was written for")

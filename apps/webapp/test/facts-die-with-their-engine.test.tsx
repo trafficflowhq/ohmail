@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ═══ A DIFFERENT ENGINE IS A DIFFERENT MAILBOX, AND THE FACTS DIE WITH IT ════════════════════

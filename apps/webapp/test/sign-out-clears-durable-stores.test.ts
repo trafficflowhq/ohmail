@@ -4,20 +4,20 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { dropLocalStorageKeys } from "../app/shell/boot-cache";
+import { dropLocalStorageKeys } from "@ohmail/app-logic/session/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, COMPOSE_ROW_PREFIX, COMPOSE_SESSION_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../app/shell/compose";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "../app/shell/mail-send";
 import { NOTIFICATION_SUBSCRIPTION_PREFIX } from "../app/shell/notification-settings";
 import { SCREENER_INTENTS_PREFIX } from "../app/shell/screener-intents";
-import { DELETE_INTENTS_PREFIX } from "../app/shell/delete-intents";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "../app/shell/send-lock";
-import { READING_ALONG_PREFIX } from "../app/shell/reading-along";
+import { READING_ALONG_PREFIX } from "@ohmail/app-logic/reading/reading-along";
 import { SESSION_ANSWER_KEY, SESSION_ATTEMPT_KEY, SESSION_MINTED_KEY } from "../app/session-refresh";
-import { ACCESS_VERDICT_PREFIX } from "../app/shell/wall-lift";
-import { ERASED_KEY } from "../app/shell/account-erased";
+import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
+import { ERASED_KEY } from "@ohmail/app-logic/session/account-erased";
 import { REVOKE_OWED_PREFIX, SHARED_NOTE_KEY } from "../app/(product)/resume/signed-out-note";
 
 /**
@@ -56,6 +56,8 @@ const APP = existsSync(resolve("apps/webapp/app")) ? resolve("apps/webapp/app") 
  * which is the same reach it had before.
  */
 const ENGINE = resolve("packages/client-engine/src");
+/** And the behaviour moved out of the shell runs on this origin too: its keys are this census's. */
+const LOGIC = resolve("packages/app-logic/src");
 
 /** Prefixes sign-out sweeps, as sign-out itself names them. */
 const SWEPT = [
@@ -636,7 +638,7 @@ describe("sign-out clears the durable decision stores", () => {
    */
   it("every localStorage key in the app is either swept or deliberately exempt", () => {
     const undecided: string[] = [];
-    const files = [...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : [])];
+    const files = [...walk(APP), ...(existsSync(ENGINE) ? walk(ENGINE) : []), ...(existsSync(LOGIC) ? walk(LOGIC) : [])];
     for (const file of files) {
       // The register of stored names spells every key of every store and keeps none itself; its
       // rows are held to the tree by `test/stored-keys-registry.test.ts`.

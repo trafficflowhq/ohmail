@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
 import messagesDe from "../../webapp/messages/de.json";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE DESKTOP PANE SAYS WHO FILES THE MAILBOX. On its own door this computer files what it

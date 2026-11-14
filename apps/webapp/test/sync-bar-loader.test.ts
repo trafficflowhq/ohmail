@@ -4,8 +4,8 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import type { MailState } from "../app/shell/mail-state";
-import { DRAIN_MARK_HOLD_MS, markDrain } from "../app/shell/drain-mark";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import { DRAIN_MARK_HOLD_MS, markDrain } from "@ohmail/app-logic/session/drain-mark";
 
 /**
  * THE STRIP'S LOADER — the busy states must show that something is running.

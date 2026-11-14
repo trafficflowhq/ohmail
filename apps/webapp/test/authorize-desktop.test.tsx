@@ -76,7 +76,7 @@ vi.mock("../app/api-client", async () => {
 // `ApiError` is compared with `instanceof` inside the screen, so the mocked module's class has to
 // be the one the test throws. Imported AFTER the mock so the augmented module is in play.
 const { ApiError, apiOwnerBinding, bindApiOwner } = await import("../app/api-client");
-const { markSessionAlive } = await import("../app/shell/session-truth");
+const { markSessionAlive } = await import("@ohmail/app-logic/session/session-truth");
 
 /** What the real client sent, and what answered it. */
 type Wire = { status: number; body?: unknown; cookie?: string };

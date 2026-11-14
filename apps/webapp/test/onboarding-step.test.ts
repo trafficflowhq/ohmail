@@ -18,7 +18,7 @@ import {
   ONBOARDING_STATUS_COUNTERS,
   type OnboardingFacts,
   type OnboardingMailbox,
-} from "../app/shell/onboarding";
+} from "@ohmail/app-logic/doors/onboarding";
 
 /** A mailbox that has cleared every condition — the base each row perturbs by ONE field. */
 const DONE_MAILBOX: OnboardingMailbox = {

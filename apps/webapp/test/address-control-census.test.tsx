@@ -21,7 +21,7 @@ import { KeymapProvider } from "../app/shell/keymap";
 import { MessageRecipients } from "../app/shell/MessageRecipients";
 import { MessageHeader } from "../app/shell/MessageCard";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * ═══ THE ADDRESS-CONTROL CENSUS — which surface reaches the address view, and how ═══════════

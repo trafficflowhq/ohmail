@@ -17,18 +17,18 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import { presentsUnread, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { Button, Kbd, ListPane, ListRows, MessageRow, TagDot, TextField } from "@ohmail/ui";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
-import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
+import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { avatarOf, rowStamp, hueOf, placeLabel, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useZoneNav } from "../shell/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
-import { useListWindow } from "../shell/list-window";
-import { useColumnPick } from "../shell/column-pick";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
+import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
 
 
 export interface TagAdmin {

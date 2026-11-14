@@ -20,7 +20,7 @@ import { SenderMenu } from "../app/shell/SenderMenu";
 import {
   planScreeningChange, ruleMatchOf, screeningPath, senderScreening, withResolution,
   type ScreeningDest, type ScreeningScope,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 import { shellSliceOf } from "./source-anchor";
 
 /**

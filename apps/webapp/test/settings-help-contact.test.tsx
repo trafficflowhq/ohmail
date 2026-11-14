@@ -15,8 +15,8 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { SettingsView } from "../app/views/SettingsView";
 import { HelpContactPane, type SupportSeed } from "../app/shell/HelpContactPane";
 import { SupportDiagnostics } from "../app/shell/SupportDiagnostics";
-import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "../app/shell/open-external";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import { enableExternalLinks, interceptLinkClicks, setMailtoSink } from "@ohmail/app-logic/session/open-external";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { RichValue } from "../app/shell/rich-text";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

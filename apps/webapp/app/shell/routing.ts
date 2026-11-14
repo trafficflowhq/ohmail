@@ -8,7 +8,7 @@
  * The query string (?demo=1) is untouched by navigation.
  */
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import { abandonOpen, beginOpen, beginSwitch } from "./ui-vitals";
+import { abandonOpen, beginOpen, beginSwitch } from "@ohmail/app-logic/session/ui-vitals";
 
 export const VIEWS = [
   "ohbox",

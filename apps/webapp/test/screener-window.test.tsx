@@ -8,7 +8,7 @@ import {
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX, FULL_RANGE_MAX_ROWS } from "../app/shell/list-window";
+import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX, FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**

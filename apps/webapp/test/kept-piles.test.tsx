@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { KeptPiles, type KeptPileName } from "../app/shell/kept-piles";
-import { queryVisible, queryAllVisible } from "../app/shell/visible-dom";
+import { queryVisible, queryAllVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /**
  * THE KEPT PILES (`kept-piles.tsx`): News and Receipts stay mounted, hidden, while the reader is on

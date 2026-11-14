@@ -17,11 +17,11 @@ import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import {
   otherOrganizerOf, readerMoveRefusal, screenerMode, type ScreenerRole,
-} from "../app/shell/mail-state";
-import { postureRefusal, rulesPostureOf } from "../app/shell/rules-posture";
+} from "@ohmail/app-logic/mail-state/mail-state";
+import { postureRefusal, rulesPostureOf } from "@ohmail/app-logic/press/rules-posture";
 import { ScreenerView } from "../app/views/ScreenerView";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { KeymapProvider } from "../app/shell/keymap";
 import type { ScreenerState } from "../app/shell/screener-state";
 

@@ -22,7 +22,7 @@ import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from "re
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
 import type { EngineMessage } from "@ohmail/client-engine";
-import type { BlockNotice } from "../components/BlockNotice";
+import type { BlockNotice } from "../letter-body";
 import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import { recipientRows, writtenDateTime, writtenInstant, type RecipientRowChip } from "./format";
 import { displayAddress } from "./idn";

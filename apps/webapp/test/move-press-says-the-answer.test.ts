@@ -12,7 +12,7 @@ import {
   dispatchScreeningChange,
   planScreeningChange,
   senderScreening,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * A MOVE PRESS SAYS WHAT HAPPENED, AFTER THE ANSWER.

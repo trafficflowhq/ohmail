@@ -7,7 +7,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   deriveMailState, seedGrowth, type FilingFacts, type MailState, type MailStateInputs, type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE STUCK STRIP COUNTS WHAT IS STUCK, UNDER ITS OWN CLOCK, FOR THE REASON ON RECORD.

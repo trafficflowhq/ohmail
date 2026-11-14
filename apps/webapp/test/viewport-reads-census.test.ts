@@ -12,20 +12,21 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * belongs in viewport px. Comments are blanked first (`source-scan.mjs`); a planted raw read is the
  * positive control.
  */
-/* @reads: apps/webapp/app/shell, apps/webapp/app/views, apps/webapp/app/components, packages/ui/src */
+/* @reads: apps/webapp/app/shell, apps/webapp/app/views, apps/webapp/app/components, apps/webapp/app/letter-body, packages/app-logic/src, packages/ui/src */
 const REPO = join(__dirname, "..", "..", "..");
-const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/components", "apps/webapp/app/(product)", "packages/ui/src"];
+const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/components", "apps/webapp/app/letter-body", "apps/webapp/app/(product)", "packages/app-logic/src", "packages/ui/src"];
 const RAW = /getBoundingClientRect\s*\(|\.clientX\b|\.clientY\b|\binnerWidth\b|\binnerHeight\b/g;
 
 /** Reads that belong in viewport px, each with why. A new one is a reviewed diff. */
 const ADMITTED: Record<string, { count: number; why: string }> = {
   "packages/ui/src/ui-zoom.ts": { count: 5, why: "the helper itself" },
+  "packages/app-logic/src/geometry/ui-zoom.ts": { count: 5, why: "the helper's twin, for behaviour that may not import the kit" },
   "apps/webapp/app/shell/drag-file.ts": {
     count: 6,
     why: "the drag's slop compares two pointer reads, and the hit test `elementFromPoint` takes viewport px",
   },
   "apps/webapp/app/views/OhboxView.tsx": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
-  "apps/webapp/app/shell/list-window.ts": {
+  "packages/app-logic/src/lists/list-window.ts": {
     count: 2,
     why: "the page-scroll half: the ROOT scroller's scrollTop is viewport px under the zoom (measured)",
   },

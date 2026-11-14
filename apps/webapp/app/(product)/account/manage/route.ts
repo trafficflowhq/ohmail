@@ -1,8 +1,8 @@
 import { resolveApiOrigin, resolveInternalApiOrigin } from "../../../api-origin";
 import { SESSION_COOKIE } from "../../../session-gate";
-import { cookieFromJar } from "../../../shell/cookie-jar";
+import { cookieFromJar } from "@ohmail/app-logic/storage/cookie-jar";
 import { localeFromCookieHeader } from "../../../shell/locale";
-import { readOwnerMarker } from "../../../shell/owner-cookie";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { LOGIN_FOR_MANAGE, manageHandoff } from "../../../manage-handoff";
 
 /**

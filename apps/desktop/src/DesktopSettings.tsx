@@ -26,7 +26,7 @@ import type { LocalAiStatus } from "./local-ai.js";
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { isRemovedMailbox, readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
+import { isRemovedMailbox, readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 
 /**

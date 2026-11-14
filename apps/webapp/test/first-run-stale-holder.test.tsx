@@ -9,9 +9,9 @@ import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import { holderStopped } from "../app/shell/reader-holder";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+import { holderStopped } from "@ohmail/app-logic/reading/reader-holder";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /**
@@ -219,7 +219,7 @@ describe("holderStopped reads the decider's stop and nothing else", () => {
  */
 describe("census: one step, one predicate", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/mobile/app", "apps/mobile/src"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/app", "apps/mobile/src"];
   const KEYS = [
     "elsewhereLead", "elsewhereLeadStopped", "elsewhereChoiceHereWhy", "elsewhereChoiceHereStoppedWhy",
     "elsewhereChoiceReadWhy", "elsewhereChoiceReadStoppedWhy",

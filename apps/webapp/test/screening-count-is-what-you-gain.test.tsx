@@ -20,9 +20,9 @@ import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { shellSliceOf } from "./source-anchor";
 import { COMMIT_MS } from "../app/shell/screener-state";
-import { shellConsentOptions, type ShellConsentFacts } from "../app/shell/consent-options";
-import { screeningReadBack, screeningShown } from "../app/shell/press-verdict";
-import { dispatchScreeningChange, planScreeningChange, senderScreening } from "../app/shell/sender-screening";
+import { shellConsentOptions, type ShellConsentFacts } from "@ohmail/app-logic/press/consent-options";
+import { screeningReadBack, screeningShown } from "@ohmail/app-logic/press/press-verdict";
+import { dispatchScreeningChange, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE COUNT IS WHAT YOU GAIN. Accepting a waiting sender said "Ohbox — 1 message

@@ -124,7 +124,7 @@ beforeEach(() => {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 const state: { current: import("../app/shell/screener-state.js").ScreenerState | null } = { current: null };
-const dispatch: { current: ReturnType<typeof import("../app/shell/shell-dispatch.js").useShellDispatch> | null } = { current: null };
+const dispatch: { current: ReturnType<typeof import("@ohmail/app-logic/press/shell-dispatch").useShellDispatch> | null } = { current: null };
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
   host?.remove();
@@ -139,14 +139,15 @@ async function flush(n = 25): Promise<void> {
 /** The shell's composition: the dispatch spine, the presentation with the window's places, the Screener. */
 async function mount(engine: OhmailEngine): Promise<void> {
   const { useScreenerState } = await import("../app/shell/screener-state.js");
-  const { useShellDispatch } = await import("../app/shell/shell-dispatch.js");
+  const { useShellDispatch } = await import("@ohmail/app-logic/press/shell-dispatch");
+  const { placeLabel } = await import("../app/shell/format.js");
   function Probe(): null {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const t = useTranslations();
     const reader = engine.read();
     const d = useShellDispatch({
-      engine, reader, t, demo: false, refreshFacts: () => {},
+      engine, reader, t, placeLabel, demo: false, refreshFacts: () => {},
       toast: (message: string, opts?: { onAction?: () => void }) => { toasts.push({ message, onAction: opts?.onAction }); },
     });
     dispatch.current = d;

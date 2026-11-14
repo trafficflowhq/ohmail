@@ -89,7 +89,7 @@ describe("the reason a reader's press is refused has one decider, and every refu
   it("the fan-out's per-mailbox refusal and the client's Screener read the same leaf", () => {
     const fanOut = withoutCommentsAndLiterals(readFileSync(join(REPO, "packages/services/src/reader-request.ts"), "utf8"));
     expect(fanOut).toMatch(/refused\.push\(\{\s*mailboxId: id, holder: e\.by, reason: requestRefusalReason\(e\) \}\)/);
-    const client = readFileSync(join(REPO, "apps/webapp/app/shell/mail-state.ts"), "utf8");
+    const client = readFileSync(join(REPO, "packages/app-logic/src/mail-state/mail-state.ts"), "utf8");
     expect(withoutComments(client)).toMatch(/from "@trafficflow\/core\/reader-refusal"/);
     const at = withoutCommentsAndLiterals(client).indexOf("export function screenerMode(");
     expect(at).toBeGreaterThan(-1);
@@ -111,12 +111,12 @@ describe("the reason a reader's press is refused has one decider, and every refu
 
 type SourceFile = { file: string; raw: string };
 
-const MAIL_STATE = "apps/webapp/app/shell/mail-state.ts";
+const MAIL_STATE = "packages/app-logic/src/mail-state/mail-state.ts";
 const SCREENER_STATE = "apps/webapp/app/shell/screener-state.ts";
-const SHELL_DISPATCH = "apps/webapp/app/shell/shell-dispatch.ts";
+const SHELL_DISPATCH = "packages/app-logic/src/press/shell-dispatch.ts";
 const APP_SHELL = "apps/webapp/app/shell/AppShell.tsx";
 const PHONE_FORM = "apps/mobile/src/ui/standalone-form.ts";
-const READER_HOLDER = "apps/webapp/app/shell/reader-holder.ts";
+const READER_HOLDER = "packages/app-logic/src/reading/reader-holder.ts";
 const PHONE_LIVE = "apps/mobile/src/state/live.ts";
 
 /** A door is a function a holder sentence is chosen from; `asks` is read in its body. */
@@ -126,9 +126,9 @@ const DOORS: { file: string; fn: string; asks: RegExp; literals?: true }[] = [
   // The role's `reason` is `screenerMode`'s decider answer: read, never re-derived.
   { file: MAIL_STATE, fn: "readerHolder", asks: /\brole\.reason === "no_organizer"/, literals: true },
   { file: MAIL_STATE, fn: "readerMoveRefusal", asks: /\bholderIsLive\(/ },
-  { file: "apps/webapp/app/shell/first-run-subject.ts", fn: "accountOrganizer", asks: /\bholderIsLive\(/ },
+  { file: "packages/app-logic/src/doors/first-run-subject.ts", fn: "accountOrganizer", asks: /\bholderIsLive\(/ },
   // A 409's reason is the server's decider answer (case 2 above pins the server side).
-  { file: "apps/webapp/app/shell/organizer-refusal.ts", fn: "organizerRefusalOf", asks: /\?\.reason === "no_organizer"/, literals: true },
+  { file: "packages/app-logic/src/press/organizer-refusal.ts", fn: "organizerRefusalOf", asks: /\?\.reason === "no_organizer"/, literals: true },
   { file: PHONE_FORM, fn: "claimFrom", asks: /\bholderIsLive\(/ },
   { file: PHONE_LIVE, fn: "phoneOrganizer", asks: /\bholderIsLive\(/ },
   // The stop is the decider's too: a named holder that is not live (READER-SENTENCES-STOPPED-ARMS).

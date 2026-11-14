@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { notOrganizingYetOf } from "./mail-state";
+import { notOrganizingYetOf } from "@ohmail/app-logic/mail-state/mail-state";
 import { goFirstRun } from "./routing";
 
 /** Whether this launch has asked the organize decision of an undecided mailbox. One per JS context. */

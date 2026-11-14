@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useListWindow } from "../app/shell/list-window";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * ROWS ARRIVING ABOVE EVERY INDEX (`inserted`, History's arrivals). Each row keeps its measured

@@ -10,7 +10,7 @@ import {
   type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { planScreeningChange, senderScreening } from "../../webapp/app/shell/sender-screening";
+import { planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE DESKTOP WINDOW'S SENDER SHEET AND DECIDE OVER A SENDER'S RULE TWINS

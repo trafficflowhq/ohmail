@@ -8,7 +8,7 @@ import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { OhboxView } from "../app/views/OhboxView";
 import { KeymapProvider } from "../app/shell/keymap";
-import { ESTIMATED_ROW_PX, useListWindow, WINDOW_TOP } from "../app/shell/list-window";
+import { ESTIMATED_ROW_PX, useListWindow, WINDOW_TOP } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * THE WINDOW COUNTS FROM THE FIRST ROW, NOT FROM THE SCROLLER'S TOP. A note, a banner or a pinned

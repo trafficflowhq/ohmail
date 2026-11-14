@@ -7,12 +7,12 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import DOMPurify from "dompurify";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { MessageBody } from "../app/components/MessageBody";
+import { MessageBody } from "../app/letter-body/MessageBody";
 import {
   forgetMailDocs, mailDocCacheFor, MAIL_DOC_ENTRIES_MAX, type MailDocInputs,
-} from "../app/components/mail-doc-cache";
+} from "../app/letter-body/mail-doc-cache";
 import { EngineProvider } from "../app/shell/engine";
-import { registerSyncGate, type SyncGate, type SyncIdentity } from "../app/shell/sync-scheduler";
+import { registerSyncGate, type SyncGate, type SyncIdentity } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * THE SANITIZED DOCUMENT IS KEPT PER ENGINE, AND SERVED ONLY FOR THE INPUTS IT WAS MADE FROM

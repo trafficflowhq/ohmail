@@ -8,7 +8,7 @@ import { FolderView } from "../app/views/FolderView";
 import { TrashView } from "../app/views/TrashView";
 import { KeymapProvider } from "../app/shell/keymap";
 import { WithListGone } from "./_list-gone";
-import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "../app/shell/list-window";
+import { ESTIMATED_ROW_PX, MEASURED_FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * ↓ TO A ROW THE WINDOW HAS NOT MOUNTED. A folder or Trash of a few hundred rows is a window now,

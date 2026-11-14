@@ -15,8 +15,8 @@ import { KeymapProvider } from "../../webapp/app/shell/keymap";
 
 import {
   deriveOnboardingStep, onboardingPath, type OnboardingFacts,
-} from "../../webapp/app/shell/onboarding";
-import type { FirstRunHost } from "../../webapp/app/shell/first-run-host";
+} from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { firstRunDoorFor } from "../src/doors.js";
 import {
   localAiPosture, localProbeReason, LocalWireError, useLocalFirstRun,

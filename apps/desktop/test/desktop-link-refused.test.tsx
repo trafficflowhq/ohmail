@@ -11,8 +11,8 @@ import { DesktopGate } from "../src/DesktopGate.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import { LINK_ASK_EVENT, LINK_REFUSED_EVENT } from "../src/native.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
-import { COPY } from "../../webapp/app/components/MessageBody";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
+import { COPY } from "../../webapp/app/letter-body/MessageBody";
 import messages from "../../webapp/messages/en.json";
 
 /**

@@ -132,7 +132,7 @@ async function reload(): Promise<void> {
 }
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-06T08:00:00.000Z"));
   vi.spyOn(Math, "random").mockReturnValue(0);

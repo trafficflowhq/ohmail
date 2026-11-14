@@ -5,7 +5,7 @@ import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { NOW, S, act, click, consentTransport, engineOver, setup, storeWith, teardown, waitFor } from "./_view-shell";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE WHOLE SHELL PUTS THE GAP OFFER UNDER THE PILES (GAP-OFFER-OFF-SCREEN-UNDER-FOLDERS).

@@ -28,7 +28,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, SettingsRow, Switch } from "@ohmail/ui";
 import type { AutoOptInControl } from "./screener-suggest";
-import { useManagedService } from "./managed-service";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { ruleDate } from "../views/RulesView";
 
 export function AutoSuggestRow({

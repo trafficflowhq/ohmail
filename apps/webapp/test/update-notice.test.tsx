@@ -14,7 +14,7 @@ import {
   resetUpdateStoreForTests,
   sendWaits,
   setSendWaits,
-} from "../app/shell/app-update";
+} from "@ohmail/app-logic/doors/app-update";
 import de from "../messages/de.json";
 import { noticeServerAnswered, noticeUpdateAnswer, hearUpdateAnswer } from "../app/shell/update-answer";
 import type { SendLineItem, SendPhase } from "../app/shell/mail-send";

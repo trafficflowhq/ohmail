@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import { type EngineMessage, type TagDTO, type TriagePileEntry, type TriagePiles } from "@ohmail/client-engine";
 import {
   Button,
@@ -29,10 +29,10 @@ import { useKeyBindings } from "../shell/keymap";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { useZoneNav } from "../shell/zone-nav";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
-import { useListWindow } from "../shell/list-window";
-import { useColumnPick } from "../shell/column-pick";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
+import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
-import { useReaderVisit, type ReaderMarkSeen } from "../shell/reader-seen";
+import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/reader-seen";
 import { TRIAGE_PILES, type TriagePileId } from "../shell/routing";
 
 

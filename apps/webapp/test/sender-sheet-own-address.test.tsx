@@ -8,7 +8,7 @@ import { MemoryMirrorStore, type EngineMessage, type EngineMutation, type Folder
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { dispatchScreeningChange, isOwnSubject, planScreeningChange, senderScreening } from "../app/shell/sender-screening";
+import { dispatchScreeningChange, isOwnSubject, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE SENDER SHEET OFFERS NO SCREENING PRESS ON OUR OWN MAIL (SENDER-SHEET-OFFERED-ON-OUR-OWN-MAIL).
@@ -120,7 +120,7 @@ describe("the sender sheet on the account's own mail", () => {
 
 describe("the web's own addresses are the server's", () => {
   it("leave out a mailbox the server does not count as own; a row without the field counts", async () => {
-    const { ownAddressesOf } = await import("../app/shell/mail-state");
+    const { ownAddressesOf } = await import("@ohmail/app-logic/mail-state/mail-state");
     expect(ownAddressesOf([
       { address: "live@own.invalid", addressIsOwn: true },
       { address: "removed@own.invalid", addressIsOwn: false },

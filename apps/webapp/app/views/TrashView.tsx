@@ -22,22 +22,22 @@ import { ListPane, ListRows, MessageRow, Reader, Spinner } from "@ohmail/ui";
 import type { TrashWindowItemWire } from "../api-client";
 import { MessagePane, type MessageAction } from "../shell/MessagePane";
 import { useRowBadgeCopy } from "../shell/row-copy";
-import { rowThreadOf } from "../shell/row-thread";
+import { rowThreadOf } from "@ohmail/app-logic/reading/row-thread";
 import {
   avatarHue, avatarOf, agoStamp, displayTime, hueOf, initialsOf, placeLabel, rowAddress,
   senderName, tagsOfMessage,
 } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { displayAddressee, displayAddressUnder } from "../shell/idn";
-import { BodyText } from "../shell/BodyText";
+import { BodyText } from "../letter-body";
 import { useZoneNav } from "../shell/zone-nav";
 import { ListEmpty, ListReadColumn, ListSentence, useListView } from "../shell/list-view";
 import { useFocusFollows } from "../shell/focus-follows";
-import { useListWindow } from "../shell/list-window";
-import { useColumnPick } from "../shell/column-pick";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
+import { useColumnPick } from "@ohmail/app-logic/lists/column-pick";
 import { useKeyBindings } from "../shell/keymap";
-import { isModalOpen } from "../shell/modal-gate";
-import type { TrashPage } from "../shell/trash-page";
+import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
+import type { TrashPage } from "@ohmail/app-logic/lists/trash-page";
 import {
   trashLiveKeyOf, trashLiveState, trashReadVerbs, type TrashWindowControl,
 } from "../shell/trash-window";

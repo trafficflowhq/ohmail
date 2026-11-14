@@ -12,7 +12,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { cssRect, cssViewport } from "@ohmail/ui";
-import type { BarVerb } from "./bar-density";
+import type { BarVerb } from "@ohmail/app-logic/lists/bar-density";
 import { useFocusFollows } from "./focus-follows";
 import { OVERLAY_EDGE, OVERLAY_GAP } from "./overlay-clamp";
 

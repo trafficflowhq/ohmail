@@ -7,7 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 import { fillFrom } from "../app/shell/locale";
 import { formalAddress } from "./_formal-address";
 

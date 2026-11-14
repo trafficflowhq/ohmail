@@ -7,9 +7,9 @@ import type { EngineMessage } from "@ohmail/client-engine";
 import {
   EVIDENCE_WINDOW_MS, LANDING_REST_MS, TOP_LINE_FALLBACK_PX, createThreadReadDom, createUnreadHold, panelsOf, pressEnters, useReaderVisit,
   useThreadRead, viewOf, type ThreadReadDomOptions,
-} from "../app/shell/reader-seen";
-import { scrollProgrammatically } from "../app/shell/programmatic-scroll";
-import { readLandedCard } from "../app/shell/stream-landing-read";
+} from "@ohmail/app-logic/reading/reader-seen";
+import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
+import { readLandedCard } from "@ohmail/app-logic/lists/stream-landing-read";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout";
 
 /**

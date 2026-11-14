@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { showInboundQuiet } from "../app/shell/mail-state";
+import { showInboundQuiet } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE FORWARDING-DETECTION NOTICE's show rule (mail 0078) — the ONE rule both panes render by

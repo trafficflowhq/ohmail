@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost, useToast, type ToastFn } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { createUndoDoor } from "../app/shell/undo-door";
+import { createUndoDoor } from "@ohmail/app-logic/press/undo-door";
 
 /**
  * THE NOTICES AND THE UNDO CAPSULE, READ AS A SCREEN READER READS THEM. A

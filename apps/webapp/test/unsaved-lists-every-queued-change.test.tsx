@@ -17,7 +17,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMutation, QueuedChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

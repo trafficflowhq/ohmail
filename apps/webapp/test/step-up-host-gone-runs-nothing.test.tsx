@@ -87,7 +87,7 @@ afterEach(async () => {
   root = null;
   host = null;
   globalThis.fetch = originalFetch;
-  (await import("../app/shell/account-erased.js")).clearAccountErased();
+  (await import("@ohmail/app-logic/session/account-erased")).clearAccountErased();
   vi.restoreAllMocks();
 });
 

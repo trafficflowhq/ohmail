@@ -18,8 +18,8 @@ import { createRoot, type Root } from "react-dom/client";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DIR = join(HERE, "fixtures/newsletters");

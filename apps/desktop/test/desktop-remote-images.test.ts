@@ -2,8 +2,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../webapp/app/components/MessageBody";
-import { DEFERRED_SRC_ATTR } from "../../webapp/app/components/proxied-images";
+import { COPY, frameCsp, MessageBody, sanitizeMailHtml } from "../../webapp/app/letter-body/MessageBody";
+import { DEFERRED_SRC_ATTR } from "../../webapp/app/letter-body/proxied-images";
 import { autoLoadsImages, imageProxyUrl, useRemoteImages } from "../../webapp/app/shell/remote-images";
 import { localImageWire, localLoadRemote } from "../src/local-images.js";
 

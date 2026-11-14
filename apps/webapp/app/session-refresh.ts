@@ -13,18 +13,18 @@ import {
   CREDENTIAL_REFUSED, REFRESH_MISSING, REFRESH_REUSE_CAUSE, durableIdbCommit, isSessionRefusal,
 } from "@ohmail/client-engine";
 import { csrfMark, csrfToken } from "./csrf";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "./shell/confirm-schedule";
-import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./shell/durable";
-import { readOwner, readOwnerCookie, readOwnerMarker, restampOwner } from "./shell/owner-cookie";
-import { webLane } from "./shell/resume-lane";
-import { isDemoOwned, storageOwner } from "./shell/storage-owner";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "@ohmail/app-logic/storage/durable";
+import { readOwner, readOwnerCookie, readOwnerMarker, restampOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { webLane } from "@ohmail/app-logic/session/resume-lane";
+import { isDemoOwned, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import {
   ERASED_DECLARATION, clearAccountErased, erasedAnswerOf, erasedCapture, hearAccountErased,
-} from "./shell/account-erased";
+} from "@ohmail/app-logic/session/account-erased";
 import {
   markSessionAlive, markSessionDead, registerSessionProbe, sessionIsDead, subscribeSessionRevival,
   subscribeSessionTruth,
-} from "./shell/session-truth";
+} from "@ohmail/app-logic/session/session-truth";
 import { clientDeclaration, declareClient } from "./shell/client-declaration";
 import { RELOAD_REMEDY, hearUpdateAnswer } from "./shell/update-answer";
 

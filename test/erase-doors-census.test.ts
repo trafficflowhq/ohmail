@@ -16,7 +16,7 @@ import { bracketSpan, withoutComments, withoutCommentsAndLiterals } from "../scr
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /** The client roots, and the directories a walk skips: build output and installed packages. */
-const CLIENT_ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app", "packages/client-engine/src"];
+const CLIENT_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app", "packages/client-engine/src"];
 const SKIPPED = new Set(["node_modules", "dist", "build", ".next"]);
 
 function walk(dir: string, out: string[] = []): string[] {

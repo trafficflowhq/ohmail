@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { Button, Spinner } from "@ohmail/ui";
-import type { LiveBodyRefusal, LiveBodyState } from "./live-body";
+import type { LiveBodyRefusal, LiveBodyState } from "@ohmail/app-logic/reading/live-body";
 
 /** Where Settings → Storage lives in the shell's routes, on every door. */
 export const STORAGE_PANE_HREF = "#/settings/storage";

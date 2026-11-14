@@ -16,19 +16,20 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 const ROOTS: Array<[string, URL]> = [
   ["apps/webapp/app", new URL("../../../apps/webapp/app/", import.meta.url)],
+  ["packages/app-logic/src", new URL("../../app-logic/src/", import.meta.url)],
   ["apps/mobile/src", new URL("../../../apps/mobile/src/", import.meta.url)],
   ["apps/mobile/app", new URL("../../../apps/mobile/app/", import.meta.url)],
 ];
 
 /** Every render bind the roots hold today, by file. A new one is named here on purpose. */
 const BINDS: Record<string, number> = {
-  "apps/webapp/app/shell/store-timeline.ts": 1,
+  "packages/app-logic/src/session/store-timeline.ts": 1,
   "apps/webapp/app/views/SearchView.tsx": 1,
   "apps/mobile/src/state/store-views.ts": 2,
 };
 
 /** Each platform's one adapter over the engine's rule. */
-const ADAPTERS = ["apps/webapp/app/shell/session-reask.ts", "apps/mobile/src/state/store-views.ts"];
+const ADAPTERS = ["packages/app-logic/src/session/session-reask.ts", "apps/mobile/src/state/store-views.ts"];
 
 const WALKER_SOURCE = /new\s+Store(?:Timeline|Search)Walker\(|store(?:Search)?WalkerFor\(|\.store\.(?:walker|searchWalker)\b/;
 

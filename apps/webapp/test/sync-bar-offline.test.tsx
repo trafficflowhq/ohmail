@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * the offline word. "As of {time} · catching up" is an ACTIVITY claim, and over a dead

@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost, FirstRunOrganizeOutcome } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import type { FirstRunHost, FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * AGREE MEETS THE DOOR'S SECOND-FACTOR CHECK. On the self-hosted server the consent

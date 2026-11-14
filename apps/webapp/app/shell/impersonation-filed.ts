@@ -10,8 +10,8 @@
 
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { AutoFiledItemWire, OhmailEngine } from "@ohmail/client-engine";
-import { durableSet } from "./durable";
-import { storageOwner } from "./storage-owner";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * This device's mark, per account (`searchSortKey`'s keying): the newest filing it has acknowledged,

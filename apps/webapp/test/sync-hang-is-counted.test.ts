@@ -19,7 +19,7 @@ import {
   type EngineAdapter, type SyncResponse,
 } from "@ohmail/client-engine";
 import { createEngine } from "../app/shell/engine-config.js";
-import { POLL_MS, startSyncScheduler, type SyncStatus } from "../app/shell/sync-scheduler.js";
+import { POLL_MS, startSyncScheduler, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 
 const NOW = "2026-10-23T09:00:00.000Z";
 const quiet = (cursor: string): SyncResponse => ({

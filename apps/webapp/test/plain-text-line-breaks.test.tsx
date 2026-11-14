@@ -31,7 +31,7 @@ const SHEETS = [
   "packages/ui/src/composites/stream.css",
   "packages/ui/src/composites/reader.css",
   "apps/webapp/app/app.css",
-  "apps/webapp/app/components/message-body.css",
+  "apps/webapp/app/letter-body/message-body.css",
 ];
 
 /** The sender's own line break, inside one paragraph — what the finding's reply carried. */
@@ -151,7 +151,7 @@ describe("no container takes the line breaks away", () => {
   for (const [what, cls] of CONTAINERS) {
     it(`${what} (.${cls})`, async () => {
       loadSheets();
-      const { MessageBody } = await import("../app/components/MessageBody.js");
+      const { MessageBody } = await import("../app/letter-body/MessageBody.js");
       const el = await render(h("div", { className: cls }, h(MessageBody as never, { text: SIGNED, html: null } as never)));
       expect(whiteSpaceOf(signatureIn(el))).toBe("pre-line");
     });

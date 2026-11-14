@@ -12,9 +12,9 @@ import { pressReaderSites } from "../../../scripts/lib/press-readers.mjs";
 const ROOT = resolve(__dirname, "..");
 const SITES: Record<string, ReadonlyArray<"refusal-only" | "says-done" | "via-pressVerdict">> = {
   "app/shell/compose-autosave.ts": ["refusal-only"],     // a refused save keeps the composer open
-  "app/shell/delete-undo.ts": ["refusal-only"],          // counts refusals and waits, says neither else
+  "../../packages/app-logic/src/press/delete-undo.ts": ["refusal-only"],          // counts refusals and waits, says neither else
   "app/shell/mail-send.ts": ["refusal-only"],            // `absorb` reads the send's own outcome
-  "app/shell/press-verdict.ts": ["says-done"],           // moveInBatches — the moved count
+  "../../packages/app-logic/src/press/press-verdict.ts": ["says-done"],           // moveInBatches — the moved count
   "app/shell/reply-autosave.ts": ["refusal-only"],       // a refused save ends the attempt
   "app/shell/screener-state.ts": [
     "via-pressVerdict", "via-pressVerdict",
@@ -39,7 +39,7 @@ const walk = (d: string): string[] => readdirSync(d).flatMap((n) => {
 describe("the web's press readers", () => {
   it("every site is classified, in order, and every says-done site carries a superseded arm", () => {
     const found: Record<string, string[]> = {};
-    for (const f of walk(join(ROOT, "app"))) {
+    for (const f of [...walk(join(ROOT, "app")), ...walk(join(ROOT, "../../packages/app-logic/src"))]) {
       const sites = pressReaderSites(readFileSync(f, "utf8"));
       if (sites.length === 0) continue;
       const rel = relative(ROOT, f);

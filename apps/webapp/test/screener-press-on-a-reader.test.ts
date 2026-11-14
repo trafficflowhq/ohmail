@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ISO, goTo, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import en from "../messages/en.json";
 
 /**

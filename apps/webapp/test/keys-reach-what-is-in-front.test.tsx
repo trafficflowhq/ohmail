@@ -13,17 +13,17 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider, useKeyBindings, type KeyBinding } from "../app/shell/keymap";
 import { FocusFollows } from "../app/shell/focus-follows";
-import { KEY_PEEK, pageModal } from "../app/shell/modal-gate";
-import { revealInScroller } from "../app/shell/list-window";
+import { KEY_PEEK, pageModal } from "@ohmail/app-logic/session/modal-gate";
+import { revealInScroller } from "@ohmail/app-logic/lists/list-window";
 import { writeReplyDraft } from "../app/shell/mail-send";
 import { stubThreadLayout } from "./fixtures/thread-layout";
 import { parseRichValue } from "../app/shell/rich-text";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ═══ THE KEYS REACH WHAT IS IN FRONT ═══════════════════════════════════════════════════════════

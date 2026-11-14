@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { OhmailEngine, type EngineAdapter } from "@ohmail/client-engine";
-import { MessageBody } from "../app/components/MessageBody";
+import { MessageBody } from "../app/letter-body/MessageBody";
 
 /**
  * THE FRAME'S DOCUMENT IS THE SIZE OF THE LETTER, NOT OF ITS PICTURES. Twelve embedded pictures

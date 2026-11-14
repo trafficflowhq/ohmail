@@ -14,7 +14,7 @@ import ts from "typescript";
  * below with why its list is one row per key already.
  */
 const ROOT = resolve(import.meta.dirname ?? ".", "../../..");
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "apps/mobile/src", "apps/desktop/src"];
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/desktop/src"];
 
 const NAMED: Readonly<Record<string, string>> = {
   "apps/mobile/src/state/live.ts:routingReversal":

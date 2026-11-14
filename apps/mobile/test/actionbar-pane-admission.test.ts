@@ -65,7 +65,7 @@ let webOrder: { id: string; seg: string | null }[];
 /** bar-density's verb tokens → this app's `ReaderVerbId`s — the census's own map. */
 const NAME: Record<string, string> = { rall: "replyAll", fwd: "forward", screen: "screening" };
 beforeAll(async () => {
-  const url = pathToFileURL(join(APP, "..", "webapp", "app", "shell", "bar-density.ts")).href;
+  const url = pathToFileURL(join(APP, "..", "..", "packages", "app-logic", "src", "lists", "bar-density.ts")).href;
   const density = (await import(url)) as {
     admitVerbs: typeof webAdmit;
     BAR_VERB_ORDER: readonly { verb: string; seg: string | null }[];

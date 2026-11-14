@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SESSION_REFUSAL_CODES } from "@ohmail/client-engine";
 import { lastRefreshReport, resumeSession } from "../app/session-refresh.js";
-import { markSessionAlive, sessionIsDead } from "../app/shell/session-truth.js";
+import { markSessionAlive, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 
 /**
  * The browser's cookie refresh ends a session only on the refresh door's own refusal: a 401 whose

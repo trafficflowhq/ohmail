@@ -5,9 +5,9 @@ import { flushSync } from "react-dom";
 import { leaveSignedOutTab, listenSignedOut, postSignedOut, thisTabName } from "../../signed-out-signal";
 import { forgetThisTab, signOutPresses } from "../../sign-out";
 import type { OwnerResolver } from "../../shell/engine";
-import { readOwnerMarker } from "../../shell/owner-cookie";
-import { sessionIsDead, subscribeSessionTruth } from "../../shell/session-truth";
-import { storageOwner } from "../../shell/storage-owner";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { sessionIsDead, subscribeSessionTruth } from "@ohmail/app-logic/session/session-truth";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * THIS TAB LEAVES WHEN THE BROWSER HAS SIGNED OUT, whichever tab did it. Three halves: another

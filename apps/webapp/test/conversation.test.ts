@@ -9,7 +9,7 @@ import { MAX_RAW_MESSAGE_BYTES } from "@trafficflow/core/mail";
 import messages from "../messages/en.json";
 import { settleEditor } from "./_first-paint.js";
 import { setActiveFormatZone } from "../app/shell/locale";
-import { createThreadWalkChannel } from "../app/shell/thread-walk-channel";
+import { createThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
 
 /**
  * THE CONVERSATION IN THE READER — ONE FULL-BODY PANEL PER MESSAGE.

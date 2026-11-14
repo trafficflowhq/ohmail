@@ -34,20 +34,20 @@ import {
   type TriagePiles,
   type WaterlineMeta,
 } from "@ohmail/client-engine";
-import type { UndoToastFn } from "./undo-door";
+import type { UndoToastFn } from "@ohmail/app-logic/press/undo-door";
 import { placeFirstRow, SHELL_CURSOR_VIEWS, useCursorHint, type CursorHost } from "./cursor-placer";
 import { useCursorPlacer } from "./keymap";
 import type { MessageBarPanel } from "./message-chrome";
-import { createReadSetMemo } from "./conversation-on-screen";
-import { useReaderVisit, type ThreadReadWiring } from "./reader-seen";
+import { createReadSetMemo } from "@ohmail/app-logic/reading/conversation-on-screen";
+import { useReaderVisit, type ThreadReadWiring } from "@ohmail/app-logic/reading/reader-seen";
 import { readColumnHidden, watchNarrow } from "./narrow";
-import { dispatchMarkAllRead, dispatchMarkAllUndo } from "./read-all";
+import { dispatchMarkAllRead, dispatchMarkAllUndo } from "@ohmail/app-logic/reading/read-all";
 import type { RichValue } from "./rich-text";
 import { canonicalHash, go, goScreener, goSettings, reflectMessage, type Route, type ScreenerSegmentId } from "./routing";
 import type { ScreenerState } from "./screener-state";
-import { createSeenBatcher } from "./seen-batch";
-import { useStableCallback } from "./stable-callback";
-import type { ShellDispatch } from "./shell-dispatch";
+import { createSeenBatcher } from "@ohmail/app-logic/reading/seen-batch";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { SenderAuditState } from "./SenderAuditPanel";
 import type { SenderMenuState } from "./SenderMenu";
 import type { SubjectRuleState } from "./SubjectRuleSheet";
@@ -55,7 +55,7 @@ import type { TagPickerState } from "./TagPicker";
 import type { PaneId } from "../views/SettingsView";
 import type { ReadsChipState } from "../views/ReadsView";
 import { useDecisionReopensOncePerLaunch, type DecisionReopenInput } from "./decision-reopen";
-import { queryVisible } from "./visible-dom";
+import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /**
  * How long the located row stays marked, and how long we look for it.

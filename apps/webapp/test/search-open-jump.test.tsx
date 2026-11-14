@@ -10,7 +10,7 @@ import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/sh
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
 import { KeymapProvider, useKeyBindings } from "../app/shell/keymap";
-import { deleteKeyBindings } from "../app/shell/delete-undo";
+import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * ═══ CLICKING A SEARCH RESULT OPENS THAT MESSAGE ════════════════════════════════════════════

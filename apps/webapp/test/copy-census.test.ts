@@ -52,7 +52,7 @@ describe("the copy census — the scan itself", () => {
    * it catches a broken walk, not a lane that closed strings.
    */
   it("reads the interface sources, and says so with a number", () => {
-    expect(COPY_CENSUS_ROOTS.length).toBe(5);
+    expect(COPY_CENSUS_ROOTS.length).toBe(6);
     expect(findings.length).toBeGreaterThan(50);
     expect(byFile.size).toBeGreaterThan(5);
   });
@@ -121,7 +121,7 @@ describe("every key the code reads is in BOTH catalogues", () => {
    * so a key missing from `de.json` alone renders English rather than a raw key — quieter, and
    * exactly the half-English screen this lane exists to end.
    */
-  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/desktop/src"];
+  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/letter-body", "packages/app-logic/src", "apps/desktop/src"];
   const cat = (lang: "en" | "de"): Record<string, unknown> =>
     JSON.parse(fs.readFileSync(path.join(REPO, `apps/webapp/messages/${lang}.json`), "utf8"));
   const EN = cat("en");

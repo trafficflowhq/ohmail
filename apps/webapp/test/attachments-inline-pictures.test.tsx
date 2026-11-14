@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { HttpAdapter, OhmailEngine, threadOf } from "@ohmail/client-engine";
 import { AttachmentStrip } from "../app/components/AttachmentStrip.js";
-import { MessageBody } from "../app/components/MessageBody.js";
+import { MessageBody } from "../app/letter-body/MessageBody.js";
 import { useMessageAttachments } from "../app/shell/attachments.js";
 
 /**

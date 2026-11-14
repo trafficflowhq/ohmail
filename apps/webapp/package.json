@@ -14,6 +14,8 @@
     "pdfjs-dist": "6.2.108",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "@ohmail/app": "*",
+    "@ohmail/app-logic": "*",
     "@ohmail/client-engine": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",

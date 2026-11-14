@@ -73,7 +73,7 @@ describe("pageEnd — where a page of a long body ends", () => {
 
 describe("BodyText draws a long plain body a page at a time", () => {
   it("a 2 MiB body draws at most one page, with a press that adds exactly one more", async () => {
-    const { BodyText } = await import("../app/shell/BodyText.js");
+    const { BodyText } = await import("../app/letter-body/BodyText.js");
     const { BODY_PAGE_CHARS } = await import("@ohmail/ui");
     const el = await mount(h(BodyText, { text: HUGE }));
     const first = drawn(el);
@@ -92,7 +92,7 @@ describe("BodyText draws a long plain body a page at a time", () => {
   });
 
   it("an ordinary letter is drawn exactly as before — whole, with its history fold and no press", async () => {
-    const { BodyText } = await import("../app/shell/BodyText.js");
+    const { BodyText } = await import("../app/letter-body/BodyText.js");
     const letter = "Thanks, that works.\n\nOn Mon, Ann wrote:\n> the question\n> and more";
     const el = await mount(h(BodyText, { text: letter }));
     expect(el.querySelector("button.msg-page-more")).toBeNull();
@@ -101,7 +101,7 @@ describe("BodyText draws a long plain body a page at a time", () => {
   });
 
   it("a body of exactly one page is drawn whole, and one character more is paged", async () => {
-    const { BodyText } = await import("../app/shell/BodyText.js");
+    const { BodyText } = await import("../app/letter-body/BodyText.js");
     const { BODY_PAGE_CHARS } = await import("@ohmail/ui");
     const exact = HUGE.slice(0, BODY_PAGE_CHARS);
     let el = await mount(h(BodyText, { text: exact }));

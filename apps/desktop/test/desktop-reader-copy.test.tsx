@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "../src/install-role.js";
 import { desktopNotificationHost } from "../src/notify-host.js";
 

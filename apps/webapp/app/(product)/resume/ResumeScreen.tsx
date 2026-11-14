@@ -19,12 +19,12 @@ import { REFRESH_REUSE_CAUSE } from "@ohmail/client-engine";
 import { REFRESH_ENDPOINT, lastRefreshReport, resumeSession, type RefreshReport } from "../../session-refresh";
 import { revokedWipeSettled } from "../../revoked-door";
 import { erasedWipeSettled } from "../../erased-door";
-import { ACCOUNT_ERASED } from "../../shell/account-erased";
-import { readOwnerCookie, readOwnerMarker } from "../../shell/owner-cookie";
-import { storageOwner } from "../../shell/storage-owner";
-import { durableSessionRemove, durableSessionSet } from "../../shell/durable";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { useLoadingGrace } from "../../shell/loading-grace";
+import { ACCOUNT_ERASED } from "@ohmail/app-logic/session/account-erased";
+import { readOwnerCookie, readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { durableSessionRemove, durableSessionSet } from "@ohmail/app-logic/storage/durable";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import {
   REASON_BODY, isSignedOutReason, leaveSignedOutNote, shareSignedOutNote, takeSharedSignedOutNote, type SignedOutReason,
 } from "./signed-out-note";

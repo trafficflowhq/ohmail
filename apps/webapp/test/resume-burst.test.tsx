@@ -359,7 +359,7 @@ describe("a web tab's mount and its return, on the wire", () => {
     await mountAndSettle();
     const back = await pauseAndReturn(2 * 60_000, () => { syncNext = changedDelta; });
     await until(() => Date.now() - back >= LATENCY + 50, back, 1_000);
-    const { sessionFetch } = await import("../app/shell/session-truth");
+    const { sessionFetch } = await import("@ohmail/app-logic/session/session-truth");
     const askedAt = Date.now();
     // What the engine sends for an open: `priority: "high"` (`person-read-priority.test.ts`).
     const read = sessionFetch("/api/messages/m_opened/body", { priority: "high" });
@@ -374,7 +374,7 @@ describe("a web tab's mount and its return, on the wire", () => {
   });
 
   it("with the account wall up, the access read on return is not held",{ timeout: 120_000 }, async () => {
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await mountAndSettle();
     syncWall = true;
     accessAnswer = () => jsonOf(CLOSED);

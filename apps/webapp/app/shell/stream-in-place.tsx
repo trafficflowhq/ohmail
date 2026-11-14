@@ -17,10 +17,10 @@ import { isOwnOutbound, type EngineMessage, type TagDTO } from "@ohmail/client-e
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useMessageChrome } from "./message-chrome";
 import { inlineForwardKey, type SendPhase } from "./mail-send";
-import { createThreadWalkChannel, type ThreadWalkChannel } from "./thread-walk-channel";
+import { createThreadWalkChannel, type ThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
 import type { StreamHandle } from "./StreamShell";
-import { useStableCallback } from "./stable-callback";
-import { useVisit } from "./visit";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { useVisit } from "@ohmail/app-logic/lists/visit";
 
 /**
  * WHICH PILE LETTER HOSTS THE OPEN EDITOR: the reply's target when the pile holds it, else the pile

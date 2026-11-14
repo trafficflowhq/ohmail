@@ -40,7 +40,7 @@ let originalFetch: typeof globalThis.fetch;
 
 beforeEach(async () => {
   setJar("absent");
-  const { resetStorageOwnerForTest } = await import("../app/shell/storage-owner.js");
+  const { resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
   resetStorageOwnerForTest();
   originalFetch = globalThis.fetch;
   // A server that answers everything. Any request reaching it is a request the gate LET THROUGH,
@@ -131,7 +131,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("THE HEAL writes the pending word's line with the id, and only into a silent jar", async () => {
-    const { healOwner, markSignedOutPending, readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    const { healOwner, markSignedOutPending, readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     let pending = "";
     markSignedOutPending((c) => { pending = c; });
     const lines: string[] = [];
@@ -148,7 +148,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("A SIGN-IN'S NAME is written with the pending word's ninety days, and never over the server's cookie naming it", async () => {
-    const { markSignedOutPending, rememberOwner } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending, rememberOwner } = await import("@ohmail/app-logic/storage/owner-cookie");
     let pending = "";
     markSignedOutPending((c) => { pending = c; });
     const lines: string[] = [];
@@ -162,7 +162,7 @@ describe("the refusal names the state it is in", () => {
   });
 
   it("THE WORD is written over a name or silence, and never again over itself: the edge's copy outlives Safari's cap", async () => {
-    const { markSignedOutPending } = await import("../app/shell/owner-cookie.js");
+    const { markSignedOutPending } = await import("@ohmail/app-logic/storage/owner-cookie");
     const writes = (shape: keyof typeof SHAPES): number => {
       setJar(shape);
       let n = 0;
@@ -218,10 +218,10 @@ describe("ONE resolver: the three doors read the same enum", () => {
   for (const row of TABLE) {
     it(`a ${row.shape} marker: gate ${row.verdict} · sync ${row.identity} · storage ${row.storage.source}`, async () => {
       const { apiOwnerVerdict, bindApiOwner } = await import("../app/api-client.js");
-      const { createSyncGate } = await import("../app/shell/sync-scheduler.js");
-      const { storageOwnerState, resetStorageOwnerForTest } = await import("../app/shell/storage-owner.js");
+      const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
+      const { storageOwnerState, resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
       const { sendLocksKey } = await import("../app/shell/send-lock.js");
-      const { readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+      const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
 
       resetStorageOwnerForTest();
       bindApiOwner(A);
@@ -242,7 +242,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
   }
 
   it("`readOwner` is a projection of the marker, never a second parse of the cookie", async () => {
-    const { readOwner, readOwnerMarker } = await import("../app/shell/owner-cookie.js");
+    const { readOwner, readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     // Including the two values a second parse gets wrong on its own: the reserved word, and a
     // value outside the id shape.
     for (const jar of [`tf_owner=${A}`, "tf_owner=signed_out_pending", "tf_owner=not a id", ""]) {
@@ -252,7 +252,7 @@ describe("ONE resolver: the three doors read the same enum", () => {
   });
 
   it("the unowned fallback is SAID, once per state, and not on every read", async () => {
-    const { storageOwnerState, resetStorageOwnerForTest } = await import("../app/shell/storage-owner.js");
+    const { storageOwnerState, resetStorageOwnerForTest } = await import("@ohmail/app-logic/storage/storage-owner");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     resetStorageOwnerForTest();
     setJar("absent");

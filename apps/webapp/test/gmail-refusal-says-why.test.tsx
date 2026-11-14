@@ -5,9 +5,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import { ApiError, messageOf, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 import { launchRefused } from "@trafficflow/services/mail";
 
 /**

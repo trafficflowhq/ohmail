@@ -12,7 +12,7 @@ import {
   STREAM_CARD_ESTIMATE_PX,
   STREAM_WINDOW_MAX,
   openingCount,
-} from "../app/shell/stream-window";
+} from "@ohmail/app-logic/lists/stream-window";
 
 /** The opening window jsdom gets: the window's height stands in for the column (no layout). */
 const OPENING = (): number => openingCount(window.innerHeight);

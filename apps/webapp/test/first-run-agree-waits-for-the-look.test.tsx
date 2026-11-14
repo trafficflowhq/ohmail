@@ -10,9 +10,9 @@ import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { FirstRun, HOLDER_CHECK_MS, HOLDER_REREAD_MS } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import { holderAnswered } from "../app/shell/reader-holder";
-import type { FirstRunHost, FirstRunOrganizeOutcome } from "../app/shell/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "../app/shell/onboarding";
+import { holderAnswered } from "@ohmail/app-logic/reading/reader-holder";
+import type { FirstRunHost, FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * SETUP WAITS FOR THE FIRST LOOK AT WHO HOLDS THE MAILBOX. A second computer's
@@ -280,7 +280,7 @@ describe("holderAnswered reads the door's look", () => {
  */
 describe("census: every organize press carries the verb it means", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app"];
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name === "dist" || name === "build" || name === ".next") continue;

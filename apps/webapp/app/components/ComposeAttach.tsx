@@ -57,7 +57,7 @@ import {
   readImageQualityLevel,
   writeImageQualityLevel,
 } from "./image-quality";
-import { holdFilesForRestart } from "../shell/app-update";
+import { holdFilesForRestart } from "@ohmail/app-logic/doors/app-update";
 import { isTypingTarget } from "../shell/keymap";
 import {
   desktopDroppedFilesEnabled,
@@ -67,7 +67,7 @@ import {
   type DroppedSource,
 } from "../shell/dropped-files";
 import { activeFormatLocale } from "../shell/locale";
-import { storageOwner } from "../shell/storage-owner";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { AttachThumb, ComposeAttachPreview, useImageUrls, type ComposeLookEntry } from "./compose-attach-look";
 
 /**

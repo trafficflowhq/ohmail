@@ -7,7 +7,7 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 
 /**
  * ═══ THE WINDOW'S LOCK, IN ITS TWO DISTRIBUTIONS ═══ out of the shared `accessLock` catalogue, so

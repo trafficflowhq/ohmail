@@ -3,9 +3,9 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { account, type AccessRefusedFacts } from "../../api-client";
 import { refusedFactsOf } from "../../access-verdict";
-import { FIRST_PAINT_VERDICT_MS, readStoredVerdict } from "../../shell/wall-lift";
-import { readOwner } from "../../shell/owner-cookie";
-import { webLane } from "../../shell/resume-lane";
+import { FIRST_PAINT_VERDICT_MS, readStoredVerdict } from "@ohmail/app-logic/doors/wall-lift";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { webLane } from "@ohmail/app-logic/session/resume-lane";
 
 /**
  * THE WALL BEFORE MAIL. A browser whose last word for this owner was `open` paints its mirror

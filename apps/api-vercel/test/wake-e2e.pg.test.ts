@@ -21,7 +21,7 @@ import {
   startSyncScheduler,
   WAKE_STREAM_CLOSED,
   type WakeStreamLike,
-} from "../../webapp/app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
 
 /**

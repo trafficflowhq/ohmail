@@ -25,13 +25,13 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
   AFTER_VERB_STORAGE_KEY,
   DEFAULT_AFTER_VERB,
   nextRowAfter,
   readAfterVerb,
-} from "../app/shell/after-verb";
+} from "@ohmail/app-logic/press/after-verb";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;

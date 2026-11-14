@@ -41,7 +41,7 @@ async function openTab(): Promise<Refresh> {
 }
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-23T09:00:00.000Z"));
   sent = [];
@@ -82,7 +82,7 @@ describe("the renewal's own deadline", () => {
 
   it("1 — a renewal that never answers ends unavailable at its deadline, keeps its name, and the session lives", async () => {
     const tab = await openTab();
-    const { sessionIsDead } = await import("../app/shell/session-truth.js");
+    const { sessionIsDead } = await import("@ohmail/app-logic/session/session-truth");
     let answer: string | null = null;
     void tab.resumeSession().then((a) => { answer = a; });
     // Every other caller joins the one renewal while it is out.

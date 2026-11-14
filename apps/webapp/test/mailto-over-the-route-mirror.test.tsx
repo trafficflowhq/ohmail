@@ -20,7 +20,7 @@ import { go, parseHash, reflectMessage } from "../app/shell/routing";
 import { EMPTY_COMPOSE, markComposeRowHolds, resetComposerForTest, writeComposeDraft, writeComposeRow } from "../app/shell/compose";
 import { holdsSig } from "../app/shell/compose-autosave";
 import { sendPendingInDurableOutbox } from "../app/shell/mail-send";
-import { RESTART_FLUSH_MS } from "../app/shell/app-update";
+import { RESTART_FLUSH_MS } from "@ohmail/app-logic/doors/app-update";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";

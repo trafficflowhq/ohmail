@@ -21,7 +21,7 @@ import { useTranslations } from "next-intl";
 import { SettingsNote, SettingsSubhead } from "@ohmail/ui";
 
 import { OhboxWords } from "../../webapp/app/shell/OhboxWords";
-import { useManagedService } from "../../webapp/app/shell/managed-service";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import {
   readScreening, saveOhboxBar, type ScreeningPreference, type ScreeningRead,
 } from "./local-screening.js";

@@ -8,14 +8,14 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { KeymapProvider, useKeyBindings } from "../app/shell/keymap";
 import { ShortcutSheet } from "../app/shell/ShortcutSheet";
-import { readerMoveRefusal, rosterStateOf, type RosterState } from "../app/shell/mail-state";
-import { isModalOpen } from "../app/shell/modal-gate";
+import { readerMoveRefusal, rosterStateOf, type RosterState } from "@ohmail/app-logic/mail-state/mail-state";
+import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 import {
   DELETE_INTENT_TTL_MS,
   armDeleteIntent,
   deleteIntentsKey,
   takeDeleteIntents,
-} from "../app/shell/delete-intents";
+} from "@ohmail/app-logic/press/delete-intents";
 import {
   UNDO_MS,
   createDeleteUndo,
@@ -23,7 +23,7 @@ import {
   hideMessages,
   replayDeleteIntents,
   useDeleteUndo,
-} from "../app/shell/delete-undo";
+} from "@ohmail/app-logic/press/delete-undo";
 
 /**
  * ═══ BACKSPACE AND DELETE FILE THE FOCUSED MESSAGE TO TRASH ═════════════════════════════════

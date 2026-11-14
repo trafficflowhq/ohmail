@@ -8,7 +8,7 @@ import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { OhboxView } from "../app/views/OhboxView";
 import { KeymapProvider } from "../app/shell/keymap";
-import { useListWindow, FULL_RANGE_MAX_ROWS } from "../app/shell/list-window";
+import { useListWindow, FULL_RANGE_MAX_ROWS } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * SCROLLING THE OHBOX MOVES THE LIST BY ROWS, IT DOES NOT CUT THEM OFF THE TOP.

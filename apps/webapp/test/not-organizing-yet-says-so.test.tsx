@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   nothingOrganizesOf, notOrganizingYetOf, readerStandDown, type MailboxFacts, type NotOrganizingYet, type ScreenerRole,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import type { ScreenerState } from "../app/shell/screener-state";
 
 /**

@@ -8,8 +8,8 @@
  */
 import type { ComposeAttachment, EmailAddress, EngineMutation } from "@ohmail/client-engine";
 import type { SignatureState } from "./signature";
-import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "./durable";
-import { isDemoOwned, storageOwner } from "./storage-owner";
+import { durableRemove, durableSessionRemove, durableSessionSet, durableSet } from "@ohmail/app-logic/storage/durable";
+import { isDemoOwned, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /** The compose form, verbatim as typed. `to` is TEXT; `plan()` is what turns it into addresses. */
 export interface ComposeFields {

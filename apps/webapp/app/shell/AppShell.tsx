@@ -77,7 +77,7 @@ import {
   type ProvidedEngine,
 } from "./engine";
 import { PullNewMail, usePullNewMail } from "./PullNewMail";
-import { avatarHue } from "./format";
+import { avatarHue, placeLabel } from "./format";
 import { useDayClock } from "./day-clock";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { displayAddress, displayDomain } from "./idn";
@@ -85,19 +85,19 @@ import { MessageGone, MessagePane, type BulkAction, type MessageAction } from ".
 import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
-import { conversationOnScreen } from "./conversation-on-screen";
+import { conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 import { useRemoteImages, type ImageDoor } from "./remote-images";
 import { useConsentState, windowOwnersOf, type ConsentTransport } from "./consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
-import type { FirstRunHost } from "./first-run-host";
-import { importOverOf, type OnboardingFacts } from "./onboarding";
-import { firstRunImportOver, useFirstRunQueueSettle } from "./first-run-queue-settle";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import { importOverOf, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
+import { firstRunImportOver, useFirstRunQueueSettle } from "@ohmail/app-logic/doors/first-run-queue-settle";
 import { useAppLocale } from "./LocaleContext";
 import { useScreenerState } from "./screener-state";
 import { useJunkPileKey, useJunkWindow, type JunkWire } from "./junk-window";
 import { useOlderBody, type OlderBodyWire } from "./older-body";
-import type { LiveBodyWire } from "./live-body";
-import { syncMayRead } from "./sync-scheduler";
+import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
+import { syncMayRead } from "@ohmail/app-logic/session/sync-scheduler";
 import { useScreenerSuggestions, type SenderSuggestion, type SuggestWire } from "./screener-suggest";
 import type { SuggestStanding } from "./no-suggestion";
 import { AutoSuggestRow } from "./AutoSuggestRow";
@@ -114,14 +114,14 @@ import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
 import { FoldersRow } from "./FoldersRow";
 import { SignaturesRow } from "./SignaturesRow";
 import { useFolderVerbs } from "./folder-verbs";
-import { junkFolderSaid } from "./folders";
-import { useFolderGoneSays } from "./folder-gone";
+import { junkFolderSaid } from "@ohmail/app-logic/lists/folders";
+import { useFolderGoneSays } from "@ohmail/app-logic/lists/folder-gone";
 import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import { OhboxWhereLine } from "./OhboxWhereLine";
-import { useOhboxVisitMark } from "./ohbox-visit";
-import { usePileNote, type PileNoteSaid } from "./pile-note";
+import { useOhboxVisitMark } from "@ohmail/app-logic/reading/ohbox-visit";
+import { usePileNote, type PileNoteSaid } from "@ohmail/app-logic/lists/pile-note";
 import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
 import {
   ProfileImportCard, SavedProfileSection, settingsDoorbell, useProfileImport, type ProfileImportTransport,
@@ -134,7 +134,7 @@ import {
 } from "./mail-send";
 import {
   accountOrganizer, firstRunCounts, firstRunSubject, screenerForMailbox,
-} from "./first-run-subject";
+} from "@ohmail/app-logic/doors/first-run-subject";
 import {
   attachSendLockDraft, holdOf, releaseSendLockForRow, unresolvedSendRows,
 } from "./send-lock";
@@ -186,7 +186,7 @@ import { ariaShortcut, KeymapProvider, useModGlyph } from "./keymap";
 /* THE ONE CURSOR PLACER — the mechanism every list view shares; this shell is the `global`
    claimant, answering for the three views whose cursor it holds. See `cursor-placer.ts`. */
 import { CURSOR_HINT_MS } from "./cursor-placer";
-import type { ActedMarker } from "./after-verb";
+import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
 import { ZoneCursor } from "./zone-nav";
 import { FocusFollows } from "./focus-follows";
 import "./zone-cursor.css";
@@ -196,7 +196,7 @@ import { SyncBar } from "./SyncBar";
 import { SendingLine } from "./SendingLine";
 import { useMayHandOffFor } from "./send-handoff";
 import { HostConnectionLine } from "./HostConnectionLine";
-import type { HostConnection } from "./host-connection";
+import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import { UnsavedChanges } from "./UnsavedChanges";
 import { SendWaitsRelay, UpdateDot, UpdateLine, useUpdateOffer } from "./UpdateLine";
 import { DurabilityNotice } from "./DurabilityNotice";
@@ -207,9 +207,9 @@ import { MailStateProvider, useMailState, type FreshnessProbe, type MailboxProbe
 import {
   isRemovedMailbox, liveMailboxes, nothingOrganizesOf, otherOrganizerOf, readerMoveRefusal, rosterStateOf, screenerMode,
   serverUnreachable,
-} from "./mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 /* Every press that changes mail leaves through here. See the module. */
-import { useShellDispatch } from "./shell-dispatch";
+import { useShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 /* The consent partition, the projection over it and every pile. See the module. */
 import { useShellDerivations } from "./shell-derivations";
 /* Selection, the reader, the route↔open mirror and what a visit has seen. See the module. */
@@ -220,7 +220,7 @@ import { useShellOpenState } from "./shell-open-state";
 import { useShellVerbs } from "./shell-verbs";
 /* The global chords, the palette list and the rail. See the module. */
 import { useShellKeys, frKeyOf, TRIAGE_PILE_OF_RAIL } from "./shell-keys";
-import { useStableCallback } from "./stable-callback";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import { OrganizerNotice, type OrganizerNoticeTransport } from "./OrganizerNotice";
 import { GapLettersNotice, type GapLettersTransport } from "./GapLettersNotice";
@@ -247,7 +247,7 @@ import { MessageChromeProvider, type BodyTarget } from "./message-chrome";
 import { useInPlaceHost } from "./stream-in-place";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
 import { SenderAuditPanel } from "./SenderAuditPanel";
-import { attributeMessages } from "./sender-audit";
+import { attributeMessages } from "@ohmail/app-logic/press/sender-audit";
 import {
   RETRO_DEFAULT_ON,
   dispatchScreeningChange,
@@ -262,10 +262,10 @@ import {
   type ScreeningPlan,
   type ScreeningScope,
   type ScreeningToastKey,
-} from "./sender-screening";
-import { screeningShown } from "./press-verdict";
+} from "@ohmail/app-logic/press/sender-screening";
+import { screeningShown } from "@ohmail/app-logic/press/press-verdict";
 import { SubjectRuleSheet } from "./SubjectRuleSheet";
-import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "./subject-rule";
+import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "@ohmail/app-logic/press/subject-rule";
 import { senderHitOf } from "./sender-hit";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import {
@@ -274,7 +274,7 @@ import {
   type Route,
 } from "./routing";
 import { goCompose } from "./compose-door";
-import { beginSearch, markStartup, useUiVitals } from "./ui-vitals";
+import { beginSearch, markStartup, useUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
 import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
@@ -285,17 +285,17 @@ import { SearchView } from "../views/SearchView";
 import { AddressView } from "../views/AddressView";
 import { TagView } from "../views/TagView";
 import { FolderView } from "../views/FolderView";
-import { postureRefusal, rulesPostureOf } from "./rules-posture";
+import { postureRefusal, rulesPostureOf } from "@ohmail/app-logic/press/rules-posture";
 import { TrashView } from "../views/TrashView";
 import type { TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
 import { DraftsView } from "../views/DraftsView";
 import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
-import { usePersistedFlag, UI_KEYS } from "./persisted-ui.js";
+import { usePersistedFlag, UI_KEYS } from "@ohmail/app-logic/storage/persisted-ui";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
-import { useShellSetup } from "./setup-resume";
-import { durableSessionSet } from "./durable";
-import { ManagedServiceContext } from "./managed-service";
+import { useShellSetup } from "@ohmail/app-logic/doors/setup-resume";
+import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
+import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
@@ -1260,7 +1260,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
     toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast, screenerRelease,
     undoLink,
-  } = useShellDispatch({ engine, reader, toast: hostToast, t, demo, refreshFacts });
+  } = useShellDispatch({ engine, reader, toast: hostToast, t, placeLabel, demo, refreshFacts });
   /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
   const toast = undoToast;
   /** Re-take the hold an undone act ended — `engine.restoreOpenRow`, for `OhboxView`. */

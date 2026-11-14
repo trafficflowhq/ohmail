@@ -419,7 +419,7 @@ describe("the wall lifts on the service's fresh open word", () => {
     await pass(1_000);
     expect(reads).toBe(31);
     // A press inside the access door's join window is answered by the read in hand; this one comes after it.
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await pass(RETURN_DEBOUNCE_MS);
     expect(reads).toBe(31);
     access = () => jsonRes(OPEN);
@@ -430,7 +430,7 @@ describe("the wall lifts on the service's fresh open word", () => {
   });
 
   it("a hand-off pressed in this tab before a reload polls on the next mount", async () => {
-    const { rememberHandoff } = await import("../app/shell/wall-lift");
+    const { rememberHandoff } = await import("@ohmail/app-logic/doors/wall-lift");
     rememberHandoff(null);
     access = () => jsonRes(OPEN);
     await wall();

@@ -4,7 +4,7 @@ import { OhmailEngine } from "@ohmail/client-engine";
 import { ISO, act, answerConsentWith, goTo, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { LENA, arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
-import { LANDING_REST_MS } from "../app/shell/reader-seen";
+import { LANDING_REST_MS } from "@ohmail/app-logic/reading/reader-seen";
 
 /**
  * AN OHBOX MESSAGE READ IN THE READER OVER ANOTHER VIEW IS A READ IN OHMAIL (owner 2026-10-21:

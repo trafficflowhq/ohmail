@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { GapLettersNotice } from "../app/shell/GapLettersNotice";
-import type { GapOffer } from "../app/shell/mail-state";
+import type { GapOffer } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE GAP OFFER NAMES BOTH NUMBERS (mail 0158). Letters the person's rules file, letters from

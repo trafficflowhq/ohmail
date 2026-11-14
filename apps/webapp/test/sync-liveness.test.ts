@@ -22,7 +22,7 @@ import {
   startSyncScheduler,
   SYNC_BOOTSTRAPPING,
   type SyncStatus,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * SYNC LIVENESS, as behaviour.

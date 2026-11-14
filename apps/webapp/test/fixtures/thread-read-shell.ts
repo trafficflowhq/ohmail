@@ -8,7 +8,7 @@
 import { expect, vi } from "vitest";
 import { flushSync } from "react-dom";
 import { ISO, act, answerStoreWith, answerSyncWith, mailbox, mountShell, tick } from "./live-walk-shell.js";
-import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
+import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 
 export const ME = "walker@example.invalid";
 export const LENA = { name: "Lena", address: "lena@example.invalid" };

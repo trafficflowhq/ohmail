@@ -9,7 +9,7 @@ import {
   markSessionAlive,
   registerSessionProbe,
   resetSessionTruthForTests,
-} from "../app/shell/session-truth.js";
+} from "@ohmail/app-logic/session/session-truth";
 
 /**
  * ═══ VWR-3 — AN AUTH FAILURE ON THE ATTACHMENT LIST MUST NOT OUTLIVE THE SESSION ═══════════

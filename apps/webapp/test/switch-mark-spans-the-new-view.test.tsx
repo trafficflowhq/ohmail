@@ -8,7 +8,7 @@ import {
   resetUiVitalsForTest,
   takeUiVitals,
   useSwitchEnd,
-} from "../app/shell/ui-vitals";
+} from "@ohmail/app-logic/session/ui-vitals";
 import {
   go,
   goAddress,

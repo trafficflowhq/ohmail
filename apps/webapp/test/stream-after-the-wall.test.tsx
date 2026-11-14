@@ -89,7 +89,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
   });
 
   it("a stream latched dead at its re-dial, the wall, then the payment: the lift dials a NEW stream, and nothing dials while the wall stands", { timeout: 60_000 }, async () => {
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await shell.mountCloudShell();
     await shell.tick(5_000);
     expect(document.body.querySelector(".app-root"), "the premise: the mail opened").not.toBeNull();

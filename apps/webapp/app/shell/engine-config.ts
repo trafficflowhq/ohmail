@@ -9,12 +9,12 @@ import {
   SYNC_BODY_TIMEOUT_MS,
   type StorePolicy,
 } from "@ohmail/client-engine";
-import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
+import { ERASED_DECLARATION, erasedAwareFetch } from "@ohmail/app-logic/session/account-erased";
 import { clientDeclaration } from "./client-declaration";
 import { RELOAD_REMEDY, updateAwareFetch } from "./update-answer";
-import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
-import { sessionFetch, sessionMayAsk } from "./session-truth";
-import { webLane, type ResumeLane } from "./resume-lane";
+import { createSyncGate, registerSyncGate, type WakeStreamLike } from "@ohmail/app-logic/session/sync-scheduler";
+import { sessionFetch, sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
+import { webLane, type ResumeLane } from "@ohmail/app-logic/session/resume-lane";
 import { stagingAdmits, stagingUploadSource } from "../../staging-origin.mjs";
 
 /**
@@ -185,8 +185,8 @@ export class EngineUnarmedError extends Error {
  * without conveying this module's sync-scheduler import into the paired-device bundle. Re-exported
  * here because this is where every consumer and its pin already look for it.
  */
-import { BROWSER_WINDOW } from "./store-windows";
-export { BROWSER_WINDOW, DESKTOP_WINDOW } from "./store-windows";
+import { BROWSER_WINDOW } from "@ohmail/app-logic/session/store-windows";
+export { BROWSER_WINDOW, DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 
 /**
  * Build the engine for a resolved mode. `demo` WINS over everything: checked first, and no

@@ -7,7 +7,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import {
   deriveMailState, seedGrowth, type MailState, type MailStateInputs, type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A FULL `ohmail/_meta` IS CURED BY MOVING MAIL, NEVER BY DELETING IT (mail 0142). The filler a

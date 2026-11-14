@@ -16,14 +16,14 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { pendApiOwner } from "../../api-client";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { ApiError, SESSION_UNCHECKED, apiConfigured, auth, type DesktopApprovalDTO } from "../../api-client";
 import { isBusy, retryBusy } from "../../retry-busy";
 import { StepUpPrompt } from "../mailbox/StepUpPrompt";
 import { useRefusalSentence } from "../refusal-sentence";
 import { rememberApprovalRequest } from "./approval-return";
 import { isOwnerAbsent, useSettledOwner } from "./settle-owner";
-import { sessionIsDead } from "../../shell/session-truth";
+import { sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 
 type Phase = "idle" | "stepUp" | "done" | "denied";
 

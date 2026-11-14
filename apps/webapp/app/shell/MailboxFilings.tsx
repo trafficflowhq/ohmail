@@ -16,7 +16,7 @@ import { displayAddress } from "./idn";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 import { clock } from "@ohmail/client-engine";
 import { useMailState, useMailboxFacts } from "./MailStateProvider";
-import { FILING_REFUSAL_REASONS, type MailboxFacts } from "./mail-state";
+import { FILING_REFUSAL_REASONS, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { useHashRoute } from "./routing";
 
 export interface MailboxFilingsApi {

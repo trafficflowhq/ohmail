@@ -8,7 +8,7 @@ import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { createEngine } from "../app/shell/engine-config.js";
-import { confirmSyncOwner } from "../app/shell/sync-scheduler.js";
+import { confirmSyncOwner } from "@ohmail/app-logic/session/sync-scheduler";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**

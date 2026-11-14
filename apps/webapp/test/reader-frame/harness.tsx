@@ -7,7 +7,7 @@
  */
 import { useCallback, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { MessageBody } from "../../app/components/MessageBody";
+import { MessageBody } from "../../app/letter-body/MessageBody";
 import { useRemoteImages } from "../../app/shell/remote-images";
 import "../../../../packages/ui/src/base.css";
 import "../../../../packages/ui/src/composites/message.css";

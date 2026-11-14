@@ -118,7 +118,7 @@ function otherTabHoldsLock(): () => void {
 
 async function load() {
   vi.resetModules();
-  const truth = await import("../app/shell/session-truth");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   const client = await import("../app/api-client");
   await import("../app/session-refresh");
   client.bindApiOwner("acct_A");
@@ -160,7 +160,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  const { resetSessionTruthForTests } = await import("../app/shell/session-truth");
+  const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
   resetSessionTruthForTests();
   Reflect.deleteProperty(globalThis.navigator as unknown as Record<string, unknown>, "locks");
   Reflect.deleteProperty(document as unknown as Record<string, unknown>, "visibilityState");
@@ -241,8 +241,8 @@ describe("another tab signs in as B while this tab's requests wait for A's renew
     window.localStorage.setItem("ohmail.session.mintedAt", String(Date.now()));
     const { truth } = await load();
     const engine = await import("@ohmail/client-engine");
-    const { erasedAwareFetch } = await import("../app/shell/account-erased");
-    const { createSyncGate } = await import("../app/shell/sync-scheduler");
+    const { erasedAwareFetch } = await import("@ohmail/app-logic/session/account-erased");
+    const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
     const gate = createSyncGate("acct_A");
     gate.confirm("acct_A");
     const adapter = gate.guard(new engine.HttpAdapter({

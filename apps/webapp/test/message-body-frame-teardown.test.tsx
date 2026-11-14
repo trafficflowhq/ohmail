@@ -40,8 +40,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 /** Mount once; `open` then re-renders the SAME root, which is what a reading session does. */
 async function mount(): Promise<void> {

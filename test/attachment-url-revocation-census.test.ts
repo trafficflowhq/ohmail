@@ -13,7 +13,7 @@ import { presentRoots } from "./support/public-root.mjs";
  * rather than measured in somebody's tab.
  */
 
-const READER_ROOTS = presentRoots(["apps/webapp/app", "apps/mobile/src", "apps/desktop/src", "apps/admin/app"]);
+const READER_ROOTS = presentRoots(["apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/desktop/src", "apps/admin/app"]);
 const SKIP = new Set(["node_modules", "dist", "build", ".next", "test", "__tests__"]);
 
 /** Every `.ts`/`.tsx` source under `root`, tests and build outputs excluded. */
@@ -70,7 +70,7 @@ const PINNED: Record<string, Role> = {
   // The one minter that holds no attachment's bytes: the page the reader builds for a link whose
   // label names another site (`link-ask.ts`), a few kilobytes of its own text per address and at
   // most 256 per frame, revoked when the frame's next document loads and when the reader unmounts.
-  "apps/webapp/app/components/link-ask.ts": { mints: true, asks: false, releases: true },
+  "apps/webapp/app/letter-body/link-ask.ts": { mints: true, asks: false, releases: true },
   // The compose rows' pictures: one URL per attached raster image, revoked when its row leaves or the form closes.
   "apps/webapp/app/components/compose-attach-look.tsx": { mints: true, asks: false, releases: true },
 };

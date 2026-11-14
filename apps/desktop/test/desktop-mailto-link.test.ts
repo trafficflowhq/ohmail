@@ -88,7 +88,7 @@ afterEach(() => {
 });
 
 async function freshModule() {
-  return import("../../webapp/app/shell/open-external.js");
+  return import("@ohmail/app-logic/session/open-external");
 }
 
 function install(

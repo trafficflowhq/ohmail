@@ -189,7 +189,7 @@ describe("the identity fact on the web", () => {
   it("the sender sheet says the sentence, behind the shield, before any choice; an unmarked sender's says nothing", async () => {
     const { MemoryMirrorStore } = await import("@ohmail/client-engine");
     const { SenderMenu } = await import("../app/shell/SenderMenu.js");
-    const { senderScreening } = await import("../app/shell/sender-screening.js");
+    const { senderScreening } = await import("@ohmail/app-logic/press/sender-screening");
     const base = {
       accountId: "a", mailboxId: "mb", threadId: null, messageIdHeader: null, subject: "Bitte bestätigen", to: [], cc: [],
       date: "2026-10-07T09:00:00.000Z", folder: "ohmail/Screener", snippet: "", unread: true, hasAttachments: false,

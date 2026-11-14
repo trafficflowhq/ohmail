@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CONFIRM_ATTEMPTS, CONFIRM_CAP_MS, CONFIRM_SEED_MS, nextConfirmDelay,
-} from "../app/shell/confirm-schedule";
+} from "@ohmail/app-logic/session/confirm-schedule";
 
 /** Every delay the function can produce for these arguments, over enough draws to bound it. */
 function draws(attempt: number, retryAfterMs: number | null, n = 4_000): number[] {

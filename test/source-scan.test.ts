@@ -257,7 +257,7 @@ describe("the block-first spellings, and why the guards left them", () => {
  * names `file:line`, so a new one is a sentence rather than a hunt.
  */
 describe("0 block-first traps in the sources the guards read", () => {
-  const ROOTS = presentRoots(["apps/desktop/src", "apps/mobile/src", "apps/sidecar/src", "apps/webapp/app", "apps/admin/app"]);
+  const ROOTS = presentRoots(["apps/desktop/src", "apps/mobile/src", "apps/sidecar/src", "apps/webapp/app", "packages/app-logic/src", "apps/admin/app"]);
 
   /** A LINE comment — decided by the scanner, not by a regex — holding an unpaired opener. */
   const trapsIn = (src: string): number[] => {

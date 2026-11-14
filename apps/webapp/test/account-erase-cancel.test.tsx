@@ -324,6 +324,9 @@ describe("Cancel during the verify cancels the erase", () => {
  * censusing an empty set if it is not. A census that cannot find its corpus covers nothing.
  */
 const APP = `${process.cwd()}/apps/webapp/app`;
+/** The behaviour moved out of the shell: read with it, named from the repository's root. */
+const LOGIC = `${process.cwd()}/packages/app-logic/src`;
+const siteName = (abs: string): string => (abs.startsWith(APP) ? abs.slice(APP.length + 1) : abs.slice(process.cwd().length + 1));
 
 /**
  * The SEAM every one of these ceremonies passes through: an awaited second-factor verify. What
@@ -424,8 +427,8 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
 
   it("every post-verify site in the tree is classified, and no unclassified one appears", () => {
     expect(existsSync(APP), `the census corpus must exist at ${APP} (run vitest from the repo root)`).toBe(true);
-    const sites = walk(APP).flatMap((abs) =>
-      postVerifySites(readFileSync(abs, "utf8"), abs.slice(APP.length + 1)),
+    const sites = [...walk(APP), ...walk(LOGIC)].flatMap((abs) =>
+      postVerifySites(readFileSync(abs, "utf8"), siteName(abs)),
     );
     expect(sites.length, "the census found the ceremonies").toBeGreaterThan(0);
     const unpinned = [...new Set(sites.map((s) => s.file))].filter((f) => !(f in PINNED));
@@ -433,8 +436,8 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
   });
 
   it("every post-verify act but the sign-in is gated on the ceremony's generation, and the pin may only FALL", () => {
-    const sites = walk(APP).flatMap((abs) =>
-      postVerifySites(readFileSync(abs, "utf8"), abs.slice(APP.length + 1)),
+    const sites = [...walk(APP), ...walk(LOGIC)].flatMap((abs) =>
+      postVerifySites(readFileSync(abs, "utf8"), siteName(abs)),
     );
     const files = [...new Set(sites.map((s) => s.file))].sort();
     expect(files.length, "the pinned remainder may only fall").toBeLessThanOrEqual(

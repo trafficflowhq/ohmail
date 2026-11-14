@@ -8,8 +8,8 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { FILED_SINCE_SCAN_MAX, type FiledSince } from "@ohmail/client-engine";
-import type { MailState, MailboxFacts } from "../app/shell/mail-state";
-import { BROWSER_WINDOW, DESKTOP_WINDOW } from "../app/shell/store-windows";
+import type { MailState, MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { BROWSER_WINDOW, DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import { setActiveCatalog } from "../app/shell/locale";
 
 /**

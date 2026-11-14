@@ -66,7 +66,7 @@ afterEach(async () => {
   globalThis.fetch = originalFetch;
   document.cookie = "tf_csrf=; max-age=0; path=/";
   document.cookie = "tf_owner=; max-age=0; path=/";
-  const truth = await import("../app/shell/session-truth.js");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   truth.resetSessionTruthForTests();
   vi.useRealTimers();
   vi.restoreAllMocks();
@@ -87,7 +87,7 @@ const refreshes = (): string[] => seen.paths.filter((p) => p.endsWith("/auth/ref
 describe("a browser whose session is confirmed dead stops asking", () => {
   it("THE PRODUCTION SEQUENCE: one tick confirms the death, and no tick after it asks", async () => {
     const { api } = await import("../app/api-client.js");
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
 
     // Tick one is the honest one: nothing is confirmed yet — a single 401 is evidence, never
     // confirmation — so all three ask, each recovers through `POST /auth/refresh`, and the
@@ -105,7 +105,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
 
   it("THE GATE: with the death confirmed, not one of the three reaches the wire", async () => {
     const { api } = await import("../app/api-client.js");
-    const { markSessionDead } = await import("../app/shell/session-truth.js");
+    const { markSessionDead } = await import("@ohmail/app-logic/session/session-truth");
 
     markSessionDead();
     seen.paths = [];
@@ -116,7 +116,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
 
   it("the refusal a caller sees is a 401 in ohmail's own words, so no surface re-classifies", async () => {
     const { api, ApiError, SESSION_ENDED_REFUSAL_CODE } = await import("../app/api-client.js");
-    const { markSessionDead } = await import("../app/shell/session-truth.js");
+    const { markSessionDead } = await import("@ohmail/app-logic/session/session-truth");
     markSessionDead();
 
     const err = await api("/mailboxes").then(() => null, (e: unknown) => e);
@@ -127,7 +127,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
 
   it("THE WAY BACK stays open: the sign-in ceremony and the refresh are never gated", async () => {
     const { api } = await import("../app/api-client.js");
-    const { markSessionDead } = await import("../app/shell/session-truth.js");
+    const { markSessionDead } = await import("@ohmail/app-logic/session/session-truth");
     markSessionDead();
     seen.paths = [];
 
@@ -147,7 +147,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
 
   it("THE HEAL: the only thing still asking is the schedule, and it asks once per step", async () => {
     vi.useFakeTimers();
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     const { api } = await import("../app/api-client.js");
 
     const probe = vi.fn();
@@ -175,7 +175,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
 
   it("THE REVIVAL: a real 204 stops the schedule and reopens every door", async () => {
     vi.useFakeTimers();
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     const { api } = await import("../app/api-client.js");
 
     const probe = vi.fn();
@@ -209,7 +209,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
     vi.useFakeTimers();
     vi.resetModules();
     const { api } = await import("../app/api-client.js");
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     await pollOnce(api);
     expect(truth.sessionIsDead()).toBe(true);
 
@@ -229,7 +229,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
     vi.useFakeTimers();
     vi.resetModules();
     const { api } = await import("../app/api-client.js");
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     document.cookie = "tf_csrf=old-session; path=/";
     document.cookie = "tf_owner=acct-1; path=/";
     await pollOnce(api);
@@ -250,7 +250,7 @@ describe("a browser whose session is confirmed dead stops asking", () => {
     vi.useFakeTimers();
     vi.resetModules();
     const { api } = await import("../app/api-client.js");
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     await pollOnce(api);
     document.cookie = "tf_csrf=fresh-session; path=/";
     refreshFault = true;

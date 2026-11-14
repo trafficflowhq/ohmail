@@ -12,9 +12,9 @@ import {
   MemoryMirrorStore, OhmailEngine,
   type EngineAdapter, type MutationOutcome, type SyncResponse, type WindowSyncFailure,
 } from "@ohmail/client-engine";
-import { startSyncScheduler, SYNC_FAILURE_STREAK, type SyncStatus } from "../app/shell/sync-scheduler";
-import { deriveMailState, type MailStateInputs, type MailboxFacts } from "../app/shell/mail-state";
-import { seedGrowth } from "../app/shell/mail-state";
+import { startSyncScheduler, SYNC_FAILURE_STREAK, type SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
+import { deriveMailState, type MailStateInputs, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { seedGrowth } from "@ohmail/app-logic/mail-state/mail-state";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 

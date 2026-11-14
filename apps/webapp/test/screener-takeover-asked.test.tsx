@@ -16,7 +16,7 @@ import {
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import de from "../messages/de.json";
-import { screenerMode, type ScreenerRole } from "../app/shell/mail-state";
+import { screenerMode, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ScreenerState } from "../app/shell/screener-state";
 
 /**

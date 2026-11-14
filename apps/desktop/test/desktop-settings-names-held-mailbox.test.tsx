@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
 import { DEFAULT_LOCALE, setActiveCatalog } from "../../webapp/app/shell/locale";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 
 /**

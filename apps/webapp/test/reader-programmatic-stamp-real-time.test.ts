@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it } from "vitest";
-import { scrollProgrammatically, stampLive } from "../app/shell/programmatic-scroll";
+import { scrollProgrammatically, stampLive } from "@ohmail/app-logic/session/programmatic-scroll";
 
 /**
  * THE STAMP OUTLIVES ANY TASK, IN REAL TIME. The browser sends a programmatic write's `scroll`

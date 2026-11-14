@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus, type UpdateMailboxBody } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * MAILBOX-IMAP-EDIT — **EDITING A CONNECTED MAILBOX, AND THE ONE THING A BAD EDIT MAY NOT DO.**

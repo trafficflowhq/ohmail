@@ -9,7 +9,7 @@ import {
   type BarSeg,
   type BarVerb,
   type MeasuredVerb,
-} from "../app/shell/bar-density";
+} from "@ohmail/app-logic/lists/bar-density";
 
 /**
  * THE RUNTIME DENSITY'S THREE LAWS (the pill folds on ACTUAL overflow — `bar-density.ts`):

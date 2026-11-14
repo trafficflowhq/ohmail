@@ -85,8 +85,10 @@ const HAVE_PUBLISHER = fs.existsSync(path.join(REPO, PUBLISHER));
 const MIRROR_SOURCE_DIRS = [
   "apps/desktop/src",
   "apps/webapp/app/components",
+  "apps/webapp/app/letter-body",
   "apps/webapp/app/shell",
   "apps/webapp/app/views",
+  "packages/app-logic/src",
   "packages/ui/src",
 ];
 

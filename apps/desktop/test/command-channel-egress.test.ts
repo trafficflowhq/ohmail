@@ -116,7 +116,7 @@ const MAIL = [
 
 describe("a mail cannot name the command scheme", () => {
   it("blanks every ipc: use and every fetching use of http://ipc.localhost; the link left is the shell's to ignore", async () => {
-    const { sanitizeMailHtml } = await import("../../webapp/app/components/MessageBody.js");
+    const { sanitizeMailHtml } = await import("../../webapp/app/letter-body/MessageBody.js");
     const out = sanitizeMailHtml(MAIL, {});
     expect(out.html).not.toMatch(/ipc:/i);
     const doc = new DOMParser().parseFromString(`<!doctype html><body>${out.html}`, "text/html");

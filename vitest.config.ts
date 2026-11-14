@@ -177,6 +177,12 @@ export default defineConfig({
       { find: "@ohmail/client-engine/send-fingerprint", replacement: r("./packages/client-engine/src/send-fingerprint.ts") },
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("./packages/client-engine/src/html-tree-budget.ts") },
       { find: "@ohmail/client-engine", replacement: r("./packages/client-engine/src/index.ts") },
+      // Behaviour without a screen. A folder's door first, then a file by its own name (the files moved
+      // out of the web app's shell are imported one by one, as they were).
+      { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1/index.ts` },
+      { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1.ts` },
+      // The host contract's types and its two small values.
+      { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
       // The body page bound as a leaf, ABOVE the bare name (the prefix-match reason above): the phone links it.
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.

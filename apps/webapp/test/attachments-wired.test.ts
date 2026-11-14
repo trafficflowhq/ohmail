@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { FixturesAdapter, HttpAdapter, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
 import { createEngine } from "../app/shell/engine-config.js";
-import { createSyncGate, transportOf } from "../app/shell/sync-scheduler.js";
+import { createSyncGate, transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 /* The `chrome` memo below is located by its DECLARED NAME, never by the hook it is declared
    with — the rule, and the three ways a hook spelling fails, are in the helper. */
 import { shellFrameOf, sliceOfDeclaration } from "./source-anchor.js";

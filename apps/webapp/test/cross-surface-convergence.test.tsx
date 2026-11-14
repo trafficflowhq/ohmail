@@ -858,7 +858,7 @@ describe("the reader's read slot is the conversation's on the shell and on the p
     return engine;
   }
   async function surfaces(engine: { read(): EntityReader }) {
-    const { conversationReadSet } = await import("../app/shell/conversation-on-screen.js");
+    const { conversationReadSet } = await import("@ohmail/app-logic/reading/conversation-on-screen");
     const { conversationUnreadIds } = await import("../../mobile/src/ui/read-slot.js");
     const { liveMessage } = await import("../../mobile/src/state/live.js");
     if (root) await act(async () => { root!.unmount(); });

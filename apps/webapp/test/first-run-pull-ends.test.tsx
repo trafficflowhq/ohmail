@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingAi, OnboardingFacts } from "../app/shell/onboarding";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingAi, OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * THE FIRST PULL ENDS WHEN THE IMPORT DOES. Answering "No" on the AI screen kept the cursor on

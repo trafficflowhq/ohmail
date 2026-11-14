@@ -23,7 +23,7 @@ import {
   markSessionAlive,
   markSessionDead,
   resetSessionTruthForTests,
-} from "../app/shell/session-truth.js";
+} from "@ohmail/app-logic/session/session-truth";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;

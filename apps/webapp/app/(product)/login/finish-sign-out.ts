@@ -1,6 +1,6 @@
 import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
-import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "../../shell/confirm-schedule";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { CONFIRM_ATTEMPTS, nextConfirmDelay } from "@ohmail/app-logic/session/confirm-schedule";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { SETTLE_DEADLINE_MS } from "../../session-refresh";
 
 /**

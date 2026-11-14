@@ -9,7 +9,7 @@ import {
   type FetchLike, type SyncChange,
 } from "@ohmail/client-engine";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
-import { firstImportsOf } from "../../webapp/app/shell/consent-options.js";
+import { firstImportsOf } from "@ohmail/app-logic/press/consent-options";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 import { tearDown } from "./_teardown.js";

@@ -31,7 +31,7 @@ import {
 import {
   desktopAttachmentsEnabled, saveAttachmentToDownloads, stageAttachmentPreview, type SaveRefusal,
 } from "./open-attachment";
-import { probeSessionNow, subscribeSessionRevival } from "./session-truth";
+import { probeSessionNow, subscribeSessionRevival } from "@ohmail/app-logic/session/session-truth";
 
 /**
  * What `MessagePane` needs to render one message's strip.

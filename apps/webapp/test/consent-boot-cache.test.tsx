@@ -5,9 +5,9 @@ import {
 } from "./fixtures/live-walk-shell";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { bootCacheKey } from "../app/shell/boot-cache";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import { CONSENT_BOOT_SCOPE, useConsentState, type ConsentTransport } from "../app/shell/consent-state";
-import { resetStorageOwnerForTest, setDemoStorage, setStorageOwner } from "../app/shell/storage-owner";
+import { resetStorageOwnerForTest, setDemoStorage, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * BOOT PRESENTS THE CURRENT STATE, NOT THE RAW PILES — the reload-resurrection guard.

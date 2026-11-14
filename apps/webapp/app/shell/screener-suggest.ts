@@ -25,7 +25,7 @@ import {
 import type { PendingDecision } from "./screener-state";
 import type { SuggestStanding } from "./no-suggestion";
 import { aiRefusalKey, clearedByAccess } from "./ai-refusal-copy";
-import { useManagedService } from "./managed-service";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 
 /**
  * One sender's suggestion, in the vocabulary the rows already speak. All five piles appear

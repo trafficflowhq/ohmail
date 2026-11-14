@@ -136,10 +136,10 @@ describe("signOut", () => {
     // A second call site that skipped the wipe would silently re-open the hole, and it
     // would look completely reasonable in review.
     const offenders: string[] = [];
-    for (const file of walk(APP)) {
+    for (const file of [...walk(APP), ...walk(`${process.cwd()}/packages/app-logic/src`)]) {
       if (file.endsWith("/sign-out.ts") || file.endsWith("/api-client.ts")) continue;
       const text = readFileSync(file, "utf8");
-      if (/\bauth\.logout\s*\(/.test(text)) offenders.push(file.slice(file.indexOf("apps/webapp")));
+      if (/\bauth\.logout\s*\(/.test(text)) offenders.push(file.slice(process.cwd().length + 1));
     }
     expect(offenders, "call `signOut()` from app/sign-out.ts instead").toEqual([]);
   });
@@ -394,7 +394,7 @@ describe("the door's answer is the verdict", () => {
     const { signOut } = await import("../app/sign-out");
     const before = purgesSent();
     const out = await signOut(ACCOUNT);
-    const { readOwnerMarker } = await import("../app/shell/owner-cookie");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     return {
       serverRefused: out.serverRefused, marker: readOwnerMarker().kind,
       binding: client.apiOwnerBinding().kind, verdict: client.apiOwnerVerdict("/mailboxes"),
@@ -471,7 +471,7 @@ describe("the door's answer is the verdict", () => {
     const client = await import("../app/api-client");
     client.bindApiOwner(ACCOUNT);
     const { signedOutChannel } = await import("../app/signed-out-signal");
-    const { readOwnerMarker } = await import("../app/shell/owner-cookie");
+    const { readOwnerMarker } = await import("@ohmail/app-logic/storage/owner-cookie");
     const heard: unknown[] = [];
     const tab = new BroadcastChannel(signedOutChannel(ACCOUNT));
     tab.onmessage = (e: MessageEvent) => { heard.push(e.data); };
@@ -684,9 +684,9 @@ describe("a one-account wipe takes only what its reach allows", () => {
   });
 
   it("each account's preferences outlive a whole sign-out and a revoke; an erasure takes its own", async () => {
-    const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui");
+    const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
     const { seedNotNowKey } = await import("../app/shell/seed-offer");
-    const { readAfterVerb, writeAfterVerb } = await import("../app/shell/after-verb");
+    const { readAfterVerb, writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
     const prefs = (owner: string): string[] =>
       [searchSortKey(owner), seedNotNowKey(owner), foldersOpenedKey(owner), mailOriginalKey(owner)];
     for (const owner of [A, B]) {

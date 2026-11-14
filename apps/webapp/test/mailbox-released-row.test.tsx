@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ═══ A MAILBOX YOU RELEASED SAYS SO, AND OFFERS THE ONE PRESS THAT UNDOES IT ═══════════════

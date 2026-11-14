@@ -30,7 +30,7 @@ import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { Button, Icon } from "@ohmail/ui";
 import { apiConfigured, auth, codeOf, messageOf } from "../../api-client";
-import { readOwnerMarker } from "../../shell/owner-cookie";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import { offerHandoff } from "../join/handoff";
 import { verifyRefusal } from "../join/signup-refusals";
 import { PendingSignOutSaid, usePendingSignOut } from "../login/pending-sign-out";

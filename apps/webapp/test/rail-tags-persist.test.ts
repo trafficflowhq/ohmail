@@ -28,7 +28,7 @@ const code = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 const railNav = code(read("../../../packages/ui/src/composites/RailNav.tsx"));
 const shell = read("../app/shell/AppShell.tsx");
-const persisted = code(read("../app/shell/persisted-ui.ts"));
+const persisted = code(read("../../../packages/app-logic/src/storage/persisted-ui.ts"));
 
 describe("the Tags group remembers its collapse state", () => {
   it("the webapp OWNS the state and persists it", () => {

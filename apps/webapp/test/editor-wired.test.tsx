@@ -11,13 +11,13 @@ import {
 } from "@ohmail/client-engine";
 import { FIXED_NOW, makeDeps, seedMailbox, seedSession } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
 import { settleFirstPaint } from "./_first-paint.js";
 import { replyDraftKey } from "../app/shell/mail-send";
-import { DEMO_STORAGE_OWNER } from "../app/shell/storage-owner";
+import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
 
 /** Where the demo world keeps the reply buffer for `id`: the demo's own partition. */
 const bufferKey = (id: string): string => replyDraftKey(id, DEMO_STORAGE_OWNER);

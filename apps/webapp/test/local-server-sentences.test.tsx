@@ -6,8 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
-import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "../app/shell/mail-state";
-import { mailboxErrorKey } from "../app/shell/mailbox-error-key";
+import { deriveMailState, seedGrowth, type MailState, type MailboxFacts, type StoreRefusals } from "@ohmail/app-logic/mail-state/mail-state";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 import { setActiveCatalog } from "../app/shell/locale";
 
 /**
@@ -105,7 +105,7 @@ describe("the chooser picks the local server's own key beside auth and timeout o
   });
 
   it("the probe key: the two-minute sentence is the incoming leg's only", async () => {
-    const { probeCopyKey } = await import("../app/shell/local-server-host.js");
+    const { probeCopyKey } = await import("@ohmail/app-logic/doors/local-server-host");
     expect(probeCopyKey("timeout", true)).toBe("probe_timeout_local");
     expect(probeCopyKey("timeout", true, "smtp")).toBe("probe_timeout_smtp");
     expect(probeCopyKey("auth", true, "smtp")).toBe("probe_auth_local");

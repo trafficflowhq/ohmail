@@ -12,11 +12,11 @@ import {
   replayDeleteIntents,
   restoreDispatch,
   UNDO_MS,
-} from "../app/shell/delete-undo";
-import { armDeleteIntent, deleteIntentsKey, takeDeleteIntents } from "../app/shell/delete-intents";
+} from "@ohmail/app-logic/press/delete-undo";
+import { armDeleteIntent, deleteIntentsKey, takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
 import { shellFrameOf, shellFramePaths } from "./source-anchor.js";
 import { TrashView } from "../app/views/TrashView";
-import type { TrashPage } from "../app/shell/trash-page";
+import type { TrashPage } from "@ohmail/app-logic/lists/trash-page";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 
@@ -531,7 +531,7 @@ describe("a letter listed late never takes the cursor or the reader", () => {
     if (!hadCss) (globalThis as { CSS?: unknown }).CSS = undefined;
   });
   it("the delete that lands after its Undo window lists on top; the letter shown stays shown and ⇧⌫ restores it", async () => {
-    const { useTrashPage } = await import("../app/shell/trash-page");
+    const { useTrashPage } = await import("@ohmail/app-logic/lists/trash-page");
     const listTrash = vi.fn()
       .mockResolvedValueOnce({ state: "ready", items: [row("m1"), row("m2")], nextCursor: null })
       .mockResolvedValue({ state: "ready", items: [row("u8"), row("m1"), row("m2")], nextCursor: null });
@@ -574,7 +574,7 @@ describe("a letter listed late never takes the cursor or the reader", () => {
 
 describe("useTrashPage — a delete that lands while Trash is open", () => {
   it("is read in at the top without leaving the view; nothing is read while away", async () => {
-    const { useTrashPage } = await import("../app/shell/trash-page");
+    const { useTrashPage } = await import("@ohmail/app-logic/lists/trash-page");
     const listTrash = vi.fn()
       .mockResolvedValueOnce({ state: "ready", items: [row("m1")], nextCursor: null })
       .mockResolvedValue({ state: "ready", items: [row("m2"), row("m1")], nextCursor: null });
@@ -611,8 +611,8 @@ describe("a restored letter leaves Trash for good", () => {
 
   /** The shell's wiring in small: the held restore window, the Trash page and the view. */
   async function bin(answer: (id: string) => Promise<unknown>) {
-    const { useTrashPage } = await import("../app/shell/trash-page");
-    const { useDeleteUndo } = await import("../app/shell/delete-undo");
+    const { useTrashPage } = await import("@ohmail/app-logic/lists/trash-page");
+    const { useDeleteUndo } = await import("@ohmail/app-logic/press/delete-undo");
     const listTrash = vi.fn().mockResolvedValue({ state: "ready", items: [row("m1"), row("m2")], nextCursor: null });
     const engine = { trashAvailable: () => true, listTrash } as never;
     const said: string[] = [];

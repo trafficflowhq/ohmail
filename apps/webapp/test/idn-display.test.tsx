@@ -8,8 +8,8 @@ import { OhmailEngine, type EngineMessage, type EngineMutation, type MutationRes
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import type { MailboxDTO } from "../app/api-client";
-import type { MailState } from "../app/shell/mail-state";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { displayAddress, displayDomain } from "../app/shell/idn";
 import { recipientRows, rowAddress, senderName, sentRowRecipient } from "../app/shell/format";
 import { settleFirstPaint } from "./_first-paint.js";

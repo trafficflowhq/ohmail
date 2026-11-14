@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { deriveOnboardingStep, importOverOf, type OnboardingFacts } from "../app/shell/onboarding";
+import { deriveOnboardingStep, importOverOf, type OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 import { firstRunStep } from "../app/shell/FirstRun";
-import { importOver, seedGrowth, type MailboxFacts } from "../app/shell/mail-state";
+import { importOver, seedGrowth, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * THE SETUP STAGE'S PULL ENDS WHEN THE STRIP'S IMPORT DOES. On

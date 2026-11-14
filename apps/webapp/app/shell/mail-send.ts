@@ -45,13 +45,13 @@ import {
   readComposeRow,
   type ComposeHeld, type MailSend,
 } from "./compose";
-import { durableRemove, durableSet } from "./durable";
+import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
 import {
   allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForEndedSend,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
   sendSubjects, unverifiedSendIntents, type Hold, type SendIntent, type SendLockOwed,
 } from "./send-lock";
-import { storageOwner } from "./storage-owner";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { displayAddress } from "./idn";
 import { scheduleLabel } from "./format";
 import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";

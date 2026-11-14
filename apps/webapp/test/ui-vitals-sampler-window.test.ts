@@ -5,7 +5,7 @@ import {
   resetUiVitalsForTest,
   startUiVitals,
   takeUiVitals,
-} from "../app/shell/ui-vitals";
+} from "@ohmail/app-logic/session/ui-vitals";
 
 /**
  * ═══ THE FRAME SAMPLER RUNS WHILE THE WINDOW IS BEING USED, AND NOT OTHERWISE ════════════════

@@ -35,6 +35,7 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 const ROOTS = [
   ["packages", "client-engine", "src"],
   ["apps", "webapp", "app"],
+  ["packages", "app-logic", "src"],
   ["apps", "desktop", "src"],
   ["apps", "mobile", "src"],
 ].map((p) => join(REPO, ...p));

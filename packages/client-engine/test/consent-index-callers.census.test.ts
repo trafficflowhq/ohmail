@@ -13,7 +13,7 @@ import { bracketSpan, lineOf, withoutCommentsAndLiterals } from "../../../script
  */
 
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
-const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app"];
+const ROOTS = ["packages/client-engine/src", "apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app"];
 const SKIP = new Set(["node_modules", "dist", ".next", "coverage"]);
 
 /** The one-argument sites, each with why its rules are the local ones by construction. */
@@ -24,9 +24,9 @@ const LOCAL_ONLY: Record<string, string> = {
     "the held-release bell: that offer is served only for mailboxes this install organizes",
   "packages/client-engine/src/engine.ts|decidedDestination|index, address":
     "the same bell, over the same local index",
-  "apps/webapp/app/shell/sender-screening.ts|consentIndex|[...wide, mine]":
+  "packages/app-logic/src/press/sender-screening.ts|consentIndex|[...wide, mine]":
     "a press planner asking the order of two rules the press itself writes",
-  "apps/webapp/app/shell/sender-screening.ts|decidedDestination|consentIndex([...wide, mine]), match":
+  "packages/app-logic/src/press/sender-screening.ts|decidedDestination|consentIndex([...wide, mine]), match":
     "the same planner",
   "apps/mobile/src/state/live.ts|consentIndex|[...wide, mine]": "the phone's twin of that planner",
   "apps/mobile/src/state/live.ts|decidedDestination|consentIndex([...wide, mine]), match": "the same",
@@ -38,8 +38,8 @@ const PER_MAILBOX: Record<string, number> = {
   "packages/client-engine/src/consent-cutline.ts|decidedDestination": 4,
   "packages/client-engine/src/press-forecast.ts|consentIndex": 3,
   "packages/client-engine/src/press-outcome.ts|consentIndex": 1,
-  "apps/webapp/app/shell/sender-screening.ts|consentIndex": 1,
-  "apps/webapp/app/shell/sender-screening.ts|decidedDestination": 1,
+  "packages/app-logic/src/press/sender-screening.ts|consentIndex": 1,
+  "packages/app-logic/src/press/sender-screening.ts|decidedDestination": 1,
   // The phone's twin of the web sheet's ruled place (`sender-stayed.ts#stayedAsk`), per mailbox too.
   "apps/mobile/src/state/sender-stayed.ts|consentIndex": 1,
   "apps/mobile/src/state/sender-stayed.ts|decidedDestination": 1,

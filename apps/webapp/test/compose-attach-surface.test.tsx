@@ -6,13 +6,13 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
   COMPOSE_ATTACH_STAGED_SURFACE_BYTES, composeAttachBudgetFor, composeAttachCap,
   composeAttachCapBinding,
 } from "../app/components/ComposeAttach";
 import { setActiveCatalog } from "../app/shell/locale";
-import { announceUpdate, resetUpdateStoreForTests, restartHold } from "../app/shell/app-update";
+import { announceUpdate, resetUpdateStoreForTests, restartHold } from "@ohmail/app-logic/doors/app-update";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**

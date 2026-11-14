@@ -21,7 +21,7 @@ import { AddressView, archiveRowsBelong, nameFor } from "../app/views/AddressVie
 import { addressHref } from "../app/shell/address-view";
 import { KeymapProvider } from "../app/shell/keymap";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { ContactPopover } from "../app/shell/ContactPopover";
 
 /**

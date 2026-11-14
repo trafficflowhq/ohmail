@@ -1,0 +1,7 @@
+{
+  /* The window's sources without the bundler's config: the program ci.yml's typecheck job
+     compiles on the root install, where `vite.config.ts`'s plugin is not installed. Every
+     option and path is tsconfig.json's; `npm run ui:typecheck` still reads that one whole. */
+  "extends": "./tsconfig.json",
+  "include": ["src"]
+}

@@ -433,7 +433,7 @@ describe("the read column holds its letter while the letters around it change", 
   });
 
   it("the keep, hold and step arithmetic", async () => {
-    const { heldKeepTop, heldHoldShift, heldWantsMore, heldAnchored } = await import("../app/shell/held-window.js");
+    const { heldKeepTop, heldHoldShift, heldWantsMore, heldAnchored } = await import("@ohmail/app-logic/lists/held-window");
     // Keep: a card 300px further down after the prepend moves the column 300px with it.
     expect(heldKeepTop(100, -100, 200)).toBe(400);
     expect(heldKeepTop(0, 0, 0)).toBe(0);

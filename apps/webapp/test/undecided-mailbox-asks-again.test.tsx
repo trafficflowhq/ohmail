@@ -5,8 +5,8 @@ import { createRoot } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { NOW, S, act, consentTransport, engineOver, setup, storeWith, teardown, waitFor } from "./_view-shell";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import type { FirstRunHost } from "../app/shell/first-run-host";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 
 /**
  * AN UNDECIDED MAILBOX ASKS AGAIN (FIRST-RUN-STAGE-NEVER-REOPENS-ON-AN-UNDECIDED-MAILBOX) — the whole
@@ -153,7 +153,7 @@ describe("an undecided mailbox asks the organize decision again", () => {
 
   /* The boot cache marks consent known before the live read, with no completion stamp in it. */
   it("the boot cache's consent is not the stamp: nothing opens before the live read", async () => {
-    const { bootCacheKey } = await import("../app/shell/boot-cache.js");
+    const { bootCacheKey } = await import("@ohmail/app-logic/session/boot-cache");
     const { CONSENT_BOOT_SCOPE } = await import("../app/shell/consent-state.js");
     document.cookie = "tf_owner=acct_cached";
     window.localStorage.setItem(bootCacheKey(CONSENT_BOOT_SCOPE, "acct_cached"),

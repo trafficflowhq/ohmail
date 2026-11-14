@@ -15,9 +15,9 @@ import type { ReactNode } from "react";
 import type {
   FirstRunDecisionCount, FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeIntent, FirstRunOrganizeOutcome,
   FirstRunProbeOk,
-} from "../../webapp/app/shell/first-run-host";
-import type { OnboardingAi } from "../../webapp/app/shell/onboarding";
-import { refusedByLocalServer } from "../../webapp/app/shell/local-server-host";
+} from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingAi } from "@ohmail/app-logic/doors/onboarding";
+import { refusedByLocalServer } from "@ohmail/app-logic/doors/local-server-host";
 import { durableSet, type DurableWrite } from "@ohmail/client-engine/durable";
 import { bridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { CONSENT_SETTINGS_PATH } from "./local-consent.js";

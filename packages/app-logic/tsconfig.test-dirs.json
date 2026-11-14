@@ -1,0 +1,5 @@
+{
+  "//": "The program that reads this package's test/ (see test/tsconfig.test-dirs-base.json).",
+  "extends": "../../test/tsconfig.test-dirs-base.json",
+  "include": ["test"]
+}

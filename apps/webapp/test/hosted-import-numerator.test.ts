@@ -6,7 +6,7 @@ import {
   seedGrowth,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import { pullEtaMs, pullRate, pullRemaining, pullSampleStep } from "../app/shell/pull-rate";
 
 /**

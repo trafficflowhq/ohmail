@@ -16,10 +16,10 @@ import {
   DEFAULT_DORMANCY_DAYS, readScreeningByMailbox, type MailboxScreening, type ScreeningSource,
 } from "@ohmail/client-engine";
 import { apiConfigured, consent as consentApi, type ConsentStateWire } from "../api-client";
-import { readBootCache, writeBootCache } from "./boot-cache";
+import { readBootCache, writeBootCache } from "@ohmail/app-logic/session/boot-cache";
 import { normalizeLocale, type AppLocale } from "./locale";
-import { readOwner } from "./owner-cookie";
-import { storageOwnerState } from "./storage-owner";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
+import { storageOwnerState } from "@ohmail/app-logic/storage/storage-owner";
 import type { TravelledChangeWire } from "./travelled-change";
 
 /**

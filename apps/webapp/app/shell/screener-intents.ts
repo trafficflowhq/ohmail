@@ -23,8 +23,8 @@
  */
 
 import type { DecisionDestination, DecisionScope } from "@ohmail/ui";
-import { durableRemove, durableSet, type DurableWrite } from "./durable";
-import { storageOwner } from "./storage-owner";
+import { durableRemove, durableSet, type DurableWrite } from "@ohmail/app-logic/storage/durable";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * One scheduled decision — the trim, not the row. `ScreenerSenderDTO` carries every held message in full, and a

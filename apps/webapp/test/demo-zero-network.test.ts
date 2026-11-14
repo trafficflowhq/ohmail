@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FixturesAdapter, HttpAdapter } from "@ohmail/client-engine";
 import { createEngine, EngineUnarmedError } from "../app/shell/engine-config.js";
-import { transportOf } from "../app/shell/sync-scheduler.js";
+import { transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * THE DEMO PROMISE, as BEHAVIOUR (the demo-content and testing-bar invariants).
@@ -330,7 +330,7 @@ describe("no fixture content can reach a live account", () => {
   }
 
   it("NO module under apps/webapp/app imports @ohmail/fixtures", () => {
-    const files = sources(APP_DIR);
+    const files = [...sources(APP_DIR), ...sources(fileURLToPath(new URL("../../../packages/app-logic/src", import.meta.url)))];
     // The control: if this walk finds nothing, the assertion below passes for the wrong reason.
     expect(files.length, "the source walk found no modules under app/").toBeGreaterThan(30);
 

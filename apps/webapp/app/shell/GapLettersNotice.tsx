@@ -11,7 +11,7 @@
 import { useState } from "react";
 import { useTranslations } from "next-intl";
 
-import type { GapOffer } from "./mail-state";
+import type { GapOffer } from "@ohmail/app-logic/mail-state/mail-state";
 import { refusalOf } from "./OrganizerNotice";
 
 /** How an answer reaches the row. MUST REJECT on failure, the organizer notice's rule. */

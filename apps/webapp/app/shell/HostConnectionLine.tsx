@@ -22,7 +22,7 @@
  * query the sync line swaps on — see `.rail-sync-slot` for why that is one rule and not two.
  */
 
-import type { HostConnection } from "./host-connection";
+import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 
 export function HostConnectionLine({
   connection,
