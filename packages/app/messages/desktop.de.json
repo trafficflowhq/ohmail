@@ -449,7 +449,6 @@
     "bootCompacting": "Dein lokaler Mail-Speicher wird komprimiert (einmalige Wartung)…",
     "errorUnknown": "Etwas ist schiefgegangen und hat nicht gesagt, was.",
     "errorRefused": "Die Anfrage wurde abgelehnt ({status}).",
-    "notifyNewMail": "{count, plural, one {Eine neue Nachricht für dich.} other {# neue Nachrichten für dich.}}",
     "doorHostName": "Ein anderer Computer",
     "doorHostSay": "ohmail auf einem anderen Computer von dir organisiert; dieser {machine} arbeitet über ihn. Ist der andere Computer aus, zeigt dieser {machine} seine Kopie und kann nichts ändern.",
     "doorHostUnavailable": "Die Kopplung mit einem anderen Computer ist in dieser Version noch nicht verfügbar.",

@@ -815,6 +815,7 @@ apps/webapp/test/sender-sheet-now-in.test.tsx	source-text	through apps/webapp/te
 apps/webapp/test/sender-sheet-reachable.test.tsx	source-text	reads source as text (tsx)	layer 2	write	
 apps/webapp/test/sender-sheet-resolve-step.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
 apps/webapp/test/sender-sheet-scope-fits.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	write	
+apps/webapp/test/service-worker-words-bounded.test.ts	source-text	runs the service worker's own file (js) over a stand-in for the browser: the words it draws	layer 1	notices	
 apps/webapp/test/session-cookie-spellings.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/session-expiry-single-rule.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/session-gate.test.ts	source-text	reads source as text (mjs, ts)	layer 2	doors	
@@ -1076,6 +1077,7 @@ packages/client-engine/test/engine-owns-no-timers.test.ts	source-text	reads sour
 packages/client-engine/test/folder-labels.test.ts	data	through test/support/guard-list.ts: reads a list the environment names	none	engine	
 packages/client-engine/test/hour12-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/import-corpus-identity.test.ts	source-text	an import census: reads source as text (mjs)	ohmail/package-borders	tools	
+packages/client-engine/test/notices-seam.test.ts	data	reads data files (json): what a notice's title does with each character, the table the desktop shell's test reads too	none	notices	
 packages/client-engine/test/open-read-flag-census.test.ts	source-text	reads source as text (ts)	layer 1	engine	
 packages/client-engine/test/outbox-hold-ceiling.test.ts	source-text	reads source as text (ts): the fallback door's route	layer 1	engine	
 packages/client-engine/test/outbox-lifecycle.test.ts	source-text	reads source as text (ts)	layer 1	engine	

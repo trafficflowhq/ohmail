@@ -127,6 +127,25 @@ describe("revokeWakeRegistration", () => {
       .toEqual([{ signingOutOf: "acct_A" }, { signingOutOf: "acct_A" }, undefined]);
   });
 
+  it("closes every notice of the origin still listed before it answers", async () => {
+    // A sign-out that unloads the page runs no cleanup of the shell: this close is the one take-back.
+    const { revokeWakeRegistration } = await import("../app/shell/notification-settings");
+    const n1 = { close: vi.fn() };
+    const n2 = { close: vi.fn() };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        register: () => Promise.resolve({ pushManager: { getSubscription: () => Promise.resolve(null) } }),
+        getRegistration: () => Promise.resolve({ getNotifications: () => Promise.resolve([n1, n2]) }),
+      },
+    });
+
+    await revokeWakeRegistration();
+
+    expect(n1.close, "a notice of the account left stays listed").toHaveBeenCalledTimes(1);
+    expect(n2.close).toHaveBeenCalledTimes(1);
+  });
+
   it("writes the notify state OFF — the last half, for a row that somehow survives", async () => {
     /*
      * The service worker never reads the push payload; the words it may draw live in this cache

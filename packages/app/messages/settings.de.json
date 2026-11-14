@@ -177,8 +177,6 @@
     "notifyScheduledWhy": "Und wenn eine nicht gesendet werden konnte — die Hälfte, die Schweigen falsch wiedergibt.",
     "notifyPairing": "Ein Gerät wurde verbunden oder abgemeldet",
     "notifyPairingWhy": "Ein Gerät hat dein Postfach erreicht oder kann es nicht mehr.",
-    "notifyIdentify": "Absender und Betreff anzeigen",
-    "notifyIdentifyWhy": "Standardmäßig aus. Eine Benachrichtigung liest, wer auf den Bildschirm schaut.",
     "notifyAskFirst": "Dein Gerät fragt beim ersten Einschalten nach.",
     "notifyDenied": "Dieses Gerät lehnt Benachrichtigungen von ohmail ab. Das änderst du in den Systemeinstellungen, nicht hier.",
     "notifyUnsupported": "Dieses Gerät hat keine Benachrichtigungszentrale, es gibt hier also nichts zu senden.",

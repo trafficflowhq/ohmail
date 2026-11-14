@@ -328,6 +328,12 @@
       "node": "./dist/mail-state/mailbox-error-key.js",
       "default": "./src/mail-state/mailbox-error-key.ts"
     },
+    "./notices/use-notices": {
+      "types": "./src/notices/use-notices.ts",
+      "ohmail-source": "./src/notices/use-notices.ts",
+      "node": "./dist/notices/use-notices.js",
+      "default": "./src/notices/use-notices.ts"
+    },
     "./ohbox": {
       "types": "./src/ohbox/index.ts",
       "ohmail-source": "./src/ohbox/index.ts",

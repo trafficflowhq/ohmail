@@ -132,7 +132,7 @@ const BARE_NEW_EXEMPT: Record<string, string> = {
     + "it again — and neither the waterline nor a mailbox unread count, so neither word would be "
     + "true. The face is two words because a badge face is; the sentence it stands for is "
     + "`ohbox.newSinceTitle`, which the badge carries as its title and the row speaks.",
-  "desktopDoor.notifyNewMail":
+  "frame.systemNotice.ohboxBody":
     "A push notification about mail that has just ARRIVED, which is a third fact and not a "
     + "standing count: the number is the messages that came in, and \"new\" is what they are. "
     + "No waterline and no read state is involved, so there is no second word to confuse it with.",

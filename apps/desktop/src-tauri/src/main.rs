@@ -171,6 +171,11 @@ mod words;
 // compiled; only the engine build has the command that sets it, so the preview speaks English.
 mod shell_language;
 
+// The notice the window hands the shell, read closed, and the words the shell shows for it. Tauri-free;
+// only the engine build has the command that reads it.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+mod notice;
+
 // A run that vanished (a GTK or WebKit crash) is logged on the next start. Always compiled.
 mod unclean_exit;
 

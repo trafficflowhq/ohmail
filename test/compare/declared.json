@@ -1145,6 +1145,17 @@
     ]
   },
   {
+    "key": "screen=settings&sec=notifications",
+    "reason": "The reference still draws the switch \"Show who it is from and the subject\". It is not built: a notice says no sender and no subject on any surface, so a switch for them could change nothing.",
+    "since": "2026-11-17",
+    "nodes": [
+      {
+        "role": "switch",
+        "name": "Show who it is from and the subject"
+      }
+    ]
+  },
+  {
     "key": "screen=signedout",
     "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
     "since": "2026-11-15",

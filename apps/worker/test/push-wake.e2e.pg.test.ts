@@ -9,7 +9,9 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, recordChange, sessions, users } from "@trafficflow/db";
+import {
+  CALENDAR_RECORD_KINDS, accounts, fencedAccountWrite, recordCalendarChanges, recordChange, sessions, users,
+} from "@trafficflow/db";
 import { schema, pushSubscriptions, makeChangeWakeHub } from "@trafficflow/db/cloud";
 import {
   makePushEndpointGuard, makeVapidIdentity,
@@ -423,6 +425,69 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
       // saw the request — read through `waitFor`, never straight after. Measured as a latent flake
       // (`expected +0 to be 1`) before this wait existed.
       expect(wake.sent()).toBe(l.captured.length);
+    } finally {
+      wake.stop();
+      await hub.end();
+      l.close();
+    }
+  }, 60_000);
+
+  /**
+   * A CALENDAR THAT MOVED RINGS NO WAKE. A closed app draws one fixed notice for a wake, and that
+   * notice says new mail: so a window that holds the calendar's records alone dials nothing, on the
+   * real log, through the calendar's own door and the real hub. Absence is read between two wakes
+   * that did arrive, so it is the sender's answer and not a listener that was still coming up.
+   */
+  it("CALENDAR ARM — a calendar-only advance dials nothing; a mail advance dials once with the constant; a window of both dials once", async () => {
+    const l = await listener();
+    const accountId = await anAccount();
+    const endpoint = `${l.origin}/up/${randomUUID()}`;
+    const guard = makePushEndpointGuard(fixedResolver({}), { allowPrivate: true });
+    await makePushService({ endpointGuard: guard }).subscribe(ctxFor(accountId), { transport: "unifiedpush", endpoint });
+
+    /** One committed calendar change through the calendar's own door, under the account's fence as its writers take it. */
+    const calendar = (kind: (typeof CALENDAR_RECORD_KINDS)[number]): Promise<unknown> =>
+      fencedAccountWrite(db as never, { accountId }, (tx) =>
+        recordCalendarChanges(tx as never, accountId, [{ kind, id: randomUUID(), op: "update" }]));
+
+    const hub = makeChangeWakeHub(PG_TEST_URL);
+    // The real POST on a real socket, so the bytes and the headers are the ones a distributor gets.
+    const wake = startPushWake({
+      db, source: hub, guard, ownsAccount: OWN_ALL, vapid: NO_VAPID, debounceMs: 150, minIntervalMs: 0,
+    });
+    /** The requests so far, once every open window has had time to close and dial. */
+    const settled = async (): Promise<number> => { await tick(900); return l.captured.length; };
+
+    try {
+      await settleHub(accountId, () => l.captured.length);
+      const start = await settled();
+      expect(start, "the control mail never produced a wake").toBeGreaterThanOrEqual(1);
+
+      // ── THE CALENDAR ALONE: every kind of its records. No request.
+      for (const kind of CALENDAR_RECORD_KINDS) await calendar(kind);
+      expect(await settled(), "a calendar change rang a wake").toBe(start);
+
+      // ── MAIL: one request, the fifteen bytes and the fixed headers.
+      await mail(accountId);
+      await waitFor(() => l.captured.length > start);
+      expect(await settled(), "one mail advance did not dial exactly once").toBe(start + 1);
+      const c = l.captured[start]!;
+      expect(c.method).toBe("POST");
+      expect(c.raw.equals(Buffer.from(WAKE_BODY, "utf8"))).toBe(true);
+      expect(c.raw.length).toBe(15);
+      expect(c.headers["content-type"]).toBe("application/json");
+      expect(c.headers["content-length"]).toBe("15");
+      expect(c.headers.ttl).toBe("240");
+      expect(c.headers.authorization).toBeUndefined();
+      expect(`${c.url}\n${JSON.stringify(c.headers)}\n${c.body}`).not.toContain(accountId);
+
+      // ── BOTH, CLOSE TOGETHER: the calendar's records beside it neither add a request nor hide the mail.
+      await calendar("calendar_event");
+      await mail(accountId);
+      await calendar("calendar");
+      await waitFor(() => l.captured.length > start + 1);
+      expect(await settled(), "a window of mail and calendar did not dial exactly once").toBe(start + 2);
+      expect(l.captured[start + 1]!.body).toBe(WAKE_BODY);
     } finally {
       wake.stop();
       await hub.end();

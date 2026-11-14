@@ -46,6 +46,7 @@ import {
   autoUnsubscribeConfirms,
   unsubscribeLetterOf,
   rulesShown,
+  noticeChoicesOf,
 } from "@ohmail/client-engine";
 import { DEMO_NOW } from "@ohmail/testing/adapter";
 import {
@@ -122,6 +123,7 @@ import { AwayResponderRow, type AwayTransport } from "./AwayResponderRow";
 import { AwayNotice, useAwayNotice } from "./AwayNotice";
 import { OhmarchyOffer, useOhmarchyOffer } from "./OhmarchyOffer";
 import { useOhboxVisitMark } from "@ohmail/app-logic/reading/ohbox-visit";
+import { useNotices, type NoticeReads } from "@ohmail/app-logic/notices/use-notices";
 import { usePileNote, type PileNoteSaid } from "@ohmail/app-logic/lists/pile-note";
 import { useFaceFollowsAccount, type ApplyFaceAllDevices } from "./FaceRow";
 import {
@@ -263,7 +265,7 @@ import { TrashView } from "../views/TrashView";
 import type { TrashWire } from "./trash-window";
 import { TriageView } from "../views/TriageView";
 import { DraftsView } from "../views/DraftsView";
-import { reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
+import { readChannels, reconcileWakeRegistration, updateNotifyWords } from "./notification-settings.js";
 import { usePersistedFlag, UI_KEYS } from "@ohmail/app-logic/storage/persisted-ui";
 import { hasLiveMailbox, useSeedOffer } from "./seed-offer";
 import { TodaysScopeProvider } from "./todays-scope";
@@ -1390,6 +1392,22 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     replyTo, setReplyTo,
   });
   useOhboxVisitMark(demo ? null : engine, !demo && effectiveView === "ohbox"); // ohbox-visit.ts
+  /* THE NOTICES (`use-notices.ts`): at each settle of the copy the rail reads, the gate is asked
+     and this surface's emitter draws what it answers. Nothing where the host hands in no emitter;
+     the choices and the permission are read at each settle, so a switch pressed counts at once. */
+  const noticeReads = useMemo((): NoticeReads => ({
+    choices: () => noticeChoicesOf(readChannels(), null, { ohcalPhone: false }),
+    permission: () => notificationHost?.permission() ?? "unsupported",
+    devices: () => null,
+  }), [notificationHost]);
+  useNotices({
+    reader: presented,
+    version: derived,
+    settled: mailState.settled && screener.storeSettled,
+    scope,
+    emitter: notificationHost?.emitter ?? "none",
+    reads: noticeReads,
+  });
   /* LETTERS IN NEWS AND RECEIPTS FROM SENDERS NOBODY LET IN — each pile's note, asked while it is
      shown (`pile-note.ts`); the press says what the server screened, in the Ohbox offer's words. */
   const sayPileNote = useStableCallback((said: PileNoteSaid) => {

@@ -73,6 +73,8 @@ async function start(bridge: Bridge, kept: KeptStorage, root: Root): Promise<voi
         permission = answer.permission ?? permission;
         return permission;
       },
+      // This page draws no notice of its own.
+      emitter: "none",
     },
     signals,
   });

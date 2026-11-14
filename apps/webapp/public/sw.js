@@ -62,6 +62,8 @@
 /** Where the page leaves the words and the switch state. Never the network, never the payload. */
 const NOTIFY_CACHE = "ohmail-notify-v1";
 const NOTIFY_STATE_URL = "/__ohmail_notify_state";
+/** The longest title or body this worker draws, in characters; a longer one draws nothing. */
+const WORDS_MAX = 120;
 
 /**
  * Read what the page last stored: `{ enabled, title, body }`.
@@ -79,7 +81,8 @@ async function notifyState() {
     const state = await hit.json();
     if (!state || state.enabled !== true) return null;
     if (typeof state.title !== "string" || typeof state.body !== "string") return null;
-    return state;
+    if ([...state.title].length > WORDS_MAX || [...state.body].length > WORDS_MAX) return null;
+    return { title: state.title, body: state.body };
   } catch {
     return null;
   }

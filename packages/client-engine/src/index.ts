@@ -213,18 +213,39 @@ export {
 // each have to remember the master switch. Pure: no platform, no catalogue, no sentence.
 export {
   DEFAULT_CHANNELS,
-  DELIVERABLE_EVENTS,
-  NOTICE_EVENTS,
   channelsAreLive,
   decideNotices,
-  type NoticeEvent,
+  mayPost,
   type NoticePermission,
-  type NoticeSnapshot,
-  type NoticeSpec,
   type NotificationChannels,
-  type PairingEvent,
-  type ScheduledOutcome,
 } from "./notifications.js";
+
+// THE NOTICES' SEAM: the kinds and what each may say, the device's choices, what a surface hands
+// in to draw them, and what the page leaves the phone's native side.
+export {
+  CALENDAR_NOTICE_KINDS, MAIL_NOTICE_KINDS, NOTICE_ACTS, NOTICE_COUNT_MAX, NOTICE_KINDS, NOTICE_KIND_FACTS,
+  NOTICE_LEAD_MAX_MIN, noticeCount, noticeKindsOf,
+  type CalendarNotice, type CalendarNoticeKind, type Clock, type EventLabel, type MailNotice, type MailNoticeKind,
+  type Notice, type NoticeAct, type NoticeDate, type NoticeDevice, type NoticeKind, type NoticeKindFacts,
+  type NoticeStart, type NoticeSurface,
+} from "./notices/kinds.js";
+export { NOTICE_TEXT_MAX, cleanNoticeText, eventLabel } from "./notices/label.js";
+export {
+  SUMMARY_AT_START, calendarChoicesOf, mailChoicesOf, noticeChoicesOf, noticeStartsOn,
+  type CalendarNoticeChoices, type MailNoticeChoices, type NoticeChoices, type NoticeWhere,
+} from "./notices/choices.js";
+export { AHEAD_DAYS, AHEAD_MAX, type NoticeAhead, type NoticeEmitter } from "./notices/emitter.js";
+export type { NoticeGate, NoticeSample, SendStanding } from "./notices/gate.js";
+export { noticeSampleOf } from "./notices/sample.js";
+export {
+  alertNotice, answeredNotice, cancelledNotice, foundNotice, invitationNotice, movedNotice, summaryNotice,
+  type NoticedEvent,
+} from "./notices/make.js";
+export { noticeFields, type NoticeFacts, type NoticeFields, type NoticeWording } from "./notices/fields.js";
+export {
+  CALENDAR_SNAPSHOT_FILE, CALENDAR_SNAPSHOT_VERSION, SNAPSHOT_DAYS, SNAPSHOT_DAY_EVENTS_MAX,
+  type CalendarSnapshot, type SnapshotDay, type SnapshotEvent, type SnapshotMonth, type SnapshotSummary,
+} from "./notices/snapshot.js";
 
 // Wire vocabulary + errors.
 export {

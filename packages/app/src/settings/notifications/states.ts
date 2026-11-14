@@ -10,13 +10,12 @@ export function notificationsState(at: { denied?: boolean } = {}): Notifications
     screener: true,
     scheduled: false,
     pairing: true,
-    showSenderAndSubject: false,
   };
   return {
     channels,
     permission: at.denied ? "denied" : "granted",
     live: !at.denied,
-    deliverable: ["ohbox"],
+    carries: ["ohbox", "screener", "scheduled", "pairing"],
     osHolds: false,
     delivery: null,
     pressMaster: still,

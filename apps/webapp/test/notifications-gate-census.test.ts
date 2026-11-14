@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { DELIVERABLE_EVENTS, NOTICE_EVENTS } from "@ohmail/client-engine";
+import { NOTICE_KINDS, noticeKindsOf, type NoticeKind, type NoticeSurface } from "@ohmail/client-engine";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -18,7 +18,8 @@ import { DELIVERABLE_EVENTS, NOTICE_EVENTS } from "@ohmail/client-engine";
  *
  *  · {@link TRANSPORTS} may touch a platform notification API. They decide nothing — they are the
  *    "how does this OS draw a notice" half — and they must contain no branch of their own.
- *  · {@link EMITTERS} decide WHETHER to draw, and every one of them must consult the shared gate.
+ *  · {@link EMITTERS} draw what the one caller hands them, and only that caller consults the gate:
+ *    an emitter decides nothing, and nothing but the caller hands it a notice.
  *
  * A new `new Notification(...)` in a view component is in neither list and fails this file.
  *
@@ -40,6 +41,7 @@ const REPO = fileURLToPath(new URL("../../..", import.meta.url));
  */
 const ROOTS = [
   "apps/desktop/src", "apps/paired-page/src", "apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/mobile/src", "apps/webapp/public",
+  "apps/mobile/web/src", "packages/app/src",
 ] as const;
 
 /** Extensions worth scanning. `.js` is here for the service worker and nothing else today. */
@@ -119,7 +121,7 @@ for (const r of ROOTS) walk(join(REPO, r), shipped);
 
 /**
  * MAY TOUCH THE PLATFORM. `native.ts` is the desktop's binding to the shell command that owns
- * the OS notification centre; it takes a title and a body and has no opinion about either.
+ * the OS notification centre; it hands the shell a notice, and the shell writes the words.
  */
 const TRANSPORTS = new Set([
   "apps/desktop/src/native.ts",
@@ -144,26 +146,42 @@ const TRANSPORTS = new Set([
 ]);
 
 /**
- * MUST CONSULT THE GATE. One per surface today — the desktop's unread sink. The browser's
- * service worker and the phone's renderer bridge join this list as they land, and adding one
- * without the gate import fails the second test below.
+ * DRAW WHAT THE ONE CALLER HANDS THEM. One per surface, each with the surface whose kinds it may
+ * carry (`noticeKindsOf`). The phone's poster joins this list when it lands.
  */
-const EMITTERS = new Set(["apps/desktop/src/DesktopGate.tsx"]);
+const EMITTERS = new Map<string, NoticeSurface>([
+  ["apps/webapp/app/shell/notice-emitter.ts", "web"],
+  ["apps/desktop/src/notice-emitter.ts", "desktop"],
+]);
 
-/** The shared decision layer, and the call every emitter owes it. */
+/**
+ * THE ONE CALLER: it alone asks the gate and hands an emitter what the gate answered. Mounted once,
+ * where the shell holds the copy the rail reads.
+ */
+const CALLER = "packages/app-logic/src/notices/use-notices.ts";
+
+/** The shared decision layer, and the call the caller owes it. */
 const GATE_MODULE = "@ohmail/client-engine";
 const GATE_CALL = ["decide", "Notices"].join("");
+/**
+ * An emitter's draw, as the caller makes it: `emitter.post(`, and under any name that ends so
+ * (`desktopEmitter.post(`). Composed so this file does not match itself.
+ */
+const POST_CALL = new RegExp(`${["emit", "ter"].join("")}\\.${["po", "st"].join("")}\\s*\\(`, "i");
 
 /**
  * Every way to draw a notice, composed so this file does not match itself.
  *  · the desktop's shell binding — renamed FROM `notify`, which is also the client-engine's
  *    subscriber callback and so useless as a census key;
+ *  · the shell's command itself, by its name as a string: a second door that invokes it directly
+ *    instead of going through the binding;
  *  · the two browser forms, page and service worker.
  * `expo-notifications` is absent deliberately: `apps/mobile/test/privacy.test.ts` bans the module
  * outright, so the phone's notice goes through its own native renderer instead.
  */
 const DRAW_PATTERNS: [string, RegExp][] = [
   ["desktop shell notice", new RegExp(`\\b${["post", "OsNotice"].join("")}\\s*\\(`)],
+  ["desktop shell command", new RegExp(`["'\`]${["noti", "fy"].join("")}["'\`]`)],
   ["Notification constructor", new RegExp(`new\\s+${["Notifi", "cation"].join("")}\\s*\\(`)],
   ["service-worker notice", new RegExp(`\\.${["show", "Notification"].join("")}\\s*\\(`)],
 ];
@@ -183,16 +201,24 @@ describe("the scan reaches the surfaces — a census over nothing passes vacuous
 
   it("every allow-listed file EXISTS — a stale allow-list is itself a failure", () => {
     const paths = new Set(shipped.map((f) => f.path));
-    for (const p of [...TRANSPORTS, ...EMITTERS]) {
+    for (const p of [...TRANSPORTS, ...EMITTERS.keys(), CALLER]) {
       expect(paths, `allow-listed but missing: ${p}`).toContain(p);
     }
   });
 
-  it("the patterns actually match the emitter we know about — a pattern that matches nothing guards nothing", () => {
-    const gate = shipped.find((f) => f.path === "apps/desktop/src/DesktopGate.tsx")!;
-    const matched = DRAW_PATTERNS.some(([, re]) =>
-      gate.body.split("\n").some((l) => re.test(l)));
-    expect(matched, "no draw pattern matches the known emitter — the census is decorative").toBe(true);
+  it("the shell's command is named by its binding — a pattern that matches nothing guards nothing", () => {
+    const binding = shipped.find((f) => f.path === "apps/desktop/src/native.ts")!;
+    const [, command] = DRAW_PATTERNS.find(([label]) => label === "desktop shell command")!;
+    expect(binding.body.split("\n").some((l) => command.test(l)), "the shell's command pattern matches nothing").toBe(true);
+  });
+
+  it("the patterns actually match the emitters we know about — a pattern that matches nothing guards nothing", () => {
+    for (const path of EMITTERS.keys()) {
+      const emitter = shipped.find((f) => f.path === path)!;
+      const matched = DRAW_PATTERNS.some(([, re]) =>
+        emitter.body.split("\n").some((l) => re.test(l)));
+      expect(matched, `no draw pattern matches ${path} — the census is decorative`).toBe(true);
+    }
   });
 });
 
@@ -211,64 +237,58 @@ describe("nothing draws a notice outside the allow-lists", () => {
   });
 });
 
-describe("the pane may only offer a switch something can deliver", () => {
+describe("an emitter draws only the kinds its surface may carry", () => {
   /**
-   * BOTH DIRECTIONS, because each is a different lie.
+   * BOTH DIRECTIONS, because each is a different lie. The pane offers a switch for exactly the
+   * kinds an emitter carries (`carries`), and the table says which kinds a surface may carry at
+   * all. A kind an emitter names that its surface may not carry is a notice drawn where the table
+   * says none is; an emitter that names no kind draws nothing, and every switch it stands behind
+   * changes nothing.
    *
-   * An event listed as deliverable that no emitter names is a switch that cannot act — the
-   * inert-control defect this surface was built to remove, returning as soon as the vocabulary
-   * grows faster than the emitters. An event some emitter DRAWS that the list does not admit is
-   * the opposite: a notice arriving with no switch to stop it.
+   * EMITTERS ONLY, and the exclusion of the transports is not tidiness: a transport draws what it
+   * is handed and holds no kind vocabulary, so scanning one matches unrelated strings that merely
+   * spell the same word (`native.ts` carries the menu's view names, one of which is "screener").
    */
-  /**
-   * EMITTERS ONLY, and the exclusion of the transports is not tidiness.
-   *
-   * A transport draws what it is handed and holds no event vocabulary, so scanning one matches
-   * unrelated strings that merely spell the same word — `native.ts` carries the desktop's MENU
-   * view names, one of which is "screener", and including it reported an emitter drawing an
-   * event nothing emits. A census with a false positive gets weakened until it is quiet, so it
-   * is narrowed to the files where the decision actually lives.
-   */
-  const emitterSource = [...EMITTERS]
-    .map((p) => shipped.find((f) => f.path === p)!.body).join("\n");
+  const named = (body: string): NoticeKind[] => NOTICE_KINDS.filter((kind) => new RegExp(`["']${kind}["']`).test(body));
 
-  it("every deliverable event is named by an emitter", () => {
-    for (const e of DELIVERABLE_EVENTS) {
-      expect(
-        new RegExp(`["']${e}["']`).test(emitterSource),
-        `"${e}" is offered as a switch and no emitter mentions it`,
-      ).toBe(true);
+  it("every kind an emitter names is a kind its surface may carry", () => {
+    for (const [path, surface] of EMITTERS) {
+      const body = shipped.find((f) => f.path === path)!.body;
+      const beyond = named(body).filter((kind) => !noticeKindsOf(surface).includes(kind));
+      expect(beyond, `${path} draws a kind the table gives no ${surface} switch`).toEqual([]);
     }
   });
 
-  it("no emitter draws an event the pane withholds a switch for", () => {
-    const withheld = NOTICE_EVENTS.filter((e) => !DELIVERABLE_EVENTS.includes(e));
-    for (const e of withheld) {
-      expect(
-        new RegExp(`["']${e}["']`).test(emitterSource),
-        `"${e}" is drawn by an emitter but the pane offers no switch to stop it`,
-      ).toBe(false);
+  it("every emitter names the kinds it draws", () => {
+    for (const path of EMITTERS.keys()) {
+      const body = shipped.find((f) => f.path === path)!.body;
+      expect(named(body).length, `${path} names no kind: every switch it stands behind changes nothing`).toBeGreaterThan(0);
     }
   });
 });
 
-describe("every emitter consults the gate", () => {
-  it("each imports the shared decision layer and calls it", () => {
+describe("the one caller consults the gate, and an emitter is called by nothing else", () => {
+  it("the caller imports the shared decision layer and calls it", () => {
+    const body = shipped.find((f) => f.path === CALLER)!.body;
     const missing: string[] = [];
-    for (const path of EMITTERS) {
-      const body = shipped.find((f) => f.path === path)!.body;
-      if (!new RegExp(`from ["']${GATE_MODULE}`).test(body)) {
-        missing.push(`${path}: never imports ${GATE_MODULE}`);
-      }
-      // A CALL, with its paren, in code rather than in prose. `includes(GATE_CALL)` was the first
-      // spelling and a mutation walked straight through it: the identifier also appears in this
-      // file's and the emitter's own comments. Removing the IMPORT while keeping the call is not
-      // covered here and does not need to be — it is a compile error, and the desktop's own
-      // `tsc --noEmit` is the guard for it.
-      if (!new RegExp(`\\b${GATE_CALL}\\s*\\(`).test(body)) {
-        missing.push(`${path}: never calls ${GATE_CALL}()`);
-      }
-    }
-    expect(missing, "an emitter that draws without asking the gate").toEqual([]);
+    if (!new RegExp(`from ["']${GATE_MODULE}`).test(body)) missing.push(`${CALLER}: never imports ${GATE_MODULE}`);
+    // A CALL, with its paren, in code rather than in prose: the identifier also appears in this
+    // file's and the caller's own comments, and a mutation walked through `includes(GATE_CALL)`.
+    if (!new RegExp(`\\b${GATE_CALL}\\s*\\(`).test(body)) missing.push(`${CALLER}: never calls ${GATE_CALL}()`);
+    if (!POST_CALL.test(body)) missing.push(`${CALLER}: never hands an emitter a notice`);
+    expect(missing, "a caller that draws without asking the gate").toEqual([]);
+  });
+
+  it("nothing but the caller hands an emitter a notice", () => {
+    const callers = shipped
+      .filter(({ path, body }) => path !== CALLER && body.split("\n").some((line) => POST_CALL.test(line)))
+      .map(({ path }) => path);
+    expect(callers, "an emitter handed a notice the gate was not asked about").toEqual([]);
+  });
+
+  it("no emitter asks the gate itself: it draws what it is handed", () => {
+    const deciding = [...EMITTERS.keys()].filter((path) =>
+      new RegExp(`\\b${GATE_CALL}\\s*\\(`).test(shipped.find((f) => f.path === path)!.body));
+    expect(deciding).toEqual([]);
   });
 });
