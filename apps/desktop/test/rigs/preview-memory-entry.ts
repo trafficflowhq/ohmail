@@ -10,7 +10,7 @@ import { bridgeTransportReading, createEngineAdapter } from "../../src/bridge-fe
 import { installOfflineGuard } from "../../src/offline-guard.js";
 import { enableDesktopAttachments } from "../../../webapp/app/shell/open-attachment.js";
 import { ensurePreview } from "../../../webapp/app/shell/attachments.js";
-import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../../webapp/app/components/MessageBody.js";
+import { buildMailDocument, FRAME_SANDBOX, sanitizeMailHtml } from "../../../webapp/app/letter-body/MessageBody.js";
 
 installOfflineGuard(globalThis as never, "win32");
 enableDesktopAttachments();

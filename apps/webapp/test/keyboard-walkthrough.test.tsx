@@ -139,7 +139,7 @@ function zeroSetup(px: number): void {
 async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
   const { AppShell } = await import("../app/shell/AppShell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
-  const { localStorageDoor } = await import("../app/shell/durable.js");
+  const { localStorageDoor } = await import("@ohmail/app-logic/storage/durable");
 
   const container = document.createElement("div");
   document.body.appendChild(container);

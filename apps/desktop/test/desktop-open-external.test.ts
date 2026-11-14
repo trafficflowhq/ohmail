@@ -96,7 +96,7 @@ afterEach(() => {
 
 /** A fresh copy of the module — its "armed" flag and its installed-document set are per-module. */
 async function freshModule() {
-  return import("../../webapp/app/shell/open-external.js");
+  return import("@ohmail/app-logic/session/open-external");
 }
 
 /** Install, and register the teardown in one step so a case cannot forget it. */
@@ -336,7 +336,7 @@ describe("the window hands the shell no address", () => {
 
   it("the interceptor names no shell command and keeps no second refusal path", async () => {
     const mod = await freshModule();
-    const code = sourceOf("../webapp/app/shell/open-external.ts").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
+    const code = sourceOf("../../packages/app-logic/src/session/open-external.ts").replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
     expect(code).not.toMatch(/__TAURI_INTERNALS__|\binvoke\(|open_external/);
     // A refusal is the shell's `link:refused`, said by the gate (`desktop-link-refused.test.tsx`).
     expect("setOpenFailureSink" in mod, "the module still keeps a failure sink of its own").toBe(false);
@@ -361,12 +361,12 @@ describe("the window hands the shell no address", () => {
    a listener here would be a second door on Chromium alone (the frame-links rig measures both). */
 describe("the message frame is left to the shell's new-window door", () => {
   it("MessageBody installs no link listener on the frame's document", () => {
-    const rel = "apps/webapp/app/components/MessageBody.tsx";
+    const rel = "apps/webapp/app/letter-body/MessageBody.tsx";
     let body: string;
     try {
       body = readFileSync(resolve(process.cwd(), rel), "utf8");
     } catch {
-      body = readFileSync(resolve(process.cwd(), "../webapp/app/components/MessageBody.tsx"), "utf8");
+      body = readFileSync(resolve(process.cwd(), "../webapp/app/letter-body/MessageBody.tsx"), "utf8");
     }
     expect(body, "a link listener is installed in the mail renderer again").not.toMatch(/interceptLinkClicks/);
     expect(body, "a click listener is put on a document in the mail renderer").not.toMatch(/addEventListener\(\s*["']click["']/);

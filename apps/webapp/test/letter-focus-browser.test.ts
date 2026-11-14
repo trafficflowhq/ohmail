@@ -29,7 +29,7 @@ beforeAll(async () => {
     stdin: {
       contents: `import { holdLetterFocusWatch } from "./letter-focus"; import { FRAME_SANDBOX } from "./MessageBody";
         window.rig = { FRAME_SANDBOX, hold: () => holdLetterFocusWatch(window) };`,
-      resolveDir: join(ROOT, "apps/webapp/app/components"), loader: "ts", sourcefile: "rig.ts",
+      resolveDir: join(ROOT, "apps/webapp/app/letter-body"), loader: "ts", sourcefile: "rig.ts",
     },
     bundle: true, format: "iife", platform: "browser", target: ["es2020"], jsx: "automatic", outfile: join(out, "rig.js"),
     alias: { "next-intl": join(ROOT, "apps/webapp/test/editor-feel/intl-shim.mjs") },

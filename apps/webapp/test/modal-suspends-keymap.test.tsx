@@ -36,7 +36,7 @@ const act = (React as unknown as {
 (globalThis as unknown as { React: unknown }).React = React;
 
 const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap");
-const { resetModalGateForTests, useModalGate } = await import("../app/shell/modal-gate");
+const { resetModalGateForTests, useModalGate } = await import("@ohmail/app-logic/session/modal-gate");
 
 /** What the keys did. `park`/`delete` stand for the two acts the defect actually reached. */
 let ran: string[] = [];
@@ -152,7 +152,7 @@ describe("the gate is taken IN the commit, not one frame after it", () => {
    * of the commit that paints a dialog, the mailbox keys are already suspended.
    */
   it("a key pressed inside the dialog's own commit does nothing", async () => {
-    const { modalIsOpen } = await import("../app/shell/modal-gate");
+    const { modalIsOpen } = await import("@ohmail/app-logic/session/modal-gate");
     let heldAtCommit: boolean | null = null;
 
     /** Presses `d` `d` from inside the commit that paints the dialog. */

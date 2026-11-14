@@ -12,7 +12,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
-import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 
 /**
  * ═══ THE DESKTOP RENDERER'S MIRROR IS BOUNDED BY A WINDOW, NOT BY THE MAILBOX ════════════════

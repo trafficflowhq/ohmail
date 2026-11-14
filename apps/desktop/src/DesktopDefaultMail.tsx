@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, SettingsRow } from "@ohmail/ui";
 
-import { usePersistedFlag } from "../../webapp/app/shell/persisted-ui.js";
+import { usePersistedFlag } from "@ohmail/app-logic/storage/persisted-ui";
 import { DOOR_COPY } from "./door-copy.js";
 import {
   defaultMailStatus,

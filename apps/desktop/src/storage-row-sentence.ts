@@ -1,4 +1,4 @@
-import { MIRROR_STORE_REFUSED_DETAIL } from "../../webapp/app/shell/mailbox-error-key";
+import { MIRROR_STORE_REFUSED_DETAIL } from "@ohmail/app-logic/mail-state/mailbox-error-key";
 
 /**
  * WHICH SENTENCE A `storage` ROW SAYS — one table, by door and detail, so no arm elsewhere re-spells it.

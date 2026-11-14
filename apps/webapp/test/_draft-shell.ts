@@ -27,8 +27,8 @@ import {
 } from "@ohmail/client-engine";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
-import { announceUpdate, resetUpdateStoreForTests } from "../app/shell/app-update";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { announceUpdate, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import type { DraftReplyWire } from "../app/shell/draft-reply";
 import type { ComposePrefill } from "../app/shell/compose";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";

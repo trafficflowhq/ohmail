@@ -7,7 +7,7 @@ import messages from "../messages/en.json";
 import { ApiError, type MailboxDTO, type SubscriptionStatus } from "../app/api-client";
 import { parseHash } from "../app/shell/routing";
 import { initialPaneFromUrl } from "../app/views/SettingsView";
-import type { MailState } from "../app/shell/mail-state";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * LANDING BACK FROM MICROSOFT — the ceremony must finish on ANY screen, not only on the one it

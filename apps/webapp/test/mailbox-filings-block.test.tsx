@@ -11,7 +11,7 @@ import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { ApiError } from "../app/api-client";
-import type { FilingFacts, MailboxFacts } from "../app/shell/mail-state";
+import type { FilingFacts, MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

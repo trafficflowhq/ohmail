@@ -24,7 +24,7 @@ import {
   subscribeVersion,
   type RestartHold,
   type UpdateOffer,
-} from "./app-update";
+} from "@ohmail/app-logic/doors/app-update";
 import { COMPOSE_SEND_KEY, type MailSendApi, type SendLineItem, type SendPhase } from "./mail-send";
 
 /** Follow the one offer: adopt what is standing at mount, then listen. */

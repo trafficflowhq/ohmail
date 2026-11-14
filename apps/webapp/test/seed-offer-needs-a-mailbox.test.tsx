@@ -14,7 +14,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useSeedOffer, type SeedOffer } from "../app/shell/seed-offer";
-import { resetStorageOwnerForTest, setStorageOwner } from "../app/shell/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

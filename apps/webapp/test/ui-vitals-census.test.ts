@@ -10,7 +10,7 @@ import {
   REPORT_MAX_MS,
   REPORT_MIN_MS,
   takeUiVitals,
-} from "../app/shell/ui-vitals";
+} from "@ohmail/app-logic/session/ui-vitals";
 import * as check from "../../../scripts/perf-smoke-check.mjs";
 
 /**

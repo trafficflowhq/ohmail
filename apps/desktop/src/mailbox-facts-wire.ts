@@ -9,7 +9,7 @@
  * command's name into the bundle a phone is handed, which `scan:host` refuses.
  */
 
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 const isStoreRefusals = (v: unknown): v is { count: number; retrying: number; exact: boolean } => {
   const r = v as { count?: unknown; retrying?: unknown; exact?: unknown } | null | undefined;

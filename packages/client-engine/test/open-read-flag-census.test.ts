@@ -14,7 +14,7 @@ import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from
  */
 const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
 const ROOTS = [
-  "apps/webapp/app", "apps/mobile/src", "apps/desktop/src", "apps/sidecar/src", "packages/client-engine/src", "packages/ui/src",
+  "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/desktop/src", "apps/sidecar/src", "packages/client-engine/src", "packages/ui/src",
 ];
 const EXEMPT = new Set(["packages/client-engine/src/engine.ts"]);
 

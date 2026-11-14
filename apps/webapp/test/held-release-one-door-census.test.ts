@@ -16,9 +16,9 @@ import { bracketSpan, withoutComments } from "../../../scripts/lib/source-scan.m
 
 const ROOT = resolve(__dirname, "../../..");
 const ENGINE = "packages/client-engine/src/engine.ts";
-const SURFACE_ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/mobile/src"];
+const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src"];
 /** The adapter wrapper that FORWARDS the capability; forwarding is not a read. */
-const FORWARDER = "apps/webapp/app/shell/sync-scheduler.ts";
+const FORWARDER = "packages/app-logic/src/session/sync-scheduler.ts";
 
 const call = (name: string) => new RegExp(`\\b${name}\\s*\\(`);
 

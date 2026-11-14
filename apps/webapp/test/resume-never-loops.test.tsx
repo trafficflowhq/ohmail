@@ -45,7 +45,7 @@ const setOwner = (raw: string | null): void => {
 const answer = (list: Array<() => Response>, n: number): Response => list[Math.min(n, list.length) - 1]!();
 
 beforeEach(async () => {
-  (await import("../app/shell/session-truth.js")).resetSessionTruthForTests();
+  (await import("@ohmail/app-logic/session/session-truth")).resetSessionTruthForTests();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-10-17T12:00:00.000Z"));
   vi.spyOn(Math, "random").mockReturnValue(1);

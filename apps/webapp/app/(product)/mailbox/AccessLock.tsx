@@ -7,14 +7,14 @@ import { Button, Spinner } from "@ohmail/ui";
 // asserts every `auth.logout` call in this app goes through it, so never call logout directly.
 import { signOut } from "../../sign-out";
 import { signOutTrouble, type SignOutTrouble } from "../../sign-out-trouble";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { dayStamp } from "../../shell/format";
 import { saveBlob } from "../../shell/attachments";
 import { ApiError, account, type AccessRefusedFacts, type AccountLifecycle } from "../../api-client";
 import { AccountSection } from "./AccountSection";
 import { PasswordSection } from "./PasswordSection";
 import { leaveForManagePage } from "./SubscriptionSection";
-import { useWallLift } from "../../shell/wall-lift";
+import { useWallLift } from "@ohmail/app-logic/doors/wall-lift";
 import { neverStarted, opensTheWall } from "../../access-verdict";
 
 /**

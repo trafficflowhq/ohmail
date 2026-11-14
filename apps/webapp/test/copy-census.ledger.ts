@@ -107,7 +107,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
    * tokens from functions, and the `return` pass reaches them for the first time. Every row here
    * is addressed to a parser rather than to a reader.
    */
-  "apps/webapp/app/components/MessageBody.tsx": [
+  "apps/webapp/app/letter-body/MessageBody.tsx": [
     { text: "table table", why: "a CSS rule fragment for the sanitized mail frame's stylesheet" },
     { text: "default-src 'none'", why: "CSP directive — the mail frame's policy, parsed by the browser" },
     { text: "img-src data: blob:{}", why: "CSP directive — the image arm, with the proxy path spliced in" },

@@ -2,19 +2,19 @@ import { expect } from "vitest";
 import { routingIntentsKey } from "@ohmail/client-engine";
 
 import { imageQualityKeyFor } from "../../webapp/app/components/image-quality";
-import { AFTER_VERB_STORAGE_KEY } from "../../webapp/app/shell/after-verb";
-import { bootCacheKey } from "../../webapp/app/shell/boot-cache";
+import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
+import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY, composeDraftKey, composeRowKey, composeSessionKey,
 } from "../../webapp/app/shell/compose";
-import { deleteIntentsKey } from "../../webapp/app/shell/delete-intents";
+import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
 import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "../../webapp/app/shell/mail-send";
-import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "../../webapp/app/shell/persisted-ui";
-import { readingAlongKey } from "../../webapp/app/shell/reading-along";
+import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
 import { screenerIntentsKey } from "../../webapp/app/shell/screener-intents";
 import { seedNotNowKey } from "../../webapp/app/shell/seed-offer";
 import { sendLocksKey } from "../../webapp/app/shell/send-lock";
-import { ACCESS_VERDICT_PREFIX } from "../../webapp/app/shell/wall-lift";
+import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "../src/window-outbox-store.js";
 
 export interface WindowKeys { gone: string[]; kept: string[] }

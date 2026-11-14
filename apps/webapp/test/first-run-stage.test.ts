@@ -16,9 +16,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { firstRunStep, initialWindow } from "../app/shell/FirstRun";
-import { firstRunSubject } from "../app/shell/first-run-subject";
+import { firstRunSubject } from "@ohmail/app-logic/doors/first-run-subject";
 import { canonicalHash, parseHash } from "../app/shell/routing";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 /* Four callbacks in `FirstRun.tsx` and `MailboxSection.tsx` are read as source below, each
    anchored on its DECLARED NAME. Neither file has been through the render-identity codemod — both
    still declare eight callbacks as `const <name> = useCallback(` and neither holds a single

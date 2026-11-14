@@ -25,11 +25,11 @@ import {
   type WindowSearchPhases, type WindowSyncFailure,
 } from "@ohmail/client-engine";
 import { BUILD_VERSION } from "./build-id.js";
-import { DESKTOP_WINDOW } from "../../webapp/app/shell/store-windows.js";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
 import { WindowOutboxStore } from "./window-outbox-store.js";
-import { readStoredVerdict, storeVerdict } from "../../webapp/app/shell/wall-lift.js";
-import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "../../webapp/app/shell/access-window.js";
-import { storageOwner } from "../../webapp/app/shell/storage-owner.js";
+import { readStoredVerdict, storeVerdict } from "@ohmail/app-logic/doors/wall-lift";
+import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "@ohmail/app-logic/session/access-window";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { SHELL_DEADLINE_MS, withDeadline } from "./shell-deadline.js";
 import { hostLabelOf } from "./host-label.js";
 

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { FixturesAdapter, HttpAdapter } from "@ohmail/client-engine";
 import { createEngine, EngineUnarmedError } from "../app/shell/engine-config.js";
-import { transportOf } from "../app/shell/sync-scheduler.js";
+import { transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 import { assertApiArmed, API_ORIGIN_VAR } from "../next.config.mjs";
 import { isDemoBuild } from "../app/demo-mode.js";
 

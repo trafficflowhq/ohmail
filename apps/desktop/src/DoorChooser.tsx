@@ -22,7 +22,7 @@ import {
 } from "../../webapp/app/shell/CertificateTrust";
 import { useAddressFirst } from "../../webapp/app/shell/address-first";
 import { authHintPreset, authHintWantsLinks, hostsFor, providerById, type AuthHint } from "../../webapp/app/shell/providers";
-import { refusalAuthHint } from "../../webapp/app/shell/local-server-host";
+import { refusalAuthHint } from "@ohmail/app-logic/doors/local-server-host";
 import {
   EMPTY_LOCAL,
   NO_CONSENT,

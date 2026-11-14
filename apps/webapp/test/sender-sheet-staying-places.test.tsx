@@ -10,10 +10,10 @@ import {
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { senderScreening } from "../app/shell/sender-screening";
-import { screeningReadBack, verdictAction, verdictArgs, verdictKeyOf } from "../app/shell/press-verdict";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { screeningReadBack, verdictAction, verdictArgs, verdictKeyOf } from "@ohmail/app-logic/press/press-verdict";
 import { placeLabel } from "../app/shell/format";
-import { shellConsentOptions } from "../app/shell/consent-options";
+import { shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
 import { mailboxLabelResolver } from "../app/shell/mailbox-label";
 
 /**

@@ -19,9 +19,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { useTheme, useToast, type FaceName } from "@ohmail/ui";
-import { readOwner } from "./owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { ApplyFaceAllDevices } from "./FaceRow";
-import { durableSet } from "./durable";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
 
 /** Device-local dismissal memory. A read failure means "not dismissed", which only re-offers. */
 const DISMISS_KEY = "ohmail.faceOffer";

@@ -4,8 +4,8 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import type { MailState } from "../app/shell/mail-state";
-import { POLL_MS } from "../app/shell/sync-scheduler";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import { POLL_MS } from "@ohmail/app-logic/session/sync-scheduler";
 
 /**
  * ═══ THE IMPORT COUNTER IS SPOKEN, AND NOT SHOUTED ═══════════════════════════════════════

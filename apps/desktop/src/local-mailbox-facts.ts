@@ -8,7 +8,7 @@
  * a module those trees do not have.
  */
 
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { retryingBridgeFetch } from "./bridge-fetch.js";
 import { readMailboxFactsVia } from "./mailbox-facts-wire.js";
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { ACCOUNT_ACCESS_PATH, bridgeFetch, lifecycleOf, type AccessRefusedFacts } from "./bridge-fetch.js";
-import { FIRST_PAINT_VERDICT_MS, readStoredVerdict } from "../../webapp/app/shell/wall-lift.js";
+import { FIRST_PAINT_VERDICT_MS, readStoredVerdict } from "@ohmail/app-logic/doors/wall-lift";
 
 /**
  * THE WALL BEFORE MAIL, IN THE WINDOW — the browser tab's rule on the Cloud door. A window whose

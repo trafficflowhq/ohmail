@@ -10,11 +10,11 @@ import { MemoryMirrorStore, consentPartition, type EngineMessage, type MirrorSto
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { otherOrganizerOf, type MailboxFacts, type NotOrganizingYet } from "../app/shell/mail-state";
+import { otherOrganizerOf, type MailboxFacts, type NotOrganizingYet } from "@ohmail/app-logic/mail-state/mail-state";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
-import { senderScreening } from "../app/shell/sender-screening";
-import { subjectRuleContext } from "../app/shell/subject-rule";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
+import { subjectRuleContext } from "@ohmail/app-logic/press/subject-rule";
 
 /**
  * AFTER A HAND-BACK, THE OHBOX HEAD AND THE SENDER SHEETS SAY NOTHING ORGANIZES THE MAILBOX

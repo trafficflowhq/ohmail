@@ -22,13 +22,13 @@ import { MessageActionBar, type MessageAction } from "./MessagePane";
 import { MessageRecipients } from "./MessageRecipients";
 import { FoldTableArt, StreamCardToggled, StreamCardWidth } from "./StreamShell";
 import { autoLoadsImages, type RemoteImagesChrome } from "./remote-images";
-import { MessageBody as MessageBodyView } from "../components/MessageBody";
+import { MessageBody as MessageBodyView } from "../letter-body";
 import { useWithheldSentence } from "./message-chrome";
 import type { WithheldCopyKey } from "./format";
 import { MessageFiles } from "./MessageFiles";
 import { MessageEvents } from "./MessageEvents";
-import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
-import { COPY as BODY_COPY } from "./BodyText";
+import { BlockNoticeGloss, type BlockNotice } from "../letter-body";
+import { BODY_TEXT_COPY as BODY_COPY } from "../letter-body";
 
 /** The long-body press, in the reader's words — module scope, so the memo never sees a new one. */
 const moreLabel = (percent: number): string => BODY_COPY.more(String(percent));

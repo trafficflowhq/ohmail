@@ -9,7 +9,7 @@ import {
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
 import type { ScreenerState } from "../app/shell/screener-state.js";
-import { autoUnsubscribeDoor } from "../app/shell/sender-screening.js";
+import { autoUnsubscribeDoor } from "@ohmail/app-logic/press/sender-screening";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { queueDoor } from "./fixtures/queue-door.js";

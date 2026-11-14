@@ -23,6 +23,8 @@ import { shellFrameOf } from "./source-anchor";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const APP = join(HERE, "..", "app");
+/** The behaviour moved out of the shell: read with it, keyed `app-logic/…`. */
+const LOGIC = join(HERE, "..", "..", "..", "packages", "app-logic", "src");
 const NEEDLE = "planScreeningChange(";
 
 /**
@@ -48,7 +50,7 @@ const PINNED: ReadonlyArray<readonly [string, number, string]> = [
    + "`planMoveToPlace` (which BUILDS the press the window then holds), `planBulkScreening` "
    + "(`makeRule: false`, so its plans have no rule half to hold at all) and `screeningForecast` "
    + "(the step's preview of the press, which dispatches nothing)"],
-  ["shell/routing-undo.ts", 1,
+  ["app-logic/press/routing-undo.ts", 1,
    "the window's own re-plan at the commit — the plan this whole census is about, read from the "
    + "mirror at the moment it is finally sent"],
 ];
@@ -73,13 +75,13 @@ function tsFiles(dir: string): string[] {
 
 function sites(): Map<string, number> {
   const counted = new Map<string, number>();
-  for (const file of tsFiles(APP)) {
+  for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"]] as const) for (const file of tsFiles(root)) {
     const blanked = scan.withoutCommentsAndLiterals(readFileSync(file, "utf8"));
     /* The DEFINITION is not a call site: it is the only occurrence followed by a parameter list
        on the next line, and it lives in the planner's own file. */
     const hits = blanked.split(NEEDLE).length - 1
       - (file.endsWith("sender-screening.ts") ? 1 : 0);
-    if (hits > 0) counted.set(relative(APP, file).split("\\").join("/"), hits);
+    if (hits > 0) counted.set(prefix + relative(root, file).split("\\").join("/"), hits);
   }
   return counted;
 }

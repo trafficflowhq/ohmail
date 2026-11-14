@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import messages from "../messages/en.json";
-import { LOADING_GRACE_MS } from "../app/shell/loading-grace";
+import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { OwnerOutcome } from "../app/shell/engine";
 import {
   ISO,

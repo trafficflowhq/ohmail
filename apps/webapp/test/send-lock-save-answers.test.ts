@@ -21,7 +21,7 @@ import {
   durabilityLost,
   resetDurabilityForTest,
   type DurabilityLostDetail,
-} from "../app/shell/durable";
+} from "@ohmail/app-logic/storage/durable";
 import {
   SEND_LOCK_FORMAT,
   claimSendLock,

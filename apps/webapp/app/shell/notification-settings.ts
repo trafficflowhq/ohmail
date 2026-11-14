@@ -14,8 +14,8 @@ import {
   type NotificationChannels,
 } from "@ohmail/client-engine";
 import { apiConfigured, push as pushApi } from "../api-client";
-import { durableRemove, durableSet } from "./durable";
-import { readOwner } from "./owner-cookie";
+import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 /** One key, one JSON object — so a partial write cannot leave two switches disagreeing. */
 export const NOTIFICATION_CHANNELS_KEY = "ohmail.notifications.channels";

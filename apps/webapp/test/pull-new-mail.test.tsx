@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ═══ THE PRESS, END TO END: click → wire → busy until the SCAN → an outcome that is said ════
@@ -195,7 +195,7 @@ afterEach(async () => {
 
 /** The live construction, exactly as `engine-config.ts` shapes it: gate-wrapped HttpAdapter. */
 async function mount(): Promise<{ container: HTMLElement; engine: OhmailEngine }> {
-  const { createSyncGate } = await import("../app/shell/sync-scheduler.js");
+  const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
   const engine = new OhmailEngine({
     adapter: createSyncGate(null).guard(new HttpAdapter({ baseUrl: "/api" })),
   });

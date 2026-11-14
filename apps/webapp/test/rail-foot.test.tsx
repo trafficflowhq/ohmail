@@ -6,7 +6,7 @@ import { RailNav } from "@ohmail/ui";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import { DesktopCta, ShellRail } from "../app/shell/AppShell";
-import { announceUpdate, announceVersion, resetUpdateStoreForTests } from "../app/shell/app-update";
+import { announceUpdate, announceVersion, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 
 /**
  * ═══ THE RAIL'S FOOT HOLDS NO EMPTY BOX (owner report 2026-08-29, bug 3) ════════════════════

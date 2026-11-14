@@ -2,7 +2,7 @@
 import { describe, expect, it } from "vitest";
 import * as React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MessageBody, sanitizerAvailable } from "../app/components/MessageBody.js";
+import { MessageBody, sanitizerAvailable } from "../app/letter-body/MessageBody.js";
 import { OWNER_BILLING_HTML, OWNER_BILLING_TEXT, OWNER_TRACKING_PIXEL } from "./fixtures/owner-billing-email";
 
 /**

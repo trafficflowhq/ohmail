@@ -9,7 +9,7 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
-import { planScreeningChange, ruleMatchOf, senderScreening, type ScreeningScope } from "../app/shell/sender-screening";
+import { planScreeningChange, ruleMatchOf, senderScreening, type ScreeningScope } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * WHERE A SENDER'S MAIL GOES IS THEIR RULE, NOT WHERE THEIR LETTERS SIT. Tester round 24: two of

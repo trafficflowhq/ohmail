@@ -421,7 +421,7 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
      that cannot read the second as a miss would pass every press above for nothing. */
   it("the planted control: z reads an offer raised beside the door as dead, and one at the door as live", async () => {
     const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
-    const { createUndoDoor } = await import("../app/shell/undo-door.js");
+    const { createUndoDoor } = await import("@ohmail/app-logic/press/undo-door");
     const { useToast } = await import("@ohmail/ui");
     let commits = 0;
     function Surface({ atDoor }: { atDoor: boolean }): React.ReactElement {

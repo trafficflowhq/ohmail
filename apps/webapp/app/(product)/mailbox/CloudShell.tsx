@@ -4,19 +4,19 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { Spinner } from "@ohmail/ui";
 import { AppShell } from "../../shell/AppShell";
-import type { MailboxFacts } from "../../shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { toMailboxFacts } from "./mailbox-facts";
-import { buildToken } from "../../shell/app-update";
-import { startBuildWatch } from "../../shell/build-watch";
-import { reviveStandingDown } from "../../shell/sync-scheduler";
+import { buildToken } from "@ohmail/app-logic/doors/app-update";
+import { startBuildWatch } from "@ohmail/app-logic/doors/build-watch";
+import { reviveStandingDown } from "@ohmail/app-logic/session/sync-scheduler";
 import { useResolvedDemoModeFrom } from "../../shell/engine";
 import { sendSurfaceFor } from "./send-surface";
 import {
   ApiError, api, apiOwnerBinding, bindApiOwner, mailboxes as mailboxApi, onAccessRefused, pendApiOwner,
   type AccessRefusedFacts,
 } from "../../api-client";
-import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "../../shell/live-body";
-import { readOwner } from "../../shell/owner-cookie";
+import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
 import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilings";
 import { resolveOwnerOutcome } from "../session-outcome";

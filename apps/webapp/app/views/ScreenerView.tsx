@@ -53,18 +53,18 @@ import { PILE_KEY, usePileNames, useDecisionBarCopy } from "../shell/decision-co
 import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
 import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
-import { quarantineShelf, shelfRowMatches } from "../shell/quarantine-shelf";
+import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
 import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
-import { useLoadingGrace } from "../shell/loading-grace";
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 import { useKeyBindings, type KeyBinding } from "../shell/keymap";
 import { useZoneNav } from "../shell/zone-nav";
 import { ShortcutHint } from "../shell/ShortcutHint";
 import { readColumnHidden, watchNarrow } from "../shell/narrow";
-import { afterPaint, whenQuiet } from "../shell/visit";
+import { afterPaint, whenQuiet } from "@ohmail/app-logic/lists/visit";
 import { useRowMenuFit } from "../shell/row-menu-fit";
-import { useListWindow } from "../shell/list-window";
-import { HELD_ANCHOR_PAD_PX, HELD_OPENING, heldAnchorTop, heldAnchored, useHeldWindow } from "../shell/held-window";
-import { linkHref, useRenderedLinks } from "../shell/rendered-links";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
+import { HELD_ANCHOR_PAD_PX, HELD_OPENING, heldAnchorTop, heldAnchored, useHeldWindow } from "@ohmail/app-logic/lists/held-window";
+import { linkHref, useRenderedLinks } from "../letter-body/rendered-links";
 /* The reader surfaces' own bound on "still coming" — one mechanism, not a second one shaped like
    it. See {@link useBodyStalled} for why the deadline is derived from the engine's rather than
    picked, and `HeldMail` below for why this pile needs it too. */
@@ -78,7 +78,7 @@ import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../sh
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
 import {
   readerHolder, sharedNotOrganizedWhy, type NotOrganizingYet, type ReaderHolding, type ScreenerRole,
-} from "../shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
 import type { ImpersonationFiledNotice } from "../shell/impersonation-filed";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
@@ -87,9 +87,9 @@ import {
 } from "../shell/no-suggestion";
 import type { RemoteImagesChrome } from "../shell/remote-images";
 import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
-import { MessageBody } from "../components/MessageBody";
-import { BlockNoticeGloss, type BlockNotice } from "../components/BlockNotice";
-import { useManagedService } from "../shell/managed-service";
+import { MessageBody } from "../letter-body";
+import { BlockNoticeGloss, type BlockNotice } from "../letter-body";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { degradeSentence, withDegrade, type ScreeningDegrade } from "../shell/screening-degrade";
 
 

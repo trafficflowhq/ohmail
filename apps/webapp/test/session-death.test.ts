@@ -102,7 +102,7 @@ async function mountShell(opts: { keepTruth?: boolean } = {}): Promise<HTMLEleme
   // production arms it: importing the session client re-registers nothing (module init already
   // ran), so the probe is re-registered here the same way `session-refresh.ts`'s module scope
   // does.
-  const truth = await import("../app/shell/session-truth.js");
+  const truth = await import("@ohmail/app-logic/session/session-truth");
   if (!opts.keepTruth) truth.resetSessionTruthForTests();
   const { resumeSession } = await import("../app/session-refresh.js");
   truth.registerSessionProbe(() => {
@@ -186,7 +186,7 @@ describe("the terminal 401 becomes a re-auth prompt", () => {
      * latched here BEFORE the mount, exactly as that flow leaves it; the shell's own owner
      * confirmation must withdraw it.
      */
-    const truth = await import("../app/shell/session-truth.js");
+    const truth = await import("@ohmail/app-logic/session/session-truth");
     const container = await mountShell();
     // Latch as the pre-sign-in /login visit does, then let the shell's confirmation land.
     await act(async () => {

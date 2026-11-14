@@ -8,9 +8,9 @@ import deMessages from "../messages/de.json";
 import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
 import { FocusFollows } from "../app/shell/focus-follows";
-import { resetModalGateForTests } from "../app/shell/modal-gate";
-import type { FirstRunHost, FirstRunOrganizeOutcome } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import { resetModalGateForTests } from "@ohmail/app-logic/session/modal-gate";
+import type { FirstRunHost, FirstRunOrganizeOutcome } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ↵ ON EVERY SETUP STEP IS THE STEP'S OWN VERB. On 0.25.22 the card took focus

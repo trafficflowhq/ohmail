@@ -23,7 +23,7 @@ import { ThemeProvider } from "@ohmail/ui";
 import { MemoryMirrorStore, OhmailEngine, type EngineAdapter, type SyncResponse } from "@ohmail/client-engine";
 import {
   createSyncGate, startSyncScheduler, type SyncStatus,
-} from "../app/shell/sync-scheduler.js";
+} from "@ohmail/app-logic/session/sync-scheduler";
 import messages from "../messages/en.json";
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -128,7 +128,7 @@ describe("the scheduler publishes the state instead of standing down in silence"
 
 describe("the strip says it, and offers the page load that undoes it", () => {
   it("the ladder gives the state its own key, under `stopped` and `failing`", async () => {
-    const { deriveMailState } = await import("../app/shell/mail-state.js");
+    const { deriveMailState } = await import("@ohmail/app-logic/mail-state/mail-state");
     const base = {
       failureStreak: 3,
       mailboxes: null, mirrored: 0, pulled: 0,

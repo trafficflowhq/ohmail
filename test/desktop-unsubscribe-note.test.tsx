@@ -11,7 +11,7 @@ import en from "../apps/webapp/messages/en.json";
 import de from "../apps/webapp/messages/de.json";
 import { AutoUnsubscribeRow } from "../apps/webapp/app/shell/AutoUnsubscribeRow";
 import { SenderMenu } from "../apps/webapp/app/shell/SenderMenu";
-import { senderScreening } from "../apps/webapp/app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { ROOT } from "./support/public-root.mjs";
 
 /**

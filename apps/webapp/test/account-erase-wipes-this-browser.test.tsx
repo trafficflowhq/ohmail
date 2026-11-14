@@ -166,9 +166,9 @@ async function seedThisBrowser(): Promise<{ close: () => void; keys: string[]; p
 /** One account's preferences and this tab's notes about it, through the product's own builders. */
 async function plantPreferences(owner: string): Promise<string[]> {
   const before = new Set([...Object.keys(localStorage), ...Object.keys(sessionStorage)]);
-  const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("../app/shell/persisted-ui.js");
+  const { foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
   const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
-  const { writeAfterVerb } = await import("../app/shell/after-verb.js");
+  const { writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
   const { imageQualityKeyFor } = await import("../app/components/image-quality.js");
   const { dismissKey } = await import("../app/(product)/mailbox/LifecycleBanner.js");
   const { resumeOnceKey } = await import("../app/(product)/resume/ResumeScreen.js");
@@ -279,7 +279,7 @@ describe("Delete your account wipes this browser's copy of that account", () => 
     await seedThisBrowser();
     const others = [...await seedAnotherAccount(), ...await plantPreferences(OTHER)];
     // Ids that extend the erased one's, and keys that name no account: none of them is the erasure's.
-    const { searchSortKey } = await import("../app/shell/persisted-ui.js");
+    const { searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
     const kin = [searchSortKey(`${OWNER}0`), searchSortKey(`${OWNER}.x`)].sort();
     const device = ["ohmail.theme", "ohmail.ui.columns", searchSortKey(null)];
     for (const k of [...kin, ...device]) localStorage.setItem(k, "kept");

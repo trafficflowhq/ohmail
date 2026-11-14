@@ -9,7 +9,7 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { screenerIntentsKey } from "../app/shell/screener-intents";
-import { createIntentWindows, intentWindowsChannel } from "../app/shell/intent-windows";
+import { createIntentWindows, intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
 import { settleFirstPaint } from "./_first-paint.js";
 
 /**
@@ -346,7 +346,7 @@ describe("the coordinator itself", () => {
        precisely so one account's pending decision is never offered to the next. The channel takes
        the same partition, or a row id would be withheld across a sign-out. */
     const { setStorageOwner, resetStorageOwnerForTest } =
-      await import("../app/shell/storage-owner.js");
+      await import("@ohmail/app-logic/storage/storage-owner");
     try {
       setStorageOwner("acct-a");
       const a = createIntentWindows({ askMs: 1 });

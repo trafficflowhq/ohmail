@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { deriveMailState, readerStandDown } from "../app/shell/mail-state";
+import { deriveMailState, readerStandDown } from "@ohmail/app-logic/mail-state/mail-state";
 /* The SHIPPED catalogues, both of them — the remedy cases at the foot of this file are a
    claim about what a stranded person reads, so they read what ships. */
 import en from "../messages/en.json";

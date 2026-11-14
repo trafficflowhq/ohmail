@@ -20,7 +20,7 @@ import {
   type MessageStateDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { movesAtLanding, planScreeningChange, senderScreening } from "../app/shell/sender-screening";
+import { movesAtLanding, planScreeningChange, senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import {
   RETRO_DESTINATION,
   RETRO_FIXTURE,

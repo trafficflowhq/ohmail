@@ -8,7 +8,7 @@
  * both import it, and `api-client.ts` re-exports it so its public surface is unchanged.
  */
 
-import { cookieFromJar } from "./shell/cookie-jar";
+import { cookieFromJar } from "@ohmail/app-logic/storage/cookie-jar";
 
 export const CSRF_COOKIE = "tf_csrf";
 

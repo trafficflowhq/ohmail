@@ -9,7 +9,7 @@ import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
 import { replyDraftKey } from "../app/shell/mail-send";
-import { DEMO_STORAGE_OWNER } from "../app/shell/storage-owner";
+import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
 
 /** The reply buffer for `id`, in the demo's own partition (this shell mounts in demo mode). */
 const replyBuffer = (id: string): string | null => window.localStorage.getItem(replyDraftKey(id, DEMO_STORAGE_OWNER));

@@ -19,7 +19,7 @@ import {
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { screenerIntentsKey } from "../app/shell/screener-intents";
-import { INTENT_ASK_MS } from "../app/shell/intent-windows";
+import { INTENT_ASK_MS } from "@ohmail/app-logic/press/intent-windows";
 
 /**
  * A card decision replayed after a restart moves only the INBOX letters that are still the card's:

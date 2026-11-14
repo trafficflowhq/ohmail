@@ -1,0 +1,82 @@
+import { asAuthHint, type AuthHint } from "@ohmail/client-engine";
+
+/**
+ * IS THIS HOST THIS COMPUTER? The client's copy of `loopbackHarnessReason` (core `imap-types.ts`):
+ * 127.0.0.0/8, ::1 (`[::1]` too, which the engine dials at ::1) and the exact name `localhost`,
+ * never a `*.localhost` name. For the long-wait door's pending line and its held Test only; every
+ * sentence after the answer is the engine's own reading (`details.localServer`, `errorLocalServer`).
+ * Held to the original by one shared table.
+ */
+export function isLocalServerHost(host: string): boolean {
+  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  if (h === "localhost") return true;
+  const v6 = h.startsWith("[") && h.endsWith("]") ? h.slice(1, -1) : h;
+  if (v6 === "::1" || v6 === "0:0:0:0:0:0:0:1") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (!m) return false;
+  const parts = m.slice(1).map(Number);
+  return parts.every((n) => n >= 0 && n <= 255) && parts[0] === 127;
+}
+
+/**
+ * THE ENGINE'S OWN READING of a probe refusal: the server that refused is on this computer
+ * (`details.localServer`, stamped by the service from the host it dialled). Structural, so the
+ * desktop's wire error and the hosted `ApiError` read alike.
+ */
+export function refusedByLocalServer(err: unknown): boolean {
+  const e = err as { code?: unknown; details?: unknown } | null | undefined;
+  if (typeof e !== "object" || e === null || e.code !== "mailbox_probe_failed") return false;
+  return (e.details as { localServer?: unknown } | null | undefined)?.localServer === true;
+}
+
+/** Which leg refused: `details.transport`, the incoming one when unsaid. */
+export function refusalTransport(err: unknown): "imap" | "smtp" {
+  const d = (err as { details?: unknown } | null | undefined)?.details;
+  return (d as { transport?: unknown } | null | undefined)?.transport === "smtp" ? "smtp" : "imap";
+}
+
+/**
+ * WHY GOOGLE REFUSED THE SIGN-IN (`details.authHint`, stamped by the service on an incoming `auth`
+ * refusal from one of its hosts), or `null`. Structural like the two above; a word outside the
+ * closed set is no hint, so an older or newer server degrades to the generic sentence.
+ */
+export function refusalAuthHint(err: unknown): AuthHint | null {
+  const e = err as { code?: unknown; details?: unknown } | null | undefined;
+  if (typeof e !== "object" || e === null || e.code !== "mailbox_probe_failed") return null;
+  return asAuthHint((e.details as { authHint?: unknown } | null | undefined)?.authHint);
+}
+
+/**
+ * The presets whose refused password has a sentence of its own, `mailboxes.probe_auth_<id>`: what
+ * that provider takes instead of the account password. Gmail's comes from the server's `authHint`.
+ * Microsoft's is its app-password path; a screen that offers the Microsoft sign-in says that instead.
+ */
+export const PRESET_AUTH_REFUSALS: ReadonlySet<string> = new Set([
+  "microsoft", "icloud", "yahoo", "fastmail", "gmx", "infomaniak", "webde", "tonline", "bluewin",
+]);
+
+/** The reasons whose sentence names the host and port to check. */
+const NAMES_HOST: ReadonlySet<string> = new Set(["connect", "timeout", "tls"]);
+
+/**
+ * The `mailboxes.probe_*` key: a local server's own sentence for `auth`, and for `timeout` on the
+ * incoming leg only — the two-minute wait is that leg's; the submission leg keeps its 20 s. Google's
+ * refused sign-in says its own (`probe_auth_gmail_<hint>`), and so does a refused password on the
+ * chosen preset (`presetId`, {@link PRESET_AUTH_REFUSALS}), the incoming leg only. A password the
+ * outgoing server refused names that server, after the incoming one has signed in; a local server's
+ * keeps its own sentence on either leg. The sentences that name a host and port name the outgoing
+ * server's on its leg (`probe_<reason>_smtp`, the server's own English).
+ */
+export function probeCopyKey(
+  reason: string, localServer: boolean, transport: "imap" | "smtp" = "imap", authHint?: AuthHint | null,
+  presetId?: string | null,
+): string {
+  if (reason === "auth" && transport === "smtp" && !localServer) return "probe_auth_smtp";
+  if (reason === "auth" && transport === "imap" && !localServer) {
+    if (authHint) return `probe_auth_gmail_${authHint}`;
+    if (presetId && PRESET_AUTH_REFUSALS.has(presetId)) return `probe_auth_${presetId}`;
+  }
+  const own = reason === "auth" || (reason === "timeout" && transport === "imap");
+  if (localServer && own) return `probe_${reason}_local`;
+  return transport === "smtp" && NAMES_HOST.has(reason) ? `probe_${reason}_smtp` : `probe_${reason}`;
+}

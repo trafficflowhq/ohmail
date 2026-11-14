@@ -14,9 +14,9 @@ import { lastCheckedAt, type FiledPile, type FiledSince } from "@ohmail/client-e
 import { useMailState } from "./MailStateProvider";
 import { useStripTitle } from "./SyncBar";
 import { agoStamp } from "./format";
-import { documentHidden } from "./document-hidden";
+import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
 import { go, goScreener } from "./routing";
-import type { MailStateKey } from "./mail-state";
+import type { MailStateKey } from "@ohmail/app-logic/mail-state/mail-state";
 
 /** States the line says nothing in: the strip's import and first-sync sentences carry them. */
 const SILENT: ReadonlySet<MailStateKey> = new Set(["importing", "awaiting", "noMailbox"]);

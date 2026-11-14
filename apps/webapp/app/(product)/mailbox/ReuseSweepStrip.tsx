@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { apiConfigured, auth, onReuseFeed, reuseFeedFor } from "../../api-client";
-import { readOwner } from "../../shell/owner-cookie";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { ReuseSweepNotice } from "../../shell/ReuseSweepNotice";
 
 const acknowledge = (ids: string[]): Promise<void> => auth.acknowledgeReuseSweeps(ids);

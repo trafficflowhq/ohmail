@@ -18,7 +18,7 @@ import {
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import { screenerIntentsKey, type ScreenerIntent } from "../app/shell/screener-intents";
-import { INTENT_ASK_MS } from "../app/shell/intent-windows";
+import { INTENT_ASK_MS } from "@ohmail/app-logic/press/intent-windows";
 import { COMMIT_MS } from "../app/shell/screener-state";
 import { createCloudSidecar } from "../../sidecar/src/cloud-engine.js";
 import { freshDataDir } from "../../sidecar/test/_datadir.js";
@@ -766,7 +766,7 @@ describe("the first session after a sign-in on a server door", () => {
   it("a decision pressed just before the quit is sent once at the relaunch", async () => {
     vi.useRealTimers();
     const dataDir = await freshDataDir("ohmail-first-session-journal-");
-    const { setStorageOwner } = await import("../app/shell/storage-owner.js");
+    const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
     try {
       const owners = [await launch(dataDir), await launch(dataDir)];
       expect(owners[0], "the first session served no mailbox").not.toBe("");

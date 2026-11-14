@@ -43,8 +43,8 @@ import { RichEditor } from "./RichEditorLazy";
 import { isRichEmpty, type RichValue } from "./rich-text";
 import { standingNote, TravelledChangeNote, type TravelledChangeWire } from "./travelled-change";
 import { holdLeave } from "./routing";
-import { isRemovedMailbox } from "./mail-state";
-import { organizerRefusalOf, organizerRefusalSentence } from "./organizer-refusal";
+import { isRemovedMailbox } from "@ohmail/app-logic/mail-state/mail-state";
+import { organizerRefusalOf, organizerRefusalSentence } from "@ohmail/app-logic/press/organizer-refusal";
 
 export function SignaturesRow({
   mailboxes,

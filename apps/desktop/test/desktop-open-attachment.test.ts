@@ -437,6 +437,7 @@ describe("the reading pane offers the in-app viewer on the types the web preview
       }
     };
     walk(shared);
+    walk(resolve(shared, "../../../packages/app-logic/src"));
     expect(named, "a shared source still hands a type the web previews to the system viewer").toEqual([]);
   });
 });

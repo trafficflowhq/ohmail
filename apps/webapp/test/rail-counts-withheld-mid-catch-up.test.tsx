@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { LOADING_GRACE_MS } from "../app/shell/loading-grace";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { ISO, installShellEnv, mailbox, mountShell, page, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
 
 /**

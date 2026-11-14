@@ -15,12 +15,12 @@ import { localStorageDoor } from "@ohmail/client-engine/durable";
 
 import { enableDesktopAttachments } from "../../webapp/app/shell/open-attachment";
 import { enableDesktopDroppedFiles, installFileDropGuard } from "../../webapp/app/shell/dropped-files";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
-import { setRenderedLinksBatchSink } from "../../webapp/app/shell/rendered-links";
-import { stampColumns } from "../../webapp/app/shell/column-store";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
+import { setRenderedLinksBatchSink } from "../../webapp/app/letter-body/rendered-links";
+import { stampColumns } from "@ohmail/app-logic/lists/column-store";
 import { installTextSizeApplier } from "../../webapp/app/shell/text-size";
 import { applyDesktopTextSize } from "./text-zoom.js";
-import { setUiVitalsInterval, setUiVitalsSink } from "../../webapp/app/shell/ui-vitals";
+import { setUiVitalsInterval, setUiVitalsSink } from "@ohmail/app-logic/session/ui-vitals";
 import { DesktopLocale } from "./DesktopLocale.js";
 import { RendererReloaded, takeReloadedMark } from "./renderer-reloaded.js";
 import { UpdateClosing } from "./update-closing.js";

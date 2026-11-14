@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EngineMessage, EntityReader } from "@ohmail/client-engine";
-import { conversationOnScreen } from "../app/shell/conversation-on-screen";
+import { conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 
 /**
  * A message the presentation does not hold — a History row, one inside its undo window — reads its

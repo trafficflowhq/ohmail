@@ -6,7 +6,7 @@ import { createTranslator, NextIntlClientProvider } from "next-intl";
 import type { EngineMutation } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
-import { dispatchMarkAllRead, MARK_SEEN_CHUNK } from "../app/shell/read-all";
+import { dispatchMarkAllRead, MARK_SEEN_CHUNK } from "@ohmail/app-logic/reading/read-all";
 import { MarkAllRead } from "../app/components/MarkAllRead";
 
 /**

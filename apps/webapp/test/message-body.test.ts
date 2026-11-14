@@ -55,8 +55,8 @@ async function unmount(): Promise<void> {
 }
 afterEach(async () => { await unmount(); });
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 /** The body markup the sanitizer produced, plus what it refused. */
 async function clean(html: string, opts: Parameters<Mod["sanitizeMailHtml"]>[1] = {}) {
@@ -1285,7 +1285,7 @@ describe("links look like links and say where they go", () => {
     // Built as elements and serialised, never joined from strings. Mutations: the address written
     // into markup as a string → the second address's script; the policy or referrer meta dropped →
     // their rows; the decoy host or a second link added → the link count.
-    const { askPage } = await import("../app/components/link-ask.js");
+    const { askPage } = await import("../app/letter-body/link-ask.js");
     const copy = {
       lang: "en", title: "Open this link?", elsewhere: "The text of this link names a different site.",
       goes: (host: string) => `It goes to ${host}.`, open: (host: string) => `Open ${host}`, stay: "To stay, close this tab.",
@@ -1313,7 +1313,7 @@ describe("links look like links and say where they go", () => {
     // Attributes only. Mutations: a page per link → three pages for two addresses; no cap → every
     // link past it armed; a link that has an address armed → the honest link changes; the address
     // not checked again → the script row armed; the disposer revoking nothing → none taken back.
-    const { armAsks, ASK_PAGES_MAX } = await import("../app/components/link-ask.js");
+    const { armAsks, ASK_PAGES_MAX } = await import("../app/letter-body/link-ask.js");
     const made: string[] = [];
     const revoked: string[] = [];
     const urlStatics = URL as unknown as Record<string, unknown>;

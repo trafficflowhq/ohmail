@@ -33,7 +33,7 @@
  * subject line IS a claim about that subject — and random ones would differ between two paints.
  */
 
-import { useLoadingGrace } from "./loading-grace";
+import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
 
 /**
  * How long a wait may go unshaped. Three hundred milliseconds.

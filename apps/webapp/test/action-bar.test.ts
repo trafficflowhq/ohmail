@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import messages from "../messages/en.json";
 import { setActiveFormatZone } from "../app/shell/locale";
-import { COMPACT_LABELS } from "../app/shell/bar-density";
+import { COMPACT_LABELS } from "@ohmail/app-logic/lists/bar-density";
 import { act, caseLive, endCase, tracked } from "./_case-fence";
 
 /**
@@ -951,7 +951,7 @@ describe("More holds the verbs the row dropped", () => {
        A count of 3 and 2 here was the same atomicity from the menu's side. */
     await mountBar(msg());
     await openMore();
-    const { BAR_VERB_ORDER } = await import("../app/shell/bar-density.js");
+    const { BAR_VERB_ORDER } = await import("@ohmail/app-logic/lists/bar-density");
     for (const { verb } of BAR_VERB_ORDER) {
       if (verb === "rall") continue;                  // absent on a 1:1 bar, asserted elsewhere
       expect(
@@ -1749,7 +1749,7 @@ describe("the floating bar and the shared measure, as declared", () => {
 
   it("ONE MECHANISM: exactly one rule pair per verb, and nothing else touches either half", async () => {
     const src = abar();
-    const { BAR_VERB_ORDER, BAR_SEGMENTS } = await import("../app/shell/bar-density.js");
+    const { BAR_VERB_ORDER, BAR_SEGMENTS } = await import("@ohmail/app-logic/lists/bar-density");
     const verbs = BAR_VERB_ORDER.map((v) => v.verb);
     // Not vacuous: the module really does name the seven verbs this file asserts over. Forward is
     // FLOOR (DESIGN-026 §2.1), so no rule may fold it: no floor entry, no admission pair.
@@ -1890,7 +1890,7 @@ describe("the floating bar and the shared measure, as declared", () => {
    * intermittent rather than as a rule.
    */
   it("EVERY VERB IN EXACTLY ONE PLACE — every admission set, both bar shapes", async () => {
-    const { BAR_VERB_ORDER } = await import("../app/shell/bar-density.js");
+    const { BAR_VERB_ORDER } = await import("@ohmail/app-logic/lists/bar-density");
     const ALL = BAR_VERB_ORDER.map((v) => v.verb);
     const style = document.createElement("style");
     style.textContent = abar();
@@ -1988,7 +1988,7 @@ describe("the floating bar and the shared measure, as declared", () => {
    * measurement thought a verb stood.
    */
   it("the measurement's answer only ever names verbs the row actually has", async () => {
-    const { BAR_VERB_ORDER, admitVerbs } = await import("../app/shell/bar-density.js");
+    const { BAR_VERB_ORDER, admitVerbs } = await import("@ohmail/app-logic/lists/bar-density");
     for (const shape of ["solo", "rall"] as const) {
       await mountBar(shape === "rall" ? msg(AUDIENCE) : msg());
       const present = BAR_VERB_ORDER.filter(

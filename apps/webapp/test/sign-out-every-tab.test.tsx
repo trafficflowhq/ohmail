@@ -9,8 +9,8 @@
  */
 import * as shell from "./fixtures/cloud-confirm-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { resetSessionTruthForTests } from "../app/shell/session-truth";
-import { readOwnerMarker } from "../app/shell/owner-cookie";
+import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
+import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import {
   listenSignedOut, postSignedOut, setSignedOutLeaveForTest, setThisTabForTest, signedOutChannel,
 } from "../app/signed-out-signal";
@@ -232,7 +232,7 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
 
   it("a tab that leaves on another tab's post takes its own per-tab notes with it", async () => {
     await openTab("tab-1");
-    const { HANDOFF_KEY } = await import("../app/shell/wall-lift");
+    const { HANDOFF_KEY } = await import("@ohmail/app-logic/doors/wall-lift");
     const { SESSION_WATCH_PREFIX, SPLASH_PRESENTATION_KEY } = await import("../app/session-refresh");
     const notes = ["ohmail.deviceCeremony", HANDOFF_KEY, `${SESSION_WATCH_PREFIX}${ACCOUNT}`, SPLASH_PRESENTATION_KEY];
     for (const key of notes) sessionStorage.setItem(key, "{}");

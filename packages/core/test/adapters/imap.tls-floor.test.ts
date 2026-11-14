@@ -7,7 +7,7 @@ import { ImapAdapter, imapFlowOptions, smtpTransportOptions, verifySmtpLogin } f
 import {
   loopbackHarnessReason, imapTlsFloor, smtpTlsFloor, TLS_FLOOR, type ImapConfig, type TlsPin,
 } from "../../src/adapters/imap-types.js";
-import { isLocalServerHost } from "../../../../apps/webapp/app/shell/local-server-host.js";
+import { isLocalServerHost } from "@ohmail/app-logic/doors/local-server-host";
 /* The desktop's own certificate minter, so the fixture is a self-signed leaf as a gateway serves one. */
 import { buildSelfSignedCert } from "../../../../apps/sidecar/src/host-lan-tls.js";
 import { LOOPBACK_ADMITTED, LOOPBACK_LOOKALIKES } from "./_loopback-table.js";

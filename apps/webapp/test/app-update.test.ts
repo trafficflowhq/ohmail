@@ -24,7 +24,7 @@ import {
   writeAskMemory,
   type AskMemory,
   type RestartHold,
-} from "../app/shell/app-update";
+} from "@ohmail/app-logic/doors/app-update";
 
 /**
  * ═══ HOW OFTEN THE APP MAY SAY "THERE IS A NEWER OHMAIL" ════════════════════════════════════

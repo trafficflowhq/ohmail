@@ -112,13 +112,13 @@ import {
   type SendPhase,
   type SendState,
 } from "./mail-send";
-import type { MailboxFacts } from "./mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { readColumnHidden } from "./narrow";
 import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "./rich-text";
 import { go, type Route } from "./routing";
 import { sendLine, sendLineValues } from "./SendStatus";
-import { documentHidden } from "./document-hidden";
-import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "./app-update";
+import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
+import { RESTART_FLUSH_MS, holdFilesForRestart, holdForRestart } from "@ohmail/app-logic/doors/app-update";
 import { attachSendLockDraft, discardDecision, holdOf, recordForEndedSend, releaseSendLockForRow, sendRecordsNaming } from "./send-lock";
 import { setComposeDoor } from "./compose-door";
 import { releaseSendAndDone } from "./send-release";
@@ -130,8 +130,8 @@ import {
   withSignature,
   type SignatureState,
 } from "./signature";
-import { useStableCallback } from "./stable-callback";
-import { storageOwner } from "./storage-owner";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { noteReplyPress } from "./sent-reveal";
 import type { OhboxReplyDone } from "../views/OhboxView";
 import type { MailboxEntity } from "../views/SettingsView";

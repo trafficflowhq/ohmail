@@ -12,7 +12,7 @@ import {
   clampList,
   clampRail,
   splitUserValue,
-} from "../app/shell/column-store";
+} from "@ohmail/app-logic/lists/column-store";
 
 /**
  * THE TWO COLUMN SEPARATORS, DRIVEN — one case per interaction the spec names.

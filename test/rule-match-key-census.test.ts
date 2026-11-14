@@ -159,7 +159,7 @@ const READERS = [
   "packages/client-engine/src/press-forecast.ts", "packages/client-engine/src/rule-twins.ts",
   "packages/client-engine/src/address-rank.ts", "packages/client-engine/src/selectors.ts",
   "packages/services/src/consent-seed.ts", "apps/worker/src/rule-retro.ts",
-  "apps/worker/src/screener-correspondent-retro.ts", "apps/webapp/app/shell/sender-audit.ts",
+  "apps/worker/src/screener-correspondent-retro.ts", "packages/app-logic/src/press/sender-audit.ts",
   "apps/mobile/src/state/live.ts",
 ];
 

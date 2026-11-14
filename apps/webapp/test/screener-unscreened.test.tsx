@@ -331,7 +331,7 @@ describe("the note on News and Receipts", () => {
   });
 
   async function mountNote(pile: "news" | "receipts", engine: OhmailEngine): Promise<string[]> {
-    const { usePileNote } = await import("../app/shell/pile-note.js");
+    const { usePileNote } = await import("@ohmail/app-logic/lists/pile-note");
     const { PileNote } = await import("../app/shell/PileNote.js");
     const said: string[] = [];
     function Probe(): React.ReactElement {

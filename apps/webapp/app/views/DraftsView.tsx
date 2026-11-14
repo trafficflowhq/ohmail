@@ -23,7 +23,7 @@ import { HELD_SEND_RECHECK_MS, listSurface, saysEmpty, type EngineDraft } from "
 import { Button, InfoNote, ListPane, ListRows } from "@ohmail/ui";
 import { displayTime, scheduleLabel } from "../shell/format";
 import { useZoneNav } from "../shell/zone-nav";
-import { useListWindow } from "../shell/list-window";
+import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import { ListEmpty } from "../shell/list-view";
 

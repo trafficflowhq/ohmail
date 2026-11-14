@@ -5,8 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import type { MailState, MailboxFacts } from "../app/shell/mail-state";
-import { deriveMailState, growthStep, seedGrowth, type MailStateInputs } from "../app/shell/mail-state";
+import type { MailState, MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { deriveMailState, growthStep, seedGrowth, type MailStateInputs } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * ═══ THE STRIP SAYS WHERE A BUDGETED FIRST SYNC IS CONTINUING (mail 0115) ═══════════════════

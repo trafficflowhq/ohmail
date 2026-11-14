@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot } from "react-dom/client";
-import { useStableCallback } from "../app/shell/stable-callback";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { shellFrameOf } from "./source-anchor.js";
 
 /**

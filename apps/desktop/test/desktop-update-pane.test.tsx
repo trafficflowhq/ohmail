@@ -10,7 +10,7 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
-import { holdFilesForRestart, holdForRestart, resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+import { holdFilesForRestart, holdForRestart, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import { DesktopUpdate } from "../src/DesktopUpdate.js";
 import {
   AUTO_INSTALLS_AT,

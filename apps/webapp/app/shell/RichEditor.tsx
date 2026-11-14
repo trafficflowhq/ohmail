@@ -13,7 +13,7 @@ import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import type { EditorView } from "@tiptap/pm/view";
 import { dropCarriesFiles } from "./dropped-files";
 import { LinkPopover } from "./LinkPopover";
-import { linkHref, useRenderedLinks } from "./rendered-links";
+import { linkHref, useRenderedLinks } from "../letter-body/rendered-links";
 import {
   EMPTY_RICH, escapeAsParagraphs, isRichEmpty, richToHtml, type RichValue,
 } from "./rich-text";

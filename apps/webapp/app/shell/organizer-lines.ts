@@ -8,9 +8,9 @@
 import { useMemo } from "react";
 
 import type { GapLettersTransport } from "./GapLettersNotice";
-import { gapOffers, organizerNotices } from "./mail-state";
+import { gapOffers, organizerNotices } from "@ohmail/app-logic/mail-state/mail-state";
 import type { OrganizerNoticeTransport } from "./OrganizerNotice";
-import { useStableCallback } from "./stable-callback";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 
 export function useOrganizerLines({ facts, demo, organizerNoticeTransport, gapLettersTransport, refreshFacts }: {
   facts: Parameters<typeof organizerNotices>[0];

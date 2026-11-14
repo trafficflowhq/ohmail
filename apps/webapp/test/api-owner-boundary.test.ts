@@ -156,7 +156,7 @@ describe("the storage-owner boundary", () => {
    */
   it("a pending shell with no remembered account still refuses a silent marker", async () => {
     const { api, pendApiOwner } = await import("../app/api-client.js");
-    const { OWNER_SIGNED_OUT } = await import("../app/shell/owner-cookie.js");
+    const { OWNER_SIGNED_OUT } = await import("@ohmail/app-logic/storage/owner-cookie");
     setOwnerCookie(A);
     pendApiOwner(null);
     await expect(api("/mailboxes"), "a cold shell could not read at all").resolves.toBeTruthy();
@@ -266,7 +266,7 @@ describe("the storage-owner boundary", () => {
 
   it("refuses when a sign-out was asked for and the server did not confirm it", async () => {
     const { api, bindApiOwner } = await import("../app/api-client.js");
-    const { OWNER_SIGNED_OUT } = await import("../app/shell/owner-cookie.js");
+    const { OWNER_SIGNED_OUT } = await import("@ohmail/app-logic/storage/owner-cookie");
     setOwnerCookie(A);
     bindApiOwner(A);
     setOwnerCookie(OWNER_SIGNED_OUT);
@@ -428,7 +428,7 @@ describe("the press's own wake row under its pending sign-out", () => {
 
   it("goes out with the reserved word in the jar, the client bound or pending to the account the press named", async () => {
     const { bindApiOwner, pendApiOwner, push } = await import("../app/api-client.js");
-    const { OWNER_SIGNED_OUT } = await import("../app/shell/owner-cookie.js");
+    const { OWNER_SIGNED_OUT } = await import("@ohmail/app-logic/storage/owner-cookie");
     answerAccount = A;                     // the session the press is ending is still A's
     for (const bind of [() => bindApiOwner(A), () => { bindApiOwner(null); pendApiOwner(A); }]) {
       setOwnerCookie(A);
@@ -451,7 +451,7 @@ describe("the press's own wake row under its pending sign-out", () => {
     ["on the registration's own announce", { pass: A, jar: "pending", bound: "A", path: "/push/subscriptions" }, /sign-out was asked for/],
   ] as const)("is refused %s", async (_case, c, refusal) => {
     const { api, bindApiOwner, blockApiOwner, pendApiOwner } = await import("../app/api-client.js");
-    const { OWNER_SIGNED_OUT } = await import("../app/shell/owner-cookie.js");
+    const { OWNER_SIGNED_OUT } = await import("@ohmail/app-logic/storage/owner-cookie");
     answerAccount = A;
     setOwnerCookie(A);
     if (c.bound === "A") bindApiOwner(A);

@@ -36,7 +36,7 @@ import {
   scriptSync, syncCalls, syncPage,
   teardownConfirmEnv, tick, tryAgainButton, uncoded401, warmCloudShell,
 } from "./fixtures/cloud-confirm-shell";
-import { markSessionDead, resetSessionTruthForTests, sessionIsDead } from "../app/shell/session-truth";
+import { markSessionDead, resetSessionTruthForTests, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
 import { csrfToken } from "../app/csrf";
 
 /** The whole ladder's worst case: 5 s + 8 s + 8 s of waiting, plus slack. */

@@ -6,8 +6,8 @@ import {
   DEFAULT_LOCALE, activeTranslator, fillFrom, liveCopy, setActiveCatalog, setActiveFormatZone,
 } from "../app/shell/locale";
 import { AGO_COPY, PLACE_LABEL, resurfaceLabel } from "../app/shell/format";
-import { COPY as MAIL_BODY_COPY } from "../app/components/MessageBody";
-import { COPY as BODY_TEXT_COPY } from "../app/shell/BodyText";
+import { COPY as MAIL_BODY_COPY } from "../app/letter-body/MessageBody";
+import { COPY as BODY_TEXT_COPY } from "../app/letter-body/BodyText";
 import { COPY as ATTACHMENT_COPY } from "../app/components/AttachmentStrip";
 import { COPY as PREVIEW_COPY } from "../app/components/AttachmentPreview";
 import { COPY as ICS_COPY } from "../app/components/IcsEventCard";

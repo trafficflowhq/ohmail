@@ -10,8 +10,8 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
-import { queuedSentence, queuedWaitOf } from "../app/shell/queued-sentence";
-import { queuedRuleKey } from "../app/shell/sender-screening";
+import { queuedSentence, queuedWaitOf } from "@ohmail/app-logic/press/queued-sentence";
+import { queuedRuleKey } from "@ohmail/app-logic/press/sender-screening";
 import { useShellDerivations, type ShellDerivationsInput } from "../app/shell/shell-derivations";
 
 /**

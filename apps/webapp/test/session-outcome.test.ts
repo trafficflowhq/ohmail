@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 
 const { resolveOwnerOutcome } = await import("../app/(product)/session-outcome");
-const { resetSessionTruthForTests } = await import("../app/shell/session-truth");
+const { resetSessionTruthForTests } = await import("@ohmail/app-logic/session/session-truth");
 
 const ACCOUNT = "acct_predicate_1";
 /**

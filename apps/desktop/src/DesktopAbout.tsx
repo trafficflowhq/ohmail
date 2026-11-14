@@ -25,7 +25,7 @@ import { DesktopUpdate } from "./DesktopUpdate.js";
    why the predicate is the shared one. `useMailboxFacts` is the NON-throwing accessor,
    so a pane mounted without the provider keeps the sentence it always had. */
 import { useMailboxFacts } from "../../webapp/app/shell/MailStateProvider";
-import { readerHolder, screenerMode } from "../../webapp/app/shell/mail-state";
+import { readerHolder, screenerMode } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxRowWhy } from "./install-role.js";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
 import { writeDesktopDiagnostics } from "./local-diagnostics.js";

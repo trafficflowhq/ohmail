@@ -8,8 +8,8 @@
  */
 import { useLayoutEffect, useRef, type KeyboardEvent } from "react";
 import { Button, useOptionalToast } from "@ohmail/ui";
-import { COPY } from "../../webapp/app/components/MessageBody";
-import { useModalGate } from "../../webapp/app/shell/modal-gate";
+import { MAIL_BODY_COPY as COPY } from "../../webapp/app/letter-body";
+import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { linkAskOpen, type LinkAsk as HeldPress } from "./native.js";
 
 const TITLE_ID = "link-ask-title";

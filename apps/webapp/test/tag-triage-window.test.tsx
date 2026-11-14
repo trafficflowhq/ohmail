@@ -9,7 +9,7 @@ import { TagView } from "../app/views/TagView";
 import { TriageView } from "../app/views/TriageView";
 import { KeymapProvider } from "../app/shell/keymap";
 import { WithListGone } from "./_list-gone";
-import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "../app/shell/list-window";
+import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
  * A TAG AND A TRIAGE PILE MOUNT THEIR WINDOW. Neither list has an upper bound, and both mapped

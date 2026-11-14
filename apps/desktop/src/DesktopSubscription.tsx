@@ -18,8 +18,8 @@ import type { StorageChange } from "../../webapp/app/shell/StorageNotice";
 import { openWeb } from "./native.js";
 
 import { ACCESS_REFUSED_STATUS, ACCOUNT_ACCESS_PATH, bridgeFetch } from "./bridge-fetch.js";
-import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "../../webapp/app/shell/wall-lift.js";
-import { linkHref, useRenderedLinks } from "../../webapp/app/shell/rendered-links";
+import { QUIET_RETURN_MS, RETURN_DEBOUNCE_MS, useAccessSchedule } from "@ohmail/app-logic/doors/wall-lift";
+import { linkHref, useRenderedLinks } from "../../webapp/app/letter-body/rendered-links";
 import { storageFactsOf, type StorageFacts } from "../../webapp/app/shell/storage-state";
 import { reuseSweepLinesOf, type ReuseSweepLine } from "../../webapp/app/shell/reuse-sweeps";
 

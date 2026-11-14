@@ -7,7 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 
 import en from "../../webapp/messages/en.json";
-import type { MailboxFacts } from "../../webapp/app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A SCREENING CHANGE MADE ON A READER SAYS WHERE IT WENT, on both desktop doors. Both reach

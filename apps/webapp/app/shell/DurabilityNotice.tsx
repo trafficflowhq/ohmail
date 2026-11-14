@@ -13,7 +13,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { DURABILITY_LOST_EVENT, dismissDurabilityLost, durabilityLost } from "./durable";
+import { DURABILITY_LOST_EVENT, dismissDurabilityLost, durabilityLost } from "@ohmail/app-logic/storage/durable";
 
 /**
  * Adopt what the module already knows at mount, then listen. Not the current value as the

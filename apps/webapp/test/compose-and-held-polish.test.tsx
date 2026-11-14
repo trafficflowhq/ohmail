@@ -132,7 +132,7 @@ describe("the To placeholder fits its field", () => {
 const LIGHT_TABLE = '<body><table bgcolor="#ffffff" width="600"><tr><td>Newsletter</td></tr></table></body>';
 
 async function renderBody(props: Record<string, unknown>, withSlot: boolean): Promise<{ slot: HTMLElement | null }> {
-  const { MessageBody } = await import("../app/components/MessageBody.js");
+  const { MessageBody } = await import("../app/letter-body/MessageBody.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   const slot = withSlot ? document.createElement("span") : null;

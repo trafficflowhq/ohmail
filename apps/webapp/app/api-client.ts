@@ -15,23 +15,23 @@ import {
   resumeSession, retryAfterMsOf, sessionMints, withSessionCookieLock,
 } from "./session-refresh";
 import { sessionEndedResponse } from "@ohmail/client-engine";
-import { registerSessionTransport, sessionMayAsk } from "./shell/session-truth";
+import { registerSessionTransport, sessionMayAsk } from "@ohmail/app-logic/session/session-truth";
 import type { TravelledChangeWire } from "./shell/travelled-change";
-import { readOwner, readOwnerMarker, rememberOwner } from "./shell/owner-cookie";
+import { readOwner, readOwnerMarker, rememberOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import { refusedFactsOf, verdictOf } from "./access-verdict";
-import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "./shell/wall-lift";
-import { durableSessionRemove, durableSessionSet } from "./shell/durable";
+import { RETURN_DEBOUNCE_MS, readStoredVerdict, storeVerdict } from "@ohmail/app-logic/doors/wall-lift";
+import { durableSessionRemove, durableSessionSet } from "@ohmail/app-logic/storage/durable";
 import { planHintOf, type PlanHint } from "./plan-hint";
 import { storageFactsOf, type StorageFacts } from "./shell/storage-state";
 import { reuseSweepLinesOf } from "./shell/reuse-sweeps";
-import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "./shell/access-window";
+import { forgetOpenVerdict, markOpenVerdict, refusalIsStale } from "@ohmail/app-logic/session/access-window";
 import {
   ACCOUNT_ERASED, ERASED_DECLARATION, accountErasedOwner, clearAccountErased, erasedCapture, hearAccountErased,
-} from "./shell/account-erased";
+} from "@ohmail/app-logic/session/account-erased";
 import { activeTranslator } from "./shell/locale";
-import type { ProbeSending } from "./shell/onboarding";
+import type { ProbeSending } from "@ohmail/app-logic/doors/onboarding";
 import { SERVER_REFUSAL_CODES, refusalCopy } from "./shell/server-refusal";
-import { webLane, type LaneTicket } from "./shell/resume-lane";
+import { webLane, type LaneTicket } from "@ohmail/app-logic/session/resume-lane";
 import { clientDeclaration } from "./shell/client-declaration";
 import { RELOAD_REMEDY, noticeServerAnswered, noticeUpdateAnswer, updateAnswerSentence } from "./shell/update-answer";
 import { updateAnswerOf } from "@ohmail/client-engine";

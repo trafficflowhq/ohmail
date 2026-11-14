@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import { OhmailEngine } from "@ohmail/client-engine";
 import { act, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
-import { AFTER_VERB_STORAGE_KEY } from "../app/shell/after-verb.js";
+import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**

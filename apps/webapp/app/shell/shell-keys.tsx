@@ -32,15 +32,15 @@ import {
 } from "@ohmail/ui";
 import { replyAllRecipients } from "./compose-from";
 import type { ConsentState } from "./consent-state";
-import { deleteKeyBindings } from "./delete-undo";
+import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
 import { hueOf } from "./format";
 import { SHELL_CURSOR_VIEWS } from "./cursor-placer";
 import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "./keymap";
 import { pressResurfaceKey } from "./message-verbs";
-import type { MailboxFacts } from "./mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxAddressCount } from "./mailbox-label";
-import { isModalOpen } from "./modal-gate";
+import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 import { useFocusFollows } from "./focus-follows";
 import {
   layoutsDiffer, railLayout, readColumnHidden, readColumnHiddenFor, watchLayoutsDiffer, watchNarrow, watchRailLayout,
@@ -54,16 +54,16 @@ import { goCompose } from "./compose-door";
 import type { ScreenerState } from "./screener-state";
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDerivations } from "./shell-derivations";
-import type { ShellDispatch } from "./shell-dispatch";
+import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
 import type { ShellVerbs } from "./shell-verbs";
 import { degradeSentence } from "./screening-degrade";
 import { isKeptPile } from "./kept-piles";
-import { useStableCallback } from "./stable-callback";
-import { useSwitchEnd } from "./ui-vitals";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { useSwitchEnd } from "@ohmail/app-logic/session/ui-vitals";
 import { currentZone, leaveRailAfterGoTo, setRailSummon } from "./zone-nav";
 import { settingsPanes, type WiredPanes } from "../views/settings-panes";
-import { queryVisible } from "./visible-dom";
+import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /**
  * The stable name of a Reply Run entry: the message it stands for, or its title when it has

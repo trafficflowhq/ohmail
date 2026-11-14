@@ -14,7 +14,7 @@ import { IntlProvider } from "use-intl";
 import en from "../../apps/webapp/messages/en.json";
 import { AppShell } from "../../apps/webapp/app/shell/AppShell";
 import { setActiveCatalog } from "../../apps/webapp/app/shell/locale";
-import { resetUiVitalsForTest, takeUiVitals } from "../../apps/webapp/app/shell/ui-vitals";
+import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { ThemeProvider, ToastHost } from "../../packages/ui/src/index";
 import { localStorageDoor } from "../../packages/client-engine/src/durable";
 import { OhmailEngine } from "../../packages/client-engine/src/index";

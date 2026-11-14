@@ -46,8 +46,8 @@
 
 import type { MailSend } from "./compose";
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
-import { durableRemove, durableSet, type DurableWrite } from "./durable";
-import { storageOwner } from "./storage-owner";
+import { durableRemove, durableSet, type DurableWrite } from "@ohmail/app-logic/storage/durable";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * The record shape this build writes. `1` and `2` were 0.14.0 and 0.14.1, retired at {@link load};

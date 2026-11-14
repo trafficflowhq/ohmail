@@ -4,8 +4,8 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MemoryMirrorStore, type EngineMessage, type EngineMutation, type SyncChange } from "@ohmail/client-engine";
-import { useRoutingUndo, type RoutingSendResult } from "../app/shell/routing-undo";
-import type { ScreeningToastKey } from "../app/shell/sender-screening";
+import { useRoutingUndo, type RoutingSendResult } from "@ohmail/app-logic/press/routing-undo";
+import type { ScreeningToastKey } from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE ROUTING WINDOW'S CORRECTION SAYS WHICH WAIT IT IS. A move press held in the window makes the

@@ -18,7 +18,7 @@
 import * as React from "react";
 import { vi } from "vitest";
 import { THREAD_READ_HOLD_MS } from "@ohmail/client-engine";
-import { threadReadTime } from "../../app/shell/reader-seen";
+import { threadReadTime } from "@ohmail/app-logic/reading/reader-seen";
 
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 

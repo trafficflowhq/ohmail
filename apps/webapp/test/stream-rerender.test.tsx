@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, FeedPartition, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { KeymapProvider } from "../app/shell/keymap";
-import { openingCount } from "../app/shell/stream-window";
+import { openingCount } from "@ohmail/app-logic/lists/stream-window";
 
 /**
  * THE READING STREAM DOES NOT RE-RENDER A CARD WHOSE INPUTS DID NOT CHANGE.

@@ -34,11 +34,11 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 import type { OwnerResolver } from "../../app/shell/engine";
 import messages from "../../messages/en.json";
 import messagesDe from "../../messages/de.json";
-import type { MailboxFacts } from "../../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ConsentTransport } from "../../app/shell/consent-state";
-import type { FirstRunHost } from "../../app/shell/first-run-host";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { settleFirstPaint } from "../_first-paint.js";
-import { resetResumeLaneForTests } from "../../app/shell/resume-lane";
+import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
 
 (globalThis as unknown as { React: unknown }).React = React;
 process.env.NEXT_PUBLIC_API_BASE = "/api";

@@ -28,7 +28,7 @@ import type { ReplyEnvelopeEdit } from "./compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 import type { WithheldCopyKey } from "./format";
 import type { ForwardFilesPlan } from "./forward-files";
-import type { LiveBodyWire } from "./live-body";
+import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 
 /**
  * The three sub-rows that can take the action bar's place. Declared HERE and not in

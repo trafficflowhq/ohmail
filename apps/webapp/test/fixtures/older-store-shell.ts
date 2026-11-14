@@ -9,7 +9,7 @@
 import { expect, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import messages from "../../messages/en.json";
-import { LOADING_GRACE_MS } from "../../app/shell/loading-grace";
+import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import { act, installShellEnv, ISO, mailbox, mountShell, tick } from "./live-walk-shell";
 
 export type Row = { id: string; date: string | null; unread?: boolean; folder?: string; from?: string };

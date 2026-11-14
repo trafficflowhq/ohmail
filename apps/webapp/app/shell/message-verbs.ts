@@ -32,10 +32,10 @@ import { useKeyBindings } from "./keymap";
    which holds no cursor for the views that mount it. See `cursor-placer.ts`. */
 import { useRowCursorPlacer } from "./cursor-placer";
 /* The two destructive chords, from the module that owns them — see the `⌫ · ⌦` binding below. */
-import { deleteKeyBindings } from "./delete-undo";
+import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 import { useMessageChrome, type MessageChrome } from "./message-chrome";
 import type { MessageAction } from "./MessagePane";
-import { queryVisible } from "./visible-dom";
+import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 export interface MessageVerbsInput {
   /**

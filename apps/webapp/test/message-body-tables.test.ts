@@ -45,7 +45,7 @@ import { describe, expect, it } from "vitest";
  * `.msg-table` cells inheriting `anywhere`.
  */
 
-const SHEET_PATH = "apps/webapp/app/components/message-body.css";
+const SHEET_PATH = "apps/webapp/app/letter-body/message-body.css";
 const SHEET = readFileSync(resolve(process.cwd(), SHEET_PATH), "utf8");
 const bare = (css: string): string => css.replace(/\/\*[\s\S]*?\*\//g, "");
 const MSG_CSS = bare(SHEET);
@@ -61,8 +61,8 @@ const decl = (rule: string, prop: string): string | null => {
   return m ? m[1]!.trim() : null;
 };
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 /** The sanitized document, as a queryable element — what the frame will render. */
 async function sanitizedDom(html: string): Promise<HTMLElement> {

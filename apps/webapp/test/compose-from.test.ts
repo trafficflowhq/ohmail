@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { OhmailEngine, type EngineMutation, type MutationResult } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import {
   defaultFrom,
   domainMatchedFrom,

@@ -7,7 +7,7 @@
  * in its address. A note that cannot be stored costs the sentence, never the navigation.
  */
 
-import { durableSessionRemove, durableSessionSet, durableSet } from "../../shell/durable";
+import { durableSessionRemove, durableSessionSet, durableSet } from "@ohmail/app-logic/storage/durable";
 import { SIGNED_OUT_COOKIE } from "../../session-gate";
 
 const NOTE_KEY = "ohmail.signed-out-reason";

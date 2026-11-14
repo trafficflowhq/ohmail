@@ -1059,7 +1059,7 @@ describe("honest states", () => {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
     const { useScreenerState } = await import("../app/shell/screener-state.js");
-    const { ManagedServiceContext } = await import("../app/shell/managed-service.js");
+    const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
     suggestReply = (body) =>
       json({
         dryRun: body.dryRun === true, requested: body.senders.length,

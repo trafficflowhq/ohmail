@@ -24,16 +24,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "../../../webapp/app/shell/AppShell";
-import { dropLocalStorageKeys, type LocalSweep } from "../../../webapp/app/shell/boot-cache";
+import { dropLocalStorageKeys, type LocalSweep } from "@ohmail/app-logic/session/boot-cache";
 import { COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY } from "../../../webapp/app/shell/compose";
 import {
   OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX, REPLY_DRAFT_PREFIX, REPLY_META_PREFIX, SENT_COPY_NOTES_PREFIX,
 } from "../../../webapp/app/shell/mail-send";
 import { SCREENER_INTENTS_PREFIX } from "../../../webapp/app/shell/screener-intents";
-import { DELETE_INTENTS_PREFIX } from "../../../webapp/app/shell/delete-intents";
+import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "../../../webapp/app/shell/send-lock";
-import { setStorageOwner } from "../../../webapp/app/shell/storage-owner";
+import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { BearerManager, type SignOutOutcome } from "./bearer.js";
 import { HostAccountPane } from "./HostAccountPane.js";
 import { createHostClientEngine } from "./host-engine.js";

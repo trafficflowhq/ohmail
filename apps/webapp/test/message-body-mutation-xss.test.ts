@@ -35,8 +35,8 @@ import { HOSTILE_HTML, OWNER_BILLING_HTML } from "./fixtures/owner-billing-email
  * never REQUESTED" is decided; below, the claim is only that they are never NAMED.
  */
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 async function clean(html: string, opts: Parameters<Mod["sanitizeMailHtml"]>[1] = {}) {
   const { sanitizeMailHtml } = await mod();

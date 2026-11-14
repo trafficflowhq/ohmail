@@ -14,7 +14,7 @@ import {
   type ScreenIntent,
   type SyncChange,
 } from "@ohmail/client-engine";
-import { useRoutingUndo, type ScreenCommitOutcome } from "../app/shell/routing-undo";
+import { useRoutingUndo, type ScreenCommitOutcome } from "@ohmail/app-logic/press/routing-undo";
 
 /**
  * A SENDER-SHEET PRESS IS HELD AS A SCREEN INTENT, AND ITS ANSWER RIDES IT. Inside the window nothing

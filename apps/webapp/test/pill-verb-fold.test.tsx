@@ -12,7 +12,7 @@ import {
   verbCost,
   type BarSeg,
   type BarVerb,
-} from "../app/shell/bar-density";
+} from "@ohmail/app-logic/lists/bar-density";
 
 /**
  * THE PILL USES THE WIDTH IT HAS — the fold driven from a stubbed row width, both ways.

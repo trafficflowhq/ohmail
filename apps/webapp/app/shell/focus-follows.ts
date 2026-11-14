@@ -11,8 +11,8 @@
  */
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
 import { KEY_WRITING } from "./keymap";
-import { pageModal } from "./modal-gate";
-import { queryAllVisible, queryVisible } from "./visible-dom";
+import { pageModal } from "@ohmail/app-logic/session/modal-gate";
+import { queryAllVisible, queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 

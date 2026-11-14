@@ -22,8 +22,8 @@ import {
 /* Every rect here meets `scrollTop`, so every rect is read in CSS px (`ui-zoom.ts`). */
 import { cssRect, FIRST_LINES_PX, useSeenOnScroll } from "@ohmail/ui";
 import { createThreadRead } from "@ohmail/client-engine";
-import { useVisit } from "./visit";
-import { readStreamCards, type StreamRead } from "./stream-landing-read";
+import { useVisit } from "@ohmail/app-logic/lists/visit";
+import { readStreamCards, type StreamRead } from "@ohmail/app-logic/lists/stream-landing-read";
 
 /**
  * THE COLUMN WIDTH THE MOUNTED CARDS SHARE, measured once per stream.

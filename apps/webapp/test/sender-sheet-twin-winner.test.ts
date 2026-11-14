@@ -15,13 +15,13 @@ import {
 } from "@ohmail/client-engine";
 import baseMessages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
-import { routedRule } from "../app/shell/sender-audit";
+import { routedRule } from "@ohmail/app-logic/press/sender-audit";
 import {
   planScreeningChange,
   screeningToast,
   senderScreening,
   type ScreeningDest,
-} from "../app/shell/sender-screening";
+} from "@ohmail/app-logic/press/sender-screening";
 
 /**
  * THE SHEET OVER A SENDER'S RULE TWINS (SENDER-SHEET-ALREADY-OVER-AN-OUTRANKING-TWIN). An allow

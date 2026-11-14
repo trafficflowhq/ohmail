@@ -14,7 +14,7 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 
@@ -570,8 +570,8 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
         createdAt: NOW.toISOString(), updatedAt: NOW.toISOString(),
       },
     } as unknown as SyncChange);
-    beforeEach(async () => (await import("../app/shell/storage-owner.js")).setStorageOwner(OWNER));
-    afterEach(async () => (await import("../app/shell/storage-owner.js")).resetStorageOwnerForTest());
+    beforeEach(async () => (await import("@ohmail/app-logic/storage/storage-owner")).setStorageOwner(OWNER));
+    afterEach(async () => (await import("@ohmail/app-logic/storage/storage-owner")).resetStorageOwnerForTest());
 
     it("an old lane on a message or draft in the mirror moves at mount; one it cannot name stays exactly as it is", async () => {
       for (const lane of ["m1", "fwd:m1", "draft:d1", "never-mirrored", "draft:d-elsewhere"]) {

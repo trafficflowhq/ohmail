@@ -18,7 +18,7 @@ import {
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { KeymapProvider } from "../app/shell/keymap";
-import { searchSortKey } from "../app/shell/persisted-ui";
+import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 
 /**
  * THE ORDER CONTROL, AND THE HALF OF IT THAT IS NOT THE PARAMETER.

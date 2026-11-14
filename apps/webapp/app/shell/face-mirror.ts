@@ -1,5 +1,5 @@
-import { localStorageDoor, type StorageDoor } from "./durable";
-import { readOwner } from "./owner-cookie";
+import { localStorageDoor, type StorageDoor } from "@ohmail/app-logic/storage/durable";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
 /**
  * THE ACCOUNT FACE'S MIRROR NAMES ITS ACCOUNT. `ohmail.face.account` holds the account's look for the next

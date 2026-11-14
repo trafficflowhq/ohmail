@@ -12,7 +12,7 @@ import {
 } from "@trafficflow/core/diagnostics";
 
 import { useMailboxFacts } from "./MailStateProvider";
-import type { MailboxFacts } from "./mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /** What one press answered. `failed` is the request itself — nothing was read. */
 export type SelfCheckPress = { k: "rest" } | { k: "busy" } | { k: "read"; check: SelfCheck } | { k: "failed" };

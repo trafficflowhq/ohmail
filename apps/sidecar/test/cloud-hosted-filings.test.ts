@@ -6,7 +6,7 @@ import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { ensureLocalWorld } from "../src/identity.js";
 import { createCloudMirror as makeCloudMirror } from "../src/cloud-mirror.js";
 import type { CloudAuth } from "../src/cloud-auth.js";
-import { deriveMailState, seedGrowth, type MailStateInputs, type MailboxFacts } from "../../webapp/app/shell/mail-state.js";
+import { deriveMailState, seedGrowth, type MailStateInputs, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
 import { idleSession } from "./fixtures/cloud-auth-double.js";

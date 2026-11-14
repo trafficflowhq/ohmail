@@ -18,7 +18,7 @@ import {
   ACCOUNT_ACCESS_PATH, bridgeFetch, engineLogout,
   type AccessRefusedFacts, type AccountLifecycle, type EngineStatus, type SignedOut, type SignOutPress,
 } from "./bridge-fetch.js";
-import { useWallLift } from "../../webapp/app/shell/wall-lift.js";
+import { useWallLift } from "@ohmail/app-logic/doors/wall-lift";
 import { linksOutToBilling } from "./distribution.js";
 import { AccountPageLink, MANAGE_LINK_PATH, useMintedPage } from "./DesktopSubscription.js";
 import { dayStamp } from "../../webapp/app/shell/format.js";

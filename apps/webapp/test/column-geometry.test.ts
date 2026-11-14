@@ -18,7 +18,7 @@ import {
   splitSkeletonValue,
   splitUserValue,
   writeColumns,
-} from "../app/shell/column-store";
+} from "@ohmail/app-logic/lists/column-store";
 
 /**
  * THE THREE COLUMNS' GEOMETRY — pinned where it actually lives, which is three files and a

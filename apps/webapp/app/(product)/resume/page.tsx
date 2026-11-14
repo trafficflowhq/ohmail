@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { CSRF_COOKIE, csrfMark } from "../../csrf";
-import { cookieFromStore } from "../../shell/cookie-jar";
-import { OWNER_COOKIE } from "../../shell/owner-cookie";
+import { cookieFromStore } from "@ohmail/app-logic/storage/cookie-jar";
+import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 import { ResumeScreen } from "./ResumeScreen";
 
 /**

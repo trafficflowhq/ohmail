@@ -7,7 +7,7 @@
  * The server decides which card is due (its dismissal applied) and sizes the plan offer; prices
  * come only from that offer. Shared by the browser and the desktop window (same block, over its bridge).
  */
-import { firstImportsOf } from "./consent-options";
+import { firstImportsOf } from "@ohmail/app-logic/press/consent-options";
 
 /** The card atop the Ohbox: near the cap, at it, or above the plan's own lower limit. */
 export type StorageCard = "near" | "full" | "drop";

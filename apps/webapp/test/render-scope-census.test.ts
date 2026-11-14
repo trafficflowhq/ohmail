@@ -220,11 +220,15 @@ function readFrame(file: string, frameHooks: ReadonlySet<string> = new Set()): S
   return out;
 }
 
-/** The file a hook name was imported from, when it is a relative module of this app. */
+/** The file a hook name was imported from, when it is a relative module of this app or a file of app-logic. */
 function moduleOf(frame: string, shell: ShellRead, hook: string): string | null {
   const spec = shell.imports.get(hook);
-  if (spec === undefined || !spec.startsWith(".")) return null;
-  const base = resolve(dirname(frame), spec.replace(/\.js$/, ""));
+  if (spec === undefined) return null;
+  const logic = /^@ohmail\/app-logic\/(.+)$/.exec(spec);
+  if (logic === null && !spec.startsWith(".")) return null;
+  const base = logic !== null
+    ? resolve(ROOT, "packages/app-logic/src", logic[1]!)
+    : resolve(dirname(frame), spec.replace(/\.js$/, ""));
   return [".ts", ".tsx", "/index.ts", "/index.tsx"].map((e) => base + e).find((f) => existsSync(f)) ?? null;
 }
 

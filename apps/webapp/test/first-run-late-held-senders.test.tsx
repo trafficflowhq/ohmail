@@ -6,9 +6,9 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import { firstRunImportOver } from "../app/shell/first-run-queue-settle";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingAi, OnboardingFacts } from "../app/shell/onboarding";
+import { firstRunImportOver } from "@ohmail/app-logic/doors/first-run-queue-settle";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingAi, OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * THE FIRST DECISION WAITS FOR THE SCREENER. The import's stamp and the Screener's waiting count

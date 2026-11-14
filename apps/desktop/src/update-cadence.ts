@@ -41,7 +41,7 @@ import {
   UPDATE_PERIOD_MS,
   writeAskMemory,
   type UpdateOffer,
-} from "../../webapp/app/shell/app-update.js";
+} from "@ohmail/app-logic/doors/app-update";
 import {
   leaveSaved,
   onLeaveAsked,

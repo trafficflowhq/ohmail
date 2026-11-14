@@ -128,6 +128,8 @@ never adds to what breaks one.
   | `packages/db` | `db-mail`, `wire` |
   | `packages/core` | `db`, `wire` |
   | `packages/client-engine` | `core`, `fixtures`, `wire` |
+  | `packages/app-logic` | `client-engine`, `core` |
+  | `packages/app` | `ui`, `tokens`, `app-logic`; of `client-engine`, types only |
   | `packages/services` | `core`, `db`, `wire` |
   | `packages/api` | `services`, `core`, `db`, `wire` |
 

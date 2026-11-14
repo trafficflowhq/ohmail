@@ -360,7 +360,7 @@ describe("Not spam → Ohbox on a sender marked spam this session (the pinned re
 describe("a Move out of a domain rule's pile holds an address rule, and Undo takes it back", () => {
   /** The shell's routing window over the same fake engine: `hold` a press, then close or undo it. */
   async function routingOver(engine: OhmailEngine) {
-    const { useRoutingUndo } = await import("../app/shell/routing-undo.js");
+    const { useRoutingUndo } = await import("@ohmail/app-logic/press/routing-undo");
     const out: EngineMutation[] = [];
     let latest: ReturnType<typeof useRoutingUndo> | null = null;
     function Probe(): null {
@@ -408,7 +408,7 @@ describe("a Move out of a domain rule's pile holds an address rule, and Undo tak
 
 describe("releaseRules, the one ladder all three presses and the phone's mirror read", () => {
   it("their own rule AND a domain rule: only their own is retargeted, the domain rule stays", async () => {
-    const { releaseRules } = await import("../app/shell/sender-screening.js");
+    const { releaseRules } = await import("@ohmail/app-logic/press/sender-screening");
     const engine = await engineOver(screenedMail(), [
       rule("r-own", "sender", PRESSED, SCREENED), rule("r-dom", "domain", DOMAIN, SCREENED),
     ]);
@@ -418,7 +418,7 @@ describe("releaseRules, the one ladder all three presses and the phone's mirror 
   });
 
   it("an address rule already standing at the destination: nothing more is written", async () => {
-    const { releaseRules } = await import("../app/shell/sender-screening.js");
+    const { releaseRules } = await import("@ohmail/app-logic/press/sender-screening");
     const engine = await engineOver(screenedMail(), [
       rule("r-dom", "domain", DOMAIN, SCREENED), rule("r-mine", "sender", PRESSED, "INBOX"),
     ]);

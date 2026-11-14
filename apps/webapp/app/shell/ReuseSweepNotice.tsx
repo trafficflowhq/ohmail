@@ -4,7 +4,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { fullDateTime } from "./format";
 import type { ReuseSweepLine } from "./reuse-sweeps";
-import { RETURN_DEBOUNCE_MS } from "./wall-lift";
+import { RETURN_DEBOUNCE_MS } from "@ohmail/app-logic/doors/wall-lift";
 
 /** How often a shown notice asks the session again: OK on another device ends it here too. */
 export const REUSE_RECHECK_MS = 5 * 60_000;

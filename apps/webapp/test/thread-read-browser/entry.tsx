@@ -9,9 +9,9 @@
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { createThreadRead } from "@ohmail/client-engine";
-import { MessageBody } from "../../app/components/MessageBody";
-import { createThreadReadDom } from "../../app/shell/reader-seen";
-import { readStreamCards } from "../../app/shell/stream-landing-read";
+import { MessageBody } from "../../app/letter-body/MessageBody";
+import { createThreadReadDom } from "@ohmail/app-logic/reading/reader-seen";
+import { readStreamCards } from "@ohmail/app-logic/lists/stream-landing-read";
 
 interface Log { reads: string[][]; at: number[] }
 const frames = (n: number): Promise<void> =>

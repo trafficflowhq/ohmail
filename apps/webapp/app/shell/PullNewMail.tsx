@@ -36,7 +36,7 @@ import { useTranslations } from "next-intl";
 import { Icon, useToast } from "@ohmail/ui";
 import { useDemoMode, useEngine } from "./engine";
 import type { MailboxProbe } from "./MailStateProvider";
-import { serverUnreachable } from "./mail-state";
+import { serverUnreachable } from "@ohmail/app-logic/mail-state/mail-state";
 
 const SETTLE_POLL_MS = 2_000;
 const SETTLE_CAP_MS = 30_000;

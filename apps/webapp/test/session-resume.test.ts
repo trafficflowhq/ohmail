@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { RESUME_COOKIE, RESUME_ROUTE, resolveSurface } from "../app/session-gate.js";
 import { isRecoverable, mayRefreshFor, REFRESH_ENDPOINT, RENEWAL_DEADLINE_MS, resumeSession } from "../app/session-refresh.js";
 import { OWN_PATHS, REFRESH_PATH } from "../next.config.mjs";
-import type { ErasedVerdict } from "../app/shell/account-erased.js";
+import type { ErasedVerdict } from "@ohmail/app-logic/session/account-erased";
 
 /**
  * THE LOCKOUT, AND THE THREE THINGS THAT CAUSED IT.
@@ -599,7 +599,7 @@ describe("a refusal heard sends one cache purge, which nothing waits for", () =>
       try {
         const wire = door(coded(410, "account_erased", named === null ? {} : { "X-Ohmail-Account": named }));
         const { resumeSession } = await fresh();
-        const { registerErasedDoor } = await import("../app/shell/account-erased.js");
+        const { registerErasedDoor } = await import("@ohmail/app-logic/session/account-erased");
         if (verdict !== null) registerErasedDoor({ capture: () => null, hear: () => verdict });
         await expect(resumeSession()).resolves.toBe(answer);
         expect(wire.presented).toHaveLength(1);

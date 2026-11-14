@@ -27,7 +27,7 @@ const router = { push: (to: string) => { navigated.push(to); }, replace: (to: st
 vi.mock("next/navigation", () => ({ useRouter: () => router }));
 
 const { bindApiOwner } = await import("../app/api-client");
-const { markSessionAlive } = await import("../app/shell/session-truth");
+const { markSessionAlive } = await import("@ohmail/app-logic/session/session-truth");
 const { rememberApprovalRequest, takeApprovalReturn } = await import("../app/(product)/approve/approval-return");
 
 type State = "none" | "enrollment" | "full" | "busy";

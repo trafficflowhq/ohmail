@@ -12,7 +12,7 @@ import {
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
-import { attributeMessages, ruleMatchesSender } from "../app/shell/sender-audit";
+import { attributeMessages, ruleMatchesSender } from "@ohmail/app-logic/press/sender-audit";
 
 /**
  * WHY YOUR MAIL WENT WHERE IT WENT — and, mostly, what this refuses to claim.

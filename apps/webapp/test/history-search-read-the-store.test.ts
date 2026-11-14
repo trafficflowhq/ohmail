@@ -16,7 +16,7 @@ const read = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, im
 /** Every file of the two surfaces, and the door each must use. */
 const SURFACES: Array<{ file: string; door: RegExp }> = [
   { file: "../app/views/HistoryView.tsx", door: /useStoreTimeline\(/ },
-  { file: "../app/shell/store-timeline.ts", door: /StoreTimelineWalker/ },
+  { file: "../../../packages/app-logic/src/session/store-timeline.ts", door: /StoreTimelineWalker/ },
   { file: "../../../packages/client-engine/src/store-timeline.ts", door: /engine\.pageStore\("all"[\s\S]*engine\.pageSearch\(/ },
   { file: "../app/views/SearchView.tsx", door: /new StoreSearchWalker\(/ },
   { file: "../../mobile/app/history.tsx", door: /useStoreHistory\(\)/ },

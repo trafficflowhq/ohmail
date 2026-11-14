@@ -13,7 +13,7 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { organizerNotices, type OrganizerNotice as NoticeFact } from "../app/shell/mail-state";
+import { organizerNotices, type OrganizerNotice as NoticeFact } from "@ohmail/app-logic/mail-state/mail-state";
 import { OrganizerNotice } from "../app/shell/OrganizerNotice";
 import { ScreenerView } from "../app/views/ScreenerView";
 import { KeymapProvider } from "../app/shell/keymap";

@@ -13,7 +13,7 @@
 import { useTranslations } from "next-intl";
 import { useOptionalToast } from "@ohmail/ui";
 import { useCursorPlacer, type PlacerScope } from "./keymap";
-import { queryVisible } from "./visible-dom";
+import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /**
  * HOW LONG THE CURSOR HINT STANDS. Shorter than the toast's 2600 ms default, because this one

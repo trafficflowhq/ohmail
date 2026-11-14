@@ -663,6 +663,11 @@ jobs:
       - name: The web app and its tests
         run: ./node_modules/.bin/tsc --noEmit -p apps/webapp/tsconfig.json
 
+      # The desktop window's sources, which neither program above holds. Without its vite config:
+      # that needs a plugin only apps/desktop's own install carries.
+      - name: The desktop window
+        run: ./node_modules/.bin/tsc --noEmit -p apps/desktop/tsconfig.src.json
+
       # The phone app's program and its tests' program, the script apps/mobile is checked with.
       - name: The phone app and its tests
         run: npm run typecheck:mobile

@@ -37,7 +37,7 @@ import { HeldSendResolve } from "../components/HeldSendResolve";
 import { RichEditor } from "./RichEditorLazy";
 import type { RichValue } from "./rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
-import { useManagedService } from "./managed-service";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { SendStatus, sendLineValues } from "./SendStatus";
 import { useMailboxFacts } from "./MailStateProvider";
 import {
@@ -60,8 +60,8 @@ import {
 } from "./RecipientField";
 import { SignatureBlock } from "./SignatureBlock";
 import { SIG_FOLLOWING, type SignatureState } from "./signature";
-import { durableSessionSet } from "./durable";
-import { scrollIntoViewProgrammatically, scrollProgrammatically } from "./programmatic-scroll";
+import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
+import { scrollIntoViewProgrammatically, scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
 import { stuckDockScroller } from "./reply-dock";
 
 /*

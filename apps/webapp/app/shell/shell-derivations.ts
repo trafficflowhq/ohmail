@@ -46,20 +46,20 @@ import {
   widestWindowOf,
   type TagDTO,
 } from "@ohmail/client-engine";
-import { readBootCache, writeBootCache } from "./boot-cache";
+import { readBootCache, writeBootCache } from "@ohmail/app-logic/session/boot-cache";
 /* Backspace/Delete → Trash, and the window in which it has not happened yet. See the module. */
-import { firstImportsKey, firstImportsOf, shellConsentOptions } from "./consent-options";
-import { hideMessages } from "./delete-undo";
-import { folderTailVerdict, folderUnreadCounts } from "./folders";
+import { firstImportsKey, firstImportsOf, shellConsentOptions } from "@ohmail/app-logic/press/consent-options";
+import { hideMessages } from "@ohmail/app-logic/press/delete-undo";
+import { folderTailVerdict, folderUnreadCounts } from "@ohmail/app-logic/lists/folders";
 import { avatarHue, initialsOf } from "./format";
 import { mailboxLabelKey, mailboxLabelResolver } from "./mailbox-label";
-import { ownAddressesOf, type MailboxFacts } from "./mail-state";
-import { useOlderMail } from "./older-mail";
-import { ohboxSurfaceMessages } from "./ohbox-surface";
-import { readOwner } from "./owner-cookie";
+import { ownAddressesOf, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { useOlderMail } from "@ohmail/app-logic/lists/older-mail";
+import { ohboxSurfaceMessages } from "@ohmail/app-logic/reading/ohbox-surface";
+import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 import type { ViewId } from "./routing";
-import { useStableCallback } from "./stable-callback";
-import { useTrashPage } from "./trash-page";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { useTrashPage } from "@ohmail/app-logic/lists/trash-page";
 import { useTrashWindow, type TrashWire } from "./trash-window";
 import type { MailboxEntity, NotificationsMeta } from "../views/SettingsView";
 

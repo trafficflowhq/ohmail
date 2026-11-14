@@ -17,9 +17,9 @@ const GATES: Array<{ file: string; name: string }> = [
   { file: "../app/shell/shell-verbs.ts", name: "canDeleteMessage" },
   { file: "../app/shell/shell-verbs.ts", name: "planMoveToPlace" },
   { file: "../app/shell/shell-open-state.ts", name: "verbHolds" },
-  { file: "../app/shell/shell-dispatch.ts", name: "mutateAndReport" },
-  { file: "../app/shell/shell-dispatch.ts", name: "mutateSetAndReport" },
-  { file: "../app/shell/shell-dispatch.ts", name: "routing" },
+  { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "mutateAndReport" },
+  { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "mutateSetAndReport" },
+  { file: "../../../packages/app-logic/src/press/shell-dispatch.ts", name: "routing" },
   { file: "../../mobile/src/state/live.ts", name: "messageOf" },
 ];
 

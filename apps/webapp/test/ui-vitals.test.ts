@@ -26,7 +26,7 @@ import {
   startupMarks,
   takeUiVitals,
   type UiVitalsReport,
-} from "../app/shell/ui-vitals";
+} from "@ohmail/app-logic/session/ui-vitals";
 import { beginDerive, countNotify, peekClientEngineVitals } from "@ohmail/client-engine";
 
 /**

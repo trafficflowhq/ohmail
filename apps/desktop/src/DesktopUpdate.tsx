@@ -20,7 +20,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { useTranslations } from "next-intl";
 import { Button, SettingsRow, SettingsSubhead, Switch } from "@ohmail/ui";
 
-import { flushBeforeRestart, restartHold, subscribeRestartHold } from "../../webapp/app/shell/app-update.js";
+import { flushBeforeRestart, restartHold, subscribeRestartHold } from "@ohmail/app-logic/doors/app-update";
 import { agoStamp } from "../../webapp/app/shell/format.js";
 import {
   autoSentenceKey,

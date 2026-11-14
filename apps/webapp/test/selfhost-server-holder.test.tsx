@@ -6,9 +6,9 @@ import { NextIntlClientProvider } from "next-intl";
 
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { filingElsewhereKey, holderSentence } from "../app/shell/reader-holder";
-import { ManagedServiceContext } from "../app/shell/managed-service";
-import type { MailState } from "../app/shell/mail-state";
+import { filingElsewhereKey, holderSentence } from "@ohmail/app-logic/reading/reader-holder";
+import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
+import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * A SERVER HOLDER IS OHMAIL CLOUD ONLY ON A MANAGED HOST. A self-hosted server's worker writes the

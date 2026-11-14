@@ -29,9 +29,9 @@ import { clock, fullDateTime, isOwnOutbound, shownDateOf, threadWalk, weekdayDat
 import { Icon, cssRect, squaresWindow } from "@ohmail/ui";
 import { senderName } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
-import { scrollByHand, scrollProgrammatically, stampLive } from "./programmatic-scroll";
-import { nextFrame, viewOf } from "./reader-seen";
-import type { ThreadWalkChannel } from "./thread-walk-channel";
+import { scrollByHand, scrollProgrammatically, stampLive } from "@ohmail/app-logic/session/programmatic-scroll";
+import { nextFrame, viewOf } from "@ohmail/app-logic/reading/reader-seen";
+import type { ThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
 
 /** Below this width the conversation keeps its panels wide and the column takes the thin form. */
 const NARROW_PX = 560;

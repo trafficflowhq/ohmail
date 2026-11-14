@@ -13,10 +13,10 @@ import { RailNav, ThemeProvider, ToastHost, useToast } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { mailboxLabelResolver, type MailboxLabelFact } from "../app/shell/mailbox-label";
 import { senderHitOf } from "../app/shell/sender-hit";
-import { senderScreening } from "../app/shell/sender-screening";
+import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
-import { subjectRuleContext } from "../app/shell/subject-rule";
+import { subjectRuleContext } from "@ohmail/app-logic/press/subject-rule";
 import { RulesView } from "../app/views/RulesView";
 import { settleFirstPaint } from "./_first-paint.js";
 

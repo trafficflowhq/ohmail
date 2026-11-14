@@ -15,8 +15,8 @@ import {
   type EngineMutation, type Folder, type RuleDTO,
 } from "@ohmail/client-engine";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
-import { routedRule } from "./sender-audit";
-import type { RosterState } from "./mail-state";
+import { routedRule } from "@ohmail/app-logic/press/sender-audit";
+import type { RosterState } from "@ohmail/app-logic/mail-state/mail-state";
 
 const PLACES: readonly Folder[] = Object.values(FOLDER_OF_VIEW);
 

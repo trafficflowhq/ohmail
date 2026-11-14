@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { organizerRefusalOf, organizerRefusalSentence } from "../app/shell/organizer-refusal";
-import { postureRefusal, rulesPostureOf } from "../app/shell/rules-posture";
+import { organizerRefusalOf, organizerRefusalSentence } from "@ohmail/app-logic/press/organizer-refusal";
+import { postureRefusal, rulesPostureOf } from "@ohmail/app-logic/press/rules-posture";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 

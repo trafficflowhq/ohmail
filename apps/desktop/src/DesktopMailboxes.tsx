@@ -32,22 +32,22 @@ import {
 import {
   desktopFiler, deviceHoldings, filerSentence, holdingsSpeak, isRemovedMailbox, readerStandDown,
   showInboundQuiet, type MailboxFacts,
-} from "../../webapp/app/shell/mail-state";
-import { addressKey } from "../../webapp/app/shell/address-key";
+} from "@ohmail/app-logic/mail-state/mail-state";
+import { addressKey } from "@ohmail/app-logic/mail-state/address-key";
 import { holderIsLive, holderStopped, organizerSituation, standingOf } from "@trafficflow/core/reader-refusal";
 import { agoStamp, dayStamp } from "../../webapp/app/shell/format";
 import { activeFormatLocale, activeFormatZone } from "../../webapp/app/shell/locale";
-import { storeRefusalsFigure } from "../../webapp/app/shell/mailbox-error-key";
+import { storeRefusalsFigure } from "../../webapp/app/shell/store-refusals-figure";
 import { useEngineOrNull } from "../../webapp/app/shell/engine";
 import { useMailState } from "../../webapp/app/shell/MailStateProvider";
 import { goFirstRun } from "../../webapp/app/shell/routing";
 import {
   type HolderWho, holderSentence, phoneHolder, phoneHolderKey, readerHolder,
-} from "../../webapp/app/shell/reader-holder";
-import { useManagedService } from "../../webapp/app/shell/managed-service";
+} from "@ohmail/app-logic/reading/reader-holder";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import {
   clearReadingAlong, readingAlong, setReadingAlong,
-} from "../../webapp/app/shell/reading-along";
+} from "@ohmail/app-logic/reading/reading-along";
 import { bridgeFetch, engineLogout, retryingBridgeFetch, type EngineStatus } from "./bridge-fetch.js";
 import { firstRunDoorFor } from "./doors.js";
 import {

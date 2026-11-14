@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { durableSet } from "./durable";
-import { storageOwner } from "./storage-owner";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * `ohmail.ui.seed.notNow.<owner>` — "Not now" on the sent-mail review, for one account on this

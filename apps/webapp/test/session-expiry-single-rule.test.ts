@@ -91,7 +91,7 @@ function verdictsInCatches(src: string): number {
 /** Does this file ask the session door or the refresh door? */
 const ASKS = /\b(?:resumeSession|lastRefreshReport|lastRefreshOutcome|resolveOwnerOutcome|REFRESH_ENDPOINT|SESSION_ENDPOINT)\b|auth\.session\s*\(/;
 
-const FILES = walk(APP).map((p) => ({ rel: relative(resolve("."), p), src: readFileSync(p, "utf8") }));
+const FILES = [...walk(APP), ...walk(resolve("packages/app-logic/src"))].map((p) => ({ rel: relative(resolve("."), p), src: readFileSync(p, "utf8") }));
 
 function sites(find: (src: string) => number[]): Site[] {
   return FILES.flatMap(({ rel, src }) => find(src).map((at) => ({

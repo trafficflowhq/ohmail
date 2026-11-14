@@ -6,9 +6,9 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { FirstRun } from "../app/shell/FirstRun";
 import { KeymapProvider } from "../app/shell/keymap";
-import { DESKTOP_WINDOW } from "../app/shell/store-windows";
-import type { FirstRunHost } from "../app/shell/first-run-host";
-import type { OnboardingFacts } from "../app/shell/onboarding";
+import { DESKTOP_WINDOW } from "@ohmail/app-logic/session/store-windows";
+import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import type { OnboardingFacts } from "@ohmail/app-logic/doors/onboarding";
 
 /**
  * ═══ THE FIRST-RUN COUNTERS SAY WHICH POPULATION THEY ARE ABOUT ════════════════════════════

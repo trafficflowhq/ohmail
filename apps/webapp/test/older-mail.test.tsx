@@ -14,7 +14,7 @@ import {
   type SyncResponse,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { useOlderMail, type OlderMail } from "../app/shell/older-mail";
+import { useOlderMail, type OlderMail } from "@ohmail/app-logic/lists/older-mail";
 import { KeymapProvider } from "../app/shell/keymap";
 import { OhboxView } from "../app/views/OhboxView";
 

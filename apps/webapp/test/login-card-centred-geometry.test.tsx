@@ -25,7 +25,7 @@ import messages from "../messages/en.json";
 process.env.NEXT_PUBLIC_API_BASE = "/api";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace() {}, push() {} }) }));
 // Past the grace: the splash renders the waiting sentence the report showed.
-vi.mock("../app/shell/loading-grace.js", () => ({ useLoadingGrace: (active: boolean) => active }));
+vi.mock("@ohmail/app-logic/session/loading-grace", () => ({ useLoadingGrace: (active: boolean) => active }));
 
 const require_ = createRequire(resolve(process.cwd(), "package.json"));
 const { chromium } = require_("@playwright/test") as typeof import("@playwright/test");

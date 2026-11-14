@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { mailboxErrorKey } from "../app/shell/mailbox-error-key";
-import { PRESET_AUTH_REFUSALS, probeCopyKey, refusalAuthHint } from "../app/shell/local-server-host";
+import { mailboxErrorKey } from "@ohmail/app-logic/mail-state/mailbox-error-key";
+import { PRESET_AUTH_REFUSALS, probeCopyKey, refusalAuthHint } from "@ohmail/app-logic/doors/local-server-host";
 import { PROVIDERS } from "../app/shell/providers";
 
 /**

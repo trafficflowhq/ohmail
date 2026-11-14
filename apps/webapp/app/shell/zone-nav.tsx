@@ -24,8 +24,8 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap";
 import { railLayout } from "./narrow";
-import { scrollProgrammatically } from "./programmatic-scroll";
-import { queryVisible } from "./visible-dom";
+import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
+import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 
 /**
  * `"none"` is the fourth answer: a dialog is layered ABOVE the open reader (a screening

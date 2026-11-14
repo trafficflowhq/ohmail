@@ -5,7 +5,7 @@ import {
   seedGrowth,
   type MailStateInputs,
   type MailboxFacts,
-} from "../app/shell/mail-state";
+} from "@ohmail/app-logic/mail-state/mail-state";
 
 /**
  * `storeImportOpen` IS THE ACCOUNT'S OWN IMPORT FLOOR AND NOTHING ELSE. The Screener's queue is the

@@ -15,7 +15,7 @@ import {
   SUPPORT_ADDRESS, supportBlock, supportBody, supportFacts, supportMailto, type SupportSurface,
 } from "@trafficflow/core/diagnostics";
 import { defaultFrom, optionsFromFacts } from "./compose-from";
-import { copyRefused, type MailboxFacts } from "./mail-state";
+import { copyRefused, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 /** What the host knows about itself: which surface, which build, and the account where there is one. */
 export interface SupportHost {

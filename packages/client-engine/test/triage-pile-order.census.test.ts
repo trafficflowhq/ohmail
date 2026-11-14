@@ -13,7 +13,7 @@ import { withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs
 const REPO = new URL("../../../", import.meta.url);
 /** Every root a pile is rendered from: the one shell (web + desktops), the phone, the components. */
 const ROOTS = [
-  "apps/webapp/app", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app",
+  "apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src", "apps/mobile/app",
   "packages/ui/src", "packages/client-engine/src",
 ];
 const SELECTORS = "packages/client-engine/src/selectors.ts";

@@ -1,0 +1,18 @@
+{
+  "name": "@ohmail/app",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    "./host": {
+      "types": "./src/host/index.ts",
+      "ohmail-source": "./src/host/index.ts",
+      "node": "./dist/host/index.js",
+      "default": "./src/host/index.ts"
+    }
+  },
+  "dependencies": {
+    "react": "19.2.3",
+    "@ohmail/client-engine": "*"
+  }
+}

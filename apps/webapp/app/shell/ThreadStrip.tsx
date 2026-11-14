@@ -18,7 +18,7 @@
 import { useMemo, useState, useSyncExternalStore } from "react";
 import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
 import { ThreadMarksBar, marksKeys } from "./ThreadMarks";
-import type { ThreadWalkChannel, ThreadWalkSnapshot } from "./thread-walk-channel";
+import type { ThreadWalkChannel, ThreadWalkSnapshot } from "@ohmail/app-logic/reading/thread-walk-channel";
 
 const walkedKey = (channel: ThreadWalkChannel): string => channel.get()?.messages.map((m) => m.id).join("\n") ?? "";
 

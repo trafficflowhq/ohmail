@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { OHBOX_VISIT_ID, type MirrorStore, type OhmailEngine, type SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { JunkWire } from "../app/shell/junk-window";
-import type { MailboxFacts } from "../app/shell/mail-state";
+import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { NOW, S, act, click, consentTransport, engineOver, msg, setup, storeWith, teardown, waitFor } from "./_view-shell";
 
 /**

@@ -231,7 +231,7 @@ describe("the return schedule", () => {
 describe("the access door joins a return, and never across a write", () => {
   it("a fresh read inside the debounce joins the answer in hand", async () => {
     const { account } = await import("../app/api-client");
-    const { RETURN_DEBOUNCE_MS } = await import("../app/shell/wall-lift");
+    const { RETURN_DEBOUNCE_MS } = await import("@ohmail/app-logic/doors/wall-lift");
     await account.access({ fresh: true });
     later(RETURN_DEBOUNCE_MS - 1);
     await account.access({ fresh: true });
@@ -256,7 +256,7 @@ describe("the access door joins a return, and never across a write", () => {
 describe("the payer's own tab", () => {
   it("?billing=success with the payment pending: polls until paid, then draws nothing", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "setInterval", "clearTimeout", "clearInterval"] });
-    const { LIFT_POLL_MS, LIFT_POLL_MAX } = await import("../app/shell/wall-lift");
+    const { LIFT_POLL_MS, LIFT_POLL_MAX } = await import("@ohmail/app-logic/doors/wall-lift");
     window.history.replaceState(null, "", "/?billing=success");
     access = GRACE; // the confirm answered `pending`: the program has not applied it yet
     await mount();

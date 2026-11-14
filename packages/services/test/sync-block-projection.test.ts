@@ -125,7 +125,7 @@ describe("a block survives the projection even when its reason does not", () => 
     expect(
       dto!.syncBlockedSince,
       "the customer's client now has no way to know the mailbox is not being synced — the shell's " +
-        "ladder (`apps/webapp/app/shell/mail-state.ts`) gates on exactly this field",
+        "ladder (`packages/app-logic/src/mail-state/mail-state.ts`) gates on exactly this field",
     ).toBe(BLOCKED_SINCE.toISOString());
     expect(dto!.status).toBe("connected");
     expect(dto!.errorCode).toBeNull();

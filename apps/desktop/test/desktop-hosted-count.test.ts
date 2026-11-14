@@ -17,7 +17,7 @@
  * end-to-end case goes red; make it `?? 0` and the absent case goes red.
  */
 import { describe, expect, it, vi } from "vitest";
-import { deriveMailState, deviceHoldings, seedGrowth, type MailStateInputs } from "../../webapp/app/shell/mail-state";
+import { deriveMailState, deviceHoldings, seedGrowth, type MailStateInputs } from "@ohmail/app-logic/mail-state/mail-state";
 
 let wireItems: unknown[] = [];
 

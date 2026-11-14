@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { SegmentedControl, SettingsRow } from "@ohmail/ui";
-import { durableSet } from "./durable";
+import { durableSet } from "@ohmail/app-logic/storage/durable";
 import { DEFAULT_TEXT_SIZE, TEXT_SIZES, TEXT_SIZE_KEY, applyTextSize, readTextSize, type TextSize } from "./text-size";
 
 /** Store the size and put it on screen. A refused jar is announced by the door; the size holds. */

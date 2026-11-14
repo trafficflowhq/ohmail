@@ -49,8 +49,8 @@ import { describe, expect, it } from "vitest";
  *  · drop the `type(…)` blanking from `urlsIn`             → the inline-image case goes red.
  */
 
-type Mod = typeof import("../app/components/MessageBody.js");
-const mod = async (): Promise<Mod> => import("../app/components/MessageBody.js");
+type Mod = typeof import("../app/letter-body/MessageBody.js");
+const mod = async (): Promise<Mod> => import("../app/letter-body/MessageBody.js");
 
 /** The reader's policy: nothing is proxied, so every remote url this counts becomes `none`. */
 const DROP = (): null => null;

@@ -1,0 +1,138 @@
+"use client";
+
+/**
+ * Why your mail went where it went — the first "why" surface, and the hard part is refusing to say more than is
+ * known: the mirror sees much less than the router. Three answers, no fourth: `gate` — the message is in
+ * `ohmail/Screener`, not an inference; `rule` — an enabled rule matches this sender AND files into the folder
+ * the message is actually in (present tense — never "this rule filed this message", false for every message
+ * older than its rule); `arrival` — everything else, claiming nothing: known senders route through `contacts`,
+ * absent from the mirror's vocabulary, so a rule-less Ohbox message is explained by something this module
+ * cannot read. The rule named is the one the ROUTER chose ({@link routedRule}), and only when it agrees
+ * with where the message is. This reads the mirror — `screening.auditCount` says so.
+ */
+import {
+  FOLDER_OF_VIEW,
+  canonicalDestination,
+  rulesList,
+  senderKey,
+  type EngineMessage,
+  type EntityReader,
+  type RuleDTO,
+  type ScreenerSenderDTO,
+} from "@ohmail/client-engine";
+import { compareRules, effectForDestination, ruleMatchKey, type OrderedRule } from "@trafficflow/core/rule-order";
+import { bodyTextOf } from "./subject-rule.js";
+
+export type MailAttribution =
+  | { kind: "gate"; suggestion: ScreenerSenderDTO["ai"] }
+  | { kind: "rule"; rule: RuleDTO }
+  | { kind: "arrival" };
+
+export interface AttributedMessage {
+  message: EngineMessage;
+  attribution: MailAttribution;
+}
+
+/** Everything after the first `@`, lower-cased — `core/src/rules.ts#domainOf`, exactly. */
+export function auditDomainOf(address: string): string {
+  const at = address.indexOf("@");
+  return at >= 0 ? address.slice(at + 1).trim().toLowerCase() : "";
+}
+
+/**
+ * Does this rule match this sender, by the SAME test `core/src/rules.ts#matches` applies?
+ *
+ * Exact equality on a lower-cased address, or on everything after the first `@`. Not a suffix
+ * test: `corp.com` must not match `mail.corp.com` (the core matcher has no subdomain
+ * semantics) nor `evil-corp.com` (a lookalike an attacker chooses). `header` rules answer
+ * false — there are no headers in the mirror to test, and guessing is worse than silence.
+ */
+export function ruleMatchesSender(rule: RuleDTO, address: string): boolean {
+  const addr = address.trim().toLowerCase();
+  if (rule.kind === "sender") return ruleMatchKey(rule.match) === addr;
+  if (rule.kind === "domain") {
+    const d = auditDomainOf(addr);
+    return d !== "" && ruleMatchKey(rule.match) === d;
+  }
+  return false;
+}
+
+/**
+ * Does the rule's second term (mail 0050) also hold for this subject? `true` when it has none. A
+ * conjunction, asked in ADDITION to {@link ruleMatchesSender}: the `rule` attribution claims in the
+ * present tense that a rule sends mail from here to this place, and for a subject rule that is only
+ * true of messages whose subject matches — without this, the detail view for `info@` would label
+ * the invoice with the `[NinjaFirewall]` rule, the exact assertion the header forbids. Case-folded
+ * substring, matching `core/src/rules.ts#subjectSatisfies`; a blank term reads as no term — the
+ * CHECK forbids storing one, and this code is handed values the CHECK never saw.
+ */
+export function ruleSubjectHolds(rule: RuleDTO, subject: string): boolean {
+  const term = (rule.subjectContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+  if (term === "") return true;
+  return subject.toLowerCase().includes(term.toLowerCase());
+}
+
+/**
+ * Does the rule's BODY term (mail 0052) VERIFIABLY hold for this message? `true` when it has none.
+ * {@link ruleSubjectHolds}' contract against `text` — what the mirror holds
+ * (`subject-rule.ts#bodyTextOf`: full body where hydrated, snippet otherwise), a floor of the
+ * server's haystack, so the honest reading of a miss is "cannot verify". A body rule whose term
+ * sits deeper than the client's text is NOT named, and the message reads as "arrival" — an
+ * attribution this module already prefers over a claim it cannot check.
+ */
+export function ruleBodyHolds(rule: RuleDTO, text: string): boolean {
+  const term = (rule.bodyContains ?? "").replace(/^[ \t\n\r\f\v]+|[ \t\n\r\f\v]+$/g, "");
+  if (term === "") return true;
+  return text.toLowerCase().includes(term.toLowerCase());
+}
+
+/** A mirror rule as the router's order reads it: the effect is its destination's side of the gate. */
+const outranks = (a: RuleDTO, b: RuleDTO): boolean => {
+  const ordered = (r: RuleDTO): OrderedRule => ({ ...r, effect: effectForDestination(r.destination) });
+  return compareRules(ordered(a), ordered(b)) < 0;
+};
+
+/**
+ * The rule the router would name for this message, over what the mirror can test — `evaluateRules`'
+ * first two steps in `core/src/rules.ts`: the minimum under `compareRules` among the rules that fire,
+ * else the sender's standing DENIAL (a term narrows placement, never admission; a standing admission
+ * places nothing). Header rules cannot be tested here and take no part, as {@link ruleMatchesSender}
+ * says. Newest-first order decides nothing.
+ */
+export function routedRule(rules: readonly RuleDTO[], message: EngineMessage): RuleDTO | null {
+  let winner: RuleDTO | null = null;
+  let standing: RuleDTO | null = null;
+  for (const r of rules) {
+    if (!ruleMatchesSender(r, message.from.address)) continue;
+    if (r.destination !== FOLDER_OF_VIEW.screener && (standing === null || outranks(r, standing))) standing = r;
+    if (!ruleSubjectHolds(r, message.subject ?? "") || !ruleBodyHolds(r, bodyTextOf(message))) continue;
+    if (winner === null || outranks(r, winner)) winner = r;
+  }
+  if (winner !== null) return winner;
+  return standing !== null && effectForDestination(standing.destination) === "deny" ? standing : null;
+}
+
+/**
+ * Attribute a set of messages; the rules are read once for the whole set. A message is attributed to
+ * the rule the router chose ({@link routedRule}) only when that rule files into the folder the message
+ * is in: an Inbox copy from before a denial presents in Screened and names neither rule.
+ */
+export function attributeMessages(
+  reader: EntityReader, messages: readonly EngineMessage[],
+): AttributedMessage[] {
+  const rules = rulesList(reader).filter((r) => r.enabled);
+  const senders = reader.list<ScreenerSenderDTO>("screener_sender");
+
+  return messages.map((message): AttributedMessage => {
+    if (message.folder === FOLDER_OF_VIEW.screener) {
+      const key = senderKey(message.from.address);
+      const row = senders.find((s) => senderKey(s.from.address) === key);
+      return { message, attribution: { kind: "gate", suggestion: row?.ai ?? null } };
+    }
+    const rule = routedRule(rules, message);
+    return {
+      message,
+      attribution: rule !== null && rule.destination === canonicalDestination(message.folder) ? { kind: "rule", rule } : { kind: "arrival" },
+    };
+  });
+}

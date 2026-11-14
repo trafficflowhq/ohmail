@@ -10,7 +10,7 @@ import de from "../../webapp/messages/de.json";
 import { DesktopGate } from "../src/DesktopGate.js";
 import { cloudSuggestWire } from "../src/cloud-suggest.js";
 import { ACCOUNT_ACCESS_PATH } from "../src/DesktopSubscription.js";
-import { enableExternalLinks, interceptLinkClicks } from "../../webapp/app/shell/open-external";
+import { enableExternalLinks, interceptLinkClicks } from "@ohmail/app-logic/session/open-external";
 import type { EngineStatus } from "../src/bridge-fetch.js";
 import type { SuggestBatchControl } from "../../webapp/app/shell/screener-suggest";
 
