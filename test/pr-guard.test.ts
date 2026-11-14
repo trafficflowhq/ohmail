@@ -1,4 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -10,7 +11,8 @@ import { publicRel } from "./support/public-root.mjs";
  * THE GUARD CHECK: THE WORKFLOWS, THEIR TOOLS AND THE GATE CHANGE ONLY ON A MAINTAINER BRANCH OF THIS REPOSITORY.
  *
  * Every pull request is refused when its tree holds a file of a font kind, or any commit it would merge adds or
- * changes one. A maintainer's `publish/<utc>-<sha12>` branch is otherwise admitted whole; any other pull request is
+ * changes one, unless the BASE's `.github/scripts/admitted-fonts.tsv` names that file by path and sha256 and its
+ * licence text is in the tree. A maintainer's `publish/<utc>-<sha12>` branch is otherwise admitted whole; any other pull request is
  * refused when it changes `.github/`, `scripts/` or `.gate/` and is not a maintainer's `pr/<name>` branch, or
  * carries a `Monorepo-Commit:` line.
  * The script is driven over real fixture histories; the workflow is read as text for the properties that keep it
@@ -226,7 +228,7 @@ describe("a file of a font kind, anywhere in the head's tree", () => {
       const r = guard(world({ [p]: c }), fromFork());
       expect(r.rc, `${p}: ${r.out}`).toBe(1);
       expect(r.out).toMatch(new RegExp(`a file of a font kind:\\n {4}${esc(p)}\\n`));
-      expect(r.out).toMatch(/distributes no Font Software \(COPYRIGHT says why\)/);
+      expect(r.out).toMatch(/carries only the typefaces `\.github\/scripts\/admitted-fonts\.tsv` names, by path and sha256/);
       expect(r.out).toMatch(/REFUSED — paula\/ohmail:topic, 1 reason\(s\) above/);
     }
   });
@@ -295,6 +297,19 @@ describe("a file of a font kind in any commit the merge would keep, though not i
     expect(named(o.out)).toEqual([`, in commit ${root.slice(0, 12)}`]);
   });
 
+  it("refuses a font a side branch adds and a merge brings in, naming the commit that adds it and not the merge", () => {
+    const w = world({ "a.txt": "b\n" });
+    g(w.r, "checkout", "-q", "-b", "side", w.base);
+    writeFileSync(join(w.r, "side.ttf"), ""); g(w.r, "add", "-A"); g(w.r, "commit", "-q", "--no-verify", "-m", "docs: side");
+    const side = g(w.r, "rev-parse", "HEAD");
+    g(w.r, "checkout", "-q", "topic");
+    g(w.r, "merge", "-q", "--no-ff", "-m", "Merge side", "side");
+    g(w.r, "rm", "-q", "--", "side.ttf"); g(w.r, "commit", "-q", "--no-verify", "-m", "docs: drop it");
+    const r = guard({ ...w, head: g(w.r, "rev-parse", "HEAD") }, fromFork());
+    expect(r.rc, r.out).toBe(1);
+    expect(named(r.out)).toEqual([`, in commit ${side.slice(0, 12)}`]);
+  });
+
   it("reaches a maintainer's pr/ and publish/ branches", () => {
     const w = chain([{ files: { "fonts/x.otf": "" } }, { drop: ["fonts/x.otf"] }]);
     expect(guard(w, fromHere("pr/x")).out).toMatch(/REFUSED — trafficflowhq\/ohmail:pr\/x, 1 reason\(s\) above/);
@@ -306,6 +321,229 @@ describe("a file of a font kind in any commit the merge would keep, though not i
     expect(png.rc, png.out).toBe(0);
     const removal = guard(chain([{ files: { "a.txt": "c\n" } }, { drop: ["assets/old.dfont"] }], { "assets/old.dfont": "" }), fromFork());
     expect(removal.rc, removal.out).toBe(0);
+  });
+});
+
+/* ── The admitted typefaces: six fixture files under the real paths, listed on the fixture's main. ── */
+const LIST = ".github/scripts/admitted-fonts.tsv";
+const HEADER = "path\tsha256\tlicence\n";
+const sha256 = (bytes: string | Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+const FACES = ["bricolage-latin-ext", "bricolage-latin", "hanken-latin-ext", "hanken-latin", "jetbrains-latin-ext", "jetbrains-latin"];
+const facePath = (face: string) => `packages/tokens/fonts/${face}.woff2`;
+const faceBytes = (face: string) => Buffer.concat([Buffer.from("wOF2"), Buffer.from([0, 1, 0, 0]), Buffer.from(face)]);
+const licenceOf = (face: string) => `packages/tokens/fonts/OFL-${face.split("-")[0]}.txt`;
+const row = (path: string, bytes: string | Uint8Array, licence: string) => `${path}\t${sha256(bytes)}\t${licence}\n`;
+const SIX: Files = Object.fromEntries(FACES.map((f) => [facePath(f), faceBytes(f)]));
+const LICENCES: Files = Object.fromEntries(FACES.map((f) => [licenceOf(f), "Copyright the authors\n"]));
+const LISTED = HEADER + FACES.map((f) => row(facePath(f), faceBytes(f), licenceOf(f))).join("");
+const ON_MAIN: Files = { [LIST]: LISTED };
+/** What a refusal names: its indented lines. */
+const refused = (out: string) => (out.match(/^ {4}.*$/gm) ?? []).map((l) => l.slice(4));
+const inCommit = (out: string) => out.match(/, in commit [0-9a-f]{12}/g) ?? [];
+/** One more commit on the branch, made in the index alone: a mode or a name no file system here has to carry. */
+function planted(w: { r: string; base: string; head: string }, mode: string, bytes: string | Uint8Array, path: string) {
+  const oid = execFileSync("git", ["-C", w.r, "hash-object", "-w", "--stdin"], { input: bytes, env: ENV, encoding: "utf8" }).trim();
+  g(w.r, "update-index", "--add", "--cacheinfo", `${mode},${oid},${path}`);
+  g(w.r, "commit", "-q", "--no-verify", "-m", "docs: planted");
+  return { ...w, head: g(w.r, "rev-parse", "HEAD") };
+}
+
+describe("the typefaces the base's list admits, by path and by sha256", () => {
+  it("admits the six listed files with their licence texts, from a fork, a pr/ branch and a publish", () => {
+    const w = world({ ...SIX, ...LICENCES }, "feat: the typefaces", ON_MAIN);
+    for (const pr of [fromFork(), fromHere("pr/x"), publish]) {
+      const r = guard(w, pr);
+      expect(r.rc, r.out).toBe(0);
+      expect(r.out).toContain(`guard: admitted typefaces: 6 row(s) read from ${w.base.slice(0, 12)}:${LIST}\n`);
+    }
+    expect(guard(w, fromFork()).out).toMatch(/ADMITTED — paula\/ohmail:topic changes none of .*, and carries no Monorepo-Commit: line and no font file beyond the admitted\n$/);
+  });
+
+  it("refuses a seventh file beside them, and names it alone", () => {
+    const seventh = "packages/tokens/fonts/seventh.woff2";
+    const r = guard(world({ ...SIX, ...LICENCES, [seventh]: faceBytes("seventh") }, "feat: seven", ON_MAIN), fromFork());
+    expect(r.rc, r.out).toBe(1);
+    expect(refused(r.out)).toEqual([`${seventh} — not admitted`]);
+    expect(r.out).toMatch(/REFUSED — paula\/ohmail:topic, 1 reason\(s\) above/);
+  });
+
+  it("refuses one of the six with its last byte changed, for a maintainer too, and names no other", () => {
+    const bytes = Buffer.from(faceBytes("hanken-latin"));
+    bytes[bytes.length - 1]! ^= 1;
+    const w = world({ ...SIX, ...LICENCES, [facePath("hanken-latin")]: bytes }, "feat: a changed byte", ON_MAIN);
+    for (const pr of [fromFork(), fromHere("pr/x"), publish]) {
+      const r = guard(w, pr);
+      expect(r.rc, r.out).toBe(1);
+      expect(refused(r.out)).toEqual([`${facePath("hanken-latin")} — other bytes than admitted (sha256 ${sha256(bytes).slice(0, 12)}…)`]);
+    }
+  });
+
+  it("refuses the listed bytes at another path, and at the listed path in upper case", () => {
+    for (const p of ["assets/bricolage-latin.woff2", facePath("bricolage-latin").toUpperCase()]) {
+      const r = guard(world({ [p]: faceBytes("bricolage-latin") }, "feat: elsewhere", ON_MAIN), fromFork());
+      expect(r.rc, `${p}: ${r.out}`).toBe(1);
+      expect(refused(r.out)).toEqual([`${p} — not admitted`]);
+    }
+  });
+
+  it("reads the list from the base alone: a pull request cannot admit its own file", () => {
+    const p = facePath("extra");
+    const own: Files = { [LIST]: LISTED + row(p, faceBytes("extra"), licenceOf("bricolage-latin")), ...SIX, ...LICENCES, [p]: faceBytes("extra") };
+    const first = guard(world(own), fromHere("pr/x"));
+    expect(first.rc, first.out).toBe(1);
+    expect(first.out).toContain("guard: admitted typefaces: none (the base carries no list)\n");
+    expect(refused(first.out)).toEqual([...FACES, "extra"].map(facePath).sort());
+    const later = guard(world(own, "feat: a row and its file", ON_MAIN), fromHere("pr/x"));
+    expect(later.rc, later.out).toBe(1);
+    expect(refused(later.out)).toEqual([`${p} — not admitted`]);
+  });
+
+  it("refuses an admitted file whose licence text is not in the tree, and a change that deletes one", () => {
+    const lic = licenceOf("hanken-latin");
+    const want = ["hanken-latin-ext", "hanken-latin"].map((f) => `${lic} — the licence text of ${facePath(f)} is not in the tree`);
+    const others: Files = Object.fromEntries(Object.entries(LICENCES).filter(([p]) => p !== lic));
+    const missing = guard(world({ ...SIX, ...others }, "feat: two licences", ON_MAIN), fromFork());
+    expect(missing.rc, missing.out).toBe(1);
+    expect(refused(missing.out)).toEqual(want);
+    const deleted = guard(chain([{ drop: [lic] }], { ...ON_MAIN, ...SIX, ...LICENCES }), fromFork());
+    expect(deleted.rc, deleted.out).toBe(1);
+    expect(refused(deleted.out)).toEqual(want);
+    expect(deleted.out).toMatch(/REFUSED — paula\/ohmail:topic, 1 reason\(s\) above/);
+  });
+
+  it("refuses other bytes in an earlier commit though the head carries the listed ones, naming that commit alone", () => {
+    const p = facePath("jetbrains-latin"), wrong = Buffer.from("wOF2 another face");
+    const w = chain([{ files: { ...LICENCES, [p]: wrong } }, { files: { [p]: faceBytes("jetbrains-latin") } }], ON_MAIN);
+    const r = guard(w, fromFork());
+    expect(r.rc, r.out).toBe(1);
+    expect(inCommit(r.out)).toEqual([`, in commit ${w.shas[0]!.slice(0, 12)}`]);
+    expect(refused(r.out)).toEqual([`${p}, in commit ${w.shas[0]!.slice(0, 12)} — other bytes than admitted (sha256 ${sha256(wrong).slice(0, 12)}…)`]);
+    /* The control: the listed bytes in both commits. */
+    const twice = chain([{ files: { ...LICENCES, [p]: faceBytes("jetbrains-latin") } }, { files: { "a.txt": "b\n" } }], ON_MAIN);
+    expect(guard(twice, fromFork()).rc).toBe(0);
+  });
+
+  it("refuses a list it cannot read whole, naming the line, on a pull request that carries no font at all", () => {
+    const sum = sha256("x"), p = facePath("a"), lic = licenceOf("a");
+    const lists: [string, string, number][] = [
+      ["a sum of 63 digits", `${HEADER}${p}\t${sum.slice(1)}\t${lic}\n`, 2],
+      ["a sum in capitals", `${HEADER}${p}\t${sum.toUpperCase()}\t${lic}\n`, 2],
+      ["a .. segment", `${HEADER}packages/../a.woff2\t${sum}\t${lic}\n`, 2],
+      ["a .. segment in the licence", `${HEADER}${p}\t${sum}\tpackages/../OFL.txt\n`, 2],
+      ["a missing column", `${HEADER}${p}\t${sum}\n`, 2],
+      ["another kind", `${HEADER}packages/tokens/fonts/a.ttf\t${sum}\t${lic}\n`, 2],
+      ["a pattern for a path", `${HEADER}packages/tokens/fonts/*.woff2\t${sum}\t${lic}\n`, 2],
+      ["a comment", `${HEADER}# the faces\n${row(p, "x", lic)}`, 2],
+      ["a blank line", `${HEADER}${row(p, "x", lic)}\n${row(facePath("b"), "y", lic)}`, 3],
+      ["a blank line at the end", `${HEADER}${row(p, "x", lic)}\n`, 3],
+      ["line ends of another system", `${HEADER}${row(p, "x", lic)}`.replace(/\n/g, "\r\n"), 1],
+      ["a font for a licence text", `${HEADER}${p}\t${sum}\t${facePath("b")}\n`, 2],
+      ["another header", `path\tsha256\n${row(p, "x", lic)}`, 1],
+      ["no header", row(p, "x", lic), 1],
+      ["a row twice", `${HEADER}${row(p, "x", lic).repeat(2)}`, 3],
+    ];
+    for (const [what, text, line] of lists) {
+      const r = guard(world({ "a.txt": "b\n" }, "docs: a change", { [LIST]: text }), fromFork());
+      expect(r.rc, `${what}: ${r.out}`).toBe(2);
+      expect(r.out, what).toMatch(new RegExp(`^guard: [0-9a-f]{12}:${esc(LIST)}, line ${line}: `, "m"));
+      expect(r.out, what).not.toMatch(/ADMITTED/);
+    }
+    /* The control: a header and no row is a list that admits nothing. */
+    const empty = guard(world({ "a.txt": "b\n" }, "docs: a change", { [LIST]: HEADER }), fromFork());
+    expect(empty.rc, empty.out).toBe(0);
+    expect(empty.out).toMatch(/admitted typefaces: 0 row\(s\) read from /);
+  });
+
+  it("refuses all six while the base carries no list (the control)", () => {
+    const r = guard(world({ ...SIX, ...LICENCES }), fromFork());
+    expect(r.rc, r.out).toBe(1);
+    expect(refused(r.out)).toEqual(FACES.map(facePath));
+    expect(r.out).toMatch(/REFUSED — paula\/ohmail:topic, 1 reason\(s\) above/);
+  });
+
+  it("refuses a link at a listed path whose target text is the listed bytes, and a second version only once it has a row", () => {
+    const p = facePath("bricolage-latin");
+    const link = guard(planted(world({ ...LICENCES }, "feat: licences", ON_MAIN), "120000", faceBytes("bricolage-latin"), p), fromFork());
+    expect(link.rc, link.out).toBe(1);
+    expect(refused(link.out)).toEqual([`${p} — not a regular file`]);
+    /* A list is a set of pairs: the row of a new version stands beside the old one's while both are in the history. */
+    const next = Buffer.from("wOF2 the next version");
+    const files: Files = { ...SIX, ...LICENCES, [p]: next };
+    expect(guard(world(files, "feat: a new version", ON_MAIN), fromFork()).rc).toBe(1);
+    const both = guard(world(files, "feat: a new version", { [LIST]: LISTED + row(p, next, licenceOf("bricolage-latin")) }), fromFork());
+    expect(both.rc, both.out).toBe(0);
+    expect(both.out).toMatch(/admitted typefaces: 7 row\(s\) read from /);
+  });
+
+  it("admits a branch that merged the base while an earlier version was listed, once it merges the base again", () => {
+    const p = facePath("hanken-latin"), lic = licenceOf("hanken-latin");
+    const old = faceBytes("hanken-latin"), next = Buffer.from("wOF2 the next version");
+    const w = world({ "mine.txt": "1\n" }, "docs: mine", { [LIST]: HEADER + row(p, old, lic) });
+    const onMain = (files: Files, message: string) => {
+      g(w.r, "checkout", "-q", "main");
+      for (const [path, c] of Object.entries(files)) {
+        mkdirSync(join(w.r, path, ".."), { recursive: true });
+        writeFileSync(join(w.r, path), c);
+      }
+      g(w.r, "add", "-A"); g(w.r, "commit", "-q", "--no-verify", "-m", message);
+      const sha = g(w.r, "rev-parse", "HEAD");
+      g(w.r, "checkout", "-q", "topic");
+      return sha;
+    };
+    const mergeMain = () => { g(w.r, "merge", "-q", "--no-ff", "-m", "Merge branch 'main' into topic", "main"); return g(w.r, "rev-parse", "HEAD"); };
+    onMain({ [p]: old, [lic]: "Copyright the authors\n" }, "feat: the typeface");
+    const first = mergeMain();
+    /* The next version, in the order the script's header gives: its row, its bytes, then the old row leaves. */
+    onMain({ [LIST]: HEADER + row(p, old, lic) + row(p, next, lic) }, "ci: the row of the next version");
+    onMain({ [p]: next }, "feat: the next version");
+    const base = onMain({ [LIST]: HEADER + row(p, next, lic) }, "ci: the old row leaves");
+    /* Until the branch merges the base again its tree carries the old bytes: refused, and told what clears it. */
+    const stale = guard({ ...w, base, head: first }, fromFork());
+    expect(stale.rc, stale.out).toBe(1);
+    expect(refused(stale.out)).toEqual([`${p} — other bytes than admitted (sha256 ${sha256(old).slice(0, 12)}…)`]);
+    expect(stale.out).toMatch(/merge\n? *the base branch into it, or rebase on it, and push/);
+    /* After it: the old bytes are in the first merge alone, and that merge only carries what main carried. */
+    const updated = guard({ ...w, base, head: mergeMain() }, fromFork());
+    expect(updated.rc, updated.out).toBe(0);
+    expect(updated.out).toMatch(/ADMITTED — paula\/ohmail:topic /);
+    /* Bytes a merge writes by itself at that path are the merge's own, though both parents carry a file there. */
+    const wrong = Buffer.from("wOF2 another face");
+    const later = onMain({ "b.txt": "b\n" }, "docs: more");
+    execFileSync("git", ["-C", w.r, "merge", "-q", "--no-ff", "--no-commit", "main"], { env: ENV, stdio: "ignore" });
+    writeFileSync(join(w.r, p), wrong); g(w.r, "add", "-A"); g(w.r, "commit", "-q", "--no-verify", "-m", "Merge branch 'main' into topic");
+    const own = g(w.r, "rev-parse", "HEAD");
+    writeFileSync(join(w.r, p), next); g(w.r, "add", "-A"); g(w.r, "commit", "-q", "--no-verify", "-m", "docs: put it back");
+    const r = guard({ ...w, base: later, head: g(w.r, "rev-parse", "HEAD") }, fromFork());
+    expect(r.rc, r.out).toBe(1);
+    expect(refused(r.out)).toEqual([`${p}, in commit ${own.slice(0, 12)} — other bytes than admitted (sha256 ${sha256(wrong).slice(0, 12)}…)`]);
+  });
+
+  it.skipIf(process.platform === "win32")("prints a name that carries a line break on one line", () => {
+    const r = guard(planted(world({ "a.txt": "b\n" }), "100644", "", "x\nguard: ADMITTED — forged.ttf"), fromFork());
+    expect(r.rc, r.out).toBe(1);
+    expect(refused(r.out)).toEqual(["x?guard: ADMITTED — forged.ttf"]);
+    expect(r.out).not.toMatch(/^guard: ADMITTED/m);
+  });
+
+  it("the list this repository carries: six rows under packages/tokens/fonts, three licence texts, sorted, and read whole", () => {
+    const text = readFileSync(resolve(ROOT, publicRel("github/scripts/admitted-fonts.tsv")), "utf8");
+    const lines = text.split("\n");
+    expect(lines[0]).toBe(HEADER.trimEnd());
+    expect(lines.pop()).toBe("");
+    const rows = lines.slice(1).map((l) => l.split("\t"));
+    expect(rows).toHaveLength(6);
+    for (const r of rows) {
+      expect(r).toHaveLength(3);
+      expect(r[0]).toMatch(/^packages\/tokens\/fonts\/[a-z0-9-]+\.woff2$/);
+      expect(r[1]).toMatch(/^[0-9a-f]{64}$/);
+      expect(r[2]).toMatch(/^packages\/tokens\/fonts\/OFL-[A-Za-z]+\.txt$/);
+    }
+    expect(rows.map((r) => r[0])).toEqual(rows.map((r) => r[0]).sort());
+    expect(new Set(rows.map((r) => r[0])).size).toBe(6);
+    expect(new Set(rows.map((r) => r[2])).size).toBe(3);
+    const r = guard(world({ "a.txt": "b\n" }, "docs: a change", { [LIST]: text }), fromFork());
+    expect(r.rc, r.out).toBe(0);
+    expect(r.out).toMatch(/admitted typefaces: 6 row\(s\) read from /);
   });
 });
 

@@ -3,7 +3,8 @@ name: guard
 # The workflows, their tools and the gate change only on a maintainer branch of this repository.
 #
 # Every pull request is refused when its tree holds a file of a font kind, or any commit it would merge
-# adds or changes one. A pull request that changes `.github/`, `scripts/` or `.gate/` is refused unless a
+# adds or changes one, unless the base's `.github/scripts/admitted-fonts.tsv` names that file by path and
+# sha256. A pull request that changes `.github/`, `scripts/` or `.gate/` is refused unless a
 # maintainer opened it from a `pr/<name>` branch of this repository (a name of letters, digits, `.`, `_`
 # and `-`), and one carrying a `Monorepo-Commit:` line in a commit message, its title or its description
 # is refused too; a maintainer's `publish/<utc>-<sha12>` branch is admitted apart from the font rule. Who
