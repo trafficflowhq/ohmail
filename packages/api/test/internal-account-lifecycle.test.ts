@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { UNMETERED_ACCESS, type EntitlementsPort } from "@trafficflow/db";
-import { makeDeps } from "./helpers.js";
+import { eq } from "drizzle-orm";
+import { UNMETERED_ACCESS, users, type AccessLifecycle, type EntitlementsPort } from "@trafficflow/db";
+import { accountLifecycleNotices, authThrottle, creditRefundObligations } from "@trafficflow/db/cloud";
+import { throttleKeysFor } from "@trafficflow/services";
+import { makeDeps, seedSession, FIXED_NOW } from "./helpers.js";
 
 /**
  * THE NIGHTLY SWEEP'S DOORS (cloud 0040). The sweep takes one keyset position (`?after=`) and
@@ -14,6 +17,7 @@ const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null });
 const SECRET = "s".repeat(32);
 const ID = "0a000000-0000-4000-8000-000000000001";
+const DAY = 24 * 60 * 60 * 1000;
 
 const get = (path: string, secret: string | null = SECRET): Request => new Request(`http://api.test${path}`, {
   method: "GET", headers: secret ? { authorization: `Bearer ${secret}` } : {},
@@ -82,5 +86,67 @@ describe("GET /internal/account-lifecycle/run and /erase", () => {
     expect(await res.json()).toEqual({ skipped: "not_due" });
     expect((await H(get("/internal/account-lifecycle/erase"), d)).status).toBe(400);
     expect((await H(get("/internal/account-lifecycle/erase?account=nope"), d)).status).toBe(400);
+  });
+
+  /**
+   * AN ACCOUNT PAST ITS RETENTION, WARNED IN ITS WEEK, through the door itself. Nobody presses
+   * delete here, so this door hands the erasure what `DELETE /account` hands it: the keyer that
+   * reaches the sign-in throttle's rows for the person's address, and the word that a refund
+   * still owed is kept for the drain.
+   */
+  it("the erase door erases a due account: its people, its sign-in throttle rows, and it keeps a refund still owed", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW });
+    const erasureAt = new Date(FIXED_NOW.getTime() - 2 * DAY);
+    const lifecycle: AccessLifecycle = {
+      state: "closed", closedReason: "trial_ended", trialEndsAt: null, graceUntil: null,
+      closedAt: new Date(FIXED_NOW.getTime() - 32 * DAY).toISOString(), erasureAt: erasureAt.toISOString(),
+      erasedAt: null, formerlyPaid: false, lifecycleEpoch: new Date(FIXED_NOW.getTime() - 60 * DAY).toISOString(),
+    };
+    const warnedAt = new Date(erasureAt.getTime() - 7 * DAY);
+    await db.insert(accountLifecycleNotices).values({
+      accountId: s.accountId, kind: "erasure_week", anchor: erasureAt, sentAt: warnedAt, deliveredAt: warnedAt,
+    });
+    await db.insert(creditRefundObligations).values({
+      accountId: s.accountId, action: "draft", attemptKey: "ak-p", attempt: "at-p", reason: "drafter_failed", meta: { n: 1 },
+    });
+    const released: string[] = [];
+    const d = {
+      ...deps, alerts: { secret: SECRET, sinks: [] },
+      services: {
+        ...deps.services,
+        entitlementsPort: {
+          ...openPort([]),
+          async accessOrFault(id: string) {
+            return id === s.accountId ? { ok: false, reason: "payment_required", lifecycle } : UNMETERED_ACCESS;
+          },
+          async releaseAccount(id: string) { released.push(id); return "cancelled"; },
+        },
+      },
+    } as unknown as ApiDeps;
+
+    const [person] = await db.select({ email: users.email }).from(users).where(eq(users.id, s.userId));
+    const refused = await H(new Request("http://api.test/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: person!.email, password: "not the password" }),
+    }), d);
+    expect(refused.status).toBe(401);
+    const hash = throttleKeysFor(deps.keyProvider).address(person!.email.trim().toLowerCase());
+    const naming = async (): Promise<number> =>
+      (await db.select({ key: authThrottle.key }).from(authThrottle)).filter((r) => r.key.includes(hash)).length;
+    expect(await naming(), "the refused sign-in wrote no row to erase").toBeGreaterThan(0);
+
+    const res = await H(get(`/internal/account-lifecycle/erase?account=${s.accountId}`), d);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ outcome: "erased" });
+    expect(released, "the money is stopped once, for this account").toEqual([s.accountId]);
+    expect(await db.select().from(users).where(eq(users.accountId, s.accountId))).toHaveLength(0);
+    expect(await naming(), "a throttle row still names the erased person's address").toBe(0);
+    const owed = await db.select().from(creditRefundObligations).where(eq(creditRefundObligations.accountId, s.accountId));
+    expect(owed.map((r) => [r.attempt, r.meta]), "the refund still owed is kept, pseudonymised").toEqual([["at-p", null]]);
+    // Asked again, the door answers the erasure it already made and stops no money twice.
+    const again = await H(get(`/internal/account-lifecycle/erase?account=${s.accountId}`), d);
+    expect(await again.json()).toEqual({ outcome: "already_erased" });
+    expect(released).toHaveLength(1);
   });
 });

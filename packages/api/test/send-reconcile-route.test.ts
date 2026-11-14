@@ -7,9 +7,6 @@ import { drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopie
 import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE, SEND_RECONCILE_NET_TIMEOUTS } from "@trafficflow/services";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { admittedFilingAdapter } from "../src/routes/internal.js";
 import { makeDeps, req } from "./helpers.js";
 
@@ -92,35 +89,8 @@ describe("mounting and the gate", () => {
 });
 
 describe("the abandonment seam reaches production, not just the spies", () => {
-  /**
-   * A SOURCE CENSUS, and the reason is that `makeSendAdapter` CONNECTS eagerly (`adapter.connect()`)
-   * — so the only way to build one is against a live IMAP server, which is not reachable in every
-   * environment this suite runs in. The property still has to be checked somewhere, because it
-   * failed exactly the way an unchecked property does.
-   *
-   * WHAT WENT WRONG: `SendAdapter.forceClose` was added to the seam, forwarded by the reconciler's
-   * own wrapper, and exercised by a spy that defined it — while `makeSendAdapter` returns a
-   * hand-written object literal that did NOT name it. So in production `abandon()` always took the
-   * polite-`close()` fallback: the LOGOUT queued behind the hung command, waited out the very hang
-   * it was escaping, and the admission slot stayed held. Every test passed. The seam was decorative
-   * for its whole life, and only a check that looks at the PRODUCTION factory could have said so.
-   */
-  it("makeSendAdapter forwards forceClose — the reconciler's abandonment depends on it", () => {
-    const src = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), "..", "src", "send-adapter.ts"), "utf8",
-    );
-    // Matched on the PROPERTY, not on a formatting of it: an exact-body regex turns red when
-    // somebody adds a log line and stays green when a correct-looking `forceClose` is added to a
-    // second, unreachable literal. What has to be true is that the returned object names it and
-    // that it reaches the adapter's own.
-    const body = src.slice(src.indexOf("return {", src.indexOf("export async function makeSendAdapter")));
-    const decl = /forceClose\s*:\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>/.exec(body);
-    expect(decl, "the returned object must name forceClose, or the seam is decorative")
-      .not.toBeNull();
-    const after = body.slice(decl!.index, decl!.index + 200);
-    expect(after, "…and it must reach the ADAPTER's, not be a no-op that satisfies the shape")
-      .toContain("adapter.forceClose(");
-  });
+  // That the production door forwards `forceClose`, and builds its connection with the deadlines it
+  // is handed, is held where the door is entered: `send-adapter-keeper.test.ts`.
 
   /**
    * Racing a dial does not stop it (imapflow serialises commands), so the bound has to be the
@@ -286,6 +256,34 @@ describe("`GET /internal/sends/sent-copies/run` — the late Sent-copy pass's do
     // Admitted, then `makeSendAdapter` finds no credentials.
     const res = await H(req("GET", SENT_COPIES_CRON_PATH, { bearer: SECRET }), deps);
     expect({ status: res.status, taken, given }).toEqual({ status: 200, taken: 1, given: 1 });
+  });
+
+  it("its dial is asked with the pass's own deadlines, may file and look but never submit, and gives its slot back once", async () => {
+    const { db, deps } = await armed();
+    const w = await owedCopy(deps, db);
+    let taken = 0;
+    let given = 0;
+    deps.services!.imapAdmission = {
+      acquire: async () => { taken += 1; return true; },
+      release: async () => { given += 1; },
+    };
+    const asked: unknown[] = [];
+    const seen = { sends: 0, filed: 0 };
+    const adapter = await admittedFilingAdapter(deps, w.mailboxId, async (_deps, mailboxId, opts) => {
+      asked.push({ mailboxId, opts });
+      return {
+        async send() { seen.sends += 1; return { providerMessageId: "x" }; },
+        async messageInSent() { return false; },
+        async fileSentCopy() { seen.filed += 1; return null; },
+        async close() { /* nothing held */ },
+      };
+    });
+    expect(asked).toEqual([{ mailboxId: w.mailboxId, opts: { timeouts: SEND_RECONCILE_NET_TIMEOUTS } }]);
+    await adapter.fileSentCopy!(Buffer.from("raw"), "<m@rec.test>");
+    expect(() => adapter.send({} as never), "the door submitted a delivered letter again").toThrow();
+    await adapter.close();
+    await adapter.close();
+    expect({ ...seen, taken, given }).toEqual({ sends: 0, filed: 1, taken: 1, given: 1 });
   });
 
   it("a copy kept without its files reads its uploads through the host's staging, under its own account", async () => {

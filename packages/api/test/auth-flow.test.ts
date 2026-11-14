@@ -152,6 +152,17 @@ describe("auth — session, logout, refresh", () => {
     expect(cookieMaxAge(out, "tf_session")).toBe(0);
     expect(cookieMaxAge(out, "tf_refresh")).toBe(0);
     expect(cookieMaxAge(out, "tf_csrf")).toBe(0);
+    // A browser drops a cookie only for a clear with the name, host and path it was set with; a
+    // clear at another path leaves the session in the jar. Every cookie the sign-in set is cleared
+    // with the attributes it was set with.
+    const attrs = (line: string): [string, string[]] => {
+      const [pair, ...rest] = line.split(";").map((p) => p.trim());
+      return [pair!.split("=")[0]!, rest.filter((p) => !/^max-age=/i.test(p)).map((p) => p.toLowerCase()).sort()];
+    };
+    const cleared = new Map(out.headers.getSetCookie().map(attrs));
+    const minted = verify.headers.getSetCookie().map(attrs);
+    expect(minted.length).toBeGreaterThanOrEqual(3);
+    for (const [name, a] of minted) expect(cleared.get(name), `${name} is cleared as it was set`).toEqual(a);
   });
 
   it("POST /auth/refresh via tf_refresh cookie rotates → new tf_session; LATE reuse revokes the family (401)", async () => {

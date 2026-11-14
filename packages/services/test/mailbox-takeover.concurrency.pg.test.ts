@@ -493,6 +493,30 @@ describe.skipIf(!PG_UP)("MailboxService.takeover — the explicit action that en
     expect(m!.releaseRequestedAt, "a no-op wrote a request anyway").toBeNull();
   });
 
+  it("this install's own claim, left standing under a reader row, is still given up; another install's is not", async () => {
+    const here = makeMailboxService({ keyProvider: KP, accessOf: async () => UNMETERED_ACCESS, installId: "this-install", signatureChecks: false });
+    const acc = await account();
+    const heldBy = async (installId: string): Promise<string> => {
+      const id = await mailbox(acc);
+      await standDown(id, "organized_elsewhere:cloud");
+      await dbA.update(mailboxes).set({ organizedByInstallId: installId }).where(eq(mailboxes.id, id));
+      return id;
+    };
+    const requested = async (id: string): Promise<boolean> =>
+      (await dbA.select().from(mailboxes).where(eq(mailboxes.id, id)))[0]!.releaseRequestedAt !== null;
+
+    const ours = await heldBy("this-install");
+    expect(await here.release(ctxOn(dbA, acc), ours)).toEqual({ outcome: "requested" });
+    expect(await requested(ours), "the claim this install holds was left in the mailbox").toBe(true);
+
+    // The same kind of holder under another id is somebody else's claim: nothing to give up here.
+    const theirs = await heldBy("another-install");
+    expect(await here.release(ctxOn(dbA, acc), theirs)).toEqual({ outcome: "not_organizing" });
+    expect(await requested(theirs)).toBe(false);
+    // And a service that does not know its own id gives up nobody's.
+    expect(await svc.release(ctxOn(dbA, acc), ours)).toEqual({ outcome: "not_organizing" });
+  });
+
   it("a REMOVED mailbox is refused rather than revived", async () => {
     const acc = await account();
     const id = await mailbox(acc);

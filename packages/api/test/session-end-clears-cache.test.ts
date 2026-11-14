@@ -73,7 +73,7 @@ describe("every response that ends a browser session empties the jar, and none i
     expectSessionEnded(res, "POST /auth/logout");
   });
 
-  it("the web's sign-out door, its 204 and its own 401 alike; the cache goes at the purge after them", async () => {
+  it("the web's sign-out door, its 204; the cache goes at the purge after it", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW });
     const refresh = await seedRefresh(db, s);
@@ -81,18 +81,24 @@ describe("every response that ends a browser session empties the jar, and none i
     const ended = await H(req("POST", "/auth/refresh/logout", { ...jar, cookie: `${jar.cookie}; tf_refresh=${refresh}` }), deps);
     expect(ended.status).toBe(204);
     expectSessionEnded(ended, "the door's 204");
-    const named = await H(req("POST", "/auth/refresh/logout"), deps);
-    expect(named.status).toBe(401);
-    expectSessionEnded(named, "the door's 401");
     await expectPurged(await H(req("POST", "/auth/refresh", { headers: PURGE }), deps), "the purge after the sign-out");
   });
 
-  it("the erase", async () => {
+  // Its own case: the door's refusal empties the jar at a call site of its own.
+  it("the web's sign-out door, its own 401 with no jar presented", async () => {
+    const { deps } = await makeDeps();
+    const named = await H(req("POST", "/auth/refresh/logout"), deps);
+    expect(named.status).toBe(401);
+    expectSessionEnded(named, "the door's 401");
+  });
+
+  it("the erase, its receipt whole", async () => {
     const { db, deps } = await makeDeps();
     const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
     const res = await H(req("DELETE", "/account", browser(s.token)), deps);
     expect(res.status).toBe(200);
     expectSessionEnded(res, "DELETE /account");
+    expect(((await res.json()) as { erased?: boolean }).erased, "the receipt rides through").toBe(true);
   });
 
   /**

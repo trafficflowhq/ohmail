@@ -143,4 +143,29 @@ describe("MailboxService.organizeHere opens no IMAP connection when no password 
     // what only the mailbox can decide.
     expect(after!.organizerRole).toBe("reader");
   });
+
+  it("with no password in the press and no login stored, the takeover is refused and nothing is stamped", async () => {
+    const pglite = await makeTestDb();
+    const tx = pglite as unknown as Tx;
+    const accountId = randomUUID();
+    await tx.insert(accounts).values({ id: accountId, name: "takeover-no-login" });
+    const [mb] = await tx.insert(mailboxes).values({
+      accountId, provider: "imap", address: "bare@example.test",
+      organizerRole: "reader", organizedByKind: "local", organizedByName: "somebody's laptop",
+      organizeConsentedAt: new Date("2026-08-01T00:00:00.000Z"),
+    }).returning();
+    const svc = makeMailboxService({ allowance: async () => { /* permitted */ }, signatureChecks: false });
+    const ctx: ServiceContext = {
+      db: pglite as unknown as ServiceContext["db"],
+      accountId, userId: null, now: () => new Date("2026-08-05T12:00:00.000Z"), requestId: "r",
+    };
+
+    const refused = await svc.organizeHere(ctx, mb!.id, { intent: "takeover" }).then(() => null, (e: unknown) => e);
+    // The refusal asks for the password and is not worth repeating as it stands.
+    expect(refused).toMatchObject({ code: "credential_needed", httpStatus: 422, retryable: false });
+
+    const [after] = await tx.select().from(mailboxes).where(eq(mailboxes.id, mb!.id)).limit(1);
+    expect(after!.takeoverAuthorizedAt).toBeNull();
+    expect(after!.organizerRole).toBe("reader");
+  });
 });

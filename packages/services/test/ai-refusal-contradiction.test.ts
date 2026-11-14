@@ -174,6 +174,15 @@ describe("a state refusal the access view contradicts is a fault, not a bill", (
     expect(access.asks, "an empty balance asked the access half about itself").toEqual([]);
   });
 
+  it("…and a draft on an empty balance is the same 402, the model never reached", async () => {
+    // The drafter double throws a plain error if it is called, which no refusal carries: a press
+    // that went on to the model answers with no status at all.
+    const access = accessAnswering(ACTIVE);
+    expect(await statusOf(draftPress({ verdict: "insufficient", reason: "out_of_credits" }, access)))
+      .toEqual({ status: 402, code: "insufficient_credits" });
+    expect(access.asks).toEqual([]);
+  });
+
   it("the account's own off switch is still 409, and asks nobody either", async () => {
     const access = accessAnswering(ACTIVE);
     expect(await statusOf(screenerPress({ verdict: "refused", reason: "ai_disabled" }, access)))

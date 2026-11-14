@@ -173,6 +173,8 @@ describe("GET /search — hybrid search endpoint", () => {
     const gotIds = body.items.map((m: { id: string }) => m.id);
     expect(gotIds).toContain(mine.id);
     expect(gotIds).not.toContain(theirs.id);
+    // Nor is it counted: the total and the facets are this account's alone.
+    expect({ total: body.total, inbox: body.facets.folder.INBOX }).toEqual({ total: 1, inbox: 1 });
   });
 
   it("requires a session (401 without a token)", async () => {

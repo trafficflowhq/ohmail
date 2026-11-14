@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { accounts, mailboxes, mailboxCredentials } from "@trafficflow/db";
 import { SendConnections, type KeepTimers } from "@trafficflow/core/mail";
 import type { ImapConfig } from "@trafficflow/core/adapters/imap";
+import { SEND_RECONCILE_NET_TIMEOUTS } from "@trafficflow/services";
 import { makeSendAdapter } from "../src/send-adapter.js";
 import { makeDeps } from "./helpers.js";
 
@@ -33,18 +34,19 @@ async function seed(d: Awaited<ReturnType<typeof makeDeps>>): Promise<string> {
 function recorder(withIsLive: boolean) {
   const built: ImapConfig[] = [];
   let connects = 0;
+  let forced = 0;
   const newAdapter = ((cfg: ImapConfig) => {
     built.push(cfg);
     return {
       connect: async (): Promise<void> => { connects += 1; },
       close: async (): Promise<void> => undefined,
-      forceClose: (): void => undefined,
+      forceClose: (): void => { forced += 1; },
       send: async () => ({ providerMessageId: "<m@x>", sentLocator: { folder: "Sent", ref: "1:1" }, raw: Buffer.alloc(0) }),
       messageInSent: async () => false,
       ...(withIsLive ? { isLive: (): boolean => true } : {}),
     };
   }) as never;
-  return { built, connects: () => connects, newAdapter };
+  return { built, connects: () => connects, forced: () => forced, newAdapter };
 }
 
 const timers: KeepTimers = { set: () => 0, clear: () => undefined };
@@ -83,5 +85,30 @@ describe("makeSendAdapter — the production door dials through the keeper", () 
     await expect(makeSendAdapter(d.deps, "00000000-0000-4000-8000-000000000000", {}, recorder(true).newAdapter, keep))
       .rejects.toMatchObject({ code: "mailbox_not_signed_in", httpStatus: 424, retryable: false });
     expect(keep.size()).toBe(0);
+  });
+});
+
+describe("makeSendAdapter — what a caller asks of the door reaches the connection it built", () => {
+  // A pass that abandons a hung command escapes only through this: a polite close queues behind the hang.
+  it("forceClose on the adapter it hands back destroys that connection, kept or not", async () => {
+    for (const kept of [false, true]) {
+      const d = await makeDeps();
+      const mailboxId = await seed(d);
+      const rec = recorder(kept);
+      const adapter = await makeSendAdapter(d.deps, mailboxId, {}, rec.newAdapter, new SendConnections({ timers }));
+      expect(adapter.forceClose, "the door hands back no way to abandon the connection").toBeTypeOf("function");
+      adapter.forceClose!();
+      expect({ kept, forced: rec.forced() }).toEqual({ kept, forced: 1 });
+    }
+  });
+
+  it("the deadlines a pass hands in are the ones its connection is built with; a press hands none", async () => {
+    const d = await makeDeps();
+    const mailboxId = await seed(d);
+    const rec = recorder(false);
+    const keep = new SendConnections({ timers });
+    await (await makeSendAdapter(d.deps, mailboxId, { timeouts: SEND_RECONCILE_NET_TIMEOUTS }, rec.newAdapter, keep)).close();
+    await (await makeSendAdapter(d.deps, mailboxId, {}, rec.newAdapter, keep)).close();
+    expect(rec.built.map((cfg) => cfg.timeouts)).toEqual([SEND_RECONCILE_NET_TIMEOUTS, undefined]);
   });
 });

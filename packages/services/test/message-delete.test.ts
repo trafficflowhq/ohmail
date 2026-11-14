@@ -152,7 +152,9 @@ describe("MessageService.delete — to the provider's Trash, out of the living v
 
     await new MessageService().delete(ctx, gone);
     const after = await new SearchService().search(ctx, { q: "kingfisher" });
-    expect(after.items.map((m) => m.id)).toEqual([keep]);
+    // Not listed and not counted: the page's rows are read apart from the count beside them.
+    expect({ ids: after.items.map((m) => m.id), total: after.total, inbox: after.facets?.folder.INBOX })
+      .toEqual({ ids: [keep], total: 1, inbox: 1 });
   });
 
   it("the folder list is a living view too: a tombstoned row drops out of its former view", async () => {

@@ -996,6 +996,19 @@ describe("a delivered send's Sent copy, owed on disk until it is filed", () => {
     expect({ sentCopy: plain.res.sentCopy, rows: (await owedRows(plain.db)).length }).toEqual({ sentCopy: "pending", rows: 1 });
   });
 
+  // Not held today: Cloud keeps no copy of a letter that carries a file in its request, so a
+  // restart between the accept and the APPEND leaves the letter out of Sent. `.fails` goes with
+  // the change that keeps it.
+  it.fails("Cloud: a letter with a photo whose copy cannot land yet is in Sent after a later instance's pass", async () => {
+    const photo = { filename: "photo.jpg", contentType: "image/jpeg", content: Buffer.alloc(1024, 7) };
+    const o = await owedSend({ keepOwedCopy: OWED_COPY_CLOUD }, 0, {}, { attachments: [photo] });
+    expect(o.res.status).toBe("sent");
+    o.reachable();
+    await serverPass(o, { now: () => new Date(NOW.getTime() + 2_000 + SEND_COPY_OWED_SETTLE_MS) });
+    expect(o.smtp.sentFolder, "the delivered letter, in its Sent folder").toEqual([o.res.providerMessageId]);
+    expect(o.smtp.state.filed[0]?.equals(o.smtp.state.raws[0]!), "with the delivered bytes, the photo included").toBe(true);
+  });
+
   /** A refused APPEND as imapflow 1.7.8 raises Dovecot's answer: no `code`, the server's words in `responseText`. */
   const imapNo = (code: string): Error => Object.assign(new Error("Command failed"), {
     responseStatus: "NO", serverResponseCode: code, responseText: "Mail size is larger than the maximum size allowed by server configuration",
