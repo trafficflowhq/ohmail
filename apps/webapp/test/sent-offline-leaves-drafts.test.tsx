@@ -87,8 +87,8 @@ async function setInput(input: HTMLInputElement, value: string): Promise<void> {
 }
 
 async function replyOn(s: DraftShell, id: string, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "the row");
+  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -180,8 +180,8 @@ describe("a reply sent while offline", () => {
     s.spendSentRow.on = true;
     const before = unsent(s).length;
     s.offline.on = true;
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
     await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });
     await press([...panel.querySelectorAll<HTMLElement>(".mmenu button")].find((b) => b.textContent?.trim() === "Forward") ?? null, "Forward");

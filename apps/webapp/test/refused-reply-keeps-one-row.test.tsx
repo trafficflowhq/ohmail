@@ -53,8 +53,8 @@ async function sendRefused(s: DraftShell, nth: number): Promise<void> {
 describe("a refused reply keeps one draft", () => {
   it("the second press sends the row the first refusal left, and makes no other", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await act(async () => { typeInto(replySurface(s.el)!, "See you on Thursday"); });
@@ -90,8 +90,8 @@ describe("a refused reply keeps one draft", () => {
 
   it("a send from that row whose fate is not known is never sent again", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await act(async () => { typeInto(replySurface(s.el)!, "See you on Thursday"); });
@@ -112,8 +112,8 @@ describe("a refused reply keeps one draft", () => {
 
   it("the row it was sent from is not discarded when that send goes through", async () => {
     const s = await mountShell("#/ohbox", [message("m1")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
     await key("r");
     await waitFor(() => replySurface(s.el) != null, "the reply editor");
     await act(async () => { typeInto(replySurface(s.el)!, "See you on Thursday"); });

@@ -97,7 +97,7 @@ const barButton = (label: string): HTMLButtonElement | undefined =>
 function idsInGroup(label: string): string[] {
   const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
   if (!box) return [];
-  return [...box.querySelectorAll(".row[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
+  return [...box.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 const editors = (): HTMLElement[] =>
   [...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
@@ -110,7 +110,7 @@ const replyFor = (): string =>
   host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
 
 async function pinSelected(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -166,7 +166,7 @@ const chord = async (shiftKey: boolean): Promise<void> => {
 const kinds = (): string[] => sent.map((m) => m.kind);
 
 async function openBookedFromThePile(): Promise<string> {
-  const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   await key("Enter");
   await click(barButton("Resurface"));
@@ -176,7 +176,7 @@ async function openBookedFromThePile(): Promise<string> {
     window.dispatchEvent(new Event("hashchange"));
   });
   await settle();
-  await click(host!.querySelector<HTMLElement>(`.view-triage .row[data-id="${id}"]`));
+  await click(host!.querySelector<HTMLElement>(`.view-triage :is(.row, [role=option])[data-id="${id}"]`));
   await key("Enter");
   await key("r");
   await drain();
@@ -184,7 +184,7 @@ async function openBookedFromThePile(): Promise<string> {
   return id!;
 }
 const pile = (): string[] =>
-  [...host!.querySelectorAll<HTMLElement>(".view-triage .row[data-id]")].map((r) => r.dataset.id!);
+  [...host!.querySelectorAll<HTMLElement>(".view-triage :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id!);
 
 describe("a plain Send files nothing", () => {
   it("Send on a pinned row puts only the mail on the wire, and the row stays under Resurfaced", async () => {
@@ -238,7 +238,7 @@ describe("every Send door notes the press for the reader", () => {
   async function openAndReply(): Promise<{ id: string; notes: string[]; off: () => void }> {
     const { onReplyPress } = await import("../app/shell/sent-reveal.js");
     await mountShell();
-    const id = host!.querySelector<HTMLElement>(".row.sel")?.dataset.id;
+    const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
     expect(id, "no row under the cursor").toBeTruthy();
     await key("Enter");
     await key("r");

@@ -63,7 +63,7 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await settle();
 };
 const rowOf = (host: HTMLElement, id: string): HTMLElement => {
-  const row = host.querySelector<HTMLElement>(`[role="listbox"] .row[data-id="${id}"]`);
+  const row = host.querySelector<HTMLElement>(`[role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
   expect(row, `the Ohbox row ${id}`).toBeTruthy();
   return row!;
 };
@@ -160,7 +160,7 @@ describe("a message opened any other way forwards itself", () => {
     window.location.hash = "#/ohbox/m/h1";
     const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
     await settle();
-    expect(host.querySelector<HTMLElement>('[role="listbox"] .row[data-id]')?.dataset.id, "the premise: the row's own target is h2").toBe("h2");
+    expect(host.querySelector<HTMLElement>('[role="listbox"] :is(.row, [role=option])[data-id]')?.dataset.id, "the premise: the row's own target is h2").toBe("h2");
     await pressBarForward(host);
     expect(docked(host)).toBe("h1");
   }, 30_000);

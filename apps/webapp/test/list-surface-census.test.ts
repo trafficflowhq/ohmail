@@ -21,7 +21,6 @@ const VIEWS = join(__dirname, "..", "app", "views");
  * therefore a claim about the account's own mail. Each one renders through the shared reading.
  */
 const GUARDED: Record<string, string> = {
-  "OhboxView.tsx": "the empty pane, the unread count, the doorbell and the older-mail tail; its reading column is the shell's (`shell-open-state.ts` ohboxGone), not the list surface's (gap row OHBOX-COLUMN-ON-THE-LIST-SURFACE)",
   "ScreenerView.tsx": "the per-segment empty state and the waiting count",
   "HistoryView.tsx": "the empty pane, the message count and the reading column, through `useListView`",
   "ReadsView.tsx": "the 'N new since you were here' count and the end-of-pile line",
@@ -51,7 +50,6 @@ const OUT_OF_SCOPE: Record<string, string> = {
   "SearchView.tsx": "results of a query, with its own indexing and scope-failure states",
   "SeedReviewView.tsx": "a review screen that takes the stage; no pile",
   "SettingsView.tsx": "panes, not a list",
-  "ohbox-groups.ts": "a selector, not a view",
   "rules-standing.ts": "the Rules page's pure derivations over rules and the waiting list; no mail, no pile",
   "settings-panes.ts": "the settings tab list — one source for the nav and the palette; no mirror claim",
 };

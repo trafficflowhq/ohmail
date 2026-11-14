@@ -177,7 +177,7 @@ function frame(status, statusText, body) {
  * THE ONE MAILBOX THE STUB SERVES, and why it is not an empty page.
  *
  * An empty `/sync` page renders the "Nothing in your Ohbox" state, which draws no
- * `.rows` at all — so the bundle would be asserted against the emptiest surface it
+ * rows in its named lists at all — so the bundle would be asserted against the emptiest surface it
  * has, which is close to asserting nothing. Real rows exercise the selectors, the
  * consent projection, the row components and the reading pane's empty state.
  *
@@ -921,7 +921,10 @@ for (let i = 0; i < RENDER_TURNS; i++) await new Promise((r) => setTimeout(r, 25
 const doc = window.document;
 const root = doc.getElementById("root");
 const text = doc.body.textContent ?? "";
-const rows = doc.querySelectorAll(".rows > *").length;
+/* The list a person reads: named lists of the place (the Ohbox's groups), each row an option named by its letter. */
+const lists = [...doc.querySelectorAll('[role="listbox"][aria-label]')];
+const options = lists.flatMap((l) => [...l.querySelectorAll('[role="option"][aria-label]')]);
+const rows = options.length;
 
 /* ── 1 · it executed cleanly ───────────────────────────────────────────── */
 /* THESE TWO ARE THE ONES THAT CATCH A BROKEN ENGINE BUILD. A copy of the client
@@ -941,7 +944,7 @@ check("#root is not empty", (root?.children.length ?? 0) > 0);
 check("the rail rendered", doc.querySelector(".rail nav.oh-rail") != null);
 check("the rail's foot rendered", doc.querySelector(".rail .oh-railfoot, .rail .fr-railfoot") != null);
 check("the rail's Write rendered", doc.querySelector(".rail .oh-rail-write button") != null);
-check("a list pane rendered", doc.querySelector(".rows") != null);
+check("a list pane rendered", lists.length > 0, `${lists.length} named lists`);
 /* The floor follows the dataset — whatever the stub served — and is still far
    above "an empty shell rendered its chrome". */
 check("body text is substantial", text.length > 400, `${text.length} chars`);
@@ -1151,6 +1154,10 @@ check("no collapsed-mail placeholder", collapsed == null, collapsed?.[0] ?? "");
 
   /* It drew the served mailbox, not merely the chrome around one. */
   check("message rows rendered", rows >= SERVED.length, `${rows} rows`);
+  for (const m of SERVED) {
+    check("each served letter names a row of the list",
+      options.some((o) => (o.getAttribute("aria-label") ?? "").includes(m.subject)), m.subject);
+  }
   check(`the served sender "${SENDER.name}" is on screen`, text.includes(SENDER.name));
   for (const m of SERVED) {
     check("the served subject is on screen", text.includes(m.subject), m.subject);

@@ -226,7 +226,8 @@ export async function openPage({ dist, engine = "chromium", viewport = "1440x900
   const t0 = Date.now();
   await page.goto(`http://127.0.0.1:${srv.address().port}/?n=${messages}&bodyMs=${bodyMs}#/ohbox`);
   try {
-    await page.waitForSelector(".view-ohbox button.row[data-id]", { timeout: 180000 });
+    /* A row of the Ohbox: today's `button.row`, the new list's option. */
+    await page.waitForSelector(".view-ohbox :is(button.row, [role=option])[data-id]", { timeout: 180000 });
   } catch {
     await browser.close();
     srv.close();

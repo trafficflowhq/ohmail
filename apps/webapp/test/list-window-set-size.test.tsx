@@ -17,7 +17,8 @@ import {
 } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { OhboxView } from "../app/views/OhboxView";
+import { prepareToday } from "./ohbox/_today";
+const OhboxView = await prepareToday();
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
 import { FolderView } from "../app/views/FolderView";
@@ -198,7 +199,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-async function mount(node: React.ReactNode, scrollerSel = ".scroller"): Promise<{ host: HTMLElement; scroller: HTMLElement }> {
+async function mount(node: React.ReactNode, scrollerSel = ".scroller, .ob-scroll"): Promise<{ host: HTMLElement; scroller: HTMLElement }> {
   const host = document.createElement("div");
   document.body.append(host);
   const root = createRoot(host);

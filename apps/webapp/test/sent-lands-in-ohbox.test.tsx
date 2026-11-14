@@ -141,7 +141,7 @@ const clickText = async (el: HTMLElement, label: string): Promise<void> => {
 
 /** Rows under a named group, top to bottom — `[role=listbox]` carries the group's label. */
 const rowsUnder = (el: HTMLElement, label: string): HTMLElement[] => [
-  ...el.querySelectorAll<HTMLElement>(`[aria-label="${label}"] .row`),
+  ...el.querySelectorAll<HTMLElement>(`[aria-label="${label}"] :is(.row, [role=option])[data-id]`),
 ];
 
 /** Write a whole message into the compose form: one recipient, one line of body. */
@@ -210,7 +210,7 @@ describe("sending a message returns to the Ohbox, with the message in it", () =>
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
     });
     await drain();
-    expect(el.querySelector(".view-ohbox .row.sel"), "nothing was opened to begin with")
+    expect(el.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])"), "nothing was opened to begin with")
       .not.toBeNull();
 
     await goto("#/compose");
@@ -221,7 +221,7 @@ describe("sending a message returns to the Ohbox, with the message in it", () =>
 
     expect(window.location.hash).toBe("#/ohbox");
     expect(
-      el.querySelector(".view-ohbox .row.sel"),
+      el.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])"),
       "the Ohbox still had a message open from before the compose",
     ).toBeNull();
   });

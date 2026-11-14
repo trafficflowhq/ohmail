@@ -108,7 +108,7 @@ const answeredWorld = (): Response =>
   ]);
 
 const rowIds = (c: HTMLElement): string[] =>
-  [...c.querySelectorAll(".row[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
+  [...c.querySelectorAll(":is(.row, [role=option])[data-id]")].map((n) => n.getAttribute("data-id") ?? "");
 
 describe("History", () => {
   beforeEach(() => {
@@ -148,7 +148,7 @@ describe("History", () => {
 
     // Not "Ohbox", which is what `placeLabel(m.folder)` would have said for a message whose
     // folder is INBOX. History is a presentation and the badge is the server's own answer.
-    const row = c.querySelector('.row[data-id="hist1"]');
+    const row = c.querySelector(':is(.row, [role=option])[data-id="hist1"]');
     expect(row?.textContent ?? "").toContain("INBOX");
   });
 
@@ -178,7 +178,7 @@ describe("History", () => {
     expect(rowIds(c), "an uncorroborated join reached the consented pile").not.toContain("thr-stranger");
 
     // The consented half's row IS there, and opening it renders the whole conversation.
-    const row = c.querySelector('.row[data-id="thr-friend"]') as HTMLElement | null;
+    const row = c.querySelector(':is(.row, [role=option])[data-id="thr-friend"]') as HTMLElement | null;
     expect(row, "the consented half of the thread is not in the Ohbox").toBeTruthy();
     await act(async () => {
       row!.click();
@@ -192,7 +192,7 @@ describe("History", () => {
 
     await goTo("history");
     await tick(0);
-    const held = c.querySelector('.row[data-id="thr-stranger"]') as HTMLElement | null;
+    const held = c.querySelector(':is(.row, [role=option])[data-id="thr-stranger"]') as HTMLElement | null;
     expect(held, "the stranger's row is not in History").toBeTruthy();
     await act(async () => { held!.click(); await Promise.resolve(); });
     await tick(0);
@@ -231,7 +231,7 @@ describe("History", () => {
     const rail = [...c.querySelectorAll(".history-rail-item")] as HTMLButtonElement[];
     if (rail.length > 1) await act(async () => { rail[rail.length - 1]!.click(); await Promise.resolve(); });
     await tick(0);
-    const row = c.querySelector('.row[data-id="first-ever"]') as HTMLElement | null;
+    const row = c.querySelector(':is(.row, [role=option])[data-id="first-ever"]') as HTMLElement | null;
     expect(row, "the first message is not in History").toBeTruthy();
     await act(async () => { row!.click(); await Promise.resolve(); });
     await tick(0);
@@ -246,7 +246,7 @@ describe("History", () => {
     await tick(0);
     await goTo("history");
 
-    const row = c.querySelector('.row[data-id="hist1"]') as HTMLElement | null;
+    const row = c.querySelector(':is(.row, [role=option])[data-id="hist1"]') as HTMLElement | null;
     expect(row).toBeTruthy();
     await act(async () => {
       row!.click();
@@ -295,7 +295,7 @@ describe("History", () => {
     await tick(0);
     await goTo("history");
 
-    const row = c.querySelector('.row[data-id="hist2"]') as HTMLElement | null;
+    const row = c.querySelector(':is(.row, [role=option])[data-id="hist2"]') as HTMLElement | null;
     await act(async () => {
       row!.click();
       await Promise.resolve();

@@ -6,7 +6,7 @@
 import { useMemo } from "react";
 import type { OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
 import { useUnreadTurn } from "../reading/reader-seen.js";
-import { groupSenders, groupVoices, useOhboxGroups } from "./groups.js";
+import { groupSenders, groupVoices, useGroupPeople, useOhboxGroups } from "./groups.js";
 import { useHold } from "./hold.js";
 import { ohboxKeys } from "./keys.js";
 import { useAfterVerbLanding } from "./landing.js";
@@ -16,6 +16,7 @@ import { useSessionPlacement } from "./placement.js";
 import { useOhboxPointer } from "./pointer.js";
 import { useReadWiring } from "./read-wiring.js";
 import { ohboxDrag, ohboxPressRow } from "./row-press.js";
+import { ohboxRowVerbs } from "./row-verbs.js";
 import { useReplyDoneRead, useSlide } from "./slide.js";
 import type { OhboxListInput, OhboxListModel } from "./types.js";
 import { useSuspended, useUndoAnswer } from "./undo.js";
@@ -27,6 +28,7 @@ export type {
   BulkVerbs,
   OhboxListInput,
   OhboxListModel,
+  OhboxPerson,
   OhboxPointer,
   OhboxReplyDone,
   OhboxStep,
@@ -43,8 +45,8 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
   const placement = useSessionPlacement(input);
   const { returnToNew, unreadHold } = placement;
   const groups = useOhboxGroups(input, placement);
-  const { all, shown, navRows, groupedResurfaced, groupedNew, groupedPrev, olderRows } = groups.model;
-  const { rowIndexOf, olderRowOf } = groups;
+  const { all, shown, navRows, groupedResurfaced, groupedNew, groupedPrev } = groups.model;
+  const { rowIndexOf } = groups;
   const view = useOhboxWindow(groupedNew, groupedPrev);
   /**
    * THE OPEN MESSAGE, or `null` — never "the first one, then".
@@ -68,8 +70,8 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
     groupedResurfaced,
     windowIndexOf: view.windowIndexOf,
   });
-  const pickSet = usePickSet(navRows, rowIndexOf, olderRowOf);
-  const pickVerbs = usePickVerbs(input, pickSet, shown, navRows, olderRows, returnToNew, landing.verbTook);
+  const pickSet = usePickSet(navRows, rowIndexOf);
+  const pickVerbs = usePickVerbs(input, pickSet, shown, navRows, returnToNew, landing.verbTook);
   const { enter, readByRule } = useEnter(navRows, rowIndexOf, held);
   const visit = useVisit(input, held, pickSet.picked, selected, enter, undo.suspended);
   const { selectByUser, open } = visit;
@@ -80,8 +82,8 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
   useReplyDoneRead(input.replyDone, placement.newOrder, held.allRef, held.markSeenRef);
 
   const { order, at } = useMemo(
-    () => walkOrder(navRows, olderRows, rowIndexOf, selected),
-    [navRows, olderRows, rowIndexOf, selected],
+    () => walkOrder(navRows, rowIndexOf, selected),
+    [navRows, rowIndexOf, selected],
   );
   const steps = walkSteps({ order, at, t, selectByUser, setLandedOn: held.setLandedOn });
   const { anchor, pickRangeTo } = pickSet;
@@ -119,6 +121,8 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
   const groupSendersOf = (g: OhboxRowGroup): string => groupSenders(g, senderName);
   const drag = ohboxDrag(input, placement.byId, groups, pickSet, pickVerbs, groupSendersOf);
   const pressRow = ohboxPressRow({ input, ...pickSet, selected, open, selectByUser, enter });
+  const verbs = ohboxRowVerbs(input, { selected, ...pickSet, ...pickVerbs, ...marks, ...reading, ...steps });
+  const groupPeopleOf = useGroupPeople(input.conversationOf);
   const { picked, pickPanel, setPickPanel, clearPicked, togglePick } = pickSet;
   return {
     ...groups.model,
@@ -127,6 +131,7 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
     ...marks,
     ...reading,
     ...steps,
+    ...verbs,
     selected,
     settling: placement.settling,
     picked,
@@ -140,6 +145,8 @@ export function useOhboxList(input: OhboxListInput): OhboxListModel {
     pressRow,
     groupVoices,
     groupSenders: groupSendersOf,
+    groupPeople: groupPeopleOf,
+    conversationOf: input.conversationOf,
     keys,
     zone,
     pointer,

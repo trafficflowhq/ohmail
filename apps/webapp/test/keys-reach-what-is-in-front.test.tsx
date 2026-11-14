@@ -59,7 +59,7 @@ function stub(target: object, prop: string, desc: PropertyDescriptor): void {
   saved.push([target, prop, Object.getOwnPropertyDescriptor(target, prop)]);
   Object.defineProperty(target, prop, { configurable: true, ...desc });
 }
-const isList = (el: Element): boolean => el.matches(".view-ohbox .scroller");
+const isList = (el: Element): boolean => el.matches(".view-ohbox .ob-scroll");
 function layOut(): void {
   stub(window, "innerHeight", { value: 900 });
   stub(HTMLElement.prototype, "scrollTop", {
@@ -74,9 +74,9 @@ function layOut(): void {
   stub(Element.prototype, "getBoundingClientRect", {
     value(this: Element) {
       if (isList(this)) return rect(LIST_TOP, LIST_H);
-      const list = this.closest(".view-ohbox .scroller");
-      if (list && this.matches(".row[data-id]")) {
-        const at = [...list.querySelectorAll(".row[data-id]")].indexOf(this);
+      const list = this.closest(".view-ohbox .ob-scroll");
+      if (list && this.matches(":is(.row, [role=option])[data-id]")) {
+        const at = [...list.querySelectorAll(":is(.row, [role=option])[data-id]")].indexOf(this);
         return rect(LIST_TOP + at * ROW_H - list.scrollTop, ROW_H);
       }
       return rect(0, 0);
@@ -220,7 +220,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 
 const IDS = Array.from({ length: 12 }, (_, i) => `m${i + 1}`);
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")].map((r) => r.dataset.id ?? "");
+  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
 
 let engineNow: OhmailEngine | null = null;
 async function shell(): Promise<HTMLElement> {
@@ -266,9 +266,9 @@ const keyAtRoot = async (k: string): Promise<void> => {
 };
 
 const unseen = (el: HTMLElement, id: string): boolean =>
-  el.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${id}"]`)?.dataset.unseen === "1";
-const list = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>(".view-ohbox .scroller")!;
-const cursorRow = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".view-ohbox .row.sel[data-id]");
+  el.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${id}"]`)?.dataset.unseen === "1";
+const list = (el: HTMLElement): HTMLElement => el.querySelector<HTMLElement>(".view-ohbox .ob-scroll")!;
+const cursorRow = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])[data-id]");
 /** Where the cursor row stands against the list's visible box. */
 function cursorPlace(el: HTMLElement): { id: string | null; top: number; bottom: number; scrollTop: number; onScreen: boolean } {
   const row = cursorRow(el);

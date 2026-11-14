@@ -308,7 +308,7 @@ describe("Escape", () => {
     // Drop the `chrome.replyTo != null` term from that binding's `disabled` and this fails.
     await mountShell();
     await key("x");                                   // pick the row under the cursor
-    expect(host!.querySelector('.list-foot .abar-count [role="status"]')?.textContent).toBe("1");
+    expect(([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null)).toBe("1");
     await key("r");
     expect(editorsInMessage().length).toBeGreaterThan(0);
 
@@ -316,10 +316,10 @@ describe("Escape", () => {
 
     expect(editorsInMessage()).toHaveLength(0);
     // …and the selection is still there, because Escape closed the inner thing, not both.
-    expect(host!.querySelector('.list-foot .abar-count [role="status"]')?.textContent).toBe("1");
+    expect(([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null)).toBe("1");
     // A second Escape is what clears it — the cascade, one layer per press.
     await key("Escape");
-    expect(host!.querySelector(".list-foot")).toBeNull();
+    expect(host!.querySelector(".ob-foot")).toBeNull();
   });
 
   it("works from INSIDE the editor, which is where the cursor actually is", async () => {
@@ -502,7 +502,7 @@ describe("sending the reply", () => {
     //
     // ANSWERED FROM THE PILE, not from the Ohbox. A mail is in exactly one pile: a parked
     // message is in no Ohbox group (`selectors.ts#parkedMessageIds`), so there is no
-    // `.row[data-id="nadja"]` there to click — which is what this test used to do, against
+    // `:is(.row, [role=option])[data-id="nadja"]` there to click — which is what this test used to do, against
     // `giulia`, back when the demo parked that instead.
     const first = triage.replyLater[0]!;
     const second = triage.replyLater[1]!;

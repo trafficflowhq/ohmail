@@ -706,8 +706,8 @@ export const forwardDock = (el: HTMLElement): HTMLElement | null => el.querySele
 /** Open message `id` (unless one is open) and press Forward in its menu. */
 export async function openForward(s: DraftShell, id = "m1"): Promise<void> {
   if (s.el.querySelector(".read-col .msg") == null) {
-    await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
-    await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "the row");
+    await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+    await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "the row");
   }
   const panel = s.el.querySelector<HTMLElement>(".read-col .conv-focus") ?? s.el.querySelector<HTMLElement>(".read-col .msg")!;
   await act(async () => { panel.querySelector<HTMLElement>(".msg-more")!.click(); });

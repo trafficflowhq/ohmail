@@ -98,7 +98,7 @@ function keyedControls(root: ParentNode): Array<{ name: string; caps: string[]; 
 describe("a control's name is its words (R21-08)", () => {
   it("an open letter's controls: no keycap in any name, and the key stated beside it", async () => {
     const root = await shell("#/ohbox");
-    const row = root.querySelectorAll<HTMLElement>(".view .row[data-id]")[1]!;
+    const row = root.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")[1]!;
     await act(async () => { row.click(); });
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const controls = keyedControls(root);
@@ -138,7 +138,7 @@ describe("one heading level per view (R21-09)", () => {
 
   it("an open letter's subject is a level-2 heading under the view's h1", async () => {
     const root = await shell("#/ohbox");
-    const row = root.querySelectorAll<HTMLElement>(".view .row[data-id]")[1]!;
+    const row = root.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")[1]!;
     await act(async () => { row.click(); });
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const subject = root.querySelector(".read-col .msg-subject");

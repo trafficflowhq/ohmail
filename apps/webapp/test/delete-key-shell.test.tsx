@@ -357,7 +357,7 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(".row[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
@@ -694,7 +694,7 @@ describe("HISTORY is filtered like every other view", () => {
 
     await key("j");
     // j walks History now: the row under the cursor is the one the delete takes.
-    const cursor = container.querySelector<HTMLElement>(".view .row.sel")!.dataset.id!;
+    const cursor = container.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])")!.dataset.id!;
     await key("Backspace");
     await waitFor(() => !rowIds(container).includes(cursor), "the row to leave History");
     expect(deletes(), "and still nothing on the wire").toEqual([]);

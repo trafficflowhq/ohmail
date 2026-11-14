@@ -93,7 +93,7 @@ async function openTab(name: string, accountId = ACCOUNT, subject = SUBJECT): Pr
 
 /** Open the first row, so a body is on screen as well as the list. */
 async function readFirst(el: HTMLElement): Promise<void> {
-  const row = el.querySelector<HTMLElement>(".row[data-id]");
+  const row = el.querySelector<HTMLElement>(":is(.row, [role=option])[data-id]");
   expect(row, "no message row to open").not.toBeNull();
   await act(async () => { row!.click(); });
   await shell.tick(1_000);
@@ -103,7 +103,7 @@ async function readFirst(el: HTMLElement): Promise<void> {
 /** Anything of the mailbox on this tab's screen. */
 function showsMail(el: HTMLElement, subject = SUBJECT): boolean {
   const text = el.textContent ?? "";
-  return el.querySelector(".today") !== null || el.querySelector(".row[data-id]") !== null
+  return el.querySelector(".today") !== null || el.querySelector(":is(.row, [role=option])[data-id]") !== null
     || text.includes(subject) || text.includes(BODY) || text.includes(`snippet of ${subject}`);
 }
 
@@ -145,7 +145,7 @@ const watchers: MutationObserver[] = [];
 function mailEverOn(el: HTMLElement): () => boolean {
   let seen = showsMail(el);
   const isMail = (n: Node): boolean => (n.textContent ?? "").includes(SUBJECT)
-    || (n instanceof Element && (n.matches(".today, .row[data-id]") || n.querySelector(".today, .row[data-id]") !== null));
+    || (n instanceof Element && (n.matches(".today, :is(.row, [role=option])[data-id]") || n.querySelector(".today, :is(.row, [role=option])[data-id]") !== null));
   const watch = new MutationObserver((records) => {
     for (const r of records) for (const n of r.addedNodes) if (isMail(n)) seen = true;
   });
@@ -836,7 +836,7 @@ describe("a session revoked from another device", { timeout: 60_000 }, () => {
     const tab1 = await openTab("tab-1");
     await renewalRefused("refresh_expired");
     expect(tab1.querySelector(".session-end")?.textContent).toContain(shell.messages.session.endedMidUse);
-    expect(tab1.querySelector(".row[data-id]"), "the rows left from behind the scrim").not.toBeNull();
+    expect(tab1.querySelector(":is(.row, [role=option])[data-id]"), "the rows left from behind the scrim").not.toBeNull();
     expect(await mirrors()).toEqual([`ohmail-mirror:${ACCOUNT}`]);
     expect(leaves).toBe(0);
   });

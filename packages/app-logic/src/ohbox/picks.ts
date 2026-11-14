@@ -25,11 +25,7 @@ export interface PickSet {
   pickRangeTo: (id: string) => void;
 }
 
-export function usePickSet(
-  navRows: OhboxRowGroup[],
-  rowIndexOf: (id: string | null) => number,
-  olderRowOf: (id: string) => OhboxRowGroup | undefined,
-): PickSet {
+export function usePickSet(navRows: OhboxRowGroup[], rowIndexOf: (id: string | null) => number): PickSet {
   /* ── multi-select: VIEW-LOCAL, deliberately ──────────────────────────────
      It is a selection, not a document: it means nothing after you leave the
      Ohbox, and persisting it would resurrect a stale set on the next visit.
@@ -52,11 +48,11 @@ export function usePickSet(
    * act on five messages, not on the one that happens to lead the fold. (Representative-only
    * picking was the alternative, and it made "Move" on a five-unread conversation move one
    * message and leave the row standing — a verb that visibly does not do what the row shows.)
-   * A message not in any row — the Older tail — is its own pick, exactly as before.
+   * A message in no row is its own pick, and leaves with the next prune: the list does not show it.
    */
   const togglePick = useCallback(
     (id: string) => {
-      const row = navRows[rowIndexOf(id)] ?? olderRowOf(id);
+      const row = navRows[rowIndexOf(id)];
       const ids = row ? row.members.map((m) => m.id) : [id];
       setPicked((prev) => {
         const next = new Set(prev);
@@ -68,9 +64,9 @@ export function usePickSet(
         return next;
       });
       anchor.current = id;
-      // Keyed on the rows as drawn and the two finders over them: they change together, with the groups.
+      // Keyed on the rows as drawn and the finder over them: they change together, with the groups.
     },
-    [navRows, rowIndexOf, olderRowOf],
+    [navRows, rowIndexOf],
   );
 
   /** Shift-click: add the inclusive ROW range from the anchor to `id`, in list order. */
@@ -105,7 +101,6 @@ export function usePickVerbs(
   { picked, setPicked, setPickPanel, clearPicked }: PickSet,
   shown: EngineMessage[],
   navRows: OhboxRowGroup[],
-  olderRows: OhboxRowGroup[],
   returnToNew: (ids: readonly string[]) => void,
   verbTook: MutableRefObject<{ id: string; at: number } | null>,
 ): PickVerbs {
@@ -115,13 +110,10 @@ export function usePickVerbs(
    *
    * A `Set`'s iteration order is insertion order, so a range built upwards and one built
    * downwards would dispatch in different orders for the same visible selection. Deriving it
-   * from `shown` means the mutations follow what is on screen — including the Older tail, whose
-   * rows were dropped here and left a press acting on fewer messages than the bar counted.
+   * from `shown` means the mutations follow what is on screen.
    */
   const pickedIds = useMemo(() => shown.filter((m) => picked.has(m.id)).map((m) => m.id), [shown, picked]);
-  const pickedRowCount = [...navRows, ...olderRows].filter((g) =>
-    g.members.some((m) => picked.has(m.id)),
-  ).length;
+  const pickedRowCount = navRows.filter((g) => g.members.some((m) => picked.has(m.id))).length;
 
   /**
    * Run a bulk verb and drop the selection.
@@ -170,8 +162,7 @@ export function usePickVerbs(
   useEffect(() => {
     setPicked((prev) => {
       if (prev.size === 0) return prev;
-      // `shown`, not the three groups: an Older row picked and then pruned here left the bar
-      // counting rows it could not act on, and dropped the pick in the same frame it was made.
+      // `shown`: what the list draws is what a pick may stand on.
       const live = new Set(shown.map((m) => m.id));
       const next = new Set([...prev].filter((id) => live.has(id)));
       return next.size === prev.size ? prev : next;

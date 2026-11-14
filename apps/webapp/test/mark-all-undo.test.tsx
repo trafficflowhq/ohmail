@@ -4,6 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
+import { headCount } from "./ohbox/_finders";
 
 /**
  * TRI-F13 — "MARK ALL READ" IS REVERSIBLE.
@@ -105,7 +106,13 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 describe("TRI-F13 — mark all read answers with an undo", () => {
   it("the press flips the pile; the toast's Undo flips exactly those rows back", async () => {
     const container = await shell();
-    const meta = () => container.querySelector(".view-ohbox")?.textContent ?? "";
+    /* The head states the unread count in its Mark all read's name ("Mark all 3 unread messages read"); the design's
+       head prints no "n unread" beside the title (studio PARITY 2.1), and draws no Mark all read once nothing is
+       unread, so "0 unread" is the head with none. */
+    const meta = () => {
+      const n = headCount(container);
+      return n === null ? "0 unread" : `${n} unread`;
+    };
     await waitFor(() => meta().includes("3 unread"), "the Ohbox meta line");
     // The fixture's three (since the 2026-08-31 landing review — see fixtures/data.ts#techcheck).
     // The demo's Answer Later pile (`nadja`, `jonas`) is parked and READ, so it is in no Ohbox
@@ -113,7 +120,7 @@ describe("TRI-F13 — mark all read answers with an undo", () => {
     // (`selectors.ts#parkedMessageIds`), and this line counts what the Ohbox lists.
     expect(meta()).toContain("3 unread");
 
-    const button = container.querySelector<HTMLButtonElement>(".mark-all-read");
+    const button = (container.querySelector<HTMLButtonElement>(".mark-all-read") ?? [...document.querySelectorAll<HTMLButtonElement>(".view-ohbox button")].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
     expect(button, "no mark-all-read affordance").not.toBeNull();
     await act(async () => button!.click());
     await waitFor(() => meta().includes("0 unread"), "everything read");

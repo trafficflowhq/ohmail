@@ -30,7 +30,6 @@ const read = (p: string) => readFileSync(at(p), "utf8");
 
 /** Every list surface that renders a mail row, and therefore stamps a flippable date. */
 const MAIL_LISTS = [
-  "OhboxView",
   "ReadsView",
   "ReceiptsView",
   "HistoryView",

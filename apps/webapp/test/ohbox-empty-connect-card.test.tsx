@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
+import { act } from "react";
 import messages from "../messages/en.json";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
@@ -37,8 +38,9 @@ async function ohbox(facts: MailboxFacts[], firstRun?: FirstRunHost): Promise<HT
   return c.querySelector<HTMLElement>(".view-ohbox") ?? c;
 }
 
+/** The empty place's card, today's or the kit's. */
 const card = (pane: HTMLElement) =>
-  [...pane.querySelectorAll<HTMLElement>(".empty")].find((e) => (e.textContent ?? "").includes(t.connectTitle)) ?? null;
+  [...pane.querySelectorAll<HTMLElement>(":is(.empty, .oh-empty)")].find((e) => (e.textContent ?? "").includes(t.connectTitle)) ?? null;
 
 beforeEach(() => {
   installShellEnv();
@@ -55,17 +57,20 @@ describe("an Ohbox with no mailbox", () => {
     const go = c!.querySelector<HTMLAnchorElement>("a");
     expect(go?.getAttribute("href")).toBe("/join");
     expect(go?.textContent).toBe(t.connectAction);
-    expect(pane.textContent).not.toContain(t.emptyPlain);
+    expect(pane.textContent).not.toContain(t.empty.nothing);
   });
 
   it("in the desktop window, the same verb opens Settings → Mailboxes", async () => {
     const pane = await ohbox([]);
-    expect(card(pane)?.querySelector("a")?.getAttribute("href")).toBe("#/settings/mailboxes");
+    /* The card's one verb, pressed: where it went is where the window's address now stands. */
+    const go = [...(card(pane)?.querySelectorAll<HTMLElement>("a, button") ?? [])].find((b) => b.textContent === t.connectAction);
+    await act(async () => { go?.click(); });
+    expect(go?.getAttribute("href") ?? window.location.hash).toBe("#/settings/mailboxes");
   });
 
   it("an account with a mailbox keeps the plain empty sentence", async () => {
     const pane = await ohbox([mailbox()], webDoor);
     expect(card(pane)).toBeNull();
-    expect(pane.textContent).toContain(t.emptyPlain);
+    expect(pane.textContent).toContain(t.empty.nothing);
   });
 });

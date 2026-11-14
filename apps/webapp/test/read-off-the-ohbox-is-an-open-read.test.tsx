@@ -27,7 +27,7 @@ const views = [
   ["History", "#/history/m/old"],
 ] as const;
 const ids = (label: string): string[] =>
-  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] .row[data-id]`)]
+  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] :is(.row, [role=option])[data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
 /** The one reader on screen: the column, the sender's pane or the sheet. */
 const slot = (): HTMLElement | null => {
@@ -114,7 +114,7 @@ describe("the read rule in the readers off the Ohbox", () => {
   const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
   const dwell = async (): Promise<void> => { await layout.passDwell(); await settle(); };
   const rowIn = (view: string, id: string): HTMLElement | null =>
-    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id="${id}"]`);
+    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
   const panel = (id: string): HTMLElement | null =>
     layout.scroller()?.querySelector<HTMLElement>(`[data-conv-id="${id}"]`) ?? null;
   const unseen = (id: string): boolean => panel(id)?.hasAttribute("data-unseen") ?? false;
@@ -135,7 +135,7 @@ describe("the read rule in the readers off the Ohbox", () => {
   const filed = () => [msg("f1", 20, { threadId: "t-f1", folder: "Projects" }), msg("f2", 10, { threadId: "t-f2", folder: "Projects" }), folder];
   const later = (id: string, n: number) => msg(id, n, { threadId: `t-${id}`, triage: { id: `ms_${id}`, messageId: id, state: "reply_later", bubbleUpAt: null, setAt: ISO, updatedAt: ISO } });
   const order = (view: string): string[] =>
-    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id]`)].map((e) => e.dataset.id!);
+    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] :is(.row, [role=option])[data-id]`)].map((e) => e.dataset.id!);
 
   it("History: a click reads after the dwell, as a glance and an open read; the row and the panel turn read", async () => {
     window.location.hash = "#/history";
@@ -317,7 +317,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
   const panel = (id: string): HTMLElement | null =>
     layout.scroller()?.querySelector<HTMLElement>(`[data-conv-id="${id}"]`) ?? null;
   const order = (view: string): string[] =>
-    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id]`)].map((e) => e.dataset.id!);
+    [...document.querySelectorAll<HTMLElement>(`.view-${view} [role="listbox"] :is(.row, [role=option])[data-id]`)].map((e) => e.dataset.id!);
   const own = (id: string, n: number, over: Record<string, unknown> = {}) => msg(id, n, { threadId: `t-${id}`, ...over });
   const folder = { type: "folder", op: "create", id: "fd1", seq: 901, updatedAt: ISO, entity: { id: "fd1", name: "Projects", mailboxId: "mb_1", mailbox: "walker@example.invalid", updatedAt: ISO } };
   const tagged = () => [own("g1", 30, { labels: ["tg1"] }), own("g2", 20, { labels: ["tg1"] }), own("g3", 10, { labels: ["tg1"] }), tag];
@@ -410,7 +410,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
 
   /** Mark unread on the bar, then a step away and back, then a long rest (found on 0.30.12): no landing reads it back. */
   const rowOf = (view: string, id: string): HTMLElement | null =>
-    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] .row[data-id="${id}"]`);
+    document.querySelector<HTMLElement>(`.view-${view} [role="listbox"] :is(.row, [role=option])[data-id="${id}"]`);
   const markUnread = async (id: string): Promise<void> => {
     const slot = layout.scroller().querySelector<HTMLElement>(".abar .abar-read");
     expect(slot?.getAttribute("aria-label")).toBe("Mark unread");
@@ -602,7 +602,7 @@ describe("a step key's landing rested on reads, off the Ohbox", () => {
         : (inner as (i: unknown, n?: unknown) => Promise<Response>)(input, init)) as typeof globalThis.fetch;
       await goTo("trash");
       await settle();
-      await click(document.querySelector('.view-trash [role="listbox"] .row[data-id="x1"]'), "x1's row");
+      await click(document.querySelector('.view-trash [role="listbox"] :is(.row, [role=option])[data-id="x1"]'), "x1's row");
       await keyAsBrowser("ArrowDown");
       expect(panel("x2"), "↓ shows x2").not.toBeNull();
       await rest();

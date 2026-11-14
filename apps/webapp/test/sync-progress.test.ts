@@ -392,7 +392,7 @@ async function goTo(view: string): Promise<void> {
 }
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
-const rowCount = (el: HTMLElement): number => el.querySelectorAll(".row[data-id]").length;
+const rowCount = (el: HTMLElement): number => el.querySelectorAll(":is(.row, [role=option])[data-id]").length;
 /*
  * The strip now stands in the frame's one notice slot. A connection notice is one that says a connection state: the
  * frame's own sentence for it, or today's sentence the shell hands it (its reason). The strip's sentences for the same
@@ -909,7 +909,12 @@ describe("an empty Ohbox that is CORRECT says so, and only then", () => {
     expect(text(c), "the mirror never received the fixture").toContain("Screener");
     expect(rowCount(c), "the Ohbox has rows — this is not the state under test").toBe(0);
     expect(text(c)).toContain("Nothing in your Ohbox yet");
-    expect(text(c)).toContain("waiting in the Screener");
+    // The empty Ohbox's way on is the Screener (the kit's Empty, its one button); the doorbell above says how many wait.
+    expect([...c.querySelectorAll(".view-ohbox .oh-empty .oh-empty-acts :is(button, a)")].map((b) => b.textContent))
+      .toEqual([messages.place.screener]);
+    // The doorbell is drawn there and its name carries how many senders wait (a number, never zero).
+    expect(c.querySelector(".view-ohbox .oh-doorbell")?.getAttribute("aria-label") ?? "", "the doorbell says how many wait")
+      .toMatch(/^[1-9]\d* first-time senders waiting/);
     expect(text(c), "the pane editorialised").not.toMatch(/sorry|don't worry|oops/i);
   });
 

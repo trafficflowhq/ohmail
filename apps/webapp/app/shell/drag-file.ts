@@ -209,6 +209,8 @@ export interface DragToFile {
 export function useDragToFile(opts: {
   sourceFor: (rowId: string) => DragSource | null;
   onDrop: (target: RailDropTarget, source: DragSource) => void;
+  /** Where a row carrying `data-id` stands, when it is not today's `.row` (the Ohbox's kit rows). */
+  rowSelector?: string;
 }): DragToFile {
   const latest = useRef(opts);
   latest.current = opts;
@@ -284,7 +286,7 @@ export function useDragToFile(opts: {
       // A finger dragging a list is scrolling it; shift is the range-pick.
       if (e.pointerType === "touch") return;
       if (e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
-      const rowEl = (e.target as Element | null)?.closest?.<HTMLElement>(".row[data-id]") ?? null;
+      const rowEl = (e.target as Element | null)?.closest?.<HTMLElement>(latest.current.rowSelector ?? ".row[data-id]") ?? null;
       const rowId = rowEl?.dataset.id;
       if (!rowEl || !rowId) return;
 

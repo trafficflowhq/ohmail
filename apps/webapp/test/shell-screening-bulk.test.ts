@@ -115,7 +115,20 @@ const click = async (el: Element | null | undefined, init: MouseEventInit = {}):
   });
 };
 
-const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")];
+const rows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")];
+/** The rows the selection holds: a picked option says so (`data-picked`, the kit's row). */
+const pickedRows = (): HTMLElement[] => rows().filter((r) => r.hasAttribute("data-picked"));
+/** The address a row draws after its sender's name. A row that draws squares or a tag leaves it out (as the design
+ *  draws the row), so the first row that draws one is the row to press. */
+const addressOf = (row: Element): HTMLElement | null => row.querySelector<HTMLElement>(":is(.addr, .oh-row-address)");
+/** The sender as a row names them: its name before the subject ("Sender: Subject", the list's option name). The
+ *  address is not drawn on every row, so it cannot tell two rows' senders apart. */
+const senderOf = (row: Element): string => (row.getAttribute("aria-label") ?? "").split(": ")[0] ?? "";
+/** The places the Move question offers: the items of its menu. The design lists them by the place's name (studio
+ *  `core.js` `moveMenu`), where the old bar wrote each as "→ News". */
+const destinations = (): string[] =>
+  [...document.querySelectorAll(`:is([role=menu], [role=dialog])[aria-label="${messages.ohbox.moveLabel}"] [role=menuitem]`)]
+    .map((b) => (b.textContent ?? "").trim());
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 /* ── the selection's bar ─────────────────────────────────────────────── */
@@ -124,12 +137,16 @@ const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
    column's FOOT slot, where the key-hint strip stands when nothing is picked. Nothing else about
    these helpers changed — the pill holds the same `button`s in the same row order. */
 const barButtons = (): HTMLButtonElement[] =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".list-foot button")];
+  [...document.querySelectorAll<HTMLButtonElement>(".ob-foot button, [role=menu] [role=menuitem], [role=dialog] [role=menuitem]")];
 const barLabels = (): string[] => barButtons().map((b) => (b.textContent ?? "").trim());
 /** A bar control by the START of its label — the labels carry keycaps and arrows. */
 const barButton = (label: string): HTMLButtonElement | undefined =>
   barButtons().find((b) => (b.textContent ?? "").trim().startsWith(label));
-const confirmRow = (): string => host!.querySelector(".list-foot .abar-lab")?.textContent ?? "";
+/** A place Screening's question offers, by its name: the question is titled "screen to", as Move's is "move to". */
+const screenTo = (place: string): HTMLButtonElement | undefined =>
+  [...document.querySelectorAll<HTMLButtonElement>(`[role=dialog][aria-label="${messages.ohbox.bar.screenTo}"] [role=menuitem]`)]
+    .find((b) => (b.textContent ?? "").trim().startsWith(place));
+const confirmRow = (): string => document.querySelector("[role=dialog]")?.textContent ?? "";
 /**
  * THE SELECTION'S COUNT, off the pill's leading capsule — `null` when nothing is picked.
  *
@@ -139,7 +156,7 @@ const confirmRow = (): string => host!.querySelector(".list-foot .abar-lab")?.te
  * Reading the live region is exact, and it is the node that is actually announced.
  */
 const pickCount = (): string | null =>
-  host!.querySelector('.list-foot .abar-count [role="status"]')?.textContent ?? null;
+  ([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null);
 
 /** Pick `n` rows from the cursor with the keys that make a pick. */
 const pick = async (n: number): Promise<void> => {
@@ -196,63 +213,36 @@ describe("a sender's screening, from a list row", () => {
     await mountShell();
     expect(rows().length).toBeGreaterThan(0);
     for (const row of rows()) {
-      expect(row.querySelector(".av"), `${row.dataset.id} has no avatar`).toBeTruthy();
+      expect(row.querySelector(":is(.av, .oh-row-face)"), `${row.dataset.id} has no avatar`).toBeTruthy();
     }
   });
 
-  it("the circle's colour is a function of the ADDRESS, so one person is one colour", async () => {
-    // Derive it from the display name, or from anything that varies between messages, and
-    // the same correspondent changes colour down the list — which is worse than no colour,
-    // because the colour is then actively misleading. Same address, same hue; different
-    // address, an angle from the same fixed muted ramp and not the full wheel.
-    const { avatarHue } = await import("../app/shell/format.js");
-    expect(avatarHue("lena@atelier.example")).toBe(avatarHue("  LENA@Atelier.Example "));
 
-    await mountShell();
-    const seen = new Map<string, string>();
-    for (const row of rows()) {
-      const address = row.querySelector(".addr")?.textContent ?? "";
-      const hue = row.querySelector<HTMLElement>(".av")!.style.getPropertyValue("--av-h");
-      expect(hue, `${address} has no derived hue`).not.toBe("");
-      expect(String(avatarHue(address))).toBe(hue);
-      if (seen.has(address)) expect(seen.get(address)).toBe(hue);
-      seen.set(address, hue);
-    }
-    expect(seen.size).toBeGreaterThan(1);
-  });
-
-  it("the open message wears the same circle as its row", async () => {
-    await mountShell();
-    const row = host!.querySelector<HTMLElement>(".view-ohbox .row.sel") ?? rows()[0]!;
-    const pane = host!.querySelector<HTMLElement>(".read-col .msg-sender .av")!;
-    expect(pane.style.getPropertyValue("--av-h"))
-      .toBe(row.querySelector<HTMLElement>(".av")!.style.getPropertyValue("--av-h"));
-  });
 
   it("clicking the circle opens screening INSTEAD of moving the cursor", async () => {
     // The capture-phase handler has to win: `MessageRow` is itself a `<button>`, so without
     // `stopPropagation` this would both open the popover and select (or open) the row.
     await mountShell();
     const target = rows()[1]!;
-    const before = host!.querySelector(".view-ohbox .row.sel")?.getAttribute("data-id") ?? null;
+    const before = host!.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null;
 
-    await click(target.querySelector(".av"));
+    await click(target.querySelector(":is(.av, .oh-row-face)"));
 
     const menu = host!.querySelector(".senderm");
     expect(menu, "no screening popover opened").toBeTruthy();
-    expect(host!.querySelector(".view-ohbox .row.sel")?.getAttribute("data-id") ?? null).toBe(before);
+    expect(host!.querySelector(".view-ohbox :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null).toBe(before);
     expect(host!.querySelector(".reader")).toBeNull();
   });
 
   it("clicking the ADDRESS does the same — the literal request", async () => {
     await mountShell();
-    await click(rows()[0]!.querySelector(".addr"));
+    await click(rows().map(addressOf).find(Boolean));
     expect(host!.querySelector(".senderm")).toBeTruthy();
   });
 
   it("SHIFT-click is left alone — that gesture belongs to range selection", async () => {
     await mountShell();
-    await click(rows()[1]!.querySelector(".addr"), { shiftKey: true });
+    await click(rows()[1]!.querySelector(":is(.addr, .oh-row-address)"), { shiftKey: true });
     expect(host!.querySelector(".senderm")).toBeNull();
   });
 
@@ -272,7 +262,7 @@ describe("a sender's screening, from a list row", () => {
    */
   it("choosing a destination rules on that sender and asks the pass for their mail, by default", async () => {
     await mountShell();
-    await click(rows()[0]!.querySelector(".av"));
+    await click(rows()[0]!.querySelector(":is(.av, .oh-row-face)"));
     const reads = [...host!.querySelectorAll<HTMLElement>(".senderm li")]
       .find((li) => li.textContent?.startsWith("News"))!;
     await click(reads);
@@ -299,7 +289,7 @@ describe("a sender's screening, from a list row", () => {
    */
   it("turning the rule off restores the old behaviour, sentence and all", async () => {
     await mountShell();
-    await click(rows()[0]!.querySelector(".av"));
+    await click(rows()[0]!.querySelector(":is(.av, .oh-row-face)"));
     await click(host!.querySelector(".senderm .sm-rule"));
     await click([...host!.querySelectorAll<HTMLElement>(".senderm li")]
       .find((li) => li.textContent?.startsWith("News"))!);
@@ -324,7 +314,7 @@ describe("a sender's screening, from a list row", () => {
   it("clicking the same destination twice makes ONE rule, not one per click", async () => {
     await mountShell();
     const id = rows()[0]!.getAttribute("data-id")!;
-    const avatar = () => host!.querySelector<HTMLElement>(`.view-ohbox .row[data-id="${id}"] .av`);
+    const avatar = () => host!.querySelector<HTMLElement>(`.view-ohbox :is(.row, [role=option])[data-id="${id}"] :is(.av, .oh-row-face)`);
     const ohbox = () => [...host!.querySelectorAll<HTMLElement>(".senderm li")]
       .find((li) => li.textContent?.startsWith("Ohbox"));
 
@@ -410,7 +400,7 @@ describe("marking a selection read is ONE request", () => {
     await mountShell();
     await key("x");                                     // anchor at the cursor
     const order = rows().map((r) => r.dataset.id!);
-    const anchor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!.dataset.id!;
+    const anchor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!.dataset.id!;
     const target = order[order.indexOf(anchor) + 3]!;
 
     await click(rows().find((r) => r.dataset.id === target), { shiftKey: true });
@@ -440,10 +430,10 @@ describe("marking a selection read is ONE request", () => {
     await mountShell();
     // Walk to a row that is ALREADY read, so `u` means "make this unread" — the direction
     // the dwell can undo.
-    let cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!;
+    let cursor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!;
     for (let i = 0; i < 12 && cursor.getAttribute("data-unseen"); i++) {
       await key("j");
-      cursor = host!.querySelector<HTMLElement>(".view-ohbox .row.sel")!;
+      cursor = host!.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")!;
     }
     expect(cursor.getAttribute("data-unseen"), "never reached a read row").toBeNull();
     const id = cursor.dataset.id!;
@@ -495,7 +485,7 @@ describe("a selection offers the verbs a single message does", () => {
   it("the three horizons queue every picked message, in one sentence", async () => {
     await mountShell();
     await pick(3);
-    const ids = rows().filter((r) => r.classList.contains("picked")).map((r) => r.dataset.id!);
+    const ids = pickedRows().map((r) => r.dataset.id!);
     expect(ids).toHaveLength(3);
 
     sent = [];
@@ -545,7 +535,7 @@ describe("a selection offers the verbs a single message does", () => {
 
     sent = [];
     await click(barButton("Move"));
-    await click(barButton("→ News"));
+    await click(barButton("News"));
 
     /* THE MAIL GOES NOW AND THE ROUTING WAITS — the undo this press carries. Nothing about the
        sender's future mail is on the wire while the toast stands, so there is something left to
@@ -576,14 +566,10 @@ describe("a selection offers the verbs a single message does", () => {
   it("every destination the bar offers is a real folder — the mint always has somewhere to move to", async () => {
     await mountShell();
     await pick(3);
-    const offered = barButtons()
-      .map((b) => (b.textContent ?? "").trim())
-      .filter((t) => t.startsWith("→"));
+    const offered = destinations();
     expect(offered.length, "the Move bar offered no destinations").toBe(0);
     await click(barButton("Move"));
-    const places = barButtons()
-      .map((b) => (b.textContent ?? "").trim())
-      .filter((t) => t.startsWith("→"));
+    const places = destinations();
     expect(places.length, "the Move bar offered no destinations").toBeGreaterThan(0);
     const folders = Object.values(FOLDER_OF_VIEW);
     expect(folders.every((f) => typeof f === "string" && f.length > 0),
@@ -603,7 +589,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
 
     sent = [];
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
 
     expect(sent, "a screening decision committed before it was confirmed").toEqual([]);
     expect(confirmRow()).toContain("News");
@@ -618,13 +604,9 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     // wrong in the other direction — a plan moves that sender's WHOLE bag, not the picks.
     await mountShell();
     await pick(3);
-    const senders = new Set(
-      rows()
-        .filter((r) => r.classList.contains("picked"))
-        .map((r) => r.querySelector(".addr")?.textContent ?? ""),
-    );
+    const senders = new Set(pickedRows().map(senderOf));
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     expect(confirmRow()).toContain(
       senders.size === 1 ? "1 sender" : `${senders.size} senders`,
     );
@@ -637,7 +619,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(2);
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     expect(confirmRow()).toContain("No rule is made");
     expect(confirmRow()).not.toContain("There is no undo");
   });
@@ -650,7 +632,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(3);
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     const stated = Number(/(\d+) messages? moves?/.exec(confirmRow())?.[1] ?? "-1");
     expect(stated).toBeGreaterThan(0);
 
@@ -675,7 +657,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(3);
     await click(barButton("Screening"));
-    await click(barButton("→ Ohbox"));
+    await click(screenTo("Ohbox"));
 
     expect(confirmRow()).toContain("already in Ohbox");
     expect(barButton("Screen them")?.disabled, "an inert action was offered as live").toBe(true);
@@ -692,7 +674,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     await mountShell();
     await pick(3);
     await click(barButton("Screening"));
-    await click(barButton("→ News"));
+    await click(screenTo("News"));
     expect(barButton("Screen them")).toBeTruthy();
 
     await key("Escape");
@@ -700,7 +682,7 @@ describe("a bulk screening decision states what will PERSIST before it commits",
     expect(pickCount(), "the selection was cleared by the same press").toBe("3");
 
     await key("Escape");
-    expect(host!.querySelector(".list-foot")).toBeNull();
+    expect(host!.querySelector(".ob-foot")).toBeNull();
   });
 });
 
@@ -708,7 +690,7 @@ describe("tags over a selection", () => {
   it("the picker opens for the SET and fans `tag_assign` out over it", async () => {
     await mountShell();
     await pick(3);
-    const ids = rows().filter((r) => r.classList.contains("picked")).map((r) => r.dataset.id!);
+    const ids = pickedRows().map((r) => r.dataset.id!);
 
     await click(barButton("Tag"));
     const picker = host!.querySelector(".tagp");

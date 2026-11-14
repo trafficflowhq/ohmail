@@ -232,7 +232,7 @@ describe("the NARROW reader and the view's cursor are the same message", () => {
     await key("l");
     await waitFor(() => container.querySelector(".view-triage") != null, "triage view");
 
-    const rows = [...container.querySelectorAll<HTMLElement>(".view-triage .row[data-id]")];
+    const rows = [...container.querySelectorAll<HTMLElement>(".view-triage :is(.row, [role=option])[data-id]")];
     expect(rows.length, "the fixture pile needs a second row for this case to mean anything")
       .toBeGreaterThan(1);
     const first = rows[0]!.dataset.id!;
@@ -290,7 +290,7 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
     const container = await shell();
     // Queue nothing — act on the Ohbox cursor. `j` enters the list, `b` books resurface.
     await key("j");
-    const booked = container.querySelector<HTMLElement>(".view-ohbox .row.sel")?.dataset.id;
+    const booked = container.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])")?.dataset.id;
     expect(booked, "`j` put the cursor on no row").toBeDefined();
     await key("b");
     await waitFor(
@@ -299,7 +299,7 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
     );
     // ONE PILE: the booked row is gone from the Ohbox the moment it is booked.
     await waitFor(
-      () => container.querySelector(`.view-ohbox .row[data-id="${booked!}"]`) == null,
+      () => container.querySelector(`.view-ohbox :is(.row, [role=option])[data-id="${booked!}"]`) == null,
       "the booked row left the Ohbox",
     );
 

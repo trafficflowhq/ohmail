@@ -208,7 +208,7 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")].map((r) => r.dataset.id ?? "");
+  [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")].map((r) => r.dataset.id ?? "");
 
 async function shell(): Promise<HTMLElement> {
   const { AppShell } = await import("./_todays-shell.js");
@@ -257,9 +257,9 @@ async function enter(): Promise<void> {
 
 const sheet = (el: HTMLElement): Element | null => el.querySelector(".reader");
 const selRow = (el: HTMLElement): string | null =>
-  el.querySelector<HTMLElement>(".view-ohbox .row.sel[data-id]")?.dataset.id ?? null;
+  el.querySelector<HTMLElement>(".view-ohbox :is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id ?? null;
 const focusedRow = (): string | null =>
-  (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(".row[data-id]")?.dataset.id ?? null;
+  (document.activeElement as HTMLElement | null)?.closest<HTMLElement>(":is(.row, [role=option])[data-id]")?.dataset.id ?? null;
 /** The subject the reading column shows, or null when it rests. */
 const columnSubject = (el: HTMLElement): string | null => {
   const col = el.querySelector(".view-ohbox .read-col");
@@ -267,9 +267,11 @@ const columnSubject = (el: HTMLElement): string | null => {
   return m ? m[1]! : null;
 };
 const earlierIds = (el: HTMLElement): string[] => {
-  const rows = [...el.querySelectorAll<HTMLElement>(".view-ohbox .row[data-id]")];
+  const rows = [...el.querySelectorAll<HTMLElement>(".view-ohbox :is(.row, [role=option])[data-id]")];
   const line = [...el.querySelectorAll<HTMLElement>(".view-ohbox *")]
     .find((n) => n.children.length === 0 && n.textContent?.trim() === "Earlier");
+  const group = el.querySelector<HTMLElement>('.view-ohbox [role="listbox"][aria-label="Earlier"]');
+  if (group) return [...group.querySelectorAll<HTMLElement>('[role="option"][data-id]')].map((r) => r.dataset.id ?? "");
   if (!line) return [];
   return rows
     .filter((r) => (line.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)

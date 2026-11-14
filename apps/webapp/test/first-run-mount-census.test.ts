@@ -117,8 +117,10 @@ describe("AppShell's first-run mount", () => {
   });
 
   it("DOCTORED CONTROL — a mount missing one of them is read as missing", () => {
+    /* Doctored inside the FirstRun mount itself: another element's prop of the same name (the Ohbox's `pull`) is not it. */
+    const mount = mountProps(real).text;
     for (const prop of OWED) {
-      const doctored = real.replace(new RegExp(`\\n\\s*${prop}=\\{`), "\n          xRemoved={");
+      const doctored = real.replace(mount, mount.replace(new RegExp(`\\n\\s*${prop}=\\{`), "\n          xRemoved={"));
       expect(doctored, `${prop} was not doctored — the control measures nothing`).not.toBe(real);
       expect(mountProps(doctored).names).not.toContain(prop);
     }

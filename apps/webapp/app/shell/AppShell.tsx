@@ -85,7 +85,7 @@ import { MessageGone, MessagePane, type BulkAction, type MessageAction } from ".
 import { ListGoneProvider, useListGoneFacts } from "./list-view";
 import { AttachmentPreview } from "../components/AttachmentPreview";
 import { useMessageAttachments } from "./attachments";
-import { conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
+import { askAnew, conversationOnScreen } from "@ohmail/app-logic/reading/conversation-on-screen";
 import { useRemoteImages, type ImageDoor } from "./remote-images";
 import { useConsentState, windowOwnersOf, type ConsentTransport } from "./consent-state";
 import { FirstRun, type FirstRunDecideSubject } from "./FirstRun";
@@ -248,7 +248,7 @@ import { goCompose } from "./compose-door";
 import { beginSearch, markStartup, useUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
-import { OhboxView, type OhboxReplyDone } from "../views/OhboxView";
+import { TodaysOhbox, type OhboxReplyDone } from "./TodaysOhbox";
 import { ReadsView } from "../views/ReadsView";
 import { ReceiptsView } from "../views/ReceiptsView";
 import { ScreenerView, ScreenerWarmup } from "../views/ScreenerView";
@@ -271,7 +271,7 @@ import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
-import { useFrame, useSelectionBar, type PaneProps } from "@ohmail/app/frame";
+import { useFrame, type PaneProps } from "@ohmail/app/frame";
 import { useTodaysFixed } from "./TodaysFrame";
 import { useTodaysSignals } from "./todays-signals";
 import { useTodaysFeeds } from "./todays-feeds";
@@ -413,15 +413,6 @@ export { DESKTOP_CTA_DISMISSED, DESKTOP_DOWNLOAD_URL, showDesktopCta } from "./t
  * guard still reads it from here.
  */
 export { CURSOR_HINT_MS };
-
-/**
- * Mounted while the Ohbox's selection bar stands at the list's foot: on a phone's width the frame then draws no dock
- * over the bar. A part of its own, so a pick draws it and not the shell.
- */
-function SaysSelectionBar(): null {
-  useSelectionBar(true);
-  return null;
-}
 
 /**
  * SEARCH'S OWN SUBSCRIPTION — the mirror it derives from, and the index that answers.
@@ -830,7 +821,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     ownAddresses, firstImportDoneAt, ownNameOf, mailboxLabelOf, mailboxStatusOf, mailboxStatusKey, consentView, presented, trashPage, trashWindow,
-    older, folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
+    folderOlder, ohbox, ohboxFiled, resurfacedRows, partition, receipts, receiptsPartition, piles,
     parked, tagGroups, history, tags, folders, folderMailboxes,
     folderUnread, openFolder, folderMessages, rulesWaiting, rulesQueued, mailboxes, draft, aiChip, account,
     notifications, allOhbox, participantsOf, threadCountOf, threadMarksOf, threadSubjectOf, fallbackMailboxId,
@@ -1134,7 +1125,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    */
   const {
     absoluteTime, barPanel, chipState, closeCard, commitReadsSeen, commitReceiptsSeen, enterReader,
-    focused, fr, frDone, frValues, jump, markAllRead, markAllReadsRead, markAllReceiptsRead, markSeen,
+    focused, fr, frDone, frValues, jump, located, markAllRead, markAllReadsRead, markAllReceiptsRead, markSeen,
     mirrorHolds, verbHolds, ohboxGone, openMessage,
     picker, pickerIds, previewFor, railOpen, readerCrossed, readerFor, readerGone, readerMessage, readSetFor, readsCur,
     readsMarkSeen, reportPick, receiptsCur, receiptsMarkSeen, ribbonGone, scnSel, screenerFull, searchFrom,
@@ -1207,6 +1198,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
    * chrome context below does not churn for every consumer on every delta.
    */
   const conversationOf = useStableCallback((messageId: string) => conversationOnScreen(presented, engine.read(), messageId));
+  /* The Ohbox keeps each row's people once asked (`useGroupPeople`): it is handed a new asker when the mirror moves, so
+     what it keeps is the mirror's as it stands, and a redraw that moves nothing walks no conversation. */
+  const ohboxConversationOf = useMemo(() => askAnew(conversationOf), [conversationOf, derived]);
 
   /*
    * Attachments for the OPEN message only, and released when it changes.
@@ -1730,7 +1724,9 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onError={(error) => console.error("[view] render failed", "ohbox", error)}
                 fallback={(error) => <ViewFailCard view="ohbox" error={error} />}
               >
-              <OhboxView
+              <TodaysOhbox
+                pull={pullBinding}
+                located={located}
                 replyDone={replyDone}
                 demo={demo}
                 {...(setupHref ? { setupHref } : {})}
@@ -1743,7 +1739,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 standingNotice={
                   (() => {
                     /* THE AWAY LINE IS THE LIST'S FIRST BLOCK, not a header tenant — see
-                       `OhboxView.standingNotice` for why it moved and `AwayNotice` for the form
+                       `OhboxList`'s `notice` for why it moved and `AwayNotice` for the form
                        it takes by width. Its three-part gate is unchanged. */
                     const away = demo || !awaySupported || !awayNotice.on
                       ? null
@@ -1793,7 +1789,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 threadParticipants={participantsOf}
                 threadCountOf={threadCountOf}
                 threadMarksOf={threadMarksOf}
-                conversationOf={conversationOf}
+                conversationOf={ohboxConversationOf}
                 absoluteTime={absoluteTime}
                 onToggleTime={toggleAbsoluteTime}
                 threadSubject={threadSubjectOf}
@@ -1850,11 +1846,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
                 onAddTag={openTagPicker}
                 onDropTag={dropTag}
                 bulk={bulkVerbs}
-                whilePicking={<SaysSelectionBar />}
-                /* Mail from beyond what this device kept — see `shell/older-mail.ts`. Built in
-                   the shell because the hook needs the engine, and this view is mounted without
-                   one by several tests. It is inert on a client whose mirror IS the mailbox. */
-                older={older}
                 onMarkAllRead={markAllRead}
               />
               </ViewBoundary>

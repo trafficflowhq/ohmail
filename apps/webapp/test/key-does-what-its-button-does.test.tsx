@@ -378,11 +378,15 @@ describe("z takes back what the toast's Undo takes back, inside the window", () 
   for (const via of ["the button", "z", "z past the window"] as const) {
     it(`mark all read: ${via}`, async () => {
       await mountShell("#/ohbox");
-      const unread = () => (host!.querySelector(".view-ohbox")?.textContent ?? "").match(/(\d+) unread/)?.[1];
+      /* The head states the count in its Mark all read's name, and draws none once nothing is unread (the design's
+         head: studio PARITY 2.1, no "n unread" beside the title; `screens/ohbox.js`, Mark all read only while
+         something is unread): no control naming a count is a count of nought. */
+      const unread = () => [...(host!.querySelector(".view-ohbox")?.querySelectorAll("button") ?? [])]
+        .map((b) => b.getAttribute("aria-label") ?? "").join(" ").match(/(\d+) unread/)?.[1] ?? "0";
       await tick(500);
       const before = unread();
       expect(Number(before), "the Ohbox shows no unread").toBeGreaterThan(0);
-      await click(host!.querySelector(".mark-all-read"));
+      await click([...document.querySelectorAll<HTMLButtonElement>(".view-ohbox button")].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null);
       await tick(500);
       expect(unread()).toBe("0");
       if (via === "the button") await click(undoCapsule());
@@ -467,7 +471,7 @@ describe("s in the Screener opens the shown sender's menu, as the row's own butt
     // Off the top row, so the shown sender is not merely the first.
     await key("j");
     const rows = screenerRows();
-    const shown = host!.querySelector(".view-screener .row.sel")?.getAttribute("data-id");
+    const shown = host!.querySelector(".view-screener :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id");
     expect(shown, "j showed no second sender").toBe(rows[1]);
     await key("s");
     const slot = [...host!.querySelectorAll(".view-screener .row-slot")]
@@ -601,7 +605,7 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
 
     it(`${v.name}: with a row selected, no row tells you to select a message first`, async () => {
       await openOn(v);
-      expect(host!.querySelector(".view .row.sel"), `${v.name}: no row selected`).toBeTruthy();
+      expect(host!.querySelector(".view :is(.row.sel, [role=option][data-open])"), `${v.name}: no row selected`).toBeTruthy();
       const table = await sheetTable();
       const promised = table.filter((r) => r.reason === messages.shortcuts.needsCursor).map((r) => r.label);
       expect(promised, `${v.name}: a selection is on screen and these still ask for one`).toEqual([]);
@@ -619,7 +623,7 @@ describe("the sheet's own table in News, Receipts, Trash and Spam", () => {
   it("the control: in the Ohbox with no cursor, the verbs still ask for one", async () => {
     await mountShell("#/ohbox");
     await tick(2000);
-    expect(host!.querySelector(".view .row.sel"), "a row was selected on arrival").toBeNull();
+    expect(host!.querySelector(".view :is(.row.sel, [role=option][data-open])"), "a row was selected on arrival").toBeNull();
     const table = await sheetTable();
     const move = table.find((r) => r.label === messages.shortcuts.move);
     expect(move?.reason).toBe(messages.shortcuts.needsCursor);
@@ -636,7 +640,7 @@ describe("the key sends what its button sends", () => {
   const openCard = async (id: string): Promise<void> => {
     await click(host!.querySelector(`.scast[data-sid="${id}"] .sc-x`) ?? host!.querySelector(`.scast[data-sid="${id}"]`));
   };
-  const cursorId = (): string => host!.querySelector(".view .row.sel")?.getAttribute("data-id") ?? "";
+  const cursorId = (): string => host!.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? "";
   /* The verb's writes; reading a card writes `\Seen` beside them on its own clock. */
   const READING = new Set(["mark_seen", "feed_mark_seen"]);
   const wire = () => ({ kinds: sent.map((m) => m.kind).filter((k) => !READING.has(k)), moved: moveSent() });

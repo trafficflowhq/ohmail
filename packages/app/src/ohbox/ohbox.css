@@ -1,0 +1,48 @@
+/* The Ohbox's list: where its parts stand. Placement only; every look is the kit's. */
+.ob-list {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  height: 100%;
+  min-height: 0;
+}
+.ob-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* The selection's bar floats over the list's foot, a step above the sheet's edge, the rows running on under it; the
+   list's end keeps room for it so its last row can come out from under. */
+.ob-foot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: var(--s3);
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+.ob-foot > * {
+  pointer-events: auto;
+}
+.ob-list:has(> .ob-foot) .ob-scroll {
+  padding-bottom: var(--s8);
+}
+.ob-wait {
+  min-height: 0;
+}
+/* What is true instead of the doorbell, printed before its action in the head. */
+.ob-door {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s1);
+  min-width: 0;
+}
+.ob-door-said {
+  font-size: var(--t-meta);
+  color: var(--ink2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

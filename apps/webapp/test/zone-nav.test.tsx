@@ -71,7 +71,7 @@ function mountRail(): void {
 }
 
 async function render(newForYou: Row[]): Promise<void> {
-  const { OhboxView } = await import("../app/views/OhboxView.js");
+  const OhboxView = await (await import("./ohbox/_today.js")).prepareToday();
   const { useEnabledBinding } = await import("@ohmail/app-logic/keys/keymap");
   const { KeymapProvider } = await import("@ohmail/app/keys");
   markSeen = [];
@@ -116,7 +116,7 @@ const key = async (k: string, target: EventTarget = document): Promise<void> => 
 };
 
 const cursor = (): string | null =>
-  host!.querySelector<HTMLElement>(".row[data-id].sel")?.dataset.id ?? null;
+  host!.querySelector<HTMLElement>(":is(.row[data-id].sel, [role=option][data-id][data-open])")?.dataset.id ?? null;
 
 const focused = (): Element | null => document.activeElement;
 
@@ -319,7 +319,7 @@ describe("the zone walk: rail ← list → open message", () => {
     onTeardown.push(() => layout.restore());
     await render(FIVE);
     await key("ArrowDown");
-    const row = (): HTMLElement | null => host!.querySelector(`.row[data-id="m1"]`);
+    const row = (): HTMLElement | null => host!.querySelector(`:is(.row, [role=option])[data-id="m1"]`);
     expect(row()!.dataset.unseen, "fixture: the row under the cursor must start unread").toBe("1");
 
     await key("ArrowRight");
@@ -415,13 +415,13 @@ describe("the zone walk: rail ← list → open message", () => {
     await render(FIVE);
     await key("ArrowDown");
     await key("x");
-    expect(host!.querySelector(".list-foot"), "fixture: the pick did not register").toBeTruthy();
+    expect(host!.querySelector(".ob-foot"), "fixture: the pick did not register").toBeTruthy();
 
     await key("ArrowRight"); // zone boundary: the zone layer re-registers after the pick
     expect(focused()).toBe(host!.querySelector(".read-col"));
 
     await key("Escape");
-    expect(host!.querySelector(".list-foot"), "Escape walked zones over a standing selection")
+    expect(host!.querySelector(".ob-foot"), "Escape walked zones over a standing selection")
       .toBeNull();
     expect(focused(), "clearing the picks must not move focus").toBe(host!.querySelector(".read-col"));
 
@@ -461,7 +461,7 @@ describe("the zone walk: rail ← list → open message", () => {
     await key("ArrowLeft");
     expect((focused() as HTMLElement | null)?.closest?.(".rail"),
       "← reached the rail behind the open reader").toBeFalsy();
-    expect((focused() as HTMLElement | null)?.matches?.(".row"),
+    expect((focused() as HTMLElement | null)?.matches?.(".row, [role=option]"),
       "← landed focus on a list row behind the open reader").toBeFalsy();
 
     // Focus INSIDE the sheet scrolls it exactly the same — one zone, however it was entered.
@@ -590,7 +590,7 @@ describe("the zone walk: rail ← list → open message", () => {
     await render(FIVE);
     await key("ArrowDown");
     expect(shellKey, "fixture: the shell reads a live view key").not.toBeNull();
-    const row = host!.querySelector<HTMLElement>(".row.sel")!;
+    const row = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")!;
     const col = host!.querySelector<HTMLElement>(".read-col")!;
     const items = [...rail!.querySelectorAll<HTMLElement>("button")];
     const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");

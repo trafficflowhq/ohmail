@@ -80,10 +80,6 @@ export const EXEMPT: Record<string, Exemption[]> = {
   "apps/webapp/app/views/ComposeView.tsx": [
     { text: "mod+Enter", why: "chord identifier — parsed by the keymap, not read by anyone" },
   ],
-  "apps/webapp/app/views/OhboxView.tsx": [
-    { text: "esc", why: "keycap — the selection capsule's clear hint" },
-    { text: "Backspace", why: "chord identifier — the keymap parses it and `chordKeys` prints ⌫; nobody reads this word" },
-  ],
   "apps/webapp/app/shell/MessagePane.tsx": [
     { text: "shift+Backspace", why: "chord identifier — the Trash bar's Restore keycap; the keymap parses it and `chordKeys` prints ⇧⌫, nobody reads this word" },
   ],

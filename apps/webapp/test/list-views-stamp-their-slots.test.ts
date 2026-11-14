@@ -200,7 +200,7 @@ describe("every windowed list stamps its slots", () => {
 
   it("reads the lists it is about", () => {
     expect(readFileSync(OHBOX_LIST, "utf8"), "useOhboxList mounts no window").toMatch(/useListWindow\(\{ scrollerRef: listScrollerRef/);
-    for (const f of ["ReceiptsView.tsx", "ReadsView.tsx", "FolderView.tsx", "TrashView.tsx", "RulesView.tsx", "OhboxView.tsx"]) {
+    for (const f of ["ReceiptsView.tsx", "ReadsView.tsx", "FolderView.tsx", "TrashView.tsx", "RulesView.tsx"]) {
       expect(readings.get(f)?.callsWindow, `${f} calls no useListWindow — the census reads nothing there`).toBe(true);
       expect(readings.get(f)?.stamps ?? 0, `${f} stamps no slot`).toBeGreaterThan(0);
     }

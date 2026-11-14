@@ -17,10 +17,10 @@ const deliberate = () => patches.filter((p) => p.via === undefined);
 const openReads = () => patches.filter((p) => (p as { openRead?: boolean }).openRead === true);
 const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
 const ids = (label: string): string[] =>
-  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] .row[data-id]`)]
+  [...document.querySelectorAll(`[role="listbox"][aria-label="${label}"] :is(.row, [role=option])[data-id]`)]
     .map((e) => (e as HTMLElement).dataset.id!);
-const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
-const selected = (): string | null => document.querySelector(".view .row.sel")?.getAttribute("data-id") ?? null;
+const rowOf = (id: string): HTMLElement | null => document.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
+const selected = (): string | null => document.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id") ?? null;
 /** "old" unread (08:00) under "newer" read (08:30): New ["old"], Earlier ["newer"]. */
 const two = () => [msg("old", 0, { threadId: "t-old" }), msg("newer", 30, { threadId: "t-newer", unread: false })];
 /** Three seconds of nothing. */
@@ -134,7 +134,7 @@ describe("CONTROLS: what keeps its arrival slot, and the open", () => {
     await key("j");
     await key("j");
     expect(selected()).toBe("p1");
-    await click(document.querySelector(".mark-all-read"), "Mark all read");
+    await click([...document.querySelectorAll<HTMLButtonElement>(".view-ohbox button")].find((b) => /^Mark (all \d+ unread messages|the 1 unread message) read$/.test(b.getAttribute("aria-label") ?? "")) ?? null, "Mark all read");
     expect(patches.length).toBeGreaterThan(0);
     expect(openReads()).toEqual([]);
     await click(rowOf("p2"), "move on");

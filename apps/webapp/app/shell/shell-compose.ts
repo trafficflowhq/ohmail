@@ -135,7 +135,7 @@ import {
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import type { StorageScope } from "@ohmail/app-logic/storage/scope";
 import { noteReplyPress } from "./sent-reveal";
-import type { OhboxReplyDone } from "../views/OhboxView";
+import type { OhboxReplyDone } from "@ohmail/app-logic/ohbox";
 import type { MailboxEntity } from "../views/SettingsView";
 import type { SupportSeed } from "./HelpContactPane";
 

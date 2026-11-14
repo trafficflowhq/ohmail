@@ -45,7 +45,7 @@ const click = async (el: Element): Promise<void> => {
   await settle();
 };
 const row = (host: HTMLElement, id: string): HTMLElement => {
-  const r = host.querySelector<HTMLElement>(`.row[data-id="${id}"]`);
+  const r = host.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`);
   if (!r) throw new Error(`no row ${id}`);
   return r;
 };
@@ -65,13 +65,13 @@ describe("the shell on the account's own mail", () => {
   it("the sender sheet on our own note says the sentence and offers no place; a friend's offers five", async () => {
     const host = await mountShell([mailbox({ address: ME, lastSyncAt: ISO })]);
     await settle();
-    await click(row(host, "note").querySelector(".av")!);
+    await click(row(host, "note").querySelector(":is(.av, .oh-row-face)")!);
     const own = document.getElementById("sender-sheet")!;
     expect(own.querySelector(".sm-now")!.textContent).toBe(SENTENCE);
     expect(own.querySelectorAll("[data-dest]")).toHaveLength(0);
     await act(async () => { document.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); });
     await settle();
-    await click(row(host, "fr").querySelector(".av")!);
+    await click(row(host, "fr").querySelector(":is(.av, .oh-row-face)")!);
     expect(document.getElementById("sender-sheet")!.querySelectorAll("[data-dest]")).toHaveLength(5);
   });
 

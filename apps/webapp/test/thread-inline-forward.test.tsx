@@ -617,8 +617,8 @@ async function mountForwardShell(o: {
       } as never) }) }),
     }));
   });
-  expect(await waitUntil(() => host!.querySelector('.view-ohbox .row[data-id="m1"]') !== null), "m1 in the Ohbox").toBe(true);
-  const row = host!.querySelector<HTMLElement>('.view-ohbox .row[data-id="m1"]')!;
+  expect(await waitUntil(() => host!.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]') !== null), "m1 in the Ohbox").toBe(true);
+  const row = host!.querySelector<HTMLElement>('.view-ohbox :is(.row, [role=option])[data-id="m1"]')!;
   await act(async () => {
     row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
     row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));

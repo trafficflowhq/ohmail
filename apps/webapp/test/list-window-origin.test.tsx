@@ -6,7 +6,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { OhboxView } from "../app/views/OhboxView";
+import { prepareToday } from "./ohbox/_today";
+const OhboxView = await prepareToday();
 import { KeymapProvider } from "@ohmail/app/keys";
 import { ESTIMATED_ROW_PX, useListWindow, WINDOW_TOP } from "@ohmail/app-logic/lists/list-window";
 
@@ -73,7 +74,7 @@ function installLayout(): void {
   });
   stub(Element.prototype, "getBoundingClientRect", {
     value(this: Element): DOMRect {
-      const scroller = this.closest(".scroller");
+      const scroller = this.closest(".scroller, .ob-scroll");
       if (!scroller) return rect.call(this);
       const top = this === scroller ? 0 : yIn(scroller, this) - scroller.scrollTop;
       const height = this === scroller ? VIEW_PX : heightOf(this);
@@ -109,7 +110,7 @@ async function mount(): Promise<{ root: Root; scroller: HTMLElement }> {
   const root = createRoot(host);
   roots.push(root);
   await act(() => root.render(<List bump={bump} />));
-  return { root, scroller: host.querySelector(".scroller") as HTMLElement };
+  return { root, scroller: host.querySelector(".scroller, .ob-scroll") as HTMLElement };
 }
 
 /** A commit with nothing changed but the model: what a row or a note growing looks like to React. */
@@ -273,11 +274,11 @@ describe("a jump to a slot lands on it under whatever stands above the rows", ()
     ));
     for (let k = 0; k < 3; k++) {
       await act(async () => {
-        host.querySelector(".scroller")!.dispatchEvent(new Event("scroll"));
+        host.querySelector(".scroller, .ob-scroll")!.dispatchEvent(new Event("scroll"));
         await new Promise((r) => setTimeout(r, 30));
       });
     }
-    const scroller = host.querySelector(".scroller") as HTMLElement;
+    const scroller = host.querySelector(".scroller, .ob-scroll") as HTMLElement;
     expect(scroller.scrollTop, "the reveal scrolled past the pinned group").toBeGreaterThan(30 * ESTIMATED_ROW_PX);
     const row = host.querySelector<HTMLElement>('[data-id="m500"]');
     expect(row, "the selected row is mounted").not.toBeNull();

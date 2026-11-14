@@ -1252,8 +1252,8 @@ export function useShellOpenState({
       const row =
         typeof document === "undefined"
           ? null
-          : (queryVisible(`.view .row[data-id="${CSS.escape(located)}"]`) ??
-             queryVisible(`.view .row[data-ids~="${CSS.escape(located)}"]`));
+          : (queryVisible(`.view :is(.row, [role=option])[data-id="${CSS.escape(located)}"]`) ??
+             queryVisible(`.view :is(.row, [role=option])[data-ids~="${CSS.escape(located)}"]`));
       if (row) {
         done = true;
         found = row;
@@ -1394,6 +1394,7 @@ export function useShellOpenState({
     frDone,
     frValues,
     jump,
+    located,
     markAllRead,
     markAllReadsRead,
     markAllReceiptsRead,

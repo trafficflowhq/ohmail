@@ -790,8 +790,8 @@ describe("a save refused, then a draft opened from Drafts", () => {
     await pause(AUTOSAVE_DELAY_MS + 400);
     await waitFor(() => text().includes(compose.draftNotSaved!), "the refusal said", 60);
     await act(async () => { window.location.hash = "#/ohbox"; });
-    await waitFor(() => q(".view-ohbox .row[data-id='m1']") != null, "the row m1");
-    await press(q(".view-ohbox .row[data-id='m1']"), "the row m1");
+    await waitFor(() => q(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row m1");
+    await press(q(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row m1");
     const click = async (node: Element | undefined): Promise<void> => {
       await act(async () => { node?.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
     };

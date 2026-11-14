@@ -56,8 +56,8 @@ async function key(k: string): Promise<void> {
 }
 
 async function replyOpen(s: DraftShell, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
   await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -100,7 +100,7 @@ describe("a send that ends Not sent", () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")]);
     await replyOpen(s, "See you on Thursday");
     await act(async () => { replySend(s.el)!.click(); });
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m2']"), "the next row");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "the next row");
     await waitFor(() => toasts().includes(en.reply.toastSent), "the sent toast");
     expect(notSentToast(), "a delivered send was said as Not sent").toBe(false);
   }, 30_000);
@@ -159,8 +159,8 @@ const toDrafts = async (): Promise<void> => {
 
 /** At a phone width: tap the row (the sheet opens over the hidden column), reply there. */
 async function sheetReply(s: DraftShell, id: string, words: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.view-ohbox .row[data-id='${id}']`) != null, "the row");
-  await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), "tap the row");
+  await waitFor(() => s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`) != null, "the row");
+  await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), "tap the row");
   await waitFor(() => document.querySelector(".reader .msg-subject") != null, "the sheet");
   await key("r");
   await waitFor(() => replySurface(s.el) != null, "the reply editor");
@@ -189,7 +189,7 @@ describe("at a phone width, where the reading column is hidden", () => {
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
     await press(document.querySelector(".reader .reader-close"), "the sheet's back control");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m2']"), "tap the next letter");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "tap the next letter");
     await waitFor(() => document.querySelector(".reader .msg-subject")?.textContent === "Subject m2", "the sheet on m2");
     await online();
     await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
@@ -207,8 +207,8 @@ describe("at a phone width, where the reading column is hidden", () => {
 
 /** A forward on m1 refused retryably once, then a letter past the limit written in the composer. */
 async function forwardThenLetter(s: DraftShell): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the row");
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "the row");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the row");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "the row");
   await act(async () => {
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "F", shiftKey: true, bubbles: true, cancelable: true }));
   });
@@ -231,8 +231,8 @@ async function forwardThenLetter(s: DraftShell): Promise<void> {
 describe("Open never puts older words over the ones refused", () => {
   it("7 — a reply refused for its length while away: Open brings back the refused words, not the row's older ones", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2")], [replyDraft("d-reply", "m1", "older words")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "row m1");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m1']"), "row m1");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "row m1");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']"), "row m1");
     await key("r");
     await waitFor(() => (replySurface(s.el)?.textContent ?? "").includes("older words"), "the editor seeded from the row");
     let release!: () => void;
@@ -241,7 +241,7 @@ describe("Open never puts older words over the ones refused", () => {
     await act(async () => { typeInto(replySurface(s.el)!, "my newer words"); });
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m2']"), "row m2");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m2']"), "row m2");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     await act(async () => { release(); });
     await waitFor(() => /Not sent/.test(held()?.textContent ?? ""), "the Not sent toast");
@@ -288,21 +288,21 @@ describe("every ending stays reachable until it is acted on", () => {
     let release!: () => void;
     s.sendGate.wait = new Promise<void>((r) => { release = r; });
     for (const [id, words] of [["m1", "First reply"], ["m2", "Second reply"]] as const) {
-      await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), `row ${id}`);
+      await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `row ${id}`);
       await key("r");
       await waitFor(() => replySurface(s.el) != null, `the reply on ${id}`);
       await act(async () => { typeInto(replySurface(s.el)!, words); });
       await act(async () => { replySend(s.el)!.click(); });
       await rounds(4);
     }
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m3']"), "row m3");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     return release;
   }
 
   it("10 — two endings while the window is hidden: both are said on return, and Drafts marks both", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the rows");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
     const release = await twoRepliesFailing(s);
     await visibility(true);
     await act(async () => { release(); });
@@ -317,7 +317,7 @@ describe("every ending stays reachable until it is acted on", () => {
 
   it("11 — two endings in a visible window: the second does not take the first away", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the rows");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
     const release = await twoRepliesFailing(s);
     await act(async () => { release(); });
     await waitFor(() => /2 messages weren't sent/.test(held()?.textContent ?? ""), "one notice naming both");
@@ -325,10 +325,10 @@ describe("every ending stays reachable until it is acted on", () => {
 
   it("13 — an ending already opened is not counted into the next one", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the rows");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
     for (const [id, words] of [["m1", "First reply"], ["m2", "Second reply"]] as const) {
-      await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), `row ${id}`);
+      await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `row ${id}`);
       await key("r");
       await waitFor(() => replySurface(s.el) != null, `the reply on ${id}`);
       await act(async () => { typeInto(replySurface(s.el)!, words); });
@@ -336,7 +336,7 @@ describe("every ending stays reachable until it is acted on", () => {
       s.sendGate.wait = new Promise<void>((r) => { release = r; });
       await act(async () => { replySend(s.el)!.click(); });
       await rounds(4);
-      await press(s.el.querySelector(".view-ohbox .row[data-id='m3']"), "row m3");
+      await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
       await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
       await act(async () => { release(); });
       await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), `the Not sent toast for ${id}`);
@@ -350,14 +350,14 @@ describe("every ending stays reachable until it is acted on", () => {
 
   it("12 — an Undo toast over the ending: the Drafts row still says it was not sent", async () => {
     const s = await mountShell("#/ohbox", [message("m1"), message("m2"), message("m3")]);
-    await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the rows");
+    await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
     Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
     let release!: () => void;
     s.sendGate.wait = new Promise<void>((r) => { release = r; });
     await replyOpen(s, "First reply");
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => sends(s).length === 1, "the send on the wire");
-    await press(s.el.querySelector(".view-ohbox .row[data-id='m3']"), "row m3");
+    await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
     await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
     await act(async () => { release(); });
     await waitFor(() => (held()?.textContent ?? "").includes(en.reply.statusUnreachable), "the Not sent toast");
@@ -385,18 +385,18 @@ const settledNotice = async (): Promise<string> => { await rounds(8); return hel
  * `first`, then m2 `second`. Hidden: both end while the window is hidden, and it shows again after.
  */
 async function twoEndings(s: DraftShell, first: Answer, second: Answer, hidden: boolean): Promise<void> {
-  await waitFor(() => s.el.querySelector(".view-ohbox .row[data-id='m1']") != null, "the rows");
+  await waitFor(() => s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m1']") != null, "the rows");
   const gates: Array<() => void> = [];
   for (const [id, words] of [["m1", "First reply"], ["m2", "Second reply"]] as const) {
     s.sendGate.wait = new Promise<void>((r) => { gates.push(r); });
-    await press(s.el.querySelector(`.view-ohbox .row[data-id='${id}']`), `row ${id}`);
+    await press(s.el.querySelector(`.view-ohbox :is(.row, [role=option])[data-id='${id}']`), `row ${id}`);
     await key("r");
     await waitFor(() => replySurface(s.el) != null, `the reply on ${id}`);
     await act(async () => { typeInto(replySurface(s.el)!, words); });
     await act(async () => { replySend(s.el)!.click(); });
     await rounds(4);
   }
-  await press(s.el.querySelector(".view-ohbox .row[data-id='m3']"), "row m3");
+  await press(s.el.querySelector(".view-ohbox :is(.row, [role=option])[data-id='m3']"), "row m3");
   await waitFor(() => replySurface(s.el) == null, "no reply editor on screen");
   if (hidden) await visibility(true);
   answer(s, first);

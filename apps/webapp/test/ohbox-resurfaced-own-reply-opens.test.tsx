@@ -90,7 +90,7 @@ function ownerShapePage(): Response {
 }
 
 const resurfacedRows = (host: HTMLElement): HTMLElement[] =>
-  [...host.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="Resurfaced"] .row[data-id]')];
+  [...host.querySelectorAll<HTMLElement>('[role="listbox"][aria-label="Resurfaced"] :is(.row, [role=option])[data-id]')];
 
 /** The reading column — the split layout's right half; `.empty` there is the resting panel. */
 const readColumn = (host: HTMLElement): HTMLElement | null =>
