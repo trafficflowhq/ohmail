@@ -98,7 +98,7 @@ async function unmount(): Promise<void> {
 async function mount(opts: { unread: number; read: number; waiting: number }): Promise<void> {
   await unmount();
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   const newForYou = Array.from({ length: opts.unread }, (_, i) => msg(`u${i}`, true));
   const previouslySeen = Array.from({ length: opts.read }, (_, i) => msg(`r${i}`, false));

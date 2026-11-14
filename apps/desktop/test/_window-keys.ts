@@ -6,14 +6,14 @@ import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
 import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import {
   COMPOSE_DRAFT_PREFIX, LEGACY_COMPOSE_DRAFT_KEY, composeDraftKey, composeRowKey, composeSessionKey,
-} from "../../webapp/app/shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 import { deleteIntentsKey } from "@ohmail/app-logic/press/delete-intents";
-import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "../../webapp/app/shell/mail-send";
+import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "@ohmail/app-logic/writing/mail-send";
 import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
-import { screenerIntentsKey } from "../../webapp/app/shell/screener-intents";
+import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
 import { seedNotNowKey } from "../../webapp/app/shell/seed-offer";
-import { sendLocksKey } from "../../webapp/app/shell/send-lock";
+import { sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
 import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "../src/window-outbox-store.js";
 

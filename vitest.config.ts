@@ -198,6 +198,7 @@ export default defineConfig({
       { find: "@ohmail/app/host/browser", replacement: r("./packages/app/src/host/browser/index.ts") },
       // The host contract's types and its two small values.
       { find: "@ohmail/app/host", replacement: r("./packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys", replacement: r("./packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
       { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },

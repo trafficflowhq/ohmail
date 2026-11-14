@@ -115,7 +115,7 @@ describe("no surface reads the offer around the door", () => {
       expect(files.filter((f) => relative(ROOT, f).startsWith(`${r}/`)).length, r).toBeGreaterThan(r === "apps/paired-page/src" ? 9 : 10);
     }
     const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
-    expect(call("heldReleaseDismissedOf").test(withoutComments(src("apps/webapp/app/shell/screener-state.ts")))).toBe(true);
+    expect(call("heldReleaseDismissedOf").test(withoutComments(src("packages/app-logic/src/screener/screener-state.ts")))).toBe(true);
     expect(/\.heldReleases\b/.test(withoutComments(src(FORWARDER)))).toBe(true);
   });
 

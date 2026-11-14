@@ -22,7 +22,7 @@ import {
   type ReplyEnvelopeEdit,
   type ReplyEnvelopePlan,
 } from "./compose-from";
-import type { MailSend } from "./compose";
+import type { MailSend } from "@ohmail/app-logic/writing/compose";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 
 /** The forward's audience: the user's edit, or the refusable empty set — never a derivation. */

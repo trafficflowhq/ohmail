@@ -83,6 +83,7 @@
       "@ohmail/app-logic/*": ["../../packages/app-logic/src/*"],
       "@ohmail/app/host/browser": ["../../packages/app/src/host/browser/index.ts"],
       "@ohmail/app/host": ["../../packages/app/src/host/index.ts"],
+      "@ohmail/app/keys": ["../../packages/app/src/keys/index.ts"],
       "@ohmail/app/text/fill": ["../../packages/app/src/text/fill.ts"],
       "@ohmail/app/frame/boot": ["../../packages/app/src/frame/boot-stamp.ts"],
       "@ohmail/app/frame": ["../../packages/app/src/frame/index.ts"],

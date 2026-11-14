@@ -7,9 +7,10 @@ import { MutationRejectedError, type EngineMutation } from "@ohmail/client-engin
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { composeRowKey } from "../app/shell/compose";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { composeRowKey } from "@ohmail/app-logic/writing/compose";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { settleFirstPaint } from "./_first-paint.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * A QUEUED DISCARD IS LISTED, NOT ONLY TOASTED. A Delete that cannot reach the account is kept on
@@ -78,7 +79,7 @@ async function makeADraft(): Promise<string> {
   await typeInto("#compose-subject", "Bis Montag");
   await act(async () => { await new Promise((r) => setTimeout(r, AUTOSAVE_DELAY_MS + 400)); });
   await settle(10);
-  const id = window.localStorage.getItem(composeRowKey());
+  const id = window.localStorage.getItem(composeRowKey(storageOwner()));
   expect(id, "the compose never wrote a row").not.toBeNull();
   return id!;
 }

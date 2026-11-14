@@ -21,11 +21,11 @@
  * is explicit engagement, and the view arms its read in `onEnter` — never a second write path.
  */
 import { useEffect, useRef, useSyncExternalStore } from "react";
-import { useTranslations } from "next-intl";
-import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap";
-import { railLayout } from "./narrow";
-import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
-import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
+import { isTypingTarget, useOptionalKeyBindings, type KeyBinding } from "./keymap.js";
+import { railLayout } from "../layout/narrow.js";
+import { scrollProgrammatically } from "../session/programmatic-scroll.js";
+import { queryVisible } from "../lists/visible-dom.js";
+import type { Translator } from "../text/translator.js";
 
 /**
  * `"none"` is the fourth answer: a dialog is layered ABOVE the open reader (a screening
@@ -349,8 +349,7 @@ export interface ZoneNavConfig {
  * bindings are built at dispatch time from the live zone, and the registry republishes their
  * shape when it moves. A view that gates its own keys on the zone reads {@link useZoneIs}.
  */
-export function useZoneNav(cfg: ZoneNavConfig = {}): void {
-  const t = useTranslations("shortcuts");
+export function useZoneNav(t: Translator, cfg: ZoneNavConfig = {}): void {
 
   /* The mounted view owns the reader geography for as long as it is mounted. */
   const readerSelector = cfg.reader?.selector ?? null;

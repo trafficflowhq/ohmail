@@ -238,7 +238,8 @@ async function mountShell(engine: OhmailEngine): Promise<{
   openSettings: () => Promise<void>;
   row: () => HTMLElement;
 }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { useConsentState } = await import("../app/shell/consent-state.js");
   const { AutoSuggestRow } = await import("../app/shell/AutoSuggestRow.js");
@@ -257,7 +258,7 @@ async function mountShell(engine: OhmailEngine): Promise<{
       autoSuggest: consent.autoSuggest,
       toast: ((m: string) => { toasts.push(m); }) as never,
     });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
     live = state;
     // Bound unconditionally, exactly as `AppShell` binds it — and NOT via `forSenders`, which the
     // shell binds only inside the Screener branch. That asymmetry is assertion 3.

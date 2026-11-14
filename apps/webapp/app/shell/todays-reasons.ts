@@ -14,7 +14,7 @@ import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
 import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "@ohmail/app-logic/reading/reader-holder";
 import { readingAlong } from "@ohmail/app-logic/reading/reading-along";
 import { clock } from "@ohmail/client-engine";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { waterlineStamp } from "./format";
 import { activeFormatLocale, activeFormatZone } from "./locale";
 

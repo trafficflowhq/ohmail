@@ -18,9 +18,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Spinner } from "@ohmail/ui";
 import { useTranslations } from "next-intl";
-import { COMPOSE_SEND_KEY, SENDING_LONG_MS, sentCopySay, type MailSendApi, type SendLineItem } from "./mail-send";
+import { COMPOSE_SEND_KEY, SENDING_LONG_MS, sentCopySay, type MailSendApi, type SendLineItem } from "@ohmail/app-logic/writing/mail-send";
+import { scheduleLabel } from "./format";
 import { sendLine, sendLineValues } from "./SendStatus";
-import { footLineSeen } from "./narrow";
+import { footLineSeen } from "@ohmail/app-logic/layout/narrow";
 
 type LineApi = Pick<MailSendApi, "line" | "subscribeLine" | "lineVersion" | "mountLine" | "dismissLine">;
 
@@ -130,7 +131,7 @@ export function SendingLine({ api, variant, onOpen, onOpenMany }: {
         : one.subject !== null ? t("sentToAbout", { name: one.to, subject: one.subject })
           : t("sentTo", { name: one.to });
       if (one?.copy) {
-        const why = sentCopySay(one.copy);
+        const why = sentCopySay(one.copy, scheduleLabel);
         detail = ta(why.key, why.values);
         dismiss = () => api.dismissLine(one.id);
       }

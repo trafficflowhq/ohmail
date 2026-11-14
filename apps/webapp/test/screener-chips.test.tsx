@@ -8,7 +8,7 @@ import {
   type EngineMessage, type Folder, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 
@@ -140,9 +140,10 @@ afterEach(async () => {
 
 /** Mount the REAL waiting Screener over the REAL state hook. */
 async function mount(only?: string[]): Promise<{ latest: () => ScreenerState }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const world = only ? WORLD.filter((w) => only.includes(w.address)) : WORLD;
   const engine = await engineWith(
     world.map((w, i) => held(`m${i}`, w.address, 9 + (i % 12))),
@@ -154,7 +155,7 @@ async function mount(only?: string[]): Promise<{ latest: () => ScreenerState }> 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions as never);
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
     });

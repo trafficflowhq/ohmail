@@ -5,7 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { OhmailEngine, MemoryMirrorStore } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import type { JunkWindowControl } from "../app/shell/junk-window.js";
 import type { JunkItemWire } from "../app/api-client.js";
 import messages from "../messages/en.json";
@@ -142,15 +142,16 @@ async function resizeTo(mobile: boolean): Promise<void> {
 async function mount(
   junk: JunkWindowControl | undefined, opts: { full?: boolean; locale?: "en" | "de" } = {},
 ): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await emptyEngine();
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state: ScreenerState = useScreenerState(engine, v, (() => {}) as never);
+    const state: ScreenerState = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     return h(ScreenerView, {
       owed: false,
       state,

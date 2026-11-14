@@ -28,8 +28,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { useTranslations } from "next-intl";
 import { formatRecipient, matchAddresses, type AddressBookEntry } from "@ohmail/client-engine";
 import { TextField } from "@ohmail/ui";
-import { parseRecipients } from "./compose";
-import { displayAddress } from "./idn";
+import { parseRecipients } from "@ohmail/app-logic/writing/compose";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 
 /** How many suggestions are offered. Six fills a popover without needing to scroll it. */
 const MAX_SUGGESTIONS = 6;

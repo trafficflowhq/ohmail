@@ -25,7 +25,7 @@ import type { EngineMessage } from "@ohmail/client-engine";
 import type { BlockNotice } from "../letter-body";
 import { ContactPopover, type ContactPopoverState } from "./ContactPopover";
 import { recipientRows, writtenDateTime, writtenInstant, type RecipientRowChip } from "./format";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { useMessageChrome } from "./message-chrome";
 import { placePicker } from "./TagPicker";
 

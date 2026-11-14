@@ -8,7 +8,7 @@ import { MutationRejectedError, type MutationResult } from "@ohmail/client-engin
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SendStatus } from "../app/shell/SendStatus.js";
-import { phaseFor, type SendState } from "../app/shell/mail-send.js";
+import { phaseFor, type SendState } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * WHAT A PERSON IS TOLD WHEN THE DRAFT MOVED UNDER THEIR PRESS.

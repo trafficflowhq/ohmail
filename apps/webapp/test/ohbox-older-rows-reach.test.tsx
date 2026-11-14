@@ -74,7 +74,7 @@ const OLDER: Row[] = [
 
 async function render(olderRows: Row[] = OLDER): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const older = {
     available: true, items: olderRows.map(msg), loading: false, error: null,
     exhausted: true, loadMore: () => {},

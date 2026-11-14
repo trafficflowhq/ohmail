@@ -16,7 +16,7 @@ import {
   releaseSendLockForRow,
   sendLocksKey,
   type HoldMirror,
-} from "../app/shell/send-lock";
+} from "@ohmail/app-logic/writing/send-lock";
 import { sliceOfDeclaration } from "./source-anchor";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
@@ -378,7 +378,7 @@ describe("the shell asks about the hold BEFORE it opens a reply", () => {
     expect(
       FRAME,
       "the composer is handed no way to answer for the send it is holding",
-    ).toMatch(/const row = readComposeRow\(\);\n\s*return row === null \? null : \{ draftId: row, onResolve: resolveHeldSend \};/);
+    ).toMatch(/const row = readComposeRow\(scope\);\n\s*return row === null \? null : \{ draftId: row, onResolve: resolveHeldSend \};/);
   });
 
   /**

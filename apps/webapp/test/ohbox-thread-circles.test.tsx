@@ -88,7 +88,7 @@ interface Props {
 
 async function render(props: Props): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const base = {
     demo: false, settled: true, owed: false,
     older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },

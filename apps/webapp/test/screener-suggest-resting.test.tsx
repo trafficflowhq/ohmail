@@ -230,9 +230,10 @@ function restingControl(over: Partial<SuggestBatchControl> = {}): SuggestBatchCo
 }
 
 async function mountView(props: Record<string, unknown>): Promise<HTMLElement> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith([
     held("m1", "one@example.test", 9),
     held("m2", "two@example.test", 10),
@@ -242,7 +243,7 @@ async function mountView(props: Record<string, unknown>): Promise<HTMLElement> {
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     return h(ScreenerView, {
       owed: false,
       state,
@@ -367,10 +368,11 @@ interface Live {
 
 /** Mount the REAL view over the REAL hooks — nothing faked but the server. */
 async function mountLive(): Promise<Live> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const engine = await engineWith(TWELVE);
 
   let live: { unsuggestedSenders: string[]; suggestedSenders: string[] } | null = null;
@@ -380,7 +382,7 @@ async function mountLive(): Promise<Live> {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const suggestions = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
     live = state;
     // Bound exactly as `AppShell` binds it — both halves of the queue.
     control = suggestions.forSenders(state.unsuggestedSenders, state.suggestedSenders);
@@ -503,7 +505,8 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
         dryRun: body.dryRun === true, requested: body.senders.length,
         quoted: 0, quotedCredits: 0, charged: 0, suggestions: [], skipped: [],
       });
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
     const engine = await engineWith(TWELVE);
     function Probe(): null {
@@ -511,7 +514,7 @@ describe("re-asking enters the EXISTING quote → confirm → purchase flow", ()
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       // OPTED IN. The path that spends with no press at all.
       const s = useScreenerSuggestions({ active: true, autoSuggest: true, toast: (() => {}) as never });
-      const st = useScreenerState(engine, v, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
       s.forSenders(st.unsuggestedSenders, st.suggestedSenders);
       return null;
     }

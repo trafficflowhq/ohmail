@@ -9,7 +9,7 @@ import * as kit from "@ohmail/ui";
 import * as geometry from "@ohmail/app-logic/geometry";
 import { SCROLL_KEYS } from "@ohmail/app-logic/keys";
 import type { ToastFn, ToastOptions } from "@ohmail/app-logic/press/report";
-import type { DecisionDestination, DecisionScope } from "@ohmail/app-logic/screener/decision";
+import { DECISION_QUIET, type DecisionDestination, type DecisionScope } from "@ohmail/app-logic/screener/decision";
 
 const html = (): HTMLElement => document.documentElement;
 afterEach(() => html().removeAttribute("style"));
@@ -65,6 +65,10 @@ describe("the types behaviour declares beside the kit's", () => {
     expect(Object.keys(destinations).sort()).toEqual(Object.keys(kit.DECISION_KEY).sort());
     expectTypeOf<DecisionDestination>().toEqualTypeOf<kit.DecisionDestination>();
     expectTypeOf<DecisionScope>().toEqualTypeOf<kit.DecisionScope>();
+  });
+
+  it("the destinations that take no read verb are the ones the kit's bar keeps quiet", () => {
+    expect([...DECISION_QUIET].sort()).toEqual([...kit.DECISION_QUIET].sort());
   });
 
   it("the press seam's report is the kit's toast, option for option", () => {

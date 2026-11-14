@@ -67,8 +67,8 @@ describe("the shell's document queries skip hidden piles", () => {
       ["shell/message-verbs.ts", 'queryVisible<HTMLButtonElement>(".abar-delete .abar-danger")'],
       ["shell/cursor-placer.ts", "queryVisible<HTMLElement>(\n    `${host.scope} .row"],
       ["shell/message-verbs.ts", "return queryVisible<HTMLElement>(`${scope} .row"],
-      ["shell/zone-nav.tsx", "const sel = queryVisible<HTMLElement>(selector);"],
-      ["shell/zone-nav.tsx", "if (tryFocus(queryVisible<HTMLElement>(sel))) return;"],
+      ["../../../packages/app-logic/src/keys/zone-nav.ts", "const sel = queryVisible<HTMLElement>(selector);"],
+      ["../../../packages/app-logic/src/keys/zone-nav.ts", "if (tryFocus(queryVisible<HTMLElement>(sel))) return;"],
     ] as const) {
       expect(readFileSync(join(APP, file), "utf8"), `${file} no longer asks queryVisible`).toContain(needle);
     }

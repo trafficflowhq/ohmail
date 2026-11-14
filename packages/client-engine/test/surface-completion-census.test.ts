@@ -129,7 +129,7 @@ describe("the completion census — no surface says done from a folded status", 
        asked of the file that holds it — left on `AppShell.tsx` it would have read true off an
        unrelated `pressVerdict` in the draft verbs and vouched for a seam it no longer contains. */
     expect(reaches("packages/app-logic/src/press/shell-dispatch.ts", "pressVerdict"), "the shell's dispatchPress").toBe(true);
-    expect(reaches("apps/webapp/app/shell/screener-state.ts", "pressVerdict"), "the Screener's moveAll").toBe(true);
+    expect(reaches("packages/app-logic/src/screener/screener-state.ts", "pressVerdict"), "the Screener's moveAll").toBe(true);
     expect(reaches("apps/webapp/app/views/RulesView.tsx", "pressVerdict"), "the rules pane's report").toBe(true);
   });
 });

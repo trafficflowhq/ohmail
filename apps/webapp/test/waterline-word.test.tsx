@@ -327,7 +327,7 @@ afterEach(async () => {
 
 async function mountReads(locale: Locale, partition: FeedPartition): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

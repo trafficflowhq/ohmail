@@ -4,8 +4,8 @@ import type { EngineDraft } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
-import { sendPendingInDurableOutbox } from "../app/shell/mail-send";
-import { COMPOSE_DRAFT_PREFIX, readComposeRow, resetComposerForTest } from "../app/shell/compose";
+import { sendPendingInDurableOutbox } from "@ohmail/app-logic/writing/mail-send";
+import { COMPOSE_DRAFT_PREFIX, readComposeRow, resetComposerForTest } from "@ohmail/app-logic/writing/compose";
 import {
   act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
@@ -13,6 +13,7 @@ import {
   attach, composeLine, composeSend, composeSubject, composerOn, footButton, footLine, holdTheWire, letter, navigate, openDraftRow,
   railCompose, rounds, sends, toasts,
 } from "./_handoff-steps.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * A HANDED-OFF SEND'S ENDING IS SAID ABOUT ITS OWN MESSAGE, NEVER OVER ANOTHER (PR #198 review,
@@ -377,8 +378,8 @@ describe("Compose while a letter's send waits", () => {
       await waitFor(() => s.el.querySelector(".view-compose") == null, "handed off", 240);
       s.saveGate.wait = null;
       await act(async () => { releaseSave(); });
-      await waitFor(() => readComposeRow() !== null, "the create's row bound", 240);
-      const copy = readComposeRow()!;
+      await waitFor(() => readComposeRow(storageOwner()) !== null, "the create's row bound", 240);
+      const copy = readComposeRow(storageOwner())!;
       if (door === "Compose") await composeBy(s, "the rail's Compose");
       else await writeToKim(s);
       expect(shown(s), "the letter let go of on a row its send does not use").toEqual({ subject: "Lunch on Tuesday", frozen: true });

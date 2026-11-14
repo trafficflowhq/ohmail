@@ -19,7 +19,7 @@ import {
   type RecipientMove,
   type RecipientRow,
 } from "../app/shell/RecipientField";
-import { composePlan, parseRecipients } from "../app/shell/compose";
+import { composePlan, parseRecipients } from "@ohmail/app-logic/writing/compose";
 import { formatRecipientChips } from "../app/shell/compose-from";
 
 /**

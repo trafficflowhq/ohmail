@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryMirrorStore, MutationRejectedError, OhmailEngine, type EngineMutation,
 } from "@ohmail/client-engine";
-import { sendPendingInDurableOutbox } from "../app/shell/mail-send";
+import { sendPendingInDurableOutbox } from "@ohmail/app-logic/writing/mail-send";
 
 const NOW = new Date("2026-09-27T09:00:00.000Z");
 

@@ -17,9 +17,9 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { screenerIntentsKey, type ScreenerIntent } from "../app/shell/screener-intents";
+import { screenerIntentsKey, type ScreenerIntent } from "@ohmail/app-logic/screener/screener-intents";
 import { INTENT_ASK_MS } from "@ohmail/app-logic/press/intent-windows";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import { createCloudSidecar } from "../../sidecar/src/cloud-engine.js";
 import { freshDataDir } from "../../sidecar/test/_datadir.js";
 import { hostedMailbox, mailboxList } from "../../sidecar/test/fixtures/hosted-mailbox.js";
@@ -154,12 +154,17 @@ interface StateLike {
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-/** Mount the real hook over `engine`; `bump` forces the version prop the restore effect keys on. */
-async function mountState(engine: OhmailEngine): Promise<{
+/**
+ * Mount the real hook over `engine`; `bump` forces the version prop the restore effect keys on. `handed` is the
+ * scope the mount hands in; absent, the storage owner at mount, as the shell reads it.
+ */
+async function mountState(engine: OhmailEngine, handed?: { scope: string | null }): Promise<{
   get: () => StateLike;
   bump: () => Promise<void>;
 }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
+  const { storageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
   let latest: StateLike | null = null;
   let force: (() => void) | null = null;
 
@@ -169,6 +174,7 @@ async function mountState(engine: OhmailEngine): Promise<{
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
+      handed ? handed.scope : storageOwner(),
       v,
       ((message: string, opts?: { onAction?: () => void }) => {
         said.push(message);
@@ -176,7 +182,7 @@ async function mountState(engine: OhmailEngine): Promise<{
         // else exposes `undo`. Capturing the options here is what lets the second case press the
         // real button rather than reach past it into the journal.
         if (opts?.onAction) undoAction = opts.onAction;
-      }) as never,
+      }) as never, useScreenerText(),
     ) as unknown as StateLike;
     counts.push(latest.waitingCount);
     return null;
@@ -257,7 +263,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     // this was ALSO the whole record.
     expect(decides(), "the decide must not be sent before the window closes").toHaveLength(0);
     // …but the decision is already on disk.
-    expect(window.localStorage.getItem(screenerIntentsKey()), "the intent was not journalled")
+    expect(window.localStorage.getItem(screenerIntentsKey(null)), "the intent was not journalled")
       .toContain("h1");
 
     await killTab();
@@ -274,7 +280,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
       kind: "screener_decide", senderId: "h1", decision: "no", dest: "screened", scope: "sender",
     });
     // The journal is spent: the durable outbox owns the verb from here.
-    expect(window.localStorage.getItem(screenerIntentsKey())).toBeNull();
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toBeNull();
   });
 
   it("a DEMOTING decision carries no held ids — the journal is not a copy of the mailbox", async () => {
@@ -289,7 +295,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
       // storage that exists to keep it.
       first.get().decide(first.get().waiting[0], "screened", { read: true, scope: "sender" });
     });
-    const raw = window.localStorage.getItem(screenerIntentsKey());
+    const raw = window.localStorage.getItem(screenerIntentsKey(null));
     expect(raw).not.toBeNull();
     const rows = JSON.parse(raw!) as Array<{ read: boolean; heldIds: string[] }>;
     expect(rows).toHaveLength(1);
@@ -304,7 +310,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     await act(async () => {
       first.get().decide(first.get().waiting[0], "ohbox", { read: true, scope: "sender" });
     });
-    const rows = JSON.parse(window.localStorage.getItem(screenerIntentsKey())!) as
+    const rows = JSON.parse(window.localStorage.getItem(screenerIntentsKey(null))!) as
       Array<{ read: boolean; heldIds: string[] }>;
     expect(rows[0]!.read).toBe(true);
     expect(rows[0]!.heldIds, "the &read batch's ids were dropped from the journal").toEqual(["h1"]);
@@ -342,7 +348,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
       sent.filter((m) => m.kind === "mark_seen"),
       "the '& read' batch went out twice",
     ).toHaveLength(1);
-    expect(window.localStorage.getItem(screenerIntentsKey())).toBeNull();
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toBeNull();
   });
 
   it("a decision the reader UNDID does not come back", async () => {
@@ -351,13 +357,13 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     await act(async () => {
       first.get().decide(first.get().waiting[0], "screened", { read: false, scope: "sender" });
     });
-    expect(window.localStorage.getItem(screenerIntentsKey())).toContain("h1");
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toContain("h1");
 
     // THE REAL UNDO — the toast's own action, captured in the probe above.
     expect(undoAction, "the decide raised no toast carrying an Undo").not.toBeNull();
     await act(async () => { undoAction!(); });
     expect(
-      window.localStorage.getItem(screenerIntentsKey()),
+      window.localStorage.getItem(screenerIntentsKey(null)),
       "Undo left the decision armed on disk",
     ).toBeNull();
 
@@ -382,7 +388,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     // past it the queue has moved on — decided elsewhere, swept, the rep evicted — and quietly
     // filing a day-old decision into a queue the reader has since re-read is a surprise rather
     // than a restoration.
-    const { INTENT_TTL_MS } = await import("../app/shell/screener-intents.js");
+    const { INTENT_TTL_MS } = await import("@ohmail/app-logic/screener/screener-intents");
     vi.setSystemTime(new Date(NOW.getTime() + INTENT_TTL_MS + 60_000));
 
     const second = await mountState(engineOver(store));
@@ -391,7 +397,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
 
     expect(decides(), "an expired intent was committed anyway").toHaveLength(0);
     expect(
-      window.localStorage.getItem(screenerIntentsKey()),
+      window.localStorage.getItem(screenerIntentsKey(null)),
       "an expired intent must be swept, not left to be re-rejected on every boot for ever",
     ).toBeNull();
     // …and the sender is simply back in the queue, undecided, which is the honest state.
@@ -417,7 +423,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
       });
       await killTab();
 
-      const { INTENT_TTL_MS } = await import("../app/shell/screener-intents.js");
+      const { INTENT_TTL_MS } = await import("@ohmail/app-logic/screener/screener-intents");
       vi.setSystemTime(new Date(NOW.getTime() + INTENT_TTL_MS + 60_000));
 
       const second = await mountState(engineOver(store));
@@ -459,7 +465,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
       });
       await killTab();
 
-      const { INTENT_TTL_MS } = await import("../app/shell/screener-intents.js");
+      const { INTENT_TTL_MS } = await import("@ohmail/app-logic/screener/screener-intents");
       vi.setSystemTime(new Date(NOW.getTime() + INTENT_TTL_MS - 60_000));
 
       const second = await mountState(engineOver(store));
@@ -496,14 +502,14 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     const warned = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const store = await freshStore(true);
-      const { INTENT_TTL_MS } = await import("../app/shell/screener-intents.js");
+      const { INTENT_TTL_MS } = await import("@ohmail/app-logic/screener/screener-intents");
       const stale = (id: string, address: string): ScreenerIntent => ({
         v: 1, id, dest: "screened", read: false, scope: "sender", quiet: false,
         at: NOW.getTime() - INTENT_TTL_MS - 60_000, derived: true, heldIds: [],
         from: { name: null, address },
       });
       window.localStorage.setItem(
-        screenerIntentsKey(),
+        screenerIntentsKey(null),
         JSON.stringify([stale(HELD.id, HELD.from.address), stale("h2", "offers@bulk.example")]),
       );
 
@@ -522,7 +528,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
         class: "screener.intent.expired", count: 2,
       });
       expect(
-        window.localStorage.getItem(screenerIntentsKey()),
+        window.localStorage.getItem(screenerIntentsKey(null)),
         "a reported expiry must still leave the journal",
       ).toBeNull();
     } finally {
@@ -582,7 +588,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     expect(decides(), "a cold boot must not dispatch against a mirror that cannot name the row")
       .toHaveLength(0);
     expect(
-      window.localStorage.getItem(screenerIntentsKey()),
+      window.localStorage.getItem(screenerIntentsKey(null)),
       "a decision the cold boot could not act on must still be on disk",
     ).toContain("h1");
 
@@ -592,7 +598,7 @@ describe("a Screener decision is durable at the moment it is taken", () => {
     await act(async () => { await Promise.resolve(); });
 
     expect(decides(), "the decision did not land once the mirror could name the row").toHaveLength(1);
-    expect(window.localStorage.getItem(screenerIntentsKey())).toBeNull();
+    expect(window.localStorage.getItem(screenerIntentsKey(null))).toBeNull();
   });
 });
 
@@ -791,4 +797,47 @@ describe("the first session after a sign-in on a server door", () => {
       rmSync(dataDir, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+/**
+ * A DECISION STAYS IN THE JOURNAL OF THE MOUNT THAT PRESSED IT. The desktop changes the storage owner as
+ * it switches mailboxes, before the old mount has gone: a window that read the storage owner at each touch
+ * disarmed its decision in the next mailbox's journal, left it armed in its own, and the next visit
+ * within a day sent it again.
+ */
+describe("a decision is armed, spent and replayed under the scope of its mount", () => {
+  it("a mailbox change inside the undo window spends the decision in its own journal and touches no other", async () => {
+    const { setStorageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
+    const A = "mailbox-aaaa1111";
+    const B = "mailbox-bbbb2222";
+    const othersJournal = JSON.stringify([{
+      v: 1, id: "b-row", dest: "screened", read: false, scope: "sender", quiet: false, at: NOW.getTime(),
+      derived: false, heldIds: [], from: { name: null, address: "b@example.test" },
+    }]);
+    window.localStorage.setItem(screenerIntentsKey(B), othersJournal);
+    try {
+      setStorageOwner(A);
+      const store = await freshStore(true);
+      const first = await mountState(engineOver(store), { scope: A });
+      await act(async () => {
+        first.get().decide(first.get().waiting[0], "screened", { read: false, scope: "sender" });
+      });
+      expect(window.localStorage.getItem(screenerIntentsKey(A)), "the decision was not journalled under its mount").toContain("h1");
+
+      setStorageOwner(B);
+      await act(async () => { vi.advanceTimersByTime(COMMIT_MS + 100); });
+      for (let i = 0; i < 6; i++) await act(async () => { await Promise.resolve(); });
+      expect(decides(), "the decision was not sent at the end of its window").toHaveLength(1);
+      expect(window.localStorage.getItem(screenerIntentsKey(A)), "the decision stayed armed in its own journal").toBeNull();
+      expect(window.localStorage.getItem(screenerIntentsKey(B)), "another mailbox's journal changed").toBe(othersJournal);
+
+      await killTab();
+      const again = await mountState(engineOver(store), { scope: A });
+      await again.bump();
+      await act(async () => { await Promise.resolve(); });
+      expect(decides(), "the next visit sent the decision again").toHaveLength(1);
+    } finally {
+      setStorageOwner(null);
+    }
+  });
 });

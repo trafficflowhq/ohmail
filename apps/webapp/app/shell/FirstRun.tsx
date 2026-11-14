@@ -24,7 +24,7 @@ import { isSharedProviderDomain } from "@trafficflow/core/rule-order";
 import { useDecisionBarCopy } from "./decision-copy";
 import { useModalGate } from "@ohmail/app-logic/session/modal-gate";
 import { markDecisionAsked } from "./decision-reopen";
-import { useFocusFollows } from "./focus-follows";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { PROVIDERS, authHintPreset, authHintWantsLinks, hostsFor, providerById, providerLabel, type AuthHint, type ProviderPreset } from "./providers";
 import { isLocalServerHost, probeCopyKey, refusalAuthHint, refusalTransport } from "@ohmail/app-logic/doors/local-server-host";
 import { ProviderHelpLinks, ProviderNote } from "./ProviderPicker";

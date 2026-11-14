@@ -10,7 +10,7 @@
  */
 
 import { defaultFrom, type EmailAddress, type FromOption } from "@ohmail/client-engine";
-import { parseRecipients } from "./compose";
+import { parseRecipients } from "@ohmail/app-logic/writing/compose";
 
 /* The options and the default are shared with the phone's composer. */
 export { defaultFrom, optionsFromFacts, type FromOption } from "@ohmail/client-engine";

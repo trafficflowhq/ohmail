@@ -109,9 +109,9 @@ async function holdCopyOf(owner: string): Promise<{ keys: string[]; prefs: strin
   await store.load();
   await store.putLocal("message", "m1", { id: "m1", subject: `the letter of ${owner.slice(0, 4)}` });
   store.close();
-  const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
-  const { COMPOSE_DRAFT_PREFIX } = await import("../app/shell/compose.js");
-  const { SENT_COPY_NOTES_PREFIX } = await import("../app/shell/mail-send.js");
+  const { SEND_LOCKS_PREFIX } = await import("@ohmail/app-logic/writing/send-lock");
+  const { COMPOSE_DRAFT_PREFIX } = await import("@ohmail/app-logic/writing/compose");
+  const { SENT_COPY_NOTES_PREFIX } = await import("@ohmail/app-logic/writing/mail-send");
   const keys = [
     `${SEND_LOCKS_PREFIX}${owner}`, `${SENT_COPY_NOTES_PREFIX}${owner}`, `${COMPOSE_DRAFT_PREFIX}${owner}.w1`, `ohmail.boot.ownAddresses.${owner}`,
   ];

@@ -11,7 +11,7 @@ import { ThemeProvider } from "@ohmail/ui";
 
 import en from "../../webapp/messages/en.json";
 import { FirstRun } from "../../webapp/app/shell/FirstRun";
-import { KeymapProvider } from "../../webapp/app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 import {
   deriveOnboardingStep, onboardingPath, type OnboardingFacts,

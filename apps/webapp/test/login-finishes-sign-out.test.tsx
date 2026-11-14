@@ -17,7 +17,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { CONFIRM_ATTEMPTS, CONFIRM_CAP_MS, CONFIRM_SEED_MS } from "@ohmail/app-logic/session/confirm-schedule";
-import { SCREENER_INTENTS_PREFIX } from "../app/shell/screener-intents.js";
+import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-intents";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

@@ -123,7 +123,7 @@ beforeEach(() => {
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
-const state: { current: import("../app/shell/screener-state.js").ScreenerState | null } = { current: null };
+const state: { current: import("@ohmail/app-logic/screener/screener-state").ScreenerState | null } = { current: null };
 const dispatch: { current: ReturnType<typeof import("@ohmail/app-logic/press/shell-dispatch").useShellDispatch> | null } = { current: null };
 afterEach(async () => {
   if (root) await act(async () => { root!.unmount(); });
@@ -138,7 +138,8 @@ async function flush(n = 25): Promise<void> {
 
 /** The shell's composition: the dispatch spine, the presentation with the window's places, the Screener. */
 async function mount(engine: OhmailEngine): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useShellDispatch } = await import("@ohmail/app-logic/press/shell-dispatch");
   const { placeLabel } = await import("../app/shell/format.js");
   function Probe(): null {
@@ -156,7 +157,7 @@ async function mount(engine: OhmailEngine): Promise<void> {
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [v, d.routing.places],
     );
-    state.current = useScreenerState(engine, v, d.undoToast, undefined, presented, true, undefined, [], [], undefined, {
+    state.current = useScreenerState(engine, null, v, d.undoToast, useScreenerText(), undefined, presented, true, undefined, [], [], undefined, {
       hold: d.routing.holdRelease, cancel: (a) => d.routing.undo(d.routing.subjectOf(a)),
       restart: (a) => d.routing.restart(d.routing.subjectOf(a)), toastWithUndo: d.toastWithUndo,
     });

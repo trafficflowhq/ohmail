@@ -28,7 +28,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button, TextField } from "@ohmail/ui";
 import { ApiError, consent as consentApi, type SeedReviewWire } from "../api-client";
-import { displayAddress } from "../shell/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 
 type Phase =
   | { state: "loading" }

@@ -9,7 +9,8 @@
  */
 
 import type { EngineDraft, OhmailEngine } from "@ohmail/client-engine";
-import { sendRecordNames } from "./send-lock";
+import { sendRecordNames } from "./send-lock.js";
+import type { StorageScope } from "../storage/scope.js";
 
 /** A create an editor made or bound, waiting to land. */
 export interface CreateClaim {
@@ -97,8 +98,8 @@ export function createLive(engine: OhmailEngine, key: string): boolean {
  * ended. No sentence rides it, and it never deletes a row a send record names nor the row a send went
  * from (S(2)). A refused delete leaves one more draft, never a lost one.
  */
-export function dropCopy(engine: OhmailEngine, lane: string, row: string, sentRow: string | null): void {
-  if (row === sentRow || sendRecordNames(lane, row, null)) return;
+export function dropCopy(engine: OhmailEngine, lane: string, row: string, sentRow: string | null, scope: StorageScope): void {
+  if (row === sentRow || sendRecordNames(lane, row, null, scope)) return;
   void engine.mutate({ kind: "draft_discard", draftId: row });
 }
 

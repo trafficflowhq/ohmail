@@ -13,8 +13,8 @@ import {
 } from "../../../packages/api/test/helpers.js";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
-import { escapeAsParagraphs } from "../app/shell/rich-text";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
+import { escapeAsParagraphs } from "@ohmail/app-logic/writing/rich-text";
 import { editorOf } from "./fixtures/rich-editor-driver";
 import { withNodeBlobs } from "./fixtures/node-blobs";
 

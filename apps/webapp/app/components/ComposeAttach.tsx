@@ -58,7 +58,7 @@ import {
   writeImageQualityLevel,
 } from "./image-quality";
 import { holdFilesForRestart } from "@ohmail/app-logic/doors/app-update";
-import { isTypingTarget } from "../shell/keymap";
+import { isTypingTarget } from "@ohmail/app-logic/keys/keymap";
 import {
   desktopDroppedFilesEnabled,
   isWithheldFileDrop,

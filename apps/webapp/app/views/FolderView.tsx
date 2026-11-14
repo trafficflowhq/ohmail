@@ -24,7 +24,7 @@ import { useReaderVisit, type ReaderMarkSeen } from "@ohmail/app-logic/reading/r
 import { avatarOf, rowStamp, hueOf, rowAddress, senderName, tagsOfMessage } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { folderLeafOf, folderParentOf } from "@ohmail/app-logic/lists/folders";
-import { useZoneNav } from "../shell/zone-nav";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useMessageVerbs } from "../shell/message-verbs";
 import { ListEmpty, ListReadColumn, useListView } from "../shell/list-view";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
@@ -249,7 +249,7 @@ export function FolderView({
     rows: [...ordered, ...olderRows], select: selectRow,
   });
 
-  useZoneNav({
+  useZoneNav(useTranslations("shortcuts"), {
     list: {
       followId: shown?.id ?? null,
       up: {

@@ -20,8 +20,8 @@ import {
   type MessageBody,
 } from "@ohmail/client-engine";
 import type { AttachmentsChrome } from "./attachments";
-import type { SendState, ShowSend } from "./mail-send";
-import { EMPTY_RICH, type RichValue } from "./rich-text";
+import type { SendState, ShowSend } from "@ohmail/app-logic/writing/mail-send";
+import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { DraftReplyChrome } from "./InlineReply";
 import { SIG_FOLLOWING, type SignatureState } from "./signature";
 import type { ReplyEnvelopeEdit } from "./compose-from";

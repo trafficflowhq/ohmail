@@ -22,7 +22,7 @@ import {
 } from "../api-client";
 /* The decided-and-waiting shape, owned by the module that renders it. Type-only, so this does not
    close a runtime cycle with `screener-state.ts`, which reads this file's overlay type. */
-import type { PendingDecision } from "./screener-state";
+import type { PendingDecision } from "@ohmail/app-logic/screener/screener-state";
 import type { SuggestStanding } from "./no-suggestion";
 import { aiRefusalKey, clearedByAccess } from "./ai-refusal-copy";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";

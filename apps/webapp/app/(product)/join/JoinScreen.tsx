@@ -32,7 +32,7 @@ import {
 } from "../../api-client";
 import { neverStarted } from "../../access-verdict";
 import { markSessionAlive, sessionIsDead } from "@ohmail/app-logic/session/session-truth";
-import { displayAddress } from "../../shell/idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { QrCode } from "../../shell/QrCode";
 import { addressSuggestion } from "./address-hint";
 import { useRefusalAtThePress } from "@ohmail/app-logic/press/refusal-at-the-press";

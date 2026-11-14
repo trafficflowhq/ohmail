@@ -14,7 +14,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { ARCHIVE_TIMEOUT_MS, SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * "SEARCHING THE WHOLE ARCHIVE…" HAD NO END — the failure-looks-like-healthy family, on screen.

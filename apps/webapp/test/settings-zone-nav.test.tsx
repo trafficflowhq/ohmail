@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { SettingsView } from "../app/views/SettingsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * "ONE COULD EVEN DIVE INTO THE SETTINGS LIKE THIS" — the zone model inside Settings.
@@ -118,7 +118,7 @@ describe("the zone model inside Settings", () => {
     expect(pane.getAttribute("role")).toBe("region");
     expect(pane.getAttribute("tabindex")).toBe("-1");
 
-    const { READER_SCROLL_STEP } = await import("../app/shell/zone-nav.js");
+    const { READER_SCROLL_STEP } = await import("@ohmail/app-logic/keys/zone-nav");
     const scroller = host!.querySelector<HTMLElement>(".view-settings .scroller")!;
     expect(scroller.scrollTop).toBe(0);
     await key("ArrowDown");

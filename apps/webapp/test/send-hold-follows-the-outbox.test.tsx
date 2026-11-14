@@ -61,13 +61,14 @@ async function world() {
 
 /** One surface: compose (`inReplyTo: null`) or the inline reply to m-1. */
 async function mount(e: OhmailEngine, said: string[]) {
-  const { useMailSend, COMPOSE_SEND_KEY } = await import("../app/shell/mail-send.js");
+  const { useMailSend, COMPOSE_SEND_KEY } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let api!: {
     held: () => boolean; withdraw: () => Promise<string>;
     compose: (body: string) => Promise<void>; reply: (body: string) => Promise<void>;
   };
   const Probe = (): null => {
-    const mail = useMailSend(e as never, ((t: string) => { said.push(t); }) as never, (() => {}) as never, (() => false) as never);
+    const mail = useMailSend(e as never, null, ((t: string) => { said.push(t); }) as never, useMailSendText(), (() => {}) as never, (() => false) as never);
     const press = (m: Record<string, unknown>, o?: unknown) => act(async () => { (mail.send as unknown as (m: unknown, o?: unknown) => void)(m, o); });
     api = {
       held: () => mail.restoredPending(COMPOSE_SEND_KEY),
@@ -85,16 +86,16 @@ async function mount(e: OhmailEngine, said: string[]) {
 }
 
 async function jar(): Promise<Array<{ lane: string; key: string; at: number }>> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  return JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Array<{ lane: string; key: string; at: number }>;
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  return JSON.parse(window.localStorage.getItem(sendLocksKey(null)) ?? "[]") as Array<{ lane: string; key: string; at: number }>;
 }
 async function ageJar(ms: number): Promise<void> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify((await jar()).map((r) => ({ ...r, at: r.at - ms }))));
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  window.localStorage.setItem(sendLocksKey(null), JSON.stringify((await jar()).map((r) => ({ ...r, at: r.at - ms }))));
 }
 async function buffer(body: string): Promise<void> {
-  const { writeComposeDraft, EMPTY_COMPOSE } = await import("../app/shell/compose.js");
-  writeComposeDraft({ ...EMPTY_COMPOSE, to: "bo@fake.test", subject: "Hello", body });
+  const { writeComposeDraft, EMPTY_COMPOSE } = await import("@ohmail/app-logic/writing/compose");
+  writeComposeDraft({ ...EMPTY_COMPOSE, to: "bo@fake.test", subject: "Hello", body }, null);
 }
 
 /** A new message pressed offline and the tab closed: the reload `later` on is the caller's. */
@@ -162,8 +163,8 @@ describe("the composer's hold follows the outbox", () => {
       w.net.offline = false;
       await boot(w, said);
       expect(w.fake.deliveries()).toHaveLength(1);
-      const { clearComposeDraft } = await import("../app/shell/compose.js");
-      clearComposeDraft();
+      const { clearComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+      clearComposeDraft(null);
       await buffer(words);
       const { s } = await boot(w, said);
       expect(s.held(), "a new message is held by another message's record").toBe(false);
@@ -221,8 +222,8 @@ describe("the composer's hold follows the outbox", () => {
   }, 30_000);
 
   for (const known of [false, true]) it(`before the outbox is read the hold's read deletes nothing on any lane (outbox ${known ? "known: both swept, the control" : "unread"})`, async () => {
-    const { claimSendLock, sendLocksKey, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-    const { sendUnsettledFromLastSession } = await import("../app/shell/mail-send.js");
+    const { claimSendLock, sendLocksKey, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+    const { sendUnsettledFromLastSession } = await import("@ohmail/app-logic/writing/mail-send");
     for (const [lane, key] of [["compose", "k-compose"], ["m-1", "k-reply"]] as const) {
       claimSendLock({ v: SEND_LOCK_FORMAT, lane, key, at: Date.now(), draftId: null, fp: `fp-${lane}`, session: "s-1", ...(lane === "compose" ? { bfp: "bfp-1" } : {}) } as never, () => false, null);
     }
@@ -248,6 +249,6 @@ describe("the composer's hold follows the outbox", () => {
     };
     walk(root);
     walk(join(__dirname, "../../../packages/app-logic/src"));
-    expect(callers, "a discard that bypasses discardUnsavedChange").toEqual(["shell/mail-send.ts"]);
+    expect(callers, "a discard that bypasses discardUnsavedChange").toEqual(["../../../packages/app-logic/src/writing/mail-send.ts"]);
   });
 });

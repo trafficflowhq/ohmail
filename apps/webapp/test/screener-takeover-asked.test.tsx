@@ -17,7 +17,7 @@ import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import de from "../messages/de.json";
 import { screenerMode, type ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ScreenerState } from "../app/shell/screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * A DECISION DURING A TAKEOVER THIS INSTALL ASKED FOR REACHES THE DOOR (as reported, and the
@@ -115,7 +115,8 @@ async function mountState(
   role: ScreenerRole,
   locale: "en" | "de" = "en",
 ): Promise<{ get: () => ScreenerState; bump: () => Promise<void> }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: ScreenerState | null = null;
   let force: (() => void) | null = null;
 
@@ -125,9 +126,9 @@ async function mountState(
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      undefined,
+      useScreenerText(), undefined,
       undefined,
       true,
       role,

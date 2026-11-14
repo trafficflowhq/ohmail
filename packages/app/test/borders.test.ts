@@ -14,6 +14,7 @@ describe("app's borders, read off its bundle", () => {
   it("bundles its own files and reaches nothing its row does not name", async () => {
     const { inputs, refused } = await readBorders(BORDERS);
     expect(inputs).toContain("packages/app/src/host/panes.ts");
+    expect(inputs).toContain("packages/app/src/keys/KeymapProvider.tsx");
     expect(refused).toEqual([]);
   });
 

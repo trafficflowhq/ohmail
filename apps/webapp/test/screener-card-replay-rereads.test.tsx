@@ -18,7 +18,7 @@ import {
 } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { screenerIntentsKey } from "../app/shell/screener-intents";
+import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
 import { INTENT_ASK_MS } from "@ohmail/app-logic/press/intent-windows";
 
 /**
@@ -95,7 +95,8 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike; bump: () => Promise<void> }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
   let force: (() => void) | null = null;
   function Probe(): null {
@@ -104,7 +105,7 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike;
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     const raw = engine.read();
     latest = useScreenerState(
-      engine, v, (() => {}) as never, undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
+      engine, null, v, (() => {}) as never, useScreenerText(), undefined, presentationReader(raw, consentPartition(raw, { now: NOW })),
     ) as unknown as StateLike;
     return null;
   }
@@ -142,7 +143,7 @@ async function replayAfter(between: (store: MirrorStore) => Promise<void>): Prom
   const first = await mountState(engineOver(store));
   expect(first.get().waiting[0]?.held.map((x) => x.id).sort()).toEqual(["h1", "i1"]);
   await act(async () => { first.get().decide(first.get().waiting[0], "reads", { read: false, scope: "sender" }); });
-  const rows = JSON.parse(window.localStorage.getItem(screenerIntentsKey())!) as Array<{ inboxIds?: string[] }>;
+  const rows = JSON.parse(window.localStorage.getItem(screenerIntentsKey(null))!) as Array<{ inboxIds?: string[] }>;
   expect(rows[0]!.inboxIds).toEqual(["i1"]);
   await killTab();
   expect(sent).toEqual([]);

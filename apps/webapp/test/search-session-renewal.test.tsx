@@ -14,7 +14,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import {
   markSessionAlive, registerSessionProbe, resetSessionTruthForTests,
 } from "@ohmail/app-logic/session/session-truth";

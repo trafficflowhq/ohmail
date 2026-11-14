@@ -17,7 +17,7 @@ import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 import type { SuggestBatchControl } from "../app/shell/screener-suggest";
-import type { ScreenerState } from "../app/shell/screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * BUYING SUGGESTIONS FOR THE SCREENER — the trigger, its price, and its bounds.
@@ -196,10 +196,11 @@ interface Mounted {
  * server. `active` mirrors what `AppShell` passes: the Screener is on screen.
  */
 async function mountView(engine: OhmailEngine, opts: { active?: boolean } = {}): Promise<Mounted> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   /**
    * The LIVE state, re-captured every render.
@@ -223,7 +224,7 @@ async function mountView(engine: OhmailEngine, opts: { active?: boolean } = {}):
       active: opts.active ?? true,
       toast: (() => {}) as never,
     });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
     });
@@ -797,15 +798,16 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
     suggestions: ReadonlyMap<string, unknown>,
     toasts: string[] = [],
   ): Promise<() => ScreenerState> {
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     let live: ScreenerState | null = null;
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       live = useScreenerState(
-        engine, v,
+        engine, null, v,
         ((m: string) => { toasts.push(m); }) as never,
-        suggestions as never,
+        useScreenerText(), suggestions as never,
       );
       return null;
     }
@@ -823,7 +825,7 @@ describe("APPLY-ALL FINISHES THE QUEUE — spam included", () => {
 
   /** Walk every staggered decision, its undo window and its commit off the fake clock. */
   async function drain(rows: number): Promise<void> {
-    const { COMMIT_MS } = await import("../app/shell/screener-state.js");
+    const { COMMIT_MS } = await import("@ohmail/app-logic/screener/screener-state");
     await act(async () => { await vi.advanceTimersByTimeAsync(rows * 240 + 200); });
     await act(async () => { await vi.advanceTimersByTimeAsync(COMMIT_MS + 200); });
   }
@@ -1003,7 +1005,8 @@ describe("honest states", () => {
   it("a run that stopped part-way is not reported as a clean success", async () => {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     suggestReply = (body) =>
       json({
         dryRun: body.dryRun === true, requested: body.senders.length,
@@ -1025,7 +1028,7 @@ describe("honest states", () => {
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, 0, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1058,7 +1061,8 @@ describe("honest states", () => {
   it("on an unmetered host the done line counts suggestions and names no credits", async () => {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { ManagedServiceContext } = await import("@ohmail/app-logic/doors/managed-service");
     suggestReply = (body) =>
       json({
@@ -1076,7 +1080,7 @@ describe("honest states", () => {
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, 0, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1178,7 +1182,8 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
     toasted: () => string;
   }> {
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let toasted = "";
     let control: SuggestBatchControl | null = null;
@@ -1187,7 +1192,7 @@ describe("SUGGEST-CHUNK — a large purchase is chunked, priced by the sum, and 
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, v, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       live = st;
       return null;
@@ -1497,13 +1502,14 @@ describe("SCR-SUGGEST-FLAKE — the auto batch must not cancel a manual purchase
     const isBuy = (p: Pending, n: number) => p.path.startsWith("/screener/suggest") && p.body?.dryRun !== true && p.body?.senders?.length === n;
 
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let toasted = "";
     let control: ReturnType<ReturnType<typeof useScreenerSuggestions>["forSenders"]> | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ active: true, autoSuggest: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, 0, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1586,14 +1592,15 @@ describe("SUGGEST-PROGRESS — a running purchase publishes done/total, not only
   /** The same probe the chunk tests use, minus the toast. */
   async function mountControl(): Promise<{ control: () => SuggestBatchControl }> {
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = await engineWith(MANY);
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const s = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
-      const st = useScreenerState(engine, v, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1698,8 +1705,9 @@ describe("APPLY-PROGRESS — a staged bulk publishes how far it has got", () => 
   it("counts rows as their decisions actually fire, then clears with the summary", async () => {
     vi.useFakeTimers();
     try {
-      const { useScreenerState } = await import("../app/shell/screener-state.js");
-      const { COMMIT_MS } = await import("../app/shell/screener-state.js");
+      const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+      const { useScreenerText } = await import("../app/shell/screener-text.js");
+      const { COMMIT_MS } = await import("@ohmail/app-logic/screener/screener-state");
       const engine = await engineWith(MANY.slice(0, 3));
       // Three senders, every one carrying a suggestion, so `applyAll` acts on all three.
       const overlay = new Map(
@@ -1709,7 +1717,7 @@ describe("APPLY-PROGRESS — a staged bulk publishes how far it has got", () => 
       function Probe(): null {
         const [v, setV] = React.useState(0);
         React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-        live = useScreenerState(engine, v, (() => {}) as never, overlay as never);
+        live = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), overlay as never);
         return null;
       }
       host = document.createElement("div");
@@ -1781,7 +1789,8 @@ describe("CREDITS-LEFT — repeated from the server, never derived", () => {
   async function runOnce(reply: (n: number) => Record<string, unknown>): Promise<string> {
     let toasted = "";
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     let n = 0;
     suggestReply = (body) => {
       if (body.dryRun) {
@@ -1805,7 +1814,7 @@ describe("CREDITS-LEFT — repeated from the server, never derived", () => {
     let control: SuggestBatchControl | null = null;
     function Probe(): null {
       const s = useScreenerSuggestions({ active: true, toast: ((m: string) => { toasted = m; }) as never });
-      const st = useScreenerState(engine, 0, (() => {}) as never, s.suggestions);
+      const st = useScreenerState(engine, null, 0, (() => {}) as never, useScreenerText(), s.suggestions);
       control = s.forSenders(st.unsuggestedSenders, [], 0, st.queueSettled);
       return null;
     }
@@ -1885,7 +1894,8 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
     state: () => ScreenerState;
     force: () => Promise<void>;
   }> {
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
     const store = new MemoryMirrorStore();
     await store.load();
@@ -1915,7 +1925,7 @@ describe("STALENESS — the store gaining a suggestion reaches the open tab", ()
       forceRender = () => setV((x) => x + 1);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       const suggestions = useScreenerSuggestions({ active: true, toast: (() => {}) as never });
-      live = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+      live = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
       // The gain signal rides `forSenders`, exactly as `AppShell` binds it at every render.
       suggestions.forSenders(live.unsuggestedSenders, [], 0, live.queueSettled);
       return null;

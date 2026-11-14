@@ -8,7 +8,7 @@
  * over a SETTLED key is spent: that press is a new key and
  * the server's duplicate claim answers it, naming the first send — never "Message sent.".
  */
-/* @reads: apps/webapp/app/shell/mail-send.ts */
+/* @reads: packages/app-logic/src/writing/mail-send.ts */
 import { afterEach, beforeEach, expect, it } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -64,11 +64,12 @@ const PARENT = {
 };
 
 async function mount(engine: OhmailEngine, said: string[], settled: string[], message: unknown = MESSAGE, opts?: unknown): Promise<() => Promise<void>> {
-  const { useMailSend } = await import("../app/shell/mail-send.js");
+  const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
   let press!: () => Promise<void>;
   const Probe = (): null => {
-    const mail = useMailSend(engine as never, ((text: string) => { said.push(text); }) as never,
-      ((key: string) => { settled.push(key); }) as never);
+    const mail = useMailSend(engine as never, null, ((text: string) => { said.push(text); }) as never,
+      useMailSendText(), ((key: string) => { settled.push(key); }) as never);
     press = async () => { await act(async () => { (mail.send as unknown as (m: unknown, o?: unknown) => void)(message, opts); }); };
     return null;
   };
@@ -84,18 +85,18 @@ afterEach(async () => { if (root) await act(async () => root!.unmount()); root =
 
 for (const shape of ["a record left standing, the server holding its key", "no record: a first delivery"] as const) {
   it(`${shape}: the sentence follows firstSend, and the composer settles`, async () => {
-    const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-    const { composeSessionId } = await import("../app/shell/compose.js");
-    const { sendLockOwed } = await import("../app/shell/mail-send.js");
+    const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+    const { composeSessionId } = await import("@ohmail/app-logic/writing/compose");
+    const { sendLockOwed } = await import("@ohmail/app-logic/writing/mail-send");
     const reserved = new Set<string>(); const deliveries: string[] = [];
     const engine = engineOver(reserved, deliveries);
     // The record's key is still OWED: the outbox has not been read, so no key is settled.
     if (shape === "no record: a first delivery") await engine.start();
     if (shape === "a record left standing, the server holding its key") {
-      const id = sendIdentity(MESSAGE as never, composeSessionId());
+      const id = sendIdentity(MESSAGE as never, composeSessionId(null));
       reserved.add("K-earlier");
       claimSendLock({ v: SEND_LOCK_FORMAT, lane: "compose", key: "K-earlier", at: Date.now(), draftId: null, fp: id.fp,
-        ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}), ...(id.session !== null ? { session: id.session } : {}) }, sendLockOwed(engine));
+        ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}), ...(id.session !== null ? { session: id.session } : {}) }, sendLockOwed(engine), null);
     }
     const said: string[] = []; const settled: string[] = [];
     const press = await mount(engine, said, settled);
@@ -110,8 +111,8 @@ for (const shape of ["a record left standing, the server holding its key", "no r
 
 for (const lane of ["reply", "forward"] as const) {
   it(`the ${lane} lane: a record left standing whose key the server holds says already sent, and delivers nothing`, async () => {
-    const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-    const { sendLockOwed, sendKeyOf } = await import("../app/shell/mail-send.js");
+    const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+    const { sendLockOwed, sendKeyOf } = await import("@ohmail/app-logic/writing/mail-send");
     const m = lane === "reply"
       ? { ...MESSAGE, inReplyTo: "msg-parent", subject: "Re: Friday" }
       : { ...MESSAGE, forwardOf: "msg-parent", subject: "Fwd: Friday" };
@@ -122,7 +123,7 @@ for (const lane of ["reply", "forward"] as const) {
     const engine = engineOver(reserved, deliveries, [], new Set(), false, store);
     const id = sendIdentity(m as never, null);
     claimSendLock({ v: SEND_LOCK_FORMAT, lane: sendKeyOf(m as never, surface?.surface), key: "K-earlier", at: Date.now(), draftId: null, fp: id.fp,
-      ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}) }, sendLockOwed(engine));
+      ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}) }, sendLockOwed(engine), null);
     const said: string[] = []; const settled: string[] = [];
     const press = await mount(engine, said, settled, m, surface);
     await press(); await settleAll();
@@ -131,15 +132,15 @@ for (const lane of ["reply", "forward"] as const) {
 }
 
 it("a record over a SETTLED key is spent — the press is a new key, the server's duplicate claim answers it, nothing is sent", async () => {
-  const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-  const { composeSessionId } = await import("../app/shell/compose.js");
-  const { sendLockOwed } = await import("../app/shell/mail-send.js");
+  const { claimSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+  const { composeSessionId } = await import("@ohmail/app-logic/writing/compose");
+  const { sendLockOwed } = await import("@ohmail/app-logic/writing/mail-send");
   const reserved = new Set<string>(["K-earlier"]); const deliveries: string[] = []; const pressed: string[] = [];
   const engine = engineOver(reserved, deliveries, pressed, new Set([MESSAGE.body]));
   await engine.start();
-  const id = sendIdentity(MESSAGE as never, composeSessionId());
+  const id = sendIdentity(MESSAGE as never, composeSessionId(null));
   claimSendLock({ v: SEND_LOCK_FORMAT, lane: "compose", key: "K-earlier", at: Date.now(), draftId: null, fp: id.fp,
-    ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}), ...(id.session !== null ? { session: id.session } : {}) }, sendLockOwed(engine));
+    ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}), ...(id.session !== null ? { session: id.session } : {}) }, sendLockOwed(engine), null);
   const said: string[] = []; const settled: string[] = [];
   const press = await mount(engine, said, settled);
   await press(); await settleAll();

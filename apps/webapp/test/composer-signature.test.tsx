@@ -14,8 +14,8 @@ import {
   withSignature,
   type SignatureState,
 } from "../app/shell/signature";
-import { readReplyMeta, writeReplyMeta } from "../app/shell/mail-send";
-import { composePlan, type ComposeFields } from "../app/shell/compose";
+import { readReplyMeta, writeReplyMeta } from "@ohmail/app-logic/writing/mail-send";
+import { composePlan, type ComposeFields } from "@ohmail/app-logic/writing/compose";
 
 /**
  * ═══ THE SIGNATURE ON AN OUTGOING MESSAGE — the model, the serialization, the block ═════════
@@ -134,16 +134,16 @@ describe("withSignature — serializes exactly as shown, or not at all", () => {
 
 describe("the per-message editor meta — the reopen scratch the subject and the block live in", () => {
   it("round-trips subject and sig; `following` and no subject store NOTHING; junk reads as rest", () => {
-    writeReplyMeta("msg-1", { subject: "Re: kept", sig: { kind: "removed" } });
-    expect(readReplyMeta("msg-1")).toEqual({ subject: "Re: kept", sig: { kind: "removed" } });
-    writeReplyMeta("msg-1", { subject: "Re: kept", sig: { kind: "edited", text: "mine" } });
-    expect(readReplyMeta("msg-1").sig).toEqual({ kind: "edited", text: "mine" });
+    writeReplyMeta("msg-1", { subject: "Re: kept", sig: { kind: "removed" } }, null);
+    expect(readReplyMeta("msg-1", null)).toEqual({ subject: "Re: kept", sig: { kind: "removed" } });
+    writeReplyMeta("msg-1", { subject: "Re: kept", sig: { kind: "edited", text: "mine" } }, null);
+    expect(readReplyMeta("msg-1", null).sig).toEqual({ kind: "edited", text: "mine" });
     // Absence IS the resting state — a meta with neither field stores nothing at all.
-    writeReplyMeta("msg-1", {});
+    writeReplyMeta("msg-1", {}, null);
     expect(window.localStorage.getItem("ohmail.ui.replymeta:msg-1")).toBeNull();
     // A value some other version wrote reads back as rest, never a throw.
     window.localStorage.setItem("ohmail.ui.replymeta:msg-2", '{"sig":{"kind":"???"},"subject":7}');
-    expect(readReplyMeta("msg-2")).toEqual({});
+    expect(readReplyMeta("msg-2", null)).toEqual({});
   });
 });
 
@@ -277,7 +277,7 @@ describe("both send paths derive with effectiveSignature and seal with withSigna
     // not hold) is the fix; pinned as the exact expression so a reorder is caught immediately.
     const src = shellSrc();
     expect(src).toContain(
-      "const sig = autosave.draftId === d.id ? compose.sig : readReplyMeta(`draft:${d.id}`).sig;",
+      "const sig = autosave.draftId === d.id ? compose.sig : readReplyMeta(`draft:${d.id}`, scope).sig;",
     );
   });
 
@@ -286,7 +286,7 @@ describe("both send paths derive with effectiveSignature and seal with withSigna
     // reload) and a content key (a rich draft's local text and server-derived text
     // legitimately differ). The meta lane `draft:<rowId>` is the one handle that survives.
     const src = shellSrc();
-    expect(src).toContain("readReplyMeta(`draft:${d.id}`).sig");
+    expect(src).toContain("readReplyMeta(`draft:${d.id}`, scope).sig");
     expect(src, "the sync effect that mirrors the block state to the row's lane is gone")
       .toContain("writeReplyMeta(\n      `draft:${autosave.draftId}`,");
   });

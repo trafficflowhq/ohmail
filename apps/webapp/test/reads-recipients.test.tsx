@@ -8,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, FeedPartition, TagDTO } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { MessageRecipients } from "../app/shell/MessageRecipients";
 import { MessageChromeProvider } from "../app/shell/message-chrome";
 import { ReadsView } from "../app/views/ReadsView";

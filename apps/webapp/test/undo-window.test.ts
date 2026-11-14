@@ -14,7 +14,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { COMMIT_MS, UNDO_MS } from "../app/shell/screener-state";
+import { COMMIT_MS, UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * THE UNDO THAT OUTLIVED THE THING IT UNDID.
@@ -138,7 +138,8 @@ let host: HTMLDivElement | null = null;
  * would have received it.
  */
 async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: StateLike | null = null;
 
   function Probe(): null {
@@ -146,10 +147,10 @@ async function mountState(engine: OhmailEngine): Promise<{ get: () => StateLike 
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string, options?: Omit<ToastCall, "message">) => {
         toasts.push({ message, ...(options ?? {}) });
-      }) as never,
+      }) as never, useScreenerText(),
     ) as unknown as StateLike;
     return null;
   }

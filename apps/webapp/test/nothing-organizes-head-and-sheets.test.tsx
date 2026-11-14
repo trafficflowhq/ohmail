@@ -58,7 +58,7 @@ let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
 async function mount(node: React.ReactElement, locale: "en" | "de" = "en"): Promise<HTMLElement> {
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

@@ -7,7 +7,7 @@ import { estimateCardHeight, STREAM_CARD_FALLBACK_PX } from "@ohmail/ui";
 import type { EngineMessage, FeedPartition, MessageBody, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { ReadsView } from "../app/views/ReadsView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * ═══ ONE WIDTH FOR THE COLUMN, READ ONCE ═════════════════════════════════════════════════════

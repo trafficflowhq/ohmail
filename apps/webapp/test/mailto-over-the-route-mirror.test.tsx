@@ -17,14 +17,15 @@ import { createRoot } from "react-dom/client";
 import { MemoryMirrorStore, type EngineDraft, type MirrorStore, type SyncChange } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import { go, parseHash, reflectMessage } from "../app/shell/routing";
-import { EMPTY_COMPOSE, markComposeRowHolds, resetComposerForTest, writeComposeDraft, writeComposeRow } from "../app/shell/compose";
-import { holdsSig } from "../app/shell/compose-autosave";
-import { sendPendingInDurableOutbox } from "../app/shell/mail-send";
+import { EMPTY_COMPOSE, markComposeRowHolds, resetComposerForTest, writeComposeDraft, writeComposeRow } from "@ohmail/app-logic/writing/compose";
+import { holdsSig } from "@ohmail/app-logic/writing/compose-autosave";
+import { sendPendingInDurableOutbox } from "@ohmail/app-logic/writing/mail-send";
 import { RESTART_FLUSH_MS } from "@ohmail/app-logic/doors/app-update";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
 import { composeLine, composeSend, composeSubject, composerOn, letter, navigate, rounds, toasts } from "./_handoff-steps.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -160,7 +161,7 @@ describe("a mail link over a letter being written", () => {
   }, 60_000);
 
   it("a link that starts the app saves the letter the last session left before it opens", async () => {
-    writeComposeDraft({ ...EMPTY_COMPOSE, subject: "Left unsaved last time", body: "Words only this buffer holds." });
+    writeComposeDraft({ ...EMPTY_COMPOSE, subject: "Left unsaved last time", body: "Words only this buffer holds." }, storageOwner());
     const s = await mountShell("#/ohbox", [message("m1")], [], { mailto: LINK });
     expect(await rowsWhenLinkShows(s)).toEqual(["Left unsaved last time|Words only this buffer holds."]);
     expect(window.location.hash).toBe("#/compose");
@@ -215,9 +216,9 @@ describe("a mail link over a letter being written", () => {
 
   it("a link that starts the app over a letter its row already holds opens, and the row stays", async () => {
     const left = { ...EMPTY_COMPOSE, to: "Mila <mila@example.invalid>", subject: "Plans for Friday", body: "Shall we meet at noon?" };
-    writeComposeDraft(left);
-    writeComposeRow("d-r");
-    markComposeRowHolds({ row: "d-r", sig: holdsSig(left) });
+    writeComposeDraft(left, storageOwner());
+    writeComposeRow("d-r", storageOwner());
+    markComposeRowHolds({ row: "d-r", sig: holdsSig(left) }, storageOwner());
     const s = await mountShell("#/ohbox", [], [], { ...await atLaunch(), mailto: LINK });
     await rowsWhenLinkShows(s);
     await waitFor(() => rows(s).length > 0, "the first sync's drafts", 240);
@@ -226,7 +227,7 @@ describe("a mail link over a letter being written", () => {
   }, 60_000);
 
   it("a link that starts the app over a letter no row holds saves it first, its drafts arriving with the first sync", async () => {
-    writeComposeDraft({ ...EMPTY_COMPOSE, subject: "Left unsaved last time", body: "Words only this buffer holds." });
+    writeComposeDraft({ ...EMPTY_COMPOSE, subject: "Left unsaved last time", body: "Words only this buffer holds." }, storageOwner());
     const s = await mountShell("#/ohbox", [], [], { ...await atLaunch(), mailto: LINK });
     expect(await rowsWhenLinkShows(s)).toContain("Left unsaved last time|Words only this buffer holds.");
   }, 60_000);

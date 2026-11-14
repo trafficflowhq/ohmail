@@ -368,7 +368,7 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
 describe("STA-F8 — the pile hint renders once", () => {
   it("an empty Parked pile does not repeat the header's sentence in the empty state", async () => {
     const { TriageView } = await import("../app/views/TriageView.js");
-    const { KeymapProvider } = await import("../app/shell/keymap.js");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     const { WithListGone } = await import("./_list-gone.js");
     const container = await mount(
       h(KeymapProvider, {

@@ -8,7 +8,7 @@ import {
   type EngineMessage, type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import { settleFirstPaint } from "./_first-paint.js";
 import messages from "../messages/en.json";
 
@@ -126,10 +126,11 @@ async function debounceMs(): Promise<number> {
 async function mount(
   engine: OhmailEngine, withSuggest: boolean,
 ): Promise<{ latest: () => ScreenerState }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   // (api-client reads API_BASE at load — the module top sets it, and every shell import stays dynamic.)
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   let live: ScreenerState | null = null;
 
@@ -140,7 +141,7 @@ async function mount(
       active: withSuggest,
       toast: (() => {}) as never,
     });
-    const state = useScreenerState(engine, v, (() => {}) as never, suggestions.suggestions);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText(), suggestions.suggestions);
     live = state;
     // The shell's own seam: the queue and its settle flag travel together, every render.
     if (withSuggest) suggestions.forSenders(state.unsuggestedSenders, state.suggestedSenders, 0, state.queueSettled);

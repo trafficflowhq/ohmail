@@ -23,8 +23,8 @@ import { ShortcutHint } from "../shell/ShortcutHint";
 import { avatarOf, rowAddress, rowStamp, senderName, tagsOfMessage, hueOf, waterlineStamp, withheldCopyKey } from "../shell/format";
 import { useSenderCheckWords } from "../shell/sender-check";
 import { useRowBadgeCopy, useSentLabel } from "../shell/row-copy";
-import { useKeyBindings, type KeyBinding } from "../shell/keymap";
-import { useZoneNav } from "../shell/zone-nav";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 import { type MessageAction } from "../shell/MessagePane";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../shell/StreamShell";
@@ -492,7 +492,7 @@ export function ReceiptsView({
 
   /* The zone model (`zone-nav.tsx`): rail ↔ list. A stream has no third column — the cards
      ARE the reading — so no reader zone is declared and → from the list stays inert. */
-  useZoneNav({ list: { up: stepUp, down: stepDown, followId: current ?? null } });
+  useZoneNav(useTranslations("shortcuts"), { list: { up: stepUp, down: stepDown, followId: current ?? null } });
 
   /* Expanding is the request for the rest of the receipt, and the retry — and it raises the verbs,
      so record which card is open. STABLE so `StreamCardMemo` can skip an unchanged card across a

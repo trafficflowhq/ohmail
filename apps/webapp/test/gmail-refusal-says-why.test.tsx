@@ -197,7 +197,7 @@ describe("the first-run mailbox form", () => {
   };
   async function firstRun(probe: FirstRunHost["probe"]): Promise<HTMLDivElement> {
     const { FirstRun } = await import("../app/shell/FirstRun");
-    const { KeymapProvider } = await import("../app/shell/keymap");
+    const { KeymapProvider } = await import("@ohmail/app/keys");
     const { probeReasonOf } = await import("../app/shell/probe-refusal");
     const host = {
       door: "cloud", ai: "on", probe,

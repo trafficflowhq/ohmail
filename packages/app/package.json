@@ -10,6 +10,12 @@
       "node": "./dist/host/index.js",
       "default": "./src/host/index.ts"
     },
+    "./keys": {
+      "types": "./src/keys/index.ts",
+      "ohmail-source": "./src/keys/index.ts",
+      "node": "./dist/keys/index.js",
+      "default": "./src/keys/index.ts"
+    },
     "./frame": {
       "types": "./src/frame/index.ts",
       "ohmail-source": "./src/frame/index.ts",

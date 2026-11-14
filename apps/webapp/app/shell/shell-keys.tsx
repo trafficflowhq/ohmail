@@ -36,22 +36,22 @@ import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 import { FoldersRailGroup, type FolderVerbs } from "./FoldersRailGroup";
 import { hueOf } from "./format";
 import { SHELL_CURSOR_VIEWS } from "./cursor-placer";
-import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "./keymap";
+import { useEnabledBinding, useKeyBindings, useKeyPress, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
 import { pressResurfaceKey } from "./message-verbs";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { mailboxAddressCount } from "./mailbox-label";
 import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
-import { useFocusFollows } from "./focus-follows";
+import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import {
   layoutsDiffer, railLayout, readColumnHidden, readColumnHiddenFor, watchLayoutsDiffer, watchNarrow, watchRailLayout,
   watchZeroPushTier, zeroPushTier,
   type RailLayout,
-} from "./narrow";
+} from "@ohmail/app-logic/layout/narrow";
 import type { PullBinding } from "./PullNewMail";
-import { EMPTY_RICH, type RichValue } from "./rich-text";
+import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { go, goFolder, goScreener, goSettings, goTag, goTriage, switchKeyOf, type Route, type TriagePileId } from "./routing";
 import { goCompose } from "./compose-door";
-import type { ScreenerState } from "./screener-state";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import type { ShellCompose } from "./shell-compose";
 import type { ShellDerivations } from "./shell-derivations";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
@@ -61,7 +61,7 @@ import { degradeSentence } from "./screening-degrade";
 import { isKeptPile } from "./kept-piles";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { useSwitchEnd } from "@ohmail/app-logic/session/ui-vitals";
-import { currentZone, leaveRailAfterGoTo, setRailSummon } from "./zone-nav";
+import { currentZone, leaveRailAfterGoTo, setRailSummon } from "@ohmail/app-logic/keys/zone-nav";
 import { settingsPanes, type WiredPanes } from "../views/settings-panes";
 import { queryVisible } from "@ohmail/app-logic/lists/visible-dom";
 

@@ -38,13 +38,13 @@ const NEEDLE = "void engine.mutate(";
  * a success sentence over a verdict it discarded, which is the property the seam defends.
  */
 const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
-  ["shell/screener-state.ts", 5,
+  ["app-logic/screener/screener-state.ts", 5,
    "the Screener's own state machine: two of these read the result and refuse the row "
    + "(`refuse`, `refuseRelease`); the `mark_seen` fan-out over already-filed mail is documented "
    + "unwatched on purpose — the decision has landed and only a seen flag can be lost; and the "
    + "card's INBOX letters, moved by id only once its decide stands, whose sentence is the decide's "
    + "own: a refused or skipped move leaves its letter and is not the decision's status"],
-  ["shell/mail-send.ts", 1,
+  ["app-logic/writing/mail-send.ts", 1,
    "a settled reply's one after-effect — clearing the answered message's Answer Later. Nothing is "
    + "claimed about it: the sentence the person reads is the send's own"],
   ["shell/AppShell.tsx", 0,
@@ -64,7 +64,7 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
   ["shell/folder-verbs.ts", 1,
    "the folder-op notice's dismissal: it raises no sentence at all, and its three siblings in the "
    + "same object already speak only on `rolled_back`"],
-  ["shell/draft-creates.ts", 1,
+  ["app-logic/writing/draft-creates.ts", 1,
    "the copy a landed create left beside its editor's row, or of a message a Discard or confirmed send "
    + "ended; no sentence rides it; a refused delete leaves one more draft, never a lost one"],
   ["views/ComposeView.tsx", 1,

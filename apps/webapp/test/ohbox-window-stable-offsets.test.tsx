@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { OhboxView } from "../app/views/OhboxView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * THE OHBOX LIST HOLDS STILL UNDER THE READER. Reported live on 0.19.3: after a jump (the

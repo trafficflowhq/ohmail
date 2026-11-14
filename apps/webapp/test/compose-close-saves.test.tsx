@@ -14,7 +14,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 
 /**
  * ═══ CLOSING THE COMPOSER SAVES WHAT IS IN IT ════════════════════════════════════════════

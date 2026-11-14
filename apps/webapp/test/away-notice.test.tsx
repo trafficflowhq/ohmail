@@ -154,7 +154,7 @@ function ohboxProps(): Record<string, unknown> {
  */
 async function mount(opts: { active: boolean; withRow?: boolean }): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   const { AwayNotice, useAwayNotice } = await import("../app/shell/AwayNotice.js");
   const { AwayResponderRow } = await import("../app/shell/AwayResponderRow.js");
 

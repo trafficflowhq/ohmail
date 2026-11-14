@@ -19,7 +19,7 @@ import {
 import { ThemeProvider } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * THE SCREENER ON A CLOUD ACCOUNT — what the surface dispatches for a DERIVED
@@ -173,13 +173,14 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
 
 /** Mount a probe that runs the real hook and hands its state back to the test. */
 async function mountState(engine: OhmailEngine): Promise<{ get: () => ScreenerStateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: ScreenerStateLike | null = null;
 
   function Probe(): null {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    latest = useScreenerState(engine, v, (() => {}) as never) as unknown as ScreenerStateLike;
+    latest = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText()) as unknown as ScreenerStateLike;
     return null;
   }
 
@@ -214,7 +215,8 @@ async function mountProjected(
   engine: OhmailEngine,
   toastFn: (message: string) => void = () => {},
 ): Promise<{ get: () => ScreenerStateLike }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: ScreenerStateLike | null = null;
 
   function Probe(): null {
@@ -223,7 +225,7 @@ async function mountProjected(
     const reader = engine.read();
     const presented = presentationReader(reader, consentPartition(reader, { now: NOW }));
     latest = useScreenerState(
-      engine, v, toastFn as never, undefined, presented,
+      engine, null, v, toastFn as never, useScreenerText(), undefined, presented,
     ) as unknown as ScreenerStateLike;
     return null;
   }
@@ -315,9 +317,11 @@ async function mountView(
   engine: OhmailEngine,
   segment: "waiting" | "screened" | "spam" = "waiting",
 ): Promise<void> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider, useKeyBindings } = await import("../app/shell/keymap.js");
+  const { useKeyBindings } = await import("@ohmail/app-logic/keys/keymap");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
@@ -328,7 +332,7 @@ async function mountView(
       [{ chord: "?", group: "app", label: "Keyboard shortcuts", run: () => {} }],
       "global",
     );
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
     });

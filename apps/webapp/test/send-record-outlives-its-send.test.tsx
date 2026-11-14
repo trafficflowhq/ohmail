@@ -9,7 +9,7 @@
  * The fake server replays a key it holds and has no one-hour content claim, so a fresh key for the
  * same words is a second delivery here, as it is on the real service past that hour.
  */
-/* @reads: apps/webapp/app/shell/mail-send.ts */
+/* @reads: packages/app-logic/src/writing/mail-send.ts */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,7 +18,7 @@ import { HttpAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-eng
 import type { MirrorStore } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { dto, listen, mailServer } from "../../mobile/test/helpers/mail-server";
-import type { ComposeFields } from "../app/shell/compose";
+import type { ComposeFields } from "@ohmail/app-logic/writing/compose";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -65,10 +65,11 @@ async function world() {
 
 /** The compose surface as the shell wires it, plus the reply and forward lanes' presses. */
 async function surface(engine: OhmailEngine) {
-  const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox, replyDockState } = await import("../app/shell/mail-send.js");
-  const { useComposeAutosave } = await import("../app/shell/compose-autosave.js");
-  const { readComposeDraft, writeComposeDraft } = await import("../app/shell/compose.js");
-  const initial = readComposeDraft();
+  const { useMailSend, SEND_IN_FLIGHT_PHASES, sendPendingInOutbox, replyDockState } = await import("@ohmail/app-logic/writing/mail-send");
+  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  const { useComposeAutosave } = await import("@ohmail/app-logic/writing/compose-autosave");
+  const { readComposeDraft, writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  const initial = readComposeDraft(null);
   let api!: {
     body: () => string; held: () => boolean; edit: (a: string, b: string) => Promise<void>; press: () => Promise<void>;
     reply: (b: string) => Promise<void>; forward: (b: string) => Promise<void>; dockPhase: (lane: string) => string;
@@ -80,19 +81,20 @@ async function surface(engine: OhmailEngine) {
     const [, force] = React.useReducer((x: number) => x + 1, 0);
     React.useEffect(() => engine.subscribe(() => force()), []);
     const settleRef = React.useRef<(rowId: string | null, about: boolean) => void>(() => {});
-    const mail = useMailSend(engine as never, (() => {}) as never,
-      ((key: string, m: { draftId?: string | null }, about: boolean) => { if (key === "compose") settleRef.current(m.draftId ?? null, about); }) as never);
+    const mail = useMailSend(engine as never, null, (() => {}) as never,
+      useMailSendText(), ((key: string, m: { draftId?: string | null }, about: boolean) => { if (key === "compose") settleRef.current(m.draftId ?? null, about); }) as never);
     const autosave = useComposeAutosave({
       engine: engine as never, fields, mailboxId: "mb-1", active: true,
       sendInFlight: SEND_IN_FLIGHT_PHASES.has(mail.stateOf("compose").phase) || sendPendingInOutbox(engine as never, "compose") || mail.restoredPending("compose"),
       onCleared: () => { setF(EMPTY); },
+      scope: null,
     });
     settleRef.current = (rowId, about) => { autosave.settleCompose({ kind: "sentByMirror", rowId, aboutThisCompose: about }); };
     const send = mail.send as unknown as (m: unknown, o?: unknown) => void;
     api = {
       body: () => fields.body,
       held: () => mail.restoredPending("compose"),
-      edit: async (a, b) => { await act(async () => { setF((f) => { const n = { ...f, body: f.body.replace(a, b) }; writeComposeDraft(n); return n; }); }); },
+      edit: async (a, b) => { await act(async () => { setF((f) => { const n = { ...f, body: f.body.replace(a, b) }; writeComposeDraft(n, null); return n; }); }); },
       press: async () => {
         if (fields.body === "") return;
         await act(async () => { send({ kind: "mail_send", inReplyTo: null, body: fields.body, subject: "Hello", to: [{ name: null, address: "bo@fake.test" }], mailboxId: "mb-1", ...(autosave.draftId ? { draftId: autosave.draftId } : {}) }); });
@@ -118,15 +120,15 @@ async function surface(engine: OhmailEngine) {
 
 type Rec = { at: number; lane: string; key: string };
 async function jar(): Promise<Rec[]> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  return JSON.parse(window.localStorage.getItem(sendLocksKey()) ?? "[]") as Rec[];
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  return JSON.parse(window.localStorage.getItem(sendLocksKey(null)) ?? "[]") as Rec[];
 }
 async function ageJar(ms: number): Promise<void> {
-  const { sendLocksKey } = await import("../app/shell/send-lock.js");
-  window.localStorage.setItem(sendLocksKey(), JSON.stringify((await jar()).map((r) => ({ ...r, at: r.at - ms }))));
+  const { sendLocksKey } = await import("@ohmail/app-logic/writing/send-lock");
+  window.localStorage.setItem(sendLocksKey(null), JSON.stringify((await jar()).map((r) => ({ ...r, at: r.at - ms }))));
 }
 const lanes = async (): Promise<string[]> => (await jar()).map((r) => r.lane).sort();
-const buffered = async (): Promise<string> => (await import("../app/shell/compose.js")).readComposeDraft().body;
+const buffered = async (): Promise<string> => (await import("@ohmail/app-logic/writing/compose")).readComposeDraft(null).body;
 async function online(w: Awaited<ReturnType<typeof world>>, e: OhmailEngine): Promise<void> {
   w.net.offline = false;
   for (let i = 0; i < 3; i++) { await act(async () => { await e.syncOnce(); }); await settle(10); }
@@ -135,8 +137,8 @@ async function online(w: Awaited<ReturnType<typeof world>>, e: OhmailEngine): Pr
 
 /** A new message sent offline from the composer, and the tab closed with it on the outbox. */
 async function composeSentOffline(w: Awaited<ReturnType<typeof world>>): Promise<void> {
-  const { writeComposeDraft } = await import("../app/shell/compose.js");
-  writeComposeDraft(fieldsFor(FIRST));
+  const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
+  writeComposeDraft(fieldsFor(FIRST), null);
   const e1 = w.engine();
   const s1 = await surface(e1);
   await act(async () => { await e1.start(); });
@@ -149,8 +151,8 @@ async function composeSentOffline(w: Awaited<ReturnType<typeof world>>): Promise
 
 /** A reply (or an inline forward) sent offline from its dock, its scratch written first, and the tab closed. */
 async function replySentOffline(w: Awaited<ReturnType<typeof world>>, kind: "reply" | "forward" = "reply"): Promise<void> {
-  const { writeReplyDraft } = await import("../app/shell/mail-send.js");
-  writeReplyDraft(kind === "reply" ? "m-1" : "fwd:m-1", { text: REPLY, html: "" });
+  const { writeReplyDraft } = await import("@ohmail/app-logic/writing/mail-send");
+  writeReplyDraft(kind === "reply" ? "m-1" : "fwd:m-1", { text: REPLY, html: "" }, null);
   const e1 = w.engine();
   const s1 = await surface(e1);
   await act(async () => { await e1.start(); });
@@ -201,7 +203,7 @@ describe("REPLY-SWEEP: a press on another lane leaves a waiting compose's record
 describe("COMPOSE-READ-SWEEPS-A-WAITING-REPLY: the composer's hold read leaves another lane's waiting record alone (allSendLocks)", () => {
   for (const [label, later] of AGES) {
     it(`${label}: a reply that waited keeps its record while it waits, goes once, and its dock is emptied`, async () => {
-      const { readReplyDraft } = await import("../app/shell/mail-send.js");
+      const { readReplyDraft } = await import("@ohmail/app-logic/writing/mail-send");
       const w = await world();
       await replySentOffline(w);
       await ageJar(later);
@@ -218,7 +220,7 @@ describe("COMPOSE-READ-SWEEPS-A-WAITING-REPLY: the composer's hold read leaves a
          re-press of the same words. Either way nothing is left in the dock to press again. */
       expect({
         atMount, afterRestore, delivered: w.fake.deliveries().length, keys: w.keys(),
-        afterReplay: await lanes(), dock: readReplyDraft("m-1").text,
+        afterReplay: await lanes(), dock: readReplyDraft("m-1", null).text,
       }, "the compose hold's read swept the waiting reply's record").toEqual({
         atMount: ["m-1"], afterRestore: ["m-1"], delivered: 1, keys: 1,
         afterReplay: later > 7 * DAY ? [] : ["m-1"], dock: "",
@@ -230,7 +232,7 @@ describe("COMPOSE-READ-SWEEPS-A-WAITING-REPLY: the composer's hold read leaves a
 describe("ADOPTED-REPLY-ENDING-LEAVES-ITS-SCRATCH (measured beside the routes, not a deletion site)", () => {
   for (const [label, later] of [AGES[0], AGES[3]] as const) for (const kind of ["reply", "forward"] as const) {
     it(`${label}: a restored ${kind} confirmed by the replay clears its dock's scratch`, async () => {
-      const { readReplyDraft } = await import("../app/shell/mail-send.js");
+      const { readReplyDraft } = await import("@ohmail/app-logic/writing/mail-send");
       const w = await world();
       await replySentOffline(w, kind);
       await ageJar(later);
@@ -238,7 +240,7 @@ describe("ADOPTED-REPLY-ENDING-LEAVES-ITS-SCRATCH (measured beside the routes, n
       await surface(e2);
       await act(async () => { await e2.start(); });
       await online(w, e2);
-      expect({ delivered: w.fake.deliveries().length, scratch: readReplyDraft(kind === "reply" ? "m-1" : "fwd:m-1").text },
+      expect({ delivered: w.fake.deliveries().length, scratch: readReplyDraft(kind === "reply" ? "m-1" : "fwd:m-1", null).text },
         "the reply went and its words stayed in the dock").toEqual({ delivered: 1, scratch: "" });
     }, 60_000);
   }
@@ -247,7 +249,7 @@ describe("ADOPTED-REPLY-ENDING-LEAVES-ITS-SCRATCH (measured beside the routes, n
 describe("RESTORED-DOCK-CLEAR: a restored reply's dock is held while its send waits, so the ending clears only the words that went", () => {
   for (const [label, later] of [AGES[0], AGES[3]] as const) for (const kind of ["reply", "forward"] as const) {
     it(`${label}: a restored ${kind}'s dock is not editable while it waits, and a rewrite cannot be lost`, async () => {
-      const { readReplyDraft, writeReplyDraft } = await import("../app/shell/mail-send.js");
+      const { readReplyDraft, writeReplyDraft } = await import("@ohmail/app-logic/writing/mail-send");
       const lane = kind === "reply" ? "m-1" : "fwd:m-1";
       const w = await world();
       await replySentOffline(w, kind);
@@ -262,9 +264,9 @@ describe("RESTORED-DOCK-CLEAR: a restored reply's dock is held while its send wa
          phase is neither sending nor queued, and its scratch is written per edit. */
       const editable = dockWhileWaiting !== "sending" && dockWhileWaiting !== "queued";
       const REWRITE = "Second thought: can we talk Monday?";
-      if (editable) writeReplyDraft(lane, { text: REWRITE, html: "" });
+      if (editable) writeReplyDraft(lane, { text: REWRITE, html: "" }, null);
       await online(w, e2);
-      const scratch = readReplyDraft(lane).text;
+      const scratch = readReplyDraft(lane, null).text;
       expect({
         dockWhileWaiting, delivered: w.fake.deliveries().length, keys: w.keys(),
         wordsLost: editable && scratch !== REWRITE, dockAfter: s2.dockPhase(lane), scratch,
@@ -340,9 +342,9 @@ describe("RESTORED-DOCK-CANCEL: a restored reply's Cancel asks the server, held 
 
 describe("OWN-PRESS: a window's own press is judged by its own outbox view", () => {
   it("a message sent and confirmed in this window releases its record (written after the view, pressed here)", async () => {
-    const { writeComposeDraft } = await import("../app/shell/compose.js");
+    const { writeComposeDraft } = await import("@ohmail/app-logic/writing/compose");
     const w = await world();
-    writeComposeDraft(fieldsFor(FIRST));
+    writeComposeDraft(fieldsFor(FIRST), null);
     const e = w.engine();
     const s = await surface(e);
     await act(async () => { await e.start(); });
@@ -356,8 +358,8 @@ describe("OWN-PRESS: a window's own press is judged by its own outbox view", () 
 describe("SECOND-COMPOSE-EVICTS: another composer's press leaves a waiting compose's record alone (claimSendLock and resumeSendLock's spent sweep)", () => {
   for (const [label, later] of [["1 h", HOUR], ["8 d", 8 * DAY]] as const) {
     it(`${label}: a second tab presses a different new message while the first tab's send waits`, async () => {
-      const { claimSendLock, resumeSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-      const { sendLockOwed } = await import("../app/shell/mail-send.js");
+      const { claimSendLock, resumeSendLock, sendIdentity, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+      const { sendLockOwed } = await import("@ohmail/app-logic/writing/mail-send");
       const w = await world();
       await composeSentOffline(w);
       await ageJar(later);
@@ -374,11 +376,11 @@ describe("SECOND-COMPOSE-EVICTS: another composer's press leaves a waiting compo
       const owed = sendLockOwed(e2);
       const other = { kind: "mail_send", inReplyTo: null, body: "Lunch on Monday, Cy?", subject: "Lunch", to: [{ name: null, address: "cy@fake.test" }], mailboxId: "mb-1" };
       const id = sendIdentity(other as never, "tab-2-session");
-      const resumed = resumeSendLock("compose", id, Date.now(), owed);
+      const resumed = resumeSendLock("compose", id, Date.now(), owed, null);
       claimSendLock({
         v: SEND_LOCK_FORMAT, lane: "compose", key: crypto.randomUUID(), at: Date.now(), draftId: null, fp: id.fp,
         ...(id.subjects[0] !== undefined ? { subject: id.subjects[0] } : {}), session: "tab-2-session", bfp: "tab-2-buffer",
-      }, owed);
+      }, owed, null);
       const afterOther = { resumed, held: s2.held(), composeRecords: (await jar()).filter((r) => r.lane === "compose").length };
       await online(w, e2);
       const afterNet = { body: s2.body(), buffer: await buffered() };

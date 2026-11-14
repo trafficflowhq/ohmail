@@ -36,8 +36,8 @@ import {
   type AddressDirection,
   type AddressHit,
 } from "../shell/address-view";
-import { displayAddress } from "../shell/idn";
-import { useKeyBindings, type KeyBinding } from "../shell/keymap";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
 import { SearchHitRow } from "./SearchView";
 import "./search-keys.css";
 

@@ -15,7 +15,7 @@ import {
 } from "../src/cloud-session.js";
 import { DOOR_COPY, machineWord } from "../src/door-copy.js";
 import messages from "../../webapp/messages/en.json";
-import { replyDraftKey } from "../../webapp/app/shell/mail-send";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 import { expectKept, expectSwept, seedWindowKeys } from "./_window-keys.js";
 
 /**
@@ -462,10 +462,10 @@ describe("a session refused while the mail is on screen", () => {
     expect(dialog(await render())).toBe(true);
     expectSwept(keys, "the next launch");
     await quit();
-    localStorage.setItem(replyDraftKey("msg-2"), "a reply begun since");
+    localStorage.setItem(replyDraftKey("msg-2", "mbx-2"), "a reply begun since");
     fakeShell(revoked, { status: { ...CLOUD_SERVING, mailboxId: "mbx-2" } });
     expect(dialog(await render())).toBe(true);
-    expect(localStorage.getItem(replyDraftKey("msg-2")), "swept again at the launch after").toBe("a reply begun since");
+    expect(localStorage.getItem(replyDraftKey("msg-2", "mbx-2")), "swept again at the launch after").toBe("a reply begun since");
   });
 
   it("gives focus back to where it stood once the session is live again and the card closes", async () => {

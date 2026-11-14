@@ -54,12 +54,12 @@ import { useRowBadgeCopy } from "../shell/row-copy";
 import { avatarHue, displayTime } from "../shell/format";
 import { junkKeyOf, type JunkWindowControl } from "../shell/junk-window";
 import { quarantineShelf, shelfRowMatches } from "@ohmail/app-logic/press/quarantine-shelf";
-import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "../shell/idn";
+import { displayAddress, displayAddressee, displayAddressUnder, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { useLoadingGrace } from "@ohmail/app-logic/session/loading-grace";
-import { useKeyBindings, type KeyBinding } from "../shell/keymap";
-import { useZoneNav } from "../shell/zone-nav";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
+import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { ShortcutHint } from "../shell/ShortcutHint";
-import { readColumnHidden, watchNarrow } from "../shell/narrow";
+import { readColumnHidden, watchNarrow } from "@ohmail/app-logic/layout/narrow";
 import { afterPaint, whenQuiet } from "@ohmail/app-logic/lists/visit";
 import { useRowMenuFit } from "../shell/row-menu-fit";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
@@ -74,13 +74,13 @@ import { useDrawnBody, useDrawnStates } from "../shell/body-slice";
 import { InvitationNote } from "../shell/InvitationNote";
 import { MessageEvents } from "../shell/MessageEvents";
 import { goFirstRun, goScreener, goSettings, type ScreenerSegmentId } from "../shell/routing";
-import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "../shell/screener-state";
+import { APPLY_PILE_ORDER, hasRealSuggestion, type PendingDecision } from "@ohmail/app-logic/screener/screener-state";
 /* The one role answer, from the module that derives it — see `mail-state.ts#screenerMode`. */
 import {
   readerHolder, sharedNotOrganizedWhy, type NotOrganizingYet, type ReaderHolding, type ScreenerRole,
 } from "@ohmail/app-logic/mail-state/mail-state";
-import type { HeldBodyStall, ScreenerState, SpamRow } from "../shell/screener-state";
-import type { ImpersonationFiledNotice } from "../shell/impersonation-filed";
+import type { HeldBodyStall, ScreenerState, SpamRow } from "@ohmail/app-logic/screener/screener-state";
+import type { ImpersonationFiledNotice } from "@ohmail/app-logic/screener/impersonation-filed";
 import type { SuggestBatchControl } from "../shell/screener-suggest";
 import {
   noSuggestionKey, noSuggestionReason, stripStandingKey, type SuggestStanding,
@@ -1450,7 +1450,7 @@ export function ScreenerView({
 
   /* The zone model (`zone-nav.tsx`): rail ↔ list. The Screener has no reading column —
      deciding, not reading, is its act — so no reader zone is declared. */
-  useZoneNav({ list: { up: stepUp, down: stepDown, followId: activeId ?? null } });
+  useZoneNav(useTranslations("shortcuts"), { list: { up: stepUp, down: stepDown, followId: activeId ?? null } });
 
   const selectRow = (id: string) => {
     setUnpicked(false);

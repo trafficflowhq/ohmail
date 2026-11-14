@@ -33,29 +33,28 @@
  * lane's durable claim and clearing on the row's `sent` transition — ledgered, not smuggled in here.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useTranslations } from "next-intl";
 import { OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE, joinableStandingSend, pileRowIdsOf, pressVerdict } from "@ohmail/client-engine";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
 import type {
   EmailAddress, EngineMessage, EntityReader, MutationResult, OhmailEngine, SendAndDonePlan,
 } from "@ohmail/client-engine";
-import type { ToastFn } from "@ohmail/ui";
+import type { ToastFn } from "../press/report.js";
 import {
   clearComposeDraft, composePlan, composeSessionId, composeStillHolds, readComposeDraft,
   readComposeRow,
   type ComposeHeld, type MailSend,
-} from "./compose";
-import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
+} from "./compose.js";
+import { durableRemove, durableSet } from "../storage/durable.js";
 import {
   allSendLocks, attachSendLockDraft, claimSendLock, holdOf, markSendLockUnverified, recordForEndedSend,
   releaseSendLock, resumeSendLock, SEND_LOCK_FORMAT, sendFingerprint, sendIdentity, sendSubject,
   sendSubjects, unverifiedSendIntents, type Hold, type SendIntent, type SendLockOwed,
-} from "./send-lock";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
-import { displayAddress } from "./idn";
-import { scheduleLabel } from "./format";
-import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text";
-import type { SignatureState } from "./signature";
+} from "./send-lock.js";
+import { scopeSuffix, usePinnedScope, type StorageScope } from "../storage/scope.js";
+import { displayAddress } from "../text/idn.js";
+import { EMPTY_RICH, parseRichValue, serializeRichValue, type RichValue } from "./rich-text.js";
+import type { SignatureState } from "@ohmail/client-engine";
+import type { Translator } from "../text/translator.js";
 
 export type SendPhase = "idle" | "sending" | "sent" | "queued" | "unverified" | "failed" | "duplicate";
 
@@ -108,7 +107,9 @@ const UNTIL_KEYS = {
 } as const;
 
 /** The note's sentence: its `sentCopy.*` message key, and the time it names, read where the reader is. */
-export function sentCopySay(note: SentCopyNote, now = new Date()): { key: string; values: { time: string } } {
+export function sentCopySay(
+  note: SentCopyNote, scheduleLabel: (when: string, now: Date) => string, now = new Date(),
+): { key: string; values: { time: string } } {
   const values = { time: note.until !== undefined ? scheduleLabel(note.until, now) : "" };
   if (note.state === "pending" && note.until !== undefined) {
     return { key: `sentCopy.${note.reason === undefined ? "waitingUntil" : UNTIL_KEYS[note.reason]}`, values };
@@ -133,8 +134,8 @@ export const SENT_COPY_NOTES_MAX = 3;
 export const SENT_COPY_NOTES_PREFIX = "ohmail.send.notes.";
 const NOTE_REASONS: ReadonlySet<unknown> = new Set(["too_big", "full", "refused", "unreachable"]);
 
-export function sentCopyNotesKey(owner: string | null): string {
-  return `${SENT_COPY_NOTES_PREFIX}${owner ?? "local"}`;
+export function sentCopyNotesKey(owner: StorageScope): string {
+  return `${SENT_COPY_NOTES_PREFIX}${scopeSuffix(owner)}`;
 }
 
 function isLineNote(x: unknown): x is SentCopyLineNote {
@@ -832,8 +833,8 @@ export const COMPOSE_SEND_KEY = "compose";
  * never match a record: a surface with no compose on it (a reply-only harness, a shell that has never opened one)
  * would otherwise latch on somebody else's record and refuse a press it has no business refusing.
  */
-export function composeBufferFingerprint(): string | null {
-  const fields = readComposeDraft();
+export function composeBufferFingerprint(scope: StorageScope): string | null {
+  const fields = readComposeDraft(scope);
   const empty = fields.to.trim().length === 0
     && fields.subject.trim().length === 0
     && fields.body.trim().length === 0;
@@ -880,8 +881,10 @@ export const REPLY_DRAFT_PREFIX = "ohmail.ui.reply:";
 /** …and one that names its account: `<prefix><owner>:<lane>`, so a one-account wipe takes its own. */
 export const OWNED_REPLY_DRAFT_PREFIX = "ohmail.ui.reply.";
 
-export const replyDraftKey = (lane: string, owner: string | null = storageOwner()): string =>
-  owner === null ? `${REPLY_DRAFT_PREFIX}${lane}` : `${OWNED_REPLY_DRAFT_PREFIX}${owner}:${lane}`;
+export const replyDraftKey = (lane: string, owner: StorageScope): string => {
+  const suffix = scopeSuffix(owner);
+  return owner === null ? `${REPLY_DRAFT_PREFIX}${lane}` : `${OWNED_REPLY_DRAFT_PREFIX}${suffix}:${lane}`;
+};
 
 /**
  * THE KEY A LANE IS READ FROM: its account's, or the key that names no account, moved there first. Message and
@@ -909,7 +912,7 @@ function heldLaneKey(
  * `parseRichValue` is the shape-based read that makes both readable from one key — see
  * `rich-text.ts` for why it is shape-based and not "did it parse as JSON".
  */
-export function readReplyDraft(lane: string, owner: string | null = storageOwner()): RichValue {
+export function readReplyDraft(lane: string, owner: StorageScope): RichValue {
   try {
     return parseRichValue(window.localStorage.getItem(heldLaneKey(lane, owner, replyDraftKey, "reply.draft")));
   } catch {
@@ -923,7 +926,7 @@ export function readReplyDraft(lane: string, owner: string | null = storageOwner
  * bare string for a reply with no formatting, so the common case stays readable by a bundle
  * that predates the envelope.
  */
-export function writeReplyDraft(lane: string, value: RichValue, owner: string | null = storageOwner()): void {
+export function writeReplyDraft(lane: string, value: RichValue, owner: StorageScope): void {
   const raw = serializeRichValue(value);
   // The draft still lives in React state for this session; a jar that refused it no longer
   // passes for one that kept it.
@@ -1008,10 +1011,12 @@ function envelopeOf(v: unknown): LaneEnvelope | null {
 export const REPLY_META_PREFIX = "ohmail.ui.replymeta:";
 export const OWNED_REPLY_META_PREFIX = "ohmail.ui.replymeta.";
 
-export const replyMetaKey = (lane: string, owner: string | null = storageOwner()): string =>
-  owner === null ? `${REPLY_META_PREFIX}${lane}` : `${OWNED_REPLY_META_PREFIX}${owner}:${lane}`;
+export const replyMetaKey = (lane: string, owner: StorageScope): string => {
+  const suffix = scopeSuffix(owner);
+  return owner === null ? `${REPLY_META_PREFIX}${lane}` : `${OWNED_REPLY_META_PREFIX}${suffix}:${lane}`;
+};
 
-export function readReplyMeta(lane: string, owner: string | null = storageOwner()): ReplyEditorMeta {
+export function readReplyMeta(lane: string, owner: StorageScope): ReplyEditorMeta {
   try {
     const raw = window.localStorage.getItem(heldLaneKey(lane, owner, replyMetaKey, "reply.meta"));
     if (!raw) return {};
@@ -1047,7 +1052,7 @@ export function readReplyMeta(lane: string, owner: string | null = storageOwner(
   }
 }
 
-export function writeReplyMeta(lane: string, meta: ReplyEditorMeta, owner: string | null = storageOwner()): void {
+export function writeReplyMeta(lane: string, meta: ReplyEditorMeta, owner: StorageScope): void {
   // A meta with neither field stores nothing — absence IS the resting state, see above.
   const resting = meta.subject === undefined && meta.sig === undefined && meta.row === undefined
     && meta.envelope === undefined && (meta.creates === undefined || meta.creates.length === 0)
@@ -1102,7 +1107,7 @@ export function clearLaneScratch(
  * promoteOrphanedReplyLane}), and two copies of "which keys is this lane holding" is two places
  * for a lane to leak a draft that outlives the message it was. A lane's old copies go with it.
  */
-export function clearReplyLane(lane: string, owner: string | null = storageOwner()): void {
+export function clearReplyLane(lane: string, owner: StorageScope): void {
   for (const who of owner === null ? [null] : [owner, null]) {
     durableRemove(replyDraftKey(lane, who), "reply.draft");
     durableRemove(replyMetaKey(lane, who), "reply.meta");
@@ -1175,7 +1180,7 @@ export async function promoteOrphanedReplyLane(
     subject: string; body: string; html?: string | null;
     to: EmailAddress[]; cc: EmailAddress[]; bcc: EmailAddress[];
   }) => Promise<Pick<MutationResult, "status" | "entityId">>,
-  owner: string | null = storageOwner(),
+  owner: StorageScope,
 ): Promise<LanePromotion> {
   const body = readReplyDraft(lane, owner);
   if (body.text.trim().length === 0) return "empty";
@@ -1656,9 +1661,19 @@ function afterPaint(): Promise<void> {
   return new Promise<void>((resolve) => { setTimeout(resolve, 0); });
 }
 
+/** Sending's words, handed in by the mount: the catalogue's reader, and how a time to come is written. */
+export interface MailSendText {
+  t: Translator;
+  scheduleLabel: (when: string, now: Date) => string;
+}
+
 export function useMailSend(
   engine: OhmailEngine,
+  /** Whose send locks, notes and drafts these are: the mount's storage scope, kept for the life of the mount. */
+  scope: StorageScope,
   toast: ToastFn,
+  /** The words it speaks: {@link MailSendText}. */
+  text: MailSendText,
   /**
    * Close the surface if it is still the one open — see `AppShell.onSendSettled`. The settled
    * MUTATION rides along because the shell's draft bookkeeping needs its `draftId`: a compose
@@ -1688,7 +1703,7 @@ export function useMailSend(
    */
   markOf?: (key: string) => unknown,
 ): MailSendApi {
-  const t = useTranslations();
+  const { t, scheduleLabel } = text;
   const [states, setStates] = useState<Record<string, SendState>>({});
   /** Keys whose kept-back words were already said — see `absorb`. */
   const saidGoing = useRef(new Set<string>());
@@ -1846,7 +1861,7 @@ export function useMailSend(
    * the mount's owner ({@link SENT_COPY_NOTES_PREFIX}), so a remount and a reload find them.
    */
   const notes = useRef<readonly SentCopyLineNote[] | null>(null);
-  if (notes.current === null) notes.current = readSentCopyNotes(storageOwner()) ?? [];
+  if (notes.current === null) notes.current = readSentCopyNotes(scope) ?? [];
   /** Change the notes over what this browser keeps now (another tab's included), and keep the result. */
   const changeNotes = useCallback((change: (was: readonly SentCopyLineNote[]) => readonly SentCopyLineNote[]): void => {
     const next = change(readSentCopyNotes(owner.current) ?? notes.current ?? []);
@@ -2028,16 +2043,16 @@ export function useMailSend(
         : key.startsWith("fwd:")
           ? t("reply.toastForwarded")
           : t("reply.toastSent");
-      const why = copy && !copyOnLine ? sentCopySay(copy) : null;
+      const why = copy && !copyOnLine ? sentCopySay(copy, scheduleLabel) : null;
       if (why) toast(`${said} ${t(why.key, why.values)}`, { duration: SENT_COPY_TOAST_MS });
       else toast(said);
     },
-    [engine, setPhase, toast, t, beat, shownNow, lineSeenNow, sayLineSent, noteLine],
+    [engine, setPhase, toast, t, scheduleLabel, beat, shownNow, lineSeenNow, sayLineSent, noteLine],
   );
 
   /**
-   * THE MAILBOX THIS HOOK'S STORAGE BELONGS TO, captured once at mount. `storageOwner()` answers the mailbox the
-   * window is showing NOW, and a send does not settle now. `engine.mutate`'s promise outlives the surface that
+   * THE MAILBOX THIS HOOK'S STORAGE BELONGS TO, handed in and kept from the first render. The storage owner answers
+   * the mailbox the window is showing NOW, and a send does not settle now. `engine.mutate`'s promise outlives the surface that
    * started it: the desktop replaces the mailbox, the shell remounts under the new one (which is what its key is
    * for), and then mailbox A's promise resolves and runs `absorb` — whose `releaseSendLock` and `clearComposeDraft`
    * would resolve their keys through the module global and delete MAILBOX B's unfinished message and B's durable
@@ -2051,7 +2066,7 @@ export function useMailSend(
    * mailbox for its whole life, so the value cannot go stale within it, and a settlement that arrives late writes to
    * the partition it was started in.
    */
-  const owner = useRef<string | null>(storageOwner());
+  const owner = useRef<string | null>(usePinnedScope(scope));
 
   /**
    * AN ENDED SEND'S RECORD GOES, OR IS ASKED AGAIN: the jar keeps a record while its key is owed (a
@@ -2582,7 +2597,6 @@ export function useMailSend(
      */
     if (engine.hasLateResults()) void collect();
     return () => { cancelled = true; off(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engine]);
 
   /**
@@ -2712,7 +2726,7 @@ export function useMailSend(
   {
     const live = composeSessionId(owner.current);
     if (latch.current === null || latch.current.session !== live) {
-      latch.current = { fp: composeBufferFingerprint(), session: live };
+      latch.current = { fp: composeBufferFingerprint(owner.current), session: live };
     }
   }
 
@@ -2819,7 +2833,7 @@ export function useMailSend(
       /* Read HERE, at the press, from the same helper the later mount reads — see `SendLock.bfp`.
          Taken before `engine.mutate` for the same reason the claim is: what is written down has to
          describe the message that went, not the buffer as it stands some time afterwards. */
-      const bufferFp = key === COMPOSE_SEND_KEY ? composeBufferFingerprint() : null;
+      const bufferFp = key === COMPOSE_SEND_KEY ? composeBufferFingerprint(owner.current) : null;
       const subject = id.subjects[0];
       /* THROUGH THE IDENTITY, not the fingerprint alone: the session and the subjects scope the resume. */
       const owed = sendLockOwed(engine);

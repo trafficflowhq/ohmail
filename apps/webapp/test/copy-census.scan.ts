@@ -309,6 +309,169 @@ export interface KeyRead {
   dotted: string;
 }
 
+/**
+ * ── A READER CAN ALSO BE HANDED IN ─────────────────────────────────────────────────────────
+ *
+ * The files below call no `useTranslations`: their caller hands them the reader (a hook in
+ * `packages/app-logic` may not import `next-intl`). The binding the scan keys on is then in
+ * another file, and every `t("…")` here was outside the census until this table: 77 reads in the
+ * first three, measured when they moved, and 37 in the dispatch spine, which moved before them;
+ * the Ohbox's key table and walk (26), since its behaviour left the view for `useOhboxList`.
+ * Each row names the identifier the file reads through and the namespace its caller binds,
+ * and `glue` names where that choice is made, which `handedReaderNamespaces` reads back.
+ */
+export interface HandedReaders {
+  /** Identifier in the file → the namespace of the reader it holds ("" is the catalogue root). */
+  readers: Record<string, string>;
+  /** Where the namespaces are chosen: every reader bound in that file, or every reader handed at each call of that hook. */
+  glue: { file: string } | { call: string };
+}
+
+export const HANDED_READERS: Record<string, HandedReaders> = {
+  "packages/app-logic/src/screener/screener-state.ts": {
+    readers: { t: "screener", ts: "screening", tWhy: "ohbox", tSession: "session" },
+    glue: { file: "apps/webapp/app/shell/screener-text.ts" },
+  },
+  "packages/app-logic/src/writing/mail-send.ts": {
+    readers: { t: "" },
+    glue: { file: "apps/webapp/app/shell/mail-send-text.ts" },
+  },
+  "packages/app-logic/src/keys/zone-nav.ts": {
+    readers: { t: "shortcuts" },
+    glue: { call: "useZoneNav" },
+  },
+  "packages/app-logic/src/press/shell-dispatch.ts": {
+    readers: { t: "" },
+    glue: { call: "useShellDispatch" },
+  },
+  "packages/app-logic/src/ohbox/keys.ts": {
+    readers: { t: "ohbox" },
+    glue: { call: "useOhboxList" },
+  },
+  "packages/app-logic/src/ohbox/walk.ts": {
+    readers: { t: "ohbox" },
+    glue: { call: "useOhboxList" },
+  },
+};
+
+/** `useTranslations()` → "", `useTranslations("ns")` → "ns", a variable namespace → null, anything else → undefined. */
+function readerNamespace(e: ts.Expression): string | null | undefined {
+  while (ts.isAsExpression(e) || ts.isParenthesizedExpression(e)) e = e.expression;
+  if (!ts.isCallExpression(e) || !ts.isIdentifier(e.expression) || e.expression.text !== "useTranslations") {
+    return undefined;
+  }
+  const arg = e.arguments[0];
+  return arg === undefined ? "" : ts.isStringLiteral(arg) ? arg.text : null;
+}
+
+function sourceFiles(repo: string, roots: string[]): string[] {
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name !== "node_modules") walk(p);
+      } else if (e.name.endsWith(".ts") || e.name.endsWith(".tsx")) files.push(p);
+    }
+  };
+  for (const root of roots) walk(path.join(repo, root));
+  return files;
+}
+
+const parse = (file: string): ts.SourceFile =>
+  ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+
+/**
+ * The namespaces a row's glue chooses: for `{ file }` every reader bound in that file, for
+ * `{ call }` every reader handed at a call of that hook, as an argument (`useZoneNav(
+ * useTranslations("shortcuts"), …)`) or as a property of one (`useShellDispatch({ t })`, where
+ * `t` is resolved to the nearest binding as the scan does). A variable namespace answers null.
+ */
+export function handedReaderNamespaces(repo: string, roots: string[], glue: HandedReaders["glue"]): Set<string | null> {
+  const out = new Set<string | null>();
+  const files = "file" in glue ? [path.join(repo, glue.file)] : sourceFiles(repo, roots);
+  for (const file of files) {
+    const sf = parse(file);
+    const scopes: Map<string, string | null>[] = [new Map()];
+    const lookup = (name: string): string | null | undefined => {
+      for (let i = scopes.length - 1; i >= 0; i--) if (scopes[i]!.has(name)) return scopes[i]!.get(name);
+      return undefined;
+    };
+    const isScope = (n: ts.Node): boolean =>
+      ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)
+      || ts.isMethodDeclaration(n) || ts.isBlock(n) || ts.isSourceFile(n);
+    const handed = (e: ts.Expression): string | null | undefined => {
+      const ns = readerNamespace(e);
+      if (ns !== undefined) return ns;
+      let inner = e;
+      while (ts.isAsExpression(inner) || ts.isParenthesizedExpression(inner)) inner = inner.expression;
+      return ts.isIdentifier(inner) ? lookup(inner.text) : undefined;
+    };
+    const visit = (n: ts.Node): void => {
+      const opened = isScope(n);
+      if (opened) scopes.push(new Map());
+      if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) {
+        const ns = readerNamespace(n.initializer);
+        if (ns !== undefined) {
+          scopes[scopes.length - 1]!.set(n.name.text, ns);
+          if ("file" in glue) out.add(ns);
+        }
+      }
+      if ("call" in glue && ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === glue.call) {
+        for (const arg of n.arguments) {
+          if (ts.isObjectLiteralExpression(arg)) {
+            for (const prop of arg.properties) {
+              const value = ts.isShorthandPropertyAssignment(prop) ? prop.name
+                : ts.isPropertyAssignment(prop) ? prop.initializer : undefined;
+              const ns = value === undefined ? undefined : handed(value);
+              if (ns !== undefined) out.add(ns);
+            }
+          } else {
+            const ns = handed(arg);
+            if (ns !== undefined) out.add(ns);
+          }
+        }
+      }
+      ts.forEachChild(n, visit);
+      if (opened) scopes.pop();
+    };
+    visit(sf);
+  }
+  return out;
+}
+
+/**
+ * Every file in the roots that takes a `Translator` (the type a handed reader carries), binds
+ * no reader of its own and calls anything with a string first (`x("…")`, `x.rich("…")`, and a
+ * reader reached through a record, `text.screener("…")`, which the scan cannot read): each must
+ * be a row of {@link HANDED_READERS}, or its reads are outside the census. A file that only names
+ * the type (`ohbox/types.ts`, the input's declaration) makes no call and holds no read.
+ */
+export function filesHandedAReader(repo: string, roots: string[]): string[] {
+  const out: string[] = [];
+  for (const file of sourceFiles(repo, roots)) {
+    const sf = parse(file);
+    const takesTranslator = sf.statements.some((st) =>
+      ts.isImportDeclaration(st) && st.importClause?.namedBindings !== undefined
+      && ts.isNamedImports(st.importClause.namedBindings)
+      && st.importClause.namedBindings.elements.some((el) => (el.propertyName ?? el.name).text === "Translator"));
+    if (!takesTranslator) continue;
+    let binds = false;
+    let readShaped = false;
+    const visit = (n: ts.Node): void => {
+      if (ts.isVariableDeclaration(n) && n.initializer && readerNamespace(n.initializer) !== undefined) binds = true;
+      if (
+        ts.isCallExpression(n) && n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0])
+        && (ts.isIdentifier(n.expression) || ts.isPropertyAccessExpression(n.expression))
+      ) readShaped = true;
+      if (!binds) ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    if (!binds && readShaped) out.push(path.relative(repo, file));
+  }
+  return out.sort();
+}
+
 /** Every `t("…")` in the scanned roots, with the namespace its translator was bound to. */
 export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
   const reads: KeyRead[] = [];
@@ -380,8 +543,9 @@ export function scanKeyReads(repo: string, roots: string[]): KeyRead[] {
       };
       liveCopyKeys(sf);
 
-      /** Innermost first. Each frame maps a translator identifier to its namespace prefix. */
-      const scopes: Map<string, string | null>[] = [new Map()];
+      /** Innermost first. Each frame maps a translator identifier to its namespace prefix. The
+          outermost holds the readers a caller hands this file ({@link HANDED_READERS}). */
+      const scopes: Map<string, string | null>[] = [new Map(Object.entries(HANDED_READERS[rel]?.readers ?? {}))];
       const lookup = (name: string): string | null | undefined => {
         for (let i = scopes.length - 1; i >= 0; i--) {
           if (scopes[i]!.has(name)) return scopes[i]!.get(name);

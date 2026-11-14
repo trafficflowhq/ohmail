@@ -5,7 +5,7 @@ import {
   type EngineMessage, type Folder, type RuleDTO, type SyncChange,
 } from "@ohmail/client-engine";
 import { ISO, act, installShellEnv, mailbox, mountShell, teardownShellEnv, tick } from "./fixtures/live-walk-shell";
-import { UNDO_MS } from "../app/shell/screener-state";
+import { UNDO_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
 
 /**

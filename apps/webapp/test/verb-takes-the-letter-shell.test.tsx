@@ -3,7 +3,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite
 import {
   ISO, act, answerSyncWith, installShellEnv, mailbox, mountShell, teardownShellEnv, tick,
 } from "./fixtures/live-walk-shell.js";
-import { COMMIT_MS } from "../app/shell/screener-state";
+import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
 
 /**

@@ -13,7 +13,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useTranslations } from "next-intl";
-import { chordKeys, useBinding, useModGlyph } from "./keymap";
+import { chordKeys, useBinding, useModGlyph } from "@ohmail/app-logic/keys/keymap";
 import { replySubject } from "@ohmail/client-engine";
 import type {
   AddressBookEntry,
@@ -26,16 +26,16 @@ import {
   ComposeAttach, composeAttachCap, composeAttachCapBinding,
 } from "../components/ComposeAttach";
 import { rowAddress, senderName } from "./format";
-import { displayAddress } from "./idn";
-import { sendKeyOf, sendRefusal, sendStateFor, sendVerb, type SendState, type ShowSend } from "./mail-send";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
+import { sendKeyOf, sendRefusal, sendStateFor, sendVerb, type SendState, type ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import { draftOverCeiling } from "@trafficflow/core/outbound-text";
-import { parseRecipients, type MailSend } from "./compose";
+import { parseRecipients, type MailSend } from "@ohmail/app-logic/writing/compose";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
 import { ForwardFiles } from "./ForwardFiles";
 import type { ForwardFilesPlan } from "./forward-files";
 import { HeldSendResolve } from "../components/HeldSendResolve";
 import { RichEditor } from "./RichEditorLazy";
-import type { RichValue } from "./rich-text";
+import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { DraftReplyControl, DraftedReply } from "./draft-reply";
 import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 import { SendStatus, sendLineValues } from "./SendStatus";

@@ -82,7 +82,7 @@ interface Props { resurfaced?: Row[]; newForYou: Row[]; previouslySeen?: Row[] }
 
 async function render(props: Props): Promise<void> {
   const { OhboxView } = await import("../app/views/OhboxView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
   function Wrapper(): React.ReactElement {
     const [sel, setSel] = React.useState<string | null>(null);
     return h(OhboxView as never, {

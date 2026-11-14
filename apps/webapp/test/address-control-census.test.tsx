@@ -17,7 +17,7 @@ import { MessageRow, StreamCard } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { senderHitOf } from "../app/shell/sender-hit";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { MessageRecipients } from "../app/shell/MessageRecipients";
 import { MessageHeader } from "../app/shell/MessageCard";
 import { SenderMenu } from "../app/shell/SenderMenu";

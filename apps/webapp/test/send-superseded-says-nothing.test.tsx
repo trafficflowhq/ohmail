@@ -48,7 +48,8 @@ const drain = async (): Promise<void> => {
 
 describe("a superseded answer on the web", () => {
   it("leaves a queued lane queued: no failure, no settlement, no sentence", async () => {
-    const { useMailSend } = await import("../app/shell/mail-send.js");
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
     const settled: string[] = [];
     const toasts: string[] = [];
     const flushes: string[] = [];
@@ -64,8 +65,9 @@ describe("a superseded answer on the web", () => {
     const Probe = (): null => {
       api = useMailSend(
         engine as never,
+        null,
         ((m: string) => { toasts.push(m); }) as never,
-        ((key: string) => { settled.push(key); }) as never,
+        useMailSendText(), ((key: string) => { settled.push(key); }) as never,
       ) as never;
       return null;
     };
@@ -87,10 +89,11 @@ describe("a superseded answer on the web", () => {
   });
 
   it("from the restore collector: the lane's durable lock is kept and nothing is said", async () => {
-    const { useMailSend } = await import("../app/shell/mail-send.js");
-    const { claimSendLock, recordForSendKey, SEND_LOCK_FORMAT } = await import("../app/shell/send-lock.js");
-    claimSendLock({ v: SEND_LOCK_FORMAT, lane: "m1", key: "k9", at: Date.now(), draftId: null, fp: "fp-1", subject: "Re: Werkstatt-Besuch?" } as never, NONE_OWED);
-    expect(recordForSendKey("k9", Date.now()), "no record, so the collector would skip it and this measures nothing").not.toBeNull();
+    const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
+    const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+    const { claimSendLock, recordForSendKey, SEND_LOCK_FORMAT } = await import("@ohmail/app-logic/writing/send-lock");
+    claimSendLock({ v: SEND_LOCK_FORMAT, lane: "m1", key: "k9", at: Date.now(), draftId: null, fp: "fp-1", subject: "Re: Werkstatt-Besuch?" } as never, NONE_OWED, null);
+    expect(recordForSendKey("k9", Date.now(), null), "no record, so the collector would skip it and this measures nothing").not.toBeNull();
     const toasts: string[] = [];
     const listeners: Array<() => void> = [];
     let late = true;
@@ -109,7 +112,7 @@ describe("a superseded answer on the web", () => {
       hasLateResults: () => late,
     };
     const Probe = (): null => {
-      useMailSend(engine as never, ((m: string) => { toasts.push(m); }) as never, (() => {}) as never);
+      useMailSend(engine as never, null, ((m: string) => { toasts.push(m); }) as never, useMailSendText(), (() => {}) as never);
       return null;
     };
     host = document.createElement("div");
@@ -121,7 +124,7 @@ describe("a superseded answer on the web", () => {
     await act(async () => { for (const l of listeners) l(); });
     await drain();
     expect(pulls.length, "the collector never pulled, so this measures nothing").toBeGreaterThan(0);
-    expect(recordForSendKey("k9", Date.now()), "a superseded answer released the lane's lock").not.toBeNull();
+    expect(recordForSendKey("k9", Date.now(), null), "a superseded answer released the lane's lock").not.toBeNull();
     expect(toasts).toEqual([]);
   });
 });

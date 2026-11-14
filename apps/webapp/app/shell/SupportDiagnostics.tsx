@@ -9,7 +9,7 @@
 import { useTranslations } from "next-intl";
 import { Button } from "@ohmail/ui";
 import { withSupportBlock, withoutSupportBlock } from "@trafficflow/core/diagnostics";
-import { appendRich, escapeAsParagraphs, type RichValue } from "./rich-text";
+import { appendRich, escapeAsParagraphs, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 
 /** The body without the block, or `null` when either half no longer holds it whole. */
 export function richWithoutBlock(value: RichValue, block: string): RichValue | null {

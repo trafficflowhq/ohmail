@@ -11,7 +11,7 @@ import { AttachmentPreview, isPreviewable, previewKind } from "../app/components
 import { AttachThumb } from "../app/components/compose-attach-look.js";
 import type { AttachmentItem } from "../app/components/AttachmentStrip.js";
 import type { ComposeAttachment } from "@ohmail/client-engine";
-import { KeymapProvider } from "../app/shell/keymap.js";
+import { KeymapProvider } from "@ohmail/app/keys";
 
 /**
  * ═══ pdf.js STANDS IN, AND THE STAND-IN IS HELD TO THE REAL LIBRARY'S SHAPE ═══════════════

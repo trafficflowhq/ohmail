@@ -16,8 +16,8 @@ import { settleFirstPaint } from "./_first-paint.js";
 import { organizerNotices, type OrganizerNotice as NoticeFact } from "@ohmail/app-logic/mail-state/mail-state";
 import { OrganizerNotice } from "../app/shell/OrganizerNotice";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "../app/shell/keymap";
-import type { PendingDecision, ScreenerState } from "../app/shell/screener-state";
+import { KeymapProvider } from "@ohmail/app/keys";
+import type { PendingDecision, ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**
  * ═══ WHO ORGANIZES THIS MAILBOX CHANGED — SAID ONCE, AND A DECISION THAT SURVIVES ITS CONFIRM ══
@@ -559,7 +559,8 @@ async function freshStore(): Promise<MirrorStore> {
 async function mountState(
   engine: OhmailEngine,
 ): Promise<{ get: () => ScreenerState; }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   let latest: ScreenerState | null = null;
 
   function Probe(): null {
@@ -567,9 +568,9 @@ async function mountState(
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
     latest = useScreenerState(
       engine,
-      v,
+      null, v,
       ((message: string) => { toasts.push(message); }) as never,
-      undefined,
+      useScreenerText(), undefined,
       undefined,
       true,
       { mode: "pending", name: "ohmail Cloud", reason: null, oauthOnly: false },
@@ -627,14 +628,15 @@ describe("a decision queued with the organizer does not revert on its own confir
   it("a decision the SERVER already knows about excludes the sender before any press", async () => {
     /* The durable half: a press made in a previous session. Without it a reload puts every
        decided sender back in the queue and asks the same question again. */
-    const { useScreenerState } = await import("../app/shell/screener-state.js");
+    const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+    const { useScreenerText } = await import("../app/shell/screener-text.js");
     const engine = queueingEngine(await freshStore());
     let latest: ScreenerState | null = null;
     function Probe(): null {
       const [v, setV] = React.useState(0);
       React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
       latest = useScreenerState(
-        engine, v, (() => {}) as never, undefined, undefined, true,
+        engine, null, v, (() => {}) as never, useScreenerText(), undefined, undefined, true,
         { mode: "pending", name: "ohmail Cloud", reason: null, oauthOnly: false },
         [{
           subject: "editors@terracereview.invalid", scope: "sender",

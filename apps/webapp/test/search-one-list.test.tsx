@@ -16,7 +16,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 

@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { EngineMessage, MessageBody, FeedPartition, TagDTO } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { ReadsView } from "../app/views/ReadsView";
 import { mailboxLabelKey, mailboxLabelResolver, type MailboxLabelFact } from "../app/shell/mailbox-label";
 

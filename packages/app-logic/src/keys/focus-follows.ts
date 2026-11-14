@@ -10,9 +10,9 @@
  * Surfaces call {@link useFocusFollows}; the shell mounts {@link FocusFollows} once.
  */
 import { useEffect, useLayoutEffect, useRef, type RefObject } from "react";
-import { KEY_WRITING } from "./keymap";
-import { pageModal } from "@ohmail/app-logic/session/modal-gate";
-import { queryAllVisible, queryVisible } from "@ohmail/app-logic/lists/visible-dom";
+import { KEY_WRITING } from "./keymap.js";
+import { pageModal } from "../session/modal-gate.js";
+import { queryAllVisible, queryVisible } from "../lists/visible-dom.js";
 
 const useCommitEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 

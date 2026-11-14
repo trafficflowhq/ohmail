@@ -13,7 +13,7 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import { ThemeProvider } from "@ohmail/ui";
-import type { ScreenerState } from "../app/shell/screener-state.js";
+import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 import messages from "../messages/en.json";
 import { settleFirstPaint } from "./_first-paint.js";
 
@@ -114,16 +114,17 @@ async function engineWith(held: EngineMessage[]): Promise<OhmailEngine> {
 
 /** Mount the REAL waiting Screener over the REAL state hook; nothing is faked. */
 async function mount(engine: OhmailEngine): Promise<{ latest: () => ScreenerState }> {
-  const { useScreenerState } = await import("../app/shell/screener-state.js");
+  const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
+  const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("../app/shell/keymap.js");
+  const { KeymapProvider } = await import("@ohmail/app/keys");
 
   let live: ScreenerState | null = null;
 
   function Probe(): React.ReactElement {
     const [v, setV] = React.useState(0);
     React.useEffect(() => engine.subscribe(() => setV((x) => x + 1)), []);
-    const state = useScreenerState(engine, v, (() => {}) as never);
+    const state = useScreenerState(engine, null, v, (() => {}) as never, useScreenerText());
     const [sel, setSel] = React.useState<Record<string, string | null>>({
       waiting: null, screened: null, spam: null,
     });

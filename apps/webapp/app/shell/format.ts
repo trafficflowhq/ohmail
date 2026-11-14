@@ -28,7 +28,7 @@ import {
   type WithheldMarker,
 } from "@ohmail/client-engine";
 import { TAG_HUES, type TagHueName } from "@ohmail/ui";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { activeFormatLocale, activeFormatZone, liveCopy } from "./locale";
 
 /** An instant's wall clock where the reader is standing — the one call the stamps below share. */

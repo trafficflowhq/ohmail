@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { chordKeys, modGlyph } from "../app/shell/keymap";
+import { chordKeys, modGlyph } from "@ohmail/app-logic/keys/keymap";
 
 /**
  * THE KEYMAP CENSUS (ohmarchy Phase 1) — the one-table grammar, asserted through the sheet.

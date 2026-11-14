@@ -17,7 +17,7 @@ import type { Editor } from "@tiptap/react";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../../messages/en.json";
 import { RichEditor } from "../../app/shell/RichEditor";
-import { EMPTY_RICH, type RichValue } from "../../app/shell/rich-text";
+import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import "../../app/app.css";
 
 declare global {

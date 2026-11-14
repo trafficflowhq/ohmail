@@ -8,7 +8,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { OhmailEngine, TagDTO } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { HistoryView as HistoryViewRaw } from "../app/views/HistoryView";
-import { KeymapProvider } from "../app/shell/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
 import { WithListGone } from "./_list-gone";
 import { ESTIMATED_ROW_PX, FALLBACK_VIEWPORT_PX } from "@ohmail/app-logic/lists/list-window";
 import { FIXTURE_NOW, idOf, storeFixture, storeMessage, storeRows } from "./_store-fixture";

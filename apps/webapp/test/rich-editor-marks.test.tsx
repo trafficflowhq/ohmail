@@ -10,7 +10,7 @@ import messages from "../messages/en.json";
 import type { Editor } from "@tiptap/react";
 import { RichEditor } from "../app/shell/RichEditor";
 import { EDITOR_RULES, autolinkHref, nextMarks } from "../app/shell/rich-editor-marks";
-import { EMPTY_RICH, type RichValue } from "../app/shell/rich-text";
+import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 
 /* @reads: apps/webapp/test/editor-feel/rules.pw.ts apps/webapp/test/rich-editor-marks.test.tsx
    Read by paths built at runtime from __dirname — the rig's rule list and this file's own cases —

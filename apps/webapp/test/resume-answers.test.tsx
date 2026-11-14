@@ -668,8 +668,8 @@ describe("(g) a revoked sign-in leaves no copy behind the sign-in form", () => {
     [...Object.keys(localStorage), ...Object.keys(sessionStorage)].filter((k) => k.includes(owner)).sort();
   /** An account's keys beside its copy: its data, its preferences and this tab's note about it. */
   async function plantKeysOf(owner: string): Promise<string[]> {
-    const { SEND_LOCKS_PREFIX } = await import("../app/shell/send-lock.js");
-    const { COMPOSE_DRAFT_PREFIX } = await import("../app/shell/compose.js");
+    const { SEND_LOCKS_PREFIX } = await import("@ohmail/app-logic/writing/send-lock");
+    const { COMPOSE_DRAFT_PREFIX } = await import("@ohmail/app-logic/writing/compose");
     const { searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
     const { seedNotNowKey } = await import("../app/shell/seed-offer.js");
     const keys = [
@@ -1435,7 +1435,9 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
    * the face mirror through the product door's provider, the push row through its announce.
    */
   async function leaveItemsOfA(): Promise<void> {
-    (await import("../app/shell/mail-send.js")).writeReplyDraft("m-of-a", { text: "words of A", html: "" });
+    (await import("@ohmail/app-logic/writing/mail-send")).writeReplyDraft(
+      "m-of-a", { text: "words of A", html: "" }, (await import("@ohmail/app-logic/storage/storage-owner")).storageOwner(),
+    );
     const { Providers } = await import("../app/(product)/providers.js");
     const { useTheme } = await import("@ohmail/ui");
     const Adopt = (): null => {
@@ -1471,9 +1473,10 @@ describe("(h) a revoke heard on any page: the copy goes before the page acts, an
   });
   /** B's reply, typed once B's sign-in holds the jar, as read back by B. */
   const replyOfB = async (write: boolean): Promise<string> => {
-    const send = await import("../app/shell/mail-send.js");
-    if (write) send.writeReplyDraft("m-of-b", { text: "words of B", html: "" });
-    return send.readReplyDraft("m-of-b").text;
+    const send = await import("@ohmail/app-logic/writing/mail-send");
+    const { storageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
+    if (write) send.writeReplyDraft("m-of-b", { text: "words of B", html: "" }, storageOwner());
+    return send.readReplyDraft("m-of-b", storageOwner()).text;
   };
 
   it("a wipe held past its 15 s, then a sign-in as another account: the revoked copy goes, the new session keeps its own", async () => {

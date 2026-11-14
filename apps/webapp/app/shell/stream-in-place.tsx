@@ -16,7 +16,7 @@ import { useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObj
 import { isOwnOutbound, type EngineMessage, type TagDTO } from "@ohmail/client-engine";
 import { MessagePane, type MessageAction } from "./MessagePane";
 import { useMessageChrome } from "./message-chrome";
-import { inlineForwardKey, type SendPhase } from "./mail-send";
+import { inlineForwardKey, type SendPhase } from "@ohmail/app-logic/writing/mail-send";
 import { createThreadWalkChannel, type ThreadWalkChannel } from "@ohmail/app-logic/reading/thread-walk-channel";
 import type { StreamHandle } from "./StreamShell";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";

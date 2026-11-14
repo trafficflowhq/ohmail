@@ -29,7 +29,7 @@ import {
   type ProfileImportAppliedWire, type ProfileImportCandidateWire, type ProfileImportCountsWire,
   type ProfileImportPendingWire, type ProfileImportStatusWire,
 } from "../api-client";
-import { displayAddress } from "./idn";
+import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { isRemovedMailbox } from "@ohmail/app-logic/mail-state/mail-state";
 /* The one place any surface asks whether a phone holds the mailbox — see `reader-holder.ts`. */
 import { PHONE_HOLDER_WHY_KEY, holderSentence, phoneHolder } from "@ohmail/app-logic/reading/reader-holder";

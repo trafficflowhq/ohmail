@@ -18,16 +18,10 @@ import {
   useMemo,
   useRef,
   useSyncExternalStore,
-  type ReactNode,
 } from "react";
-import { modalIsOpen, pageModal } from "@ohmail/app-logic/session/modal-gate";
-import { modGlyph, useModGlyph } from "./mod-glyph";
-import type { BindingGroup, DisabledReason, KeyBinding } from "@ohmail/app-logic/keys/binding";
-/* The rules that stop key hints being shown on devices with no keys. It rides with the
-   registry rather than with any one component because the chrome it hides is spread across the
-   shell, the dock and the reading overlay, and this module is the one thing that is in the
-   bundle whenever any of them are. `AppShell` imports it; it never renders conditionally. */
-import "./touch-keys.css";
+import { modalIsOpen, pageModal } from "../session/modal-gate.js";
+import { modGlyph, useModGlyph } from "./mod-glyph.js";
+import type { BindingGroup, DisabledReason, KeyBinding } from "./binding.js";
 
 /* What a binding IS (`KeyBinding`, its group and why it rests) is declared in app-logic's `keys/binding.ts`. */
 export type { BindingGroup, DisabledReason, KeyBinding };
@@ -144,7 +138,8 @@ interface Store extends Omit<Registry, "bindings"> {
   reshaped: () => void;
 }
 
-const KeymapContext = createContext<Store | null>(null);
+export const KeymapContext = createContext<Store | null>(null);
+export type { Store as KeymapStore };
 
 /**
  * A writing surface declared on its markup, for a key pressed INSIDE it: the same rule as
@@ -312,7 +307,7 @@ export function ariaShortcut(chord: string, mod: string): string | undefined {
 
 /* ── the provider ───────────────────────────────────────────────────────────────────── */
 
-export function KeymapProvider({ children }: { children: ReactNode }) {
+export function useKeymapStore(): Store {
   const layers = useRef<Layer[]>([]);
   const nextId = useRef(1);
   const version = useRef(0);
@@ -591,7 +586,7 @@ export function KeymapProvider({ children }: { children: ReactNode }) {
     [register, press, mod, claimWriting, claimCursorPlacer, subscribe, snapshot, reshaped],
   );
 
-  return <KeymapContext.Provider value={value}>{children}</KeymapContext.Provider>;
+  return value;
 }
 
 function useStore(): Store {
@@ -683,7 +678,6 @@ export function useKeyBindings(bindings: KeyBinding[], scope: BindingScope = "vi
 
   useEffect(
     () => register({ scope, get: () => latest.current }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [register, scope, shape],
   );
 }
@@ -730,7 +724,6 @@ export function useOptionalKeyBindings(
       unwatch?.();
       off();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [register, reshaped, scope, shape, watch]);
 }
 

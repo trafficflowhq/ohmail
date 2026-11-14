@@ -15,15 +15,17 @@ import {
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { FirstRun } from "../app/shell/FirstRun";
-import { KeymapProvider, useKeyBindings, type KeyBinding } from "../app/shell/keymap";
-import { FocusFollows } from "../app/shell/focus-follows";
+import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
+import { KeymapProvider } from "@ohmail/app/keys";
+import { FocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { KEY_PEEK, pageModal } from "@ohmail/app-logic/session/modal-gate";
 import { revealInScroller } from "@ohmail/app-logic/lists/list-window";
-import { writeReplyDraft } from "../app/shell/mail-send";
+import { writeReplyDraft } from "@ohmail/app-logic/writing/mail-send";
 import { stubThreadLayout } from "./fixtures/thread-layout";
-import { parseRichValue } from "../app/shell/rich-text";
+import { parseRichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * ═══ THE KEYS REACH WHAT IS IN FRONT ═══════════════════════════════════════════════════════════
@@ -635,7 +637,7 @@ describe("through the shell: a page modal over the Ohbox keeps ↵ and j from th
     });
     await waitFor(() => !rowIds(el).includes("m3"), "m3 leaving the Ohbox for Answer Later");
     /* A reply already written for it, in the per-message buffer the run reads on open. */
-    writeReplyDraft("m3", parseRichValue("Thursday works."));
+    writeReplyDraft("m3", parseRichValue("Thursday works."), storageOwner());
     await key("f");
     await waitFor(() => document.querySelector('.fr-card[aria-modal="true"]') !== null, "the Reply Run");
     expect(pageModal(document), "the run's card does not own the page").not.toBeNull();

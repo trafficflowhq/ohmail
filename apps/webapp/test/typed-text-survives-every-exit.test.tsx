@@ -18,13 +18,14 @@ import {
 import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import {
   COMPOSER_KEY, EMPTY_COMPOSE, composeSessionId, resetComposerForTest, writeComposeDraft,
   writeComposeRow,
-} from "../app/shell/compose";
+} from "@ohmail/app-logic/writing/compose";
 import { typeInto as typeIntoEditor } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 /**
  * TEXT A PERSON TYPED REACHES A SERVER DRAFT OR A NAMED LOCAL UNIT ON EVERY EXIT, and no exit
@@ -421,9 +422,9 @@ describe("a duplicated tab", () => {
   it("gets its own composer while the original is still open", async () => {
     const locks = installLocks();
     tabNamed("dup-x");
-    writeComposeDraft(message("A's message"));
-    composeSessionId();
-    writeComposeRow("row-a");
+    writeComposeDraft(message("A's message"), storageOwner());
+    composeSessionId(storageOwner());
+    writeComposeRow("row-a", storageOwner());
     locks.held.set(`${COMPOSER_KEY}.dup-x`, "the original tab");
     tabNamed("dup-x");
 
@@ -475,7 +476,7 @@ describe("a duplicated tab", () => {
       value: { request: () => never(), query: () => never() },
     });
     tabNamed("silent-x");
-    writeComposeDraft(message("restored all the same"));
+    writeComposeDraft(message("restored all the same"), storageOwner());
     tabNamed("silent-x");
 
     await mountShell({ hash: "#/compose" });
@@ -485,7 +486,7 @@ describe("a duplicated tab", () => {
   it("CONTROL: a reload of the same tab keeps its composer and its message", async () => {
     installLocks();
     tabNamed("reload-x");
-    writeComposeDraft(message("still mine"));
+    writeComposeDraft(message("still mine"), storageOwner());
     tabNamed("reload-x");
 
     await mountShell({ hash: "#/compose" });
@@ -504,8 +505,8 @@ describe("a tab that dies without pagehide", () => {
     newTab();
     const dead = await mountShell({ hash: "#/compose", rows: ["row-x"] });
     const deadId = window.sessionStorage.getItem(COMPOSER_KEY)!;
-    writeComposeDraft(message("lost in a crash"));
-    writeComposeRow("row-x");
+    writeComposeDraft(message("lost in a crash"), storageOwner());
+    writeComposeRow("row-x", storageOwner());
     await killTab(dead);
     window.navigator.locks && (window.navigator.locks as unknown as FakeLocks).held.clear();
 
@@ -576,7 +577,7 @@ describe("a tab that dies without pagehide", () => {
     installLocks();
     unitOf("dead-y", "left by a dead tab", true);
     newTab();
-    writeComposeDraft(message("already writing"));
+    writeComposeDraft(message("already writing"), storageOwner());
 
     await mountShell({ hash: "#/compose" });
     await pause(200);
@@ -594,7 +595,7 @@ describe("the body ceiling", () => {
    */
   it("keeps the composer open over a message too long to save, and Discard still lets it go", async () => {
     newTab();
-    writeComposeDraft({ ...message("Long"), body: "x".repeat(DRAFT_BODY_MAX_BYTES + 16) });
+    writeComposeDraft({ ...message("Long"), body: "x".repeat(DRAFT_BODY_MAX_BYTES + 16) }, storageOwner());
     await mountShell({ hash: "#/compose" });
     await waitFor(() => subjectShown() === "Long", "the long message restored");
 

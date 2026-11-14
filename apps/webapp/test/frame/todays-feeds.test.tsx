@@ -18,7 +18,7 @@ import messages from "../../messages/en.json";
 import { engineOver, setup, storeWith, teardown } from "../_view-shell";
 import { hostFromTodaysInputs } from "../_todays-shell";
 import { DESKTOP_CTA_DISMISSED, DESKTOP_DOWNLOAD_URL, useTodaysFeeds, type TodaysFeedsInput } from "../../app/shell/todays-feeds";
-import type { MailSendApi, SendLineItem } from "../../app/shell/mail-send";
+import type { MailSendApi, SendLineItem } from "@ohmail/app-logic/writing/mail-send";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 
 const quiet = { key: "quiet", settled: true } as unknown as TodaysFeedsInput["mailState"];

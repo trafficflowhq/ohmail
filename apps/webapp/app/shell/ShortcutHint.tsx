@@ -22,7 +22,7 @@
 import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Kbd } from "@ohmail/ui";
-import { isTypingTarget, useBinding, useEnabledBinding, useKeyPress } from "./keymap";
+import { isTypingTarget, useBinding, useEnabledBinding, useKeyPress } from "@ohmail/app-logic/keys/keymap";
 import "./shortcut-hint.css";
 
 /** One generated hint: the keycaps and the winning binding's own label. */

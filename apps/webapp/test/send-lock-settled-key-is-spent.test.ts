@@ -6,14 +6,14 @@
  * an identical second reply then goes out under a new key and the SERVER decides. Only an
  * unverified record keeps resuming: it is the one evidence a message may already be out.
  */
-/* @reads: apps/webapp/app/shell/mail-send.ts */
+/* @reads: packages/app-logic/src/writing/mail-send.ts */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   releaseSendLock, resumeSendLock, sendIdentity, sendLocksKey, SEND_LOCK_FORMAT, type SendLock,
-} from "../app/shell/send-lock";
-import { sendLockOwed } from "../app/shell/mail-send";
+} from "@ohmail/app-logic/writing/send-lock";
+import { sendLockOwed } from "@ohmail/app-logic/writing/mail-send";
 
 const NOW = Date.now();
 const REPLY = { kind: "mail_send", inReplyTo: "m-1", body: "Thanks, Ada.", subject: "Re: Invoice", to: [{ name: "Ada", address: "ada@fake.test" }], mailboxId: "mb-1" };

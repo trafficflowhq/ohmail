@@ -2,8 +2,8 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { composePlan } from "../app/shell/compose";
-import { canSend } from "../app/shell/mail-send";
+import { composePlan } from "@ohmail/app-logic/writing/compose";
+import { canSend } from "@ohmail/app-logic/writing/mail-send";
 
 /**
  * AN ENTRY BEING TYPED IS UNFINISHED, NOT WRONG.

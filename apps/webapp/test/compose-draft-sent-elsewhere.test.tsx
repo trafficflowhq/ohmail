@@ -9,13 +9,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { EngineDraft, EngineMutation, SyncChange } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { AUTOSAVE_DELAY_MS } from "../app/shell/compose-autosave";
+import { AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing/compose-autosave";
 import { draftsList } from "@ohmail/client-engine";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import {
   act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
 const compose = messages.compose as unknown as Record<string, string>;
 const D = "d-elsewhere";
@@ -121,9 +122,9 @@ describe("a draft sent from another device while it is open here", () => {
 
   it("a reload brings nothing back as a draft: the unchanged sent letter leaves this browser's buffer", async () => {
     await openThenSentElsewhere();
-    const { readComposeDraft, readComposeRow } = await import("../app/shell/compose.js");
+    const { readComposeDraft, readComposeRow } = await import("@ohmail/app-logic/writing/compose");
     await waitFor(() => text().includes(compose.sentElsewhere!), "the sentence");
-    expect({ subject: readComposeDraft().subject, row: readComposeRow() }, "a reload would restore the sent letter and save it as a draft")
+    expect({ subject: readComposeDraft(storageOwner()).subject, row: readComposeRow(storageOwner()) }, "a reload would restore the sent letter and save it as a draft")
       .toEqual({ subject: "", row: null });
   }, 30_000);
 
@@ -369,8 +370,8 @@ describe("Compose after the letter went from another device", () => {
     await press(button(compose.sendAsNew!), "Send as a new letter");
     await waitFor(() => q(".view-compose") === null, "handed off");
     await pause(400);
-    const { readComposeRow } = await import("../app/shell/compose.js");
-    const whileSending = { toast: toasts().includes(compose.sentElsewhereMovedToDrafts!), bound: readComposeRow() === kept };
+    const { readComposeRow } = await import("@ohmail/app-logic/writing/compose");
+    const whileSending = { toast: toasts().includes(compose.sentElsewhereMovedToDrafts!), bound: readComposeRow(storageOwner()) === kept };
     shell.sendGate.wait = null;
     await act(async () => { release(); });
     await pause(1500);
