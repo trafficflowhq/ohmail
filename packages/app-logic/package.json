@@ -604,6 +604,18 @@
       "node": "./dist/reading/thread-walk-channel.js",
       "default": "./src/reading/thread-walk-channel.ts"
     },
+    "./streams": {
+      "types": "./src/streams/index.ts",
+      "ohmail-source": "./src/streams/index.ts",
+      "node": "./dist/streams/index.js",
+      "default": "./src/streams/index.ts"
+    },
+    "./piles": {
+      "types": "./src/piles/index.ts",
+      "ohmail-source": "./src/piles/index.ts",
+      "node": "./dist/piles/index.js",
+      "default": "./src/piles/index.ts"
+    },
     "./screener": {
       "types": "./src/screener/index.ts",
       "ohmail-source": "./src/screener/index.ts",
@@ -903,6 +915,48 @@
       "ohmail-source": "./src/writing/send-lock.ts",
       "node": "./dist/writing/send-lock.js",
       "default": "./src/writing/send-lock.ts"
+    },
+    "./drafts": {
+      "types": "./src/drafts/index.ts",
+      "ohmail-source": "./src/drafts/index.ts",
+      "node": "./dist/drafts/index.js",
+      "default": "./src/drafts/index.ts"
+    },
+    "./history": {
+      "types": "./src/history/index.ts",
+      "ohmail-source": "./src/history/index.ts",
+      "node": "./dist/history/index.js",
+      "default": "./src/history/index.ts"
+    },
+    "./tags": {
+      "types": "./src/tags/index.ts",
+      "ohmail-source": "./src/tags/index.ts",
+      "node": "./dist/tags/index.js",
+      "default": "./src/tags/index.ts"
+    },
+    "./folder": {
+      "types": "./src/folder/index.ts",
+      "ohmail-source": "./src/folder/index.ts",
+      "node": "./dist/folder/index.js",
+      "default": "./src/folder/index.ts"
+    },
+    "./address": {
+      "types": "./src/address/index.ts",
+      "ohmail-source": "./src/address/index.ts",
+      "node": "./dist/address/index.js",
+      "default": "./src/address/index.ts"
+    },
+    "./trash": {
+      "types": "./src/trash/index.ts",
+      "ohmail-source": "./src/trash/index.ts",
+      "node": "./dist/trash/index.js",
+      "default": "./src/trash/index.ts"
+    },
+    "./place-list": {
+      "types": "./src/place-list/index.ts",
+      "ohmail-source": "./src/place-list/index.ts",
+      "node": "./dist/place-list/index.js",
+      "default": "./src/place-list/index.ts"
     }
   },
   "dependencies": {

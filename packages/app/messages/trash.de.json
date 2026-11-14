@@ -30,6 +30,7 @@
     "liveOlder": "Ältere zeigen",
     "liveOlderLoading": "Es wird weiter zurückgeschaut…",
     "liveBodyLoading": "Die Nachricht wird von deinem Mailserver gelesen…",
-    "liveBodyFailed": "Die Nachricht ließ sich nicht von deinem Mailserver lesen."
+    "liveBodyFailed": "Die Nachricht ließ sich nicht von deinem Mailserver lesen.",
+    "title": "Papierkorb"
   }
 }

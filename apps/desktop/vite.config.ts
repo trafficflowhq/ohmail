@@ -101,6 +101,8 @@ const BASE_MESSAGE_NAMESPACES = [
   // The calendar's invitations, From mail, setup, settings panes and its parts beside mail (the folders of the same
   // names under `packages/app/src`), for the same reason.
   "invitations", "frommail", "calsetup", "calsettings", "calmail",
+  // The new places' own words (`@ohmail/app/news`, `piles`, `tags`, `address`), read through `@ohmail/app/text`.
+  "news", "later", "parked", "resurface", "tags", "address",
   // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.

@@ -27,6 +27,45 @@
     "runPlaceholder": "Deine Antwort",
     "runReplyAria": "Antwort",
     "runExit": "verlassen",
-    "pileResurfaces": "taucht {when} wieder auf"
+    "pileResurfaces": "taucht {when} wieder auf",
+    "list": {
+      "menu": "Liste"
+    }
+  },
+  "later": {
+    "title": "Später antworten",
+    "empty": "Nichts zum späteren Antworten",
+    "switch": {
+      "label": "Stapel",
+      "segment": "{name} {count}"
+    },
+    "run": {
+      "start": "Antwortrunde",
+      "label": "Antwortrunde",
+      "progress": "{step} von {total}",
+      "done": "Fertig → weiter",
+      "skip": "Überspringen",
+      "exit": "Verlassen",
+      "empty": "Nichts zum späteren Antworten"
+    },
+    "row": {
+      "done": "Erledigt",
+      "resurfaces": "zurück {when}"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    },
+    "step": {
+      "up": "Vorherige",
+      "down": "Nächste"
+    }
+  },
+  "parked": {
+    "title": "Geparkt",
+    "empty": "Nichts geparkt"
+  },
+  "resurface": {
+    "title": "Wieder auftauchen",
+    "empty": "Nichts, was wieder auftauchen soll"
   }
 }

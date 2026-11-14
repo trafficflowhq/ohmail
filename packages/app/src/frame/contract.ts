@@ -91,6 +91,8 @@ export type PlacePanes =
       readonly kind: "columns";
       readonly List: ComponentType<PaneProps>;
       readonly Reading: ComponentType<PaneProps> | "reader";
+      /** An own `Reading` whose verbs go through the frame's one press seam asks for the room (where a reader is). */
+      readonly room?: true;
     }
   | { readonly kind: "wide"; readonly Wide: ComponentType<PaneProps> };
 /** A place's registration. Places with one `body` share one mounted instance (today's views: "today"). */

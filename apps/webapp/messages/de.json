@@ -784,7 +784,37 @@
   "receipts": {
     "title": "Belege",
     "tail": "Ältere Belege findest du über die Suche.",
-    "streamAria": "Lesestrom"
+    "streamAria": "Lesestrom",
+    "waterline": {
+      "label": "Bis hierher gesehen"
+    },
+    "markAll": {
+      "label": "Alles als gelesen markieren",
+      "done": "{count, plural, one {1 Beitrag} other {# Beiträge}} als gelesen markiert",
+      "undo": "Rückgängig"
+    },
+    "list": {
+      "label": "Belege",
+      "menu": "Liste"
+    },
+    "stream": {
+      "label": "Belege-Strom",
+      "empty": "Hier ist nichts"
+    },
+    "item": {
+      "expand": "Aufklappen",
+      "collapse": "Zuklappen",
+      "full": "Ganz lesen",
+      "markUnread": "Als ungelesen markieren",
+      "loading": "Wird geladen",
+      "file": "Hat einen Anhang"
+    },
+    "search": {
+      "older": "Ältere in der Suche"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    }
   },
   "stream": {
     "newSince": "{count, plural, =0 {Nichts Neues} one {# neue} other {# neue}} seit deinem letzten Besuch"
@@ -1198,7 +1228,10 @@
     "runPlaceholder": "Deine Antwort",
     "runReplyAria": "Antwort",
     "runExit": "verlassen",
-    "pileResurfaces": "taucht {when} wieder auf"
+    "pileResurfaces": "taucht {when} wieder auf",
+    "list": {
+      "menu": "Liste"
+    }
   },
   "seed": {
     "title": "Du hast {count, plural, one {1 Person} other {# Leuten}} geschrieben.",
@@ -1242,8 +1275,22 @@
     "storeRetry": "Erneut versuchen",
     "railLabel": "Zu einem Monat springen",
     "railUndated": "Ohne Datum",
+    "month": "Monat",
+    "year": "Jahr",
     "railCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
-    "placeChip": "Historie"
+    "placeChip": "Historie",
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "list": {
+      "menu": "Liste"
+    }
   },
   "trash": {
     "emptyTitle": "Nichts in ohmail gelöscht.",
@@ -1276,7 +1323,8 @@
     "liveOlder": "Ältere zeigen",
     "liveOlderLoading": "Es wird weiter zurückgeschaut…",
     "liveBodyLoading": "Die Nachricht wird von deinem Mailserver gelesen…",
-    "liveBodyFailed": "Die Nachricht ließ sich nicht von deinem Mailserver lesen."
+    "liveBodyFailed": "Die Nachricht ließ sich nicht von deinem Mailserver lesen.",
+    "title": "Papierkorb"
   },
   "tag": {
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
@@ -1310,7 +1358,28 @@
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "emptyTitle": "Nichts in diesem Ordner",
     "emptyHint": "Er enthält keine Mail. Die Ordnerliste folgt deinem Mailserver: Ein dort gelöschter Ordner verschwindet auch hier.",
-    "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr."
+    "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr.",
+    "loading": "Dieser Ordner wird geladen",
+    "group": {
+      "new": "Neu",
+      "earlier": "Früher"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "title": "Ordner",
+    "way": {
+      "all": "Ordner"
+    },
+    "list": {
+      "menu": "Liste"
+    }
   },
   "search": {
     "title": "Suche",
@@ -4288,7 +4357,7 @@
     "sendAgain": "Noch einmal senden",
     "itWasSent": "Sie wurde gesendet — ausblenden",
     "resolveFailed": "Das hat den Server nicht erreicht. Die Nachricht wird weiter hier festgehalten.",
-    "resolveStillRunning": "Dieser Versand l\u00e4uft m\u00f6glicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
+    "resolveStillRunning": "Dieser Versand läuft möglicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
     "noSubject": "(kein Betreff)",
     "noRecipient": "Noch kein Empfänger",
     "isReply": "Antwort",
@@ -4305,7 +4374,7 @@
     "discardRefused": "Nicht verworfen: {reason}",
     "discardRefusedUnnamed": "Das hat nicht geklappt, und der Server hat nicht gesagt warum. Der Entwurf liegt weiter hier.",
     "discardQueued": "Noch nicht verworfen: Dieser Browser konnte deinen Account nicht erreichen. Wir versuchen es weiter.",
-    "discardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn beim n\u00e4chsten Durchlauf.",
+    "discardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn beim nächsten Durchlauf.",
     "emptyTitle": "Nichts halb Geschriebenes",
     "emptyHint": "Fang eine Nachricht an — nach einem Moment liegt sie hier, auf diesem Gerät und auf allen anderen.",
     "scheduledTitle": "Geplant",
@@ -4318,7 +4387,14 @@
     "filesNotKeptNote": "{count, plural, one {Ihre Datei wurde nicht aufbewahrt. Hänge sie vor dem Senden erneut an.} other {Ihre # Dateien wurden nicht aufbewahrt. Hänge sie vor dem Senden erneut an.}}",
     "scheduleCancelled": "Geplanter Versand abgebrochen. Die Nachricht liegt in den Entwürfen.",
     "scheduleCancelTooLate": "Zu spät zum Abbrechen — diese Nachricht wird gerade gesendet.",
-    "scheduleCancelQueued": "Keine Verbindung — das Abbrechen hat den Server noch nicht erreicht. Die Nachricht ist bis dahin weiterhin geplant."
+    "scheduleCancelQueued": "Keine Verbindung — das Abbrechen hat den Server noch nicht erreicht. Die Nachricht ist bis dahin weiterhin geplant.",
+    "rowTo": "An {name}",
+    "listLoading": "Deine Entwürfe werden geladen",
+    "heldActs": "Ein nicht bestätigter Versand",
+    "heldItWasSent": "Es wurde gesendet",
+    "reportDiscarded": "Verworfen",
+    "reportUndo": "Rückgängig",
+    "listMenu": "Liste"
   },
   "mailBody": {
     "blockedOne": "1 externes Bild blockiert.",
@@ -5250,6 +5326,147 @@
         "title": "Das Einsortieren wartet auf den nächsten Versuch"
       }
     }
+  },
+  "news": {
+    "title": "News",
+    "waterline": {
+      "label": "Bis hierher gesehen"
+    },
+    "markAll": {
+      "label": "Alles als gelesen markieren",
+      "done": "{count, plural, one {1 Beitrag} other {# Beiträge}} als gelesen markiert",
+      "undo": "Rückgängig"
+    },
+    "list": {
+      "label": "News",
+      "menu": "Liste"
+    },
+    "stream": {
+      "label": "News-Strom",
+      "empty": "Hier ist nichts"
+    },
+    "item": {
+      "expand": "Aufklappen",
+      "collapse": "Zuklappen",
+      "full": "Ganz lesen",
+      "markUnread": "Als ungelesen markieren",
+      "loading": "Wird geladen",
+      "file": "Hat einen Anhang"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    }
+  },
+  "later": {
+    "title": "Später antworten",
+    "empty": "Nichts zum späteren Antworten",
+    "switch": {
+      "label": "Stapel",
+      "segment": "{name} {count}"
+    },
+    "run": {
+      "start": "Antwortrunde",
+      "label": "Antwortrunde",
+      "progress": "{step} von {total}",
+      "done": "Fertig → weiter",
+      "skip": "Überspringen",
+      "exit": "Verlassen",
+      "empty": "Nichts zum späteren Antworten"
+    },
+    "row": {
+      "done": "Erledigt",
+      "resurfaces": "zurück {when}"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    },
+    "step": {
+      "up": "Vorherige",
+      "down": "Nächste"
+    }
+  },
+  "parked": {
+    "title": "Geparkt",
+    "empty": "Nichts geparkt"
+  },
+  "resurface": {
+    "title": "Wieder auftauchen",
+    "empty": "Nichts, was wieder auftauchen soll"
+  },
+  "tags": {
+    "title": "Tags",
+    "loading": "Deine Tags werden geladen",
+    "gone": "Diesen Tag gibt es nicht mehr",
+    "empty": {
+      "none": "Noch keine Tags",
+      "tag": "Nichts trägt diesen Tag"
+    },
+    "count": {
+      "tags": "{count, plural, one {1 Tag} other {# Tags}}",
+      "letters": "{count, plural, one {1 Nachricht} other {# Nachrichten}}"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "menu": {
+      "rename": "Umbenennen",
+      "delete": "Löschen"
+    },
+    "rename": {
+      "title": "{name} umbenennen.",
+      "field": "Name",
+      "save": "Sichern",
+      "cancel": "Abbrechen",
+      "taken": "Du hast schon einen Tag namens {name}."
+    },
+    "delete": {
+      "title": "{name} löschen.",
+      "stay": "{count, plural, one {1 Nachricht trägt ihn und bleibt, wo sie ist.} other {# Nachrichten tragen ihn und bleiben, wo sie sind.}}",
+      "nothing": "Nichts trägt ihn.",
+      "confirm": "Löschen",
+      "cancel": "Behalten"
+    },
+    "list": {
+      "menu": "Liste"
+    }
+  },
+  "address": {
+    "title": "Alle Mails",
+    "loading": "Ihre Mails werden geladen",
+    "count": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "side": {
+      "label": "Richtung",
+      "all": "Alle",
+      "from": "Von ihnen",
+      "to": "An sie"
+    },
+    "sideCount": {
+      "all": "Alle {count}",
+      "from": "Von ihnen {count}",
+      "to": "An sie {count}"
+    },
+    "empty": {
+      "all": "Nichts mit ihnen",
+      "from": "Nichts von ihnen",
+      "to": "Nichts an sie"
+    },
+    "row": {
+      "to": "An {name}",
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "close": "Schliessen"
   },
   "stepUp": {
     "titlePasskey": "Mit meinem Passkey bestätigen.",

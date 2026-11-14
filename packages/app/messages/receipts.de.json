@@ -2,6 +2,36 @@
   "receipts": {
     "title": "Belege",
     "tail": "Ältere Belege findest du über die Suche.",
-    "streamAria": "Lesestrom"
+    "streamAria": "Lesestrom",
+    "waterline": {
+      "label": "Bis hierher gesehen"
+    },
+    "markAll": {
+      "label": "Alles als gelesen markieren",
+      "done": "{count, plural, one {1 Beitrag} other {# Beiträge}} als gelesen markiert",
+      "undo": "Rückgängig"
+    },
+    "list": {
+      "label": "Belege",
+      "menu": "Liste"
+    },
+    "stream": {
+      "label": "Belege-Strom",
+      "empty": "Hier ist nichts"
+    },
+    "item": {
+      "expand": "Aufklappen",
+      "collapse": "Zuklappen",
+      "full": "Ganz lesen",
+      "markUnread": "Als ungelesen markieren",
+      "loading": "Wird geladen",
+      "file": "Hat einen Anhang"
+    },
+    "search": {
+      "older": "Ältere in der Suche"
+    },
+    "stamp": {
+      "yesterday": "gestern {time}"
+    }
   }
 }

@@ -1,0 +1,1541 @@
+[
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=news", "device=foldl&screen=news"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=news&show=open",
+      "open=news-pixelthread&screen=news",
+      "open=news-skylark&reply=1&screen=news",
+      "screen=news&state=seen",
+      "screen=news",
+      "device=fold&screen=news",
+      "device=foldl&screen=news",
+      "face=ohmarchy&screen=news",
+      "scheme=dark&screen=news",
+      "face=ohmarchy&scheme=dark&screen=news"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "S Skylark Notes mara@skylarknotes.example 07:02 #131: the joy of small tools A letter about tools that do one thing well: a ladle that pours without dripping, a…"
+      },
+      {
+        "role": "button",
+        "name": "B Blattgang post@blattgang.example 06:31 Why paper keeps winning Three hundred years of interface design, still undefeated. This week: ledgers, index cards and …"
+      },
+      {
+        "role": "button",
+        "name": "T The Maker's Dozen hello@makersdozen.example 05:12 #47: twelve things makers liked this month Done"
+      },
+      {
+        "role": "button",
+        "name": "G Gratbrief post@gratbrief.example 04:58 This week's walk: the Chäserrugg ridge in first snow Done"
+      },
+      {
+        "role": "button",
+        "name": "F Frühbrief briefing@fruehbrief.example 04:30 Morning briefing: the Advent market weekend Done"
+      },
+      {
+        "role": "button",
+        "name": "P Pixel & Thread letter@pixelthread.example yesterday Weaving colour into everything A dye garden in its second year, a palette tool worth keeping, and one brav…"
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag hallo@roestsonntag.example Sun November roast: Kenya AA Blackcurrant, bright, best before noon. Ships Monday to subscribers, a few bags left for e…"
+      },
+      {
+        "role": "button",
+        "name": "B Bergbahn Club club@bergbahnclub.example Sun Your winter pass is active All 23 lifts from 28 November to Easter. This letter also has the opening dates by vall…"
+      },
+      {
+        "role": "button",
+        "name": "T The Maker's Dozen hello@makersdozen.example 05:12 #47: twelve things makers liked this month"
+      },
+      {
+        "role": "button",
+        "name": "G Gratbrief post@gratbrief.example 04:58 This week's walk: the Chäserrugg ridge in first snow"
+      },
+      {
+        "role": "button",
+        "name": "F Frühbrief briefing@fruehbrief.example 04:30 Morning briefing: the Advent market weekend"
+      },
+      {
+        "role": "button",
+        "name": "S Skylark Notes 07:02 #131: the joy of small tools A letter about tools that do one thing well: a ladle that pours without dripping, a pencil that starts every …"
+      },
+      {
+        "role": "button",
+        "name": "B Blattgang 06:31 Why paper keeps winning Three hundred years of interface design, still undefeated. This week: ledgers, index cards and one stubborn stationer."
+      },
+      {
+        "role": "button",
+        "name": "T The Maker's Dozen 05:12 #47: twelve things makers liked this month A kiln timer, a broom, and an honest essay about pricing your own work without apologising …"
+      },
+      {
+        "role": "button",
+        "name": "G Gratbrief 04:58 This week's walk: the Chäserrugg ridge in first snow Four hours, one ridge, and a hut that still serves soup in November. Microspikes from the…"
+      },
+      {
+        "role": "button",
+        "name": "F Frühbrief 04:30 Morning briefing: the Advent market weekend What is on in Winterthur this weekend, in five minutes: two markets, one road closure, a choir."
+      },
+      {
+        "role": "button",
+        "name": "P Pixel & Thread yesterday Weaving colour into everything A dye garden in its second year, a palette tool worth keeping, and one brave kitchen."
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag Sun November roast: Kenya AA Blackcurrant, bright, best before noon. Ships Monday to subscribers, a few bags left for everyone else."
+      },
+      {
+        "role": "button",
+        "name": "B Bergbahn Club Sun Your winter pass is active All 23 lifts from 28 November to Easter. This letter also has the opening dates by valley."
+      },
+      {
+        "role": "button",
+        "name": "G Gratbrief post@gratbrief.example 04:58 This week's walk: the Chäserrugg ridge in first snow Four hours, one ridge, and a hut that still serves soup in Novembe…"
+      },
+      {
+        "role": "button",
+        "name": "F Frühbrief briefing@fruehbrief.example 04:30 Morning briefing: the Advent market weekend What is on in Winterthur this weekend, in five minutes: two markets, o…"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=news&show=open",
+      "open=news-pixelthread&screen=news",
+      "open=news-skylark&reply=1&screen=news",
+      "screen=news&state=seen",
+      "screen=news&state=empty",
+      "screen=news",
+      "device=phone&screen=news",
+      "device=fold&screen=news",
+      "device=foldl&screen=news",
+      "face=ohmarchy&screen=news",
+      "scheme=dark&screen=news",
+      "face=ohmarchy&scheme=dark&screen=news"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=news&show=open",
+      "open=news-pixelthread&screen=news",
+      "open=news-skylark&reply=1&screen=news",
+      "screen=news&state=seen",
+      "screen=news",
+      "device=phone&screen=news",
+      "device=fold&screen=news",
+      "device=foldl&screen=news",
+      "face=ohmarchy&screen=news",
+      "scheme=dark&screen=news",
+      "face=ohmarchy&scheme=dark&screen=news"
+    ],
+    "reason": "CLASS reader-letter. What the reading column holds of a letter (its head with to whom and details, its text, its notices and files) is the reader's letter in place, asked of its owner; the place draws the engine's plain text in the kit's Message, clipped until pressed, as a stand-in until it lands. The letter's own nodes are left out of both sides, by role and name; the column, its line, its panel, its blank and each item's Expand, Collapse or Read in full stay compared. On a phone the stream stands under the head, so there its letters' own nodes are left out of the list part.",
+    "removedBy": "reader (the letter in place)",
+    "out": [
+      {
+        "role": "button",
+        "name": "04:30"
+      },
+      {
+        "role": "button",
+        "name": "04:58"
+      },
+      {
+        "role": "button",
+        "name": "05:12"
+      },
+      {
+        "role": "button",
+        "name": "06:31"
+      },
+      {
+        "role": "button",
+        "name": "07:02"
+      },
+      {
+        "role": "button",
+        "name": "B Bergbahn Club club@bergbahnclub.example"
+      },
+      {
+        "role": "button",
+        "name": "B Blattgang post@blattgang.example"
+      },
+      {
+        "role": "button",
+        "name": "F Frühbrief briefing@fruehbrief.example"
+      },
+      {
+        "role": "button",
+        "name": "G Gratbrief post@gratbrief.example"
+      },
+      {
+        "role": "button",
+        "name": "Images blocked"
+      },
+      {
+        "role": "button",
+        "name": "Message"
+      },
+      {
+        "role": "button",
+        "name": "P Pixel & Thread letter@pixelthread.example"
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag hallo@roestsonntag.example"
+      },
+      {
+        "role": "button",
+        "name": "S Skylark Notes mara@skylarknotes.example"
+      },
+      {
+        "role": "button",
+        "name": "Sun 09:00"
+      },
+      {
+        "role": "button",
+        "name": "Sun 8 Nov 08:00"
+      },
+      {
+        "role": "button",
+        "name": "Sun 8 Nov 09:00"
+      },
+      {
+        "role": "button",
+        "name": "T The Maker's Dozen hello@makersdozen.example"
+      },
+      {
+        "role": "button",
+        "name": "details"
+      },
+      {
+        "role": "button",
+        "name": "yesterday 07:15"
+      },
+      {
+        "role": "button",
+        "name": "you"
+      },
+      {
+        "role": "heading",
+        "name": "#131: the joy of small tools"
+      },
+      {
+        "role": "heading",
+        "name": "#47: twelve things makers liked this month"
+      },
+      {
+        "role": "heading",
+        "name": "Morning briefing: the Advent market weekend"
+      },
+      {
+        "role": "heading",
+        "name": "November roast: Kenya AA"
+      },
+      {
+        "role": "heading",
+        "name": "This week's walk: the Chäserrugg ridge in first snow"
+      },
+      {
+        "role": "heading",
+        "name": "Weaving colour into everything"
+      },
+      {
+        "role": "heading",
+        "name": "Why paper keeps winning"
+      },
+      {
+        "role": "heading",
+        "name": "Your winter pass is active"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=receipts", "device=foldl&screen=receipts"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=rcpt-erdton&screen=receipts&show=open",
+      "screen=receipts&state=seen",
+      "screen=receipts",
+      "device=fold&screen=receipts",
+      "device=foldl&screen=receipts",
+      "face=ohmarchy&screen=receipts",
+      "scheme=dark&screen=receipts",
+      "face=ohmarchy&scheme=dark&screen=receipts"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "B Brandung Records CHF 96.00 Your tickets: Winternacht, 21 November 2 × Winternacht, Saturday 21 November, doors 19:30. Row 8, seats 14 and 15. Tickets attached…"
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick tickets@kino-seeblick.example CHF 36.00 Your tickets: film night, Thursday 20:15 2 × balcony, Thursday 12 November, 20:15. Show this letter at t…"
+      },
+      {
+        "role": "button",
+        "name": "A Atelier Erdton Paperwork CHF 240.00 Invoice #091: Glaze & Fire workshop Workshop «Glaze & Fire», 2 places, 24 October. Payable within 30 days. Invoice attache…"
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag hallo@roestsonntag.example CHF 24.00 Receipt: November roast subscription Kenya AA, 500 g, ships Monday. Your subscription renewed for another mon…"
+      },
+      {
+        "role": "button",
+        "name": "S Speichenhof Velos CHF 89.00 Bike service: ready to collect New chain, fresh brake pads, winter tyres fitted. Collect any day until 18:30."
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn Parked CHF 52.00 Your ticket Winterthur–Lugano, 14 November"
+      },
+      {
+        "role": "button",
+        "name": "P Pigment & Papier shop@pigmentpapier.example EUR 31.40 Order #5521 shipped Gouache set and two brushes are on the way to the studio. Expected Thursday."
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick CHF 36.00 Your tickets: film night, Thursday 20:15 2 × balcony, Thursday 12 November, 20:15. Show this letter at the door."
+      },
+      {
+        "role": "button",
+        "name": "A Atelier Erdton CHF 240.00 Invoice #091: Glaze & Fire workshop Workshop «Glaze & Fire», 2 places, 24 October. Payable within 30 days. Invoice attached."
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag CHF 24.00 Receipt: November roast subscription Kenya AA, 500 g, ships Monday. Your subscription renewed for another month."
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn CHF 52.00 Your ticket Winterthur–Lugano, 14 November Winterthur dep. 08:02, Lugano arr. 11:24. Seat 44, window, lake side. Ticket attached."
+      },
+      {
+        "role": "button",
+        "name": "P Pigment & Papier EUR 31.40 Order #5521 shipped Gouache set and two brushes are on the way to the studio. Expected Thursday."
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn Parked CHF 52.00 Your ticket Winterthur–Lugano, 14 November Winterthur dep. 08:02, Lugano arr. 11:24. Seat 44, window, lake side. Ticket attached."
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick CHF 36.00 Your tickets: film night, Thursday 20:15 2 × balcony, Thursday 12 November, 20:15. Show this letter at the door. Done"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=rcpt-erdton&screen=receipts&show=open",
+      "screen=receipts&state=seen",
+      "screen=receipts&state=empty",
+      "screen=receipts",
+      "device=phone&screen=receipts",
+      "device=fold&screen=receipts",
+      "device=foldl&screen=receipts",
+      "face=ohmarchy&screen=receipts",
+      "scheme=dark&screen=receipts",
+      "face=ohmarchy&scheme=dark&screen=receipts"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=rcpt-erdton&screen=receipts&show=open",
+      "screen=receipts&state=seen",
+      "screen=receipts",
+      "device=phone&screen=receipts",
+      "device=fold&screen=receipts",
+      "device=foldl&screen=receipts",
+      "face=ohmarchy&screen=receipts",
+      "scheme=dark&screen=receipts",
+      "face=ohmarchy&scheme=dark&screen=receipts"
+    ],
+    "reason": "CLASS reader-letter. What the reading column holds of a letter (its head with to whom and details, its text, its notices and files) is the reader's letter in place, asked of its owner; the place draws the engine's plain text in the kit's Message, clipped until pressed, as a stand-in until it lands. The letter's own nodes are left out of both sides, by role and name; the column, its line, its panel, its blank and each item's Expand, Collapse or Read in full stay compared. On a phone the stream stands under the head, so there its letters' own nodes are left out of the list part.",
+    "removedBy": "reader (the letter in place)",
+    "out": [
+      {
+        "role": "button",
+        "name": "07:41"
+      },
+      {
+        "role": "button",
+        "name": "08:20"
+      },
+      {
+        "role": "button",
+        "name": "A Atelier Erdton billing@erdton-atelier.example"
+      },
+      {
+        "role": "button",
+        "name": "Add"
+      },
+      {
+        "role": "button",
+        "name": "B Brandung Records tickets@brandung-records.example"
+      },
+      {
+        "role": "button",
+        "name": "B Brandung Records tickets@brandung.example"
+      },
+      {
+        "role": "button",
+        "name": "Dismiss"
+      },
+      {
+        "role": "button",
+        "name": "Download Invoice-091.pdf"
+      },
+      {
+        "role": "button",
+        "name": "Fri 09:10"
+      },
+      {
+        "role": "button",
+        "name": "Fri 6 Nov 08:00"
+      },
+      {
+        "role": "button",
+        "name": "Fri 6 Nov 11:00"
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick tickets@kino-seeblick.example"
+      },
+      {
+        "role": "button",
+        "name": "Message"
+      },
+      {
+        "role": "button",
+        "name": "Preview Invoice-091.pdf"
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag hallo@roestsonntag.example"
+      },
+      {
+        "role": "button",
+        "name": "S Speichenhof Velos werkstatt@speichenhof.example"
+      },
+      {
+        "role": "button",
+        "name": "Show in calendar"
+      },
+      {
+        "role": "button",
+        "name": "Thu 5 Nov 15:00"
+      },
+      {
+        "role": "button",
+        "name": "Tracker blocked"
+      },
+      {
+        "role": "button",
+        "name": "details"
+      },
+      {
+        "role": "button",
+        "name": "you"
+      },
+      {
+        "role": "heading",
+        "name": "Bike service: ready to collect"
+      },
+      {
+        "role": "heading",
+        "name": "Invoice #091: Glaze & Fire workshop"
+      },
+      {
+        "role": "heading",
+        "name": "Receipt: November roast subscription"
+      },
+      {
+        "role": "heading",
+        "name": "Your tickets: Winternacht, 21 November"
+      },
+      {
+        "role": "heading",
+        "name": "Your tickets: film night, Thursday 20:15"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=later", "device=foldl&screen=later"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=jonas-openstudio&screen=later",
+      "run=1&screen=later",
+      "screen=later",
+      "device=phone&screen=later",
+      "device=fold&screen=later",
+      "device=foldl&screen=later",
+      "face=ohmarchy&screen=later",
+      "scheme=dark&screen=later",
+      "face=ohmarchy&scheme=dark&screen=later"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Pottery Project Fri Would you teach the December glaze evening?"
+      },
+      {
+        "role": "button",
+        "name": "J +3 Jonas Halter +20 Fri Open studio in December: which weekend?"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner nadja@erdton-atelier.example Fri Would you teach the December glaze evening? Two hours, twelve people, Thursday the 10th or the 17th. Three peopl…"
+      },
+      {
+        "role": "button",
+        "name": "J +3 Jonas Halter +22 Fri Open studio in December: which weekend? The 5th or the 12th, and the printer wants the date on Wednesday. I lean 12th: it shares the w…"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Fri Would you teach the December glaze evening? Two hours, twelve people, Thursday the 10th or the 17th. Three people have asked who made the mat…"
+      },
+      {
+        "role": "button",
+        "name": "J +3 Jonas Halter +15 Fri Open studio in December: which weekend?"
+      },
+      {
+        "role": "button",
+        "name": "J +3 Jonas Halter +12 Fri Open studio in December: which weekend?"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Pottery Project Fri Would you teach the December glaze evening? Two hours, twelve people, Thursday the 10th or the 17th. Three people have asked …"
+      },
+      {
+        "role": "button",
+        "name": "J +3 Jonas Halter +20 Fri Open studio in December: which weekend? The 5th or the 12th, and the printer wants the date on Wednesday. I lean 12th: it shares the w…"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=jonas-openstudio&screen=later",
+      "run=1&screen=later",
+      "screen=later&state=empty",
+      "screen=later",
+      "device=phone&screen=later",
+      "device=fold&screen=later",
+      "device=foldl&screen=later",
+      "face=ohmarchy&screen=later",
+      "scheme=dark&screen=later",
+      "face=ohmarchy&scheme=dark&screen=later"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=parked", "device=foldl&screen=parked"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=parked",
+      "device=phone&screen=parked",
+      "device=fold&screen=parked",
+      "device=foldl&screen=parked",
+      "face=ohmarchy&screen=parked",
+      "scheme=dark&screen=parked",
+      "face=ohmarchy&scheme=dark&screen=parked"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn tickets@alpenbahn.example Thu Your ticket Winterthur–Lugano, 14 November"
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn tickets@alpenbahn.example Thu Your ticket Winterthur–Lugano, 14 November Winterthur dep. 08:02, Lugano arr. 11:24. Seat 44, window, lake side. Ticke…"
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn Thu Your ticket Winterthur–Lugano, 14 November Winterthur dep. 08:02, Lugano arr. 11:24. Seat 44, window, lake side. Ticket attached."
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=parked&state=empty",
+      "screen=parked",
+      "device=phone&screen=parked",
+      "device=fold&screen=parked",
+      "device=foldl&screen=parked",
+      "face=ohmarchy&screen=parked",
+      "scheme=dark&screen=parked",
+      "face=ohmarchy&scheme=dark&screen=parked"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=resurface", "device=foldl&screen=resurface"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=resurface&state=set",
+      "screen=resurface",
+      "device=phone&screen=resurface",
+      "device=fold&screen=resurface",
+      "device=foldl&screen=resurface",
+      "face=ohmarchy&screen=resurface",
+      "scheme=dark&screen=resurface",
+      "face=ohmarchy&scheme=dark&screen=resurface"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "F Flurina Caduff Wed 11 Nov, 08:00 Saturday's workshop is full Done"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss Mon 16 Nov, 08:00 Makersfest: slides due Done"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss petra@makersfest.example Mon 16 Nov, 08:00 Makersfest: slides due Done"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=resurface&state=set",
+      "screen=resurface&state=empty",
+      "screen=resurface",
+      "device=phone&screen=resurface",
+      "device=fold&screen=resurface",
+      "device=foldl&screen=resurface",
+      "face=ohmarchy&screen=resurface",
+      "scheme=dark&screen=resurface",
+      "face=ohmarchy&scheme=dark&screen=resurface"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=history", "device=foldl&screen=history"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=none&screen=history",
+      "open=rcpt-erdton&screen=history",
+      "screen=history",
+      "device=phone&screen=history",
+      "device=fold&screen=history",
+      "device=foldl&screen=history",
+      "face=ohmarchy&screen=history",
+      "scheme=dark&screen=history",
+      "face=ohmarchy&scheme=dark&screen=history"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "G +2 Giulia, Ben Ohbox 09:12 Re: Glaze order #2291 Both glazes leave Milan today and reach the studio on Thursday. The matte white came back in stock, so it is …"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss Ohbox 08:47 Your talk is on the programme “Wabi-sabi for web people” made the final programme: Saturday at 11:00 in the main hall. Speaker details …"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss petra@makersfest.example Ohbox 08:39 Invitation: Tech check, main hall Petra Wyss invited you: Friday 20 November, 16:00, main hall. Fifteen minute…"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Ohbox 08:35 New time proposed: glaze evening planning call"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock no-reply@cinderlock.example Ohbox 08:31 Your verification code Verification code · kept out of AI"
+      },
+      {
+        "role": "button",
+        "name": "B Brandung Records Receipts 08:20 Your tickets: Winternacht, 21 November Done"
+      },
+      {
+        "role": "button",
+        "name": "B +4 Ben, Jonas +6 Ohbox 07:58 Kiln is fixed, and Friday pizza The new element arrived early and the kiln heats evenly again. Friday we fire the wood oven after…"
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick Receipts 07:41 Your tickets: film night, Thursday 20:15 Done"
+      },
+      {
+        "role": "button",
+        "name": "S Skylark Notes News 07:02 #131: the joy of small tools A letter about tools that do one thing well: a ladle that pours without dripping, a pencil that starts e…"
+      },
+      {
+        "role": "button",
+        "name": "B Blattgang post@blattgang.example News 06:31 Why paper keeps winning Three hundred years of interface design, still undefeated. This week: ledgers, index cards…"
+      },
+      {
+        "role": "button",
+        "name": "T The Maker's Dozen News 05:12 #47: twelve things makers liked this month Done"
+      },
+      {
+        "role": "button",
+        "name": "G Gratbrief post@gratbrief.example News 04:58 This week's walk: the Chäserrugg ridge in first snow Done"
+      },
+      {
+        "role": "listbox",
+        "name": "History"
+      },
+      {
+        "role": "option",
+        "name": "Giulia Ferrari: Re: Glaze order #2291"
+      },
+      {
+        "role": "option",
+        "name": "Petra Wyss: Your talk is on the programme"
+      },
+      {
+        "role": "option",
+        "name": "Petra Wyss: Invitation: Tech check, main hall"
+      },
+      {
+        "role": "option",
+        "name": "Nadja Lehner: New time proposed: glaze evening planning call"
+      },
+      {
+        "role": "option",
+        "name": "Cinderlock: Your verification code"
+      },
+      {
+        "role": "option",
+        "name": "Brandung Records: Your tickets: Winternacht, 21 November"
+      },
+      {
+        "role": "option",
+        "name": "Ben Arnold: Kiln is fixed, and Friday pizza"
+      },
+      {
+        "role": "option",
+        "name": "Kino Seeblick: Your tickets: film night, Thursday 20:15"
+      },
+      {
+        "role": "option",
+        "name": "Skylark Notes: #131: the joy of small tools"
+      },
+      {
+        "role": "option",
+        "name": "Blattgang: Why paper keeps winning"
+      },
+      {
+        "role": "option",
+        "name": "The Maker's Dozen: #47: twelve things makers liked this month"
+      },
+      {
+        "role": "option",
+        "name": "Gratbrief: This week's walk: the Chäserrugg ridge in first snow"
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag hallo@roestsonntag.example News Sun November roast: Kenya AA Blackcurrant, bright, best before noon. Ships Monday to subscribers, a few bags left …"
+      },
+      {
+        "role": "button",
+        "name": "B Bergbahn Club News Sun Your winter pass is active All 23 lifts from 28 November to Easter. This letter also has the opening dates by valley."
+      },
+      {
+        "role": "button",
+        "name": "T Tim Berger tim@gassenblatt.example Ohbox Sat Got us tickets for the 21st Row 8, right side, close enough to see the drummer sweat. I will forward the details.…"
+      },
+      {
+        "role": "button",
+        "name": "C Carla Meier carla@wintermarkt-lind.example Ohbox Sat The posters went up on Friday Half the neighbourhood asked who made them. See you at the market on Saturd…"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner nadja@erdton-atelier.example Ohbox Fri Would you teach the December glaze evening?"
+      },
+      {
+        "role": "button",
+        "name": "J +3 Jonas Halter +24 Ohbox Fri Open studio in December: which weekend?"
+      },
+      {
+        "role": "button",
+        "name": "A Atelier Erdton Receipts Fri Invoice #091: Glaze & Fire workshop"
+      },
+      {
+        "role": "button",
+        "name": "R Röstsonntag hallo@roestsonntag.example Receipts Fri Receipt: November roast subscription"
+      },
+      {
+        "role": "button",
+        "name": "R Rahel Beck rahel@lichtgrat.example Ohbox Thu Invoice template, final Final version attached, with the new bank details and the VAT line moved under the total.…"
+      },
+      {
+        "role": "button",
+        "name": "S Speichenhof Velos Receipts Thu Bike service: ready to collect New chain, fresh brake pads, winter tyres fitted. Collect any day until 18:30."
+      },
+      {
+        "role": "button",
+        "name": "A Alpenbahn Receipts Thu Your ticket Winterthur–Lugano, 14 November"
+      },
+      {
+        "role": "button",
+        "name": "P Pigment & Papier Receipts Wed Order #5521 shipped Gouache set and two brushes are on the way to the studio. Expected Thursday."
+      },
+      {
+        "role": "button",
+        "name": "H Hostwerk support@hostwerk.example Ohbox 3 Nov Domain renewal: lichtgrat.example expires 30 November"
+      },
+      {
+        "role": "button",
+        "name": "Search"
+      },
+      {
+        "role": "button",
+        "name": "Write"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss Ohbox 08:39 Invitation: Tech check, main hall Petra Wyss invited you: Friday 20 November, 16:00, main hall. Fifteen minutes on stage for mics, slid…"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Ohbox 08:35 New time proposed: glaze evening planning call Nadja proposed Thursday 15:00 instead of 10:00. Same half hour, and she calls you."
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock Ohbox 08:31 Your verification code Verification code · kept out of AI"
+      },
+      {
+        "role": "button",
+        "name": "B Brandung Records Receipts 08:20 Your tickets: Winternacht, 21 November 2 × Winternacht, Saturday 21 November, doors 19:30. Row 8, seats 14 and 15. Tickets att…"
+      },
+      {
+        "role": "button",
+        "name": "B +4 Ben, Jonas +4 Ohbox 07:58 Kiln is fixed, and Friday pizza The new element arrived early and the kiln heats evenly again. Friday we fire the wood oven after…"
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick Receipts 07:41 Your tickets: film night, Thursday 20:15 2 × balcony, Thursday 12 November, 20:15. Show this letter at the door."
+      },
+      {
+        "role": "button",
+        "name": "G +2 Giulia, Ben 09:12 Re: Glaze order #2291 Both glazes leave Milan today and reach the studio on Thursday. The matte white came back in stock, so it is one ca…"
+      },
+      {
+        "role": "button",
+        "name": "B +4 Ben, Jonas +6 07:58 Kiln is fixed, and Friday pizza"
+      },
+      {
+        "role": "button",
+        "name": "K Kino Seeblick Receipts 07:41 Your tickets: film night, Thursday 20:15 2 × balcony, Thursday 12 November, 20:15. Show this letter at the door. Done"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=none&screen=history",
+      "open=rcpt-erdton&screen=history",
+      "screen=history",
+      "device=phone&screen=history",
+      "device=fold&screen=history",
+      "device=foldl&screen=history",
+      "face=ohmarchy&screen=history",
+      "scheme=dark&screen=history",
+      "face=ohmarchy&scheme=dark&screen=history"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=tags", "device=foldl&screen=tags"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=tags&tag=pottery",
+      "screen=tags&show=rename&tag=paperwork",
+      "screen=tags&shut=tag-pottery",
+      "open=rcpt-erdton&screen=tags",
+      "screen=tags",
+      "device=phone&screen=tags",
+      "device=fold&screen=tags",
+      "device=foldl&screen=tags",
+      "face=ohmarchy&screen=tags",
+      "scheme=dark&screen=tags",
+      "face=ohmarchy&scheme=dark&screen=tags"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "G +2 Giulia, Ben Ohbox 09:12 Re: Glaze order #2291 Both glazes leave Milan today and reach the studio on Thursday. The matte white came back in stock, so it is …"
+      },
+      {
+        "role": "button",
+        "name": "B +4 Ben, Jonas +2 Ohbox 07:58 Kiln is fixed, and Friday pizza The new element arrived early and the kiln heats evenly again. Friday we fire the wood oven after…"
+      },
+      {
+        "role": "button",
+        "name": "F Flurina Caduff flurina@haldenlicht.example Ohbox yesterday Saturday's workshop is full All twelve places are booked, and two people already asked about a seco…"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner nadja@erdton-atelier.example Ohbox Fri Would you teach the December glaze evening?"
+      },
+      {
+        "role": "listbox",
+        "name": "Pottery Project"
+      },
+      {
+        "role": "option",
+        "name": "Giulia Ferrari: Re: Glaze order #2291"
+      },
+      {
+        "role": "option",
+        "name": "Ben Arnold: Kiln is fixed, and Friday pizza"
+      },
+      {
+        "role": "option",
+        "name": "Flurina Caduff: Saturday's workshop is full"
+      },
+      {
+        "role": "option",
+        "name": "Nadja Lehner: Would you teach the December glaze evening?"
+      },
+      {
+        "role": "button",
+        "name": "H Hostwerk support@hostwerk.example Ohbox 3 Nov Domain renewal: lichtgrat.example expires 30 November"
+      },
+      {
+        "role": "button",
+        "name": "R Rahel Beck rahel@lichtgrat.example Ohbox Thu Invoice template, final Final version attached, with the new bank details and the VAT line moved under the total.…"
+      },
+      {
+        "role": "button",
+        "name": "A Atelier Erdton billing@erdton-atelier.example Receipts Fri Invoice #091: Glaze & Fire workshop Workshop «Glaze & Fire», 2 places, 24 October. Payable within 3…"
+      },
+      {
+        "role": "listbox",
+        "name": "Paperwork"
+      },
+      {
+        "role": "option",
+        "name": "Atelier Erdton: Invoice #091: Glaze & Fire workshop"
+      },
+      {
+        "role": "option",
+        "name": "Rahel Beck: Invoice template, final"
+      },
+      {
+        "role": "option",
+        "name": "Hostwerk: Domain renewal: lichtgrat.example expires 30 November"
+      },
+      {
+        "role": "button",
+        "name": "R +3 Reto Frei Ohbox yesterday Photos from the ridge The promised photos from the ridge. The sunrise was worth every minute of the four o'clock start. Next time…"
+      },
+      {
+        "role": "button",
+        "name": "T Tim Berger tim@gassenblatt.example Ohbox Sat Got us tickets for the 21st Row 8, right side, close enough to see the drummer sweat. I will forward the details.…"
+      },
+      {
+        "role": "region",
+        "name": "Adventures"
+      },
+      {
+        "role": "listbox",
+        "name": "Adventures"
+      },
+      {
+        "role": "option",
+        "name": "Reto Frei: Photos from the ridge"
+      },
+      {
+        "role": "option",
+        "name": "Tim Berger: Got us tickets for the 21st"
+      },
+      {
+        "role": "region",
+        "name": "Paperwork"
+      },
+      {
+        "role": "region",
+        "name": "Pottery Project"
+      },
+      {
+        "role": "button",
+        "name": "B +4 Ben, Jonas +4 Ohbox 07:58 Kiln is fixed, and Friday pizza The new element arrived early and the kiln heats evenly again. Friday we fire the wood oven after…"
+      },
+      {
+        "role": "button",
+        "name": "F Flurina Caduff Ohbox yesterday Saturday's workshop is full All twelve places are booked, and two people already asked about a second date. Shall we plan one f…"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner nadja@erdton-atelier.example Ohbox Fri Would you teach the December glaze evening? Two hours, twelve people, Thursday the 10th or the 17th. Three…"
+      },
+      {
+        "role": "button",
+        "name": "H Hostwerk support@hostwerk.example Ohbox 3 Nov Domain renewal: lichtgrat.example expires 30 November lichtgrat.example renews on 30 November for CHF 19.00 a ye…"
+      },
+      {
+        "role": "button",
+        "name": "A Atelier Erdton Receipts Fri Invoice #091: Glaze & Fire workshop Workshop «Glaze & Fire», 2 places, 24 October. Payable within 30 days. Invoice attached."
+      },
+      {
+        "role": "button",
+        "name": "G +2 Giulia, Ben 09:12 Re: Glaze order #2291 Both glazes leave Milan today and reach the studio on Thursday. The matte white came back in stock, so it is one ca…"
+      },
+      {
+        "role": "button",
+        "name": "B +4 Ben, Jonas +6 07:58 Kiln is fixed, and Friday pizza"
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Ohbox Fri Would you teach the December glaze evening? Two hours, twelve people, Thursday the 10th or the 17th. Three people have asked who made t…"
+      },
+      {
+        "role": "button",
+        "name": "H Hostwerk Ohbox 3 Nov Domain renewal: lichtgrat.example expires 30 November lichtgrat.example renews on 30 November for CHF 19.00 a year. Auto-renew is off, so…"
+      },
+      {
+        "role": "button",
+        "name": "R Rahel Beck Ohbox Thu Invoice template, final Final version attached, with the new bank details and the VAT line moved under the total. Use this one from Monda…"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=tags&tag=pottery",
+      "screen=tags&show=rename&tag=paperwork",
+      "screen=tags&shut=tag-pottery",
+      "open=rcpt-erdton&screen=tags",
+      "screen=tags&state=empty",
+      "screen=tags",
+      "device=phone&screen=tags",
+      "device=fold&screen=tags",
+      "device=foldl&screen=tags",
+      "face=ohmarchy&screen=tags",
+      "scheme=dark&screen=tags",
+      "face=ohmarchy&scheme=dark&screen=tags"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "device=phone&f=Workshops&folders=1&screen=folder",
+      "device=foldl&f=Workshops&folders=1&open=fld-flurina-dates&screen=folder"
+    ],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "f=Clients%2FGartenlokal%20Rosa&folders=1&screen=folder",
+      "f=Workshops&folders=1&open=fld-flurina-dates&screen=folder",
+      "device=phone&f=Workshops&folders=1&screen=folder",
+      "device=fold&f=Workshops&folders=1&open=fld-flurina-dates&screen=folder",
+      "device=foldl&f=Workshops&folders=1&open=fld-flurina-dates&screen=folder",
+      "f=Workshops&face=ohmarchy&folders=1&open=fld-flurina-dates&screen=folder",
+      "f=Workshops&folders=1&open=fld-flurina-dates&scheme=dark&screen=folder",
+      "f=Workshops&face=ohmarchy&folders=1&open=fld-flurina-dates&scheme=dark&screen=folder"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "A Anna Odermatt anna@gartenlokal-rosa.example Mon 26 Oct Sunday brunch cards Ten cards without prices would be perfect for the brunch. Same paper as the others."
+      },
+      {
+        "role": "button",
+        "name": "A Anna Odermatt anna@gartenlokal-rosa.example Fri 9 Oct The rose, a little smaller Could the rose in the corner be a little smaller? It fights with the prices."
+      },
+      {
+        "role": "region",
+        "name": "Earlier"
+      },
+      {
+        "role": "listbox",
+        "name": "Earlier"
+      },
+      {
+        "role": "option",
+        "name": "Anna Odermatt: Sunday brunch cards"
+      },
+      {
+        "role": "option",
+        "name": "Anna Odermatt: The rose, a little smaller"
+      },
+      {
+        "role": "button",
+        "name": "F Flurina Caduff flurina@haldenlicht.example Thu 29 Oct Workshop dates until March Every second Saturday, starting 14 November. Twelve places each."
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner nadja@erdton-atelier.example Tue 20 Oct Glaze evening: what to bring Aprons and two bisque pieces each. I bring the test tiles."
+      },
+      {
+        "role": "option",
+        "name": "Flurina Caduff: Workshop dates until March"
+      },
+      {
+        "role": "option",
+        "name": "Nadja Lehner: Glaze evening: what to bring"
+      },
+      {
+        "role": "button",
+        "name": "F Flurina Caduff Thu 29 Oct Workshop dates until March Every second Saturday, starting 14 November. Twelve places each."
+      },
+      {
+        "role": "button",
+        "name": "N Nadja Lehner Tue 20 Oct Glaze evening: what to bring Aprons and two bisque pieces each. I bring the test tiles."
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "f=Clients%2FGartenlokal%20Rosa&folders=1&screen=folder",
+      "f=Workshops&folders=1&open=fld-flurina-dates&screen=folder",
+      "device=phone&f=Workshops&folders=1&screen=folder",
+      "device=fold&f=Workshops&folders=1&open=fld-flurina-dates&screen=folder",
+      "device=foldl&f=Workshops&folders=1&open=fld-flurina-dates&screen=folder",
+      "f=Workshops&face=ohmarchy&folders=1&open=fld-flurina-dates&screen=folder",
+      "f=Workshops&folders=1&open=fld-flurina-dates&scheme=dark&screen=folder",
+      "f=Workshops&face=ohmarchy&folders=1&open=fld-flurina-dates&scheme=dark&screen=folder"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "address=petra%40makersfest.example&device=phone&dir=from&screen=address",
+      "address=petra%40makersfest.example&device=foldl&dir=from&screen=address"
+    ],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "address=petra%40makersfest.example&dir=from&screen=address",
+      "address=petra%40makersfest.example&device=phone&dir=from&screen=address",
+      "address=petra%40makersfest.example&device=fold&dir=from&screen=address",
+      "address=petra%40makersfest.example&device=foldl&dir=from&screen=address",
+      "address=petra%40makersfest.example&dir=from&face=ohmarchy&screen=address",
+      "address=petra%40makersfest.example&dir=from&scheme=dark&screen=address",
+      "address=petra%40makersfest.example&dir=from&face=ohmarchy&scheme=dark&screen=address"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss petra@makersfest.example Ohbox 08:47 Your talk is on the programme “Wabi-sabi for web people” made the final programme: Saturday at 11:00 in the ma…"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss petra@makersfest.example Ohbox 08:39 Invitation: Tech check, main hall Petra Wyss invited you: Friday 20 November, 16:00, main hall. Fifteen minute…"
+      },
+      {
+        "role": "listbox",
+        "name": "From them"
+      },
+      {
+        "role": "option",
+        "name": "Petra Wyss: Your talk is on the programme"
+      },
+      {
+        "role": "option",
+        "name": "Petra Wyss: Invitation: Tech check, main hall"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss Ohbox 08:47 Your talk is on the programme “Wabi-sabi for web people” made the final programme: Saturday at 11:00 in the main hall. Speaker details …"
+      },
+      {
+        "role": "button",
+        "name": "P Petra Wyss Ohbox 08:39 Invitation: Tech check, main hall Petra Wyss invited you: Friday 20 November, 16:00, main hall. Fifteen minutes on stage for mics, slid…"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=drafts", "device=foldl&open=draft-nadja&screen=drafts"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=draft-nadja&screen=drafts",
+      "screen=drafts&state=scheduled",
+      "open=draft-nadja&screen=drafts&state=held",
+      "device=phone&screen=drafts",
+      "device=fold&open=draft-nadja&screen=drafts",
+      "device=foldl&open=draft-nadja&screen=drafts",
+      "face=ohmarchy&open=draft-nadja&screen=drafts",
+      "open=draft-nadja&scheme=dark&screen=drafts",
+      "face=ohmarchy&open=draft-nadja&scheme=dark&screen=drafts"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "N To Nadja Lehner Reply Sends Wed 11 Nov, 08:00 Cancel send"
+      },
+      {
+        "role": "region",
+        "name": "Scheduled"
+      },
+      {
+        "role": "listbox",
+        "name": "Scheduled"
+      },
+      {
+        "role": "option",
+        "name": "Nadja Lehner: Re: Would you teach the December glaze evening?"
+      },
+      {
+        "role": "button",
+        "name": "N To Nadja Lehner Unconfirmed Sends Wed 11 Nov, 08:00 Cancel send"
+      },
+      {
+        "role": "button",
+        "name": "N To Nadja Lehner nadja@erdton-atelier.example Reply Sends Wed 11 Nov, 08:00 Re: Would you teach the December glaze evening? Cancel send"
+      },
+      {
+        "role": "button",
+        "name": "N To Nadja Lehner Reply Sends Wed 11 Nov, 08:00 Re: Would you teach the December glaze evening? Cancel send"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=draft-nadja&screen=drafts",
+      "screen=drafts&state=scheduled",
+      "open=draft-nadja&screen=drafts&state=held",
+      "screen=drafts&state=empty",
+      "device=phone&screen=drafts",
+      "device=fold&open=draft-nadja&screen=drafts",
+      "device=foldl&open=draft-nadja&screen=drafts",
+      "face=ohmarchy&open=draft-nadja&screen=drafts",
+      "open=draft-nadja&scheme=dark&screen=drafts",
+      "face=ohmarchy&open=draft-nadja&scheme=dark&screen=drafts"
+    ],
+    "reason": "CLASS menu-contract. The list's menu button says to a screen reader whether its menu is open, as the kit's every control that opens a menu does (and the Ohbox's list menu); the reference's button says nothing. Its words and paint stay compared, loose.",
+    "removedBy": "never: the kit's menu button contract",
+    "unnamed": [
+      {
+        "role": "button",
+        "name": "List"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "open=draft-nadja&screen=drafts",
+      "open=draft-nadja&screen=drafts&state=held",
+      "device=fold&open=draft-nadja&screen=drafts",
+      "device=foldl&open=draft-nadja&screen=drafts",
+      "face=ohmarchy&open=draft-nadja&screen=drafts",
+      "open=draft-nadja&scheme=dark&screen=drafts",
+      "face=ohmarchy&open=draft-nadja&scheme=dark&screen=drafts"
+    ],
+    "reason": "CLASS write-composer. With a draft open the reading column is the composer, which the place hands to writing; Drafts' own column is blank until then, so it is not compared yet.",
+    "removedBy": "write (the composer in Drafts' column)",
+    "notDrawn": ["reading"]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": ["device=phone&screen=trash&state=one", "device=foldl&screen=trash&state=one"],
+    "reason": "CLASS frame-switch. The reference stands the switch between ohmail and ohcal in the list's head where the rail is a dock (the phone, the folded phone turned): the frame's part, and no calendar stands in the app yet (the frame's own declared row says the same of its rail).",
+    "removedBy": "frame (the calendar's switch)",
+    "out": [
+      {
+        "role": "button",
+        "name": "ohcal"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=trash&state=one",
+      "device=phone&screen=trash&state=one",
+      "device=fold&screen=trash&state=one",
+      "device=foldl&screen=trash&state=one",
+      "face=ohmarchy&screen=trash&state=one",
+      "scheme=dark&screen=trash&state=one",
+      "face=ohmarchy&scheme=dark&screen=trash&state=one"
+    ],
+    "reason": "CLASS row-contract. A list is a named listbox and a row an option named 'Sender: Subject' that says its state in its description, each group a named region: what the shipped list says to a screen reader, as the Ohbox's rows are declared; the reference draws a list of buttons named by every word on the row. The rows' boxes, paint and pictures stay compared.",
+    "removedBy": "never: the shipped list's contract",
+    "unnamed": [
+      {
+        "role": "list",
+        "name": ""
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock ← Ohbox Deleted 09:24 Your verification code Verification code · kept out of AI"
+      },
+      {
+        "role": "listbox",
+        "name": "Trash"
+      },
+      {
+        "role": "option",
+        "name": "Cinderlock: Your verification code"
+      }
+    ]
+  },
+  {
+    "since": "2026-11-16",
+    "keys": [
+      "screen=trash&state=one",
+      "device=fold&screen=trash&state=one",
+      "device=foldl&screen=trash&state=one",
+      "face=ohmarchy&screen=trash&state=one",
+      "scheme=dark&screen=trash&state=one",
+      "face=ohmarchy&scheme=dark&screen=trash&state=one"
+    ],
+    "reason": "CLASS reader-letter. What the reading column holds of a letter (its head with to whom and details, its text, its notices and files) is the reader's letter in place, asked of its owner; the place draws the engine's plain text in the kit's Message as a stand-in until it lands. The letter's own nodes are left out of both sides, by role and name; the column, its line, its panel and its blank stay compared.",
+    "removedBy": "reader (the letter in place)",
+    "out": [
+      {
+        "role": "button",
+        "name": "08:31"
+      },
+      {
+        "role": "button",
+        "name": "C Cinderlock no-reply@cinderlock.example"
+      },
+      {
+        "role": "button",
+        "name": "Message"
+      },
+      {
+        "role": "button",
+        "name": "details"
+      },
+      {
+        "role": "button",
+        "name": "you"
+      },
+      {
+        "role": "heading",
+        "name": "Your verification code"
+      }
+    ]
+  }
+]

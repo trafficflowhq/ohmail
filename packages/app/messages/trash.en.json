@@ -30,6 +30,7 @@
     "liveOlder": "Show older",
     "liveOlderLoading": "Looking further back…",
     "liveBodyLoading": "Reading the message from your mail server…",
-    "liveBodyFailed": "The message couldn’t be read from your mail server."
+    "liveBodyFailed": "The message couldn’t be read from your mail server.",
+    "title": "Trash"
   }
 }

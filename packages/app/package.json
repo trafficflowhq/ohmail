@@ -262,6 +262,24 @@
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
     },
+    "./news": {
+      "types": "./src/news/index.ts",
+      "ohmail-source": "./src/news/index.ts",
+      "node": "./dist/news/index.js",
+      "default": "./src/news/index.ts"
+    },
+    "./receipts": {
+      "types": "./src/receipts/index.ts",
+      "ohmail-source": "./src/receipts/index.ts",
+      "node": "./dist/receipts/index.js",
+      "default": "./src/receipts/index.ts"
+    },
+    "./piles": {
+      "types": "./src/piles/index.ts",
+      "ohmail-source": "./src/piles/index.ts",
+      "node": "./dist/piles/index.js",
+      "default": "./src/piles/index.ts"
+    },
     "./doors": {
       "types": "./src/doors/index.ts",
       "ohmail-source": "./src/doors/index.ts",
@@ -375,6 +393,42 @@
       "ohmail-source": "./src/ohbox/index.ts",
       "node": "./dist/ohbox/index.js",
       "default": "./src/ohbox/index.ts"
+    },
+    "./drafts": {
+      "types": "./src/drafts/index.ts",
+      "ohmail-source": "./src/drafts/index.ts",
+      "node": "./dist/drafts/index.js",
+      "default": "./src/drafts/index.ts"
+    },
+    "./history": {
+      "types": "./src/history/index.ts",
+      "ohmail-source": "./src/history/index.ts",
+      "node": "./dist/history/index.js",
+      "default": "./src/history/index.ts"
+    },
+    "./tags": {
+      "types": "./src/tags/index.ts",
+      "ohmail-source": "./src/tags/index.ts",
+      "node": "./dist/tags/index.js",
+      "default": "./src/tags/index.ts"
+    },
+    "./folder": {
+      "types": "./src/folder/index.ts",
+      "ohmail-source": "./src/folder/index.ts",
+      "node": "./dist/folder/index.js",
+      "default": "./src/folder/index.ts"
+    },
+    "./address": {
+      "types": "./src/address/index.ts",
+      "ohmail-source": "./src/address/index.ts",
+      "node": "./dist/address/index.js",
+      "default": "./src/address/index.ts"
+    },
+    "./trash": {
+      "types": "./src/trash/index.ts",
+      "ohmail-source": "./src/trash/index.ts",
+      "node": "./dist/trash/index.js",
+      "default": "./src/trash/index.ts"
     }
   },
   "dependencies": {
