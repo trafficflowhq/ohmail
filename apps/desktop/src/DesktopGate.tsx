@@ -16,7 +16,8 @@
  * wait in state until the mail client is on screen, then seed the compose through `AppShell`'s
  * `mailtoDraft` seam. A click INSIDE the window takes the same path — `shell/open-external.ts`
  * used to cancel every non-http scheme, so a clicked address did nothing, silently. The native
- * chrome is wired here too (menu, badge, notification — only this build has them); the menu
+ * chrome is wired here too (menu and badge — only this build has them; its notices are
+ * `notice-emitter.ts`'s); the menu
  * drives `go()`, the same function the rail, palette and number keys call.
  */
 
@@ -105,12 +106,10 @@ import { useLocalFirstRun } from "./local-first-run.js";
 import { LocalSuggest } from "./local-suggest.js";
 import { CloudSuggest } from "./CloudSuggest.js";
 import {
-  claimMailto, offLinkAsk, offLinkRefused, onLinkAsk, onLinkRefused, postOsNotice, onMailto, onMenuCommand, onMenuNavigate,
+  claimMailto, offLinkAsk, offLinkRefused, onLinkAsk, onLinkRefused, onMailto, onMenuCommand, onMenuNavigate,
   setBadge, type LinkAsk as HeldPress, type LinkRefusal, type MenuCommand,
 } from "./native.js";
 import { LinkAsk } from "./LinkAsk.js";
-import { decideNotices, noticeChoicesOf, type Notice, type NoticeSample } from "@ohmail/client-engine";
-import { readChannels } from "../../webapp/app/shell/notification-settings";
 import { parseMailto } from "@trafficflow/core/mailto";
 import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
 import {
@@ -1518,53 +1517,19 @@ function UnpairedCard({ host, notice = null, causeId, removed = false, onPairAga
 }
 
 /**
- * WHAT THE ICON SAYS, AND WHEN THE MACHINE SPEAKS UP. One sink for the client's unread
- * count, driving both native surfaces: the DOCK BADGE is the count itself, set on change and
- * removed at zero (a badge reading "0" says what taking it off already says); a NOTIFICATION
- * fires only when the count RISES and the window is not the one being looked at — falling
- * counts are the user reading their own mail. The first render seeds the previous count
- * rather than notifying against zero: an app opened with eleven unread has not just
- * received eleven.
+ * WHAT THE ICON SAYS. One sink for the client's unread count: the DOCK BADGE is the count itself,
+ * set on change and removed at zero (a badge reading "0" says what taking it off already says).
+ * The notices are not drawn here: the one caller (`use-notices`) asks the gate and hands this
+ * window's emitter (`notice-emitter.ts`) what may be drawn.
  */
 function useUnreadSink(): (unread: number) => void {
-  const previous = useRef<number | null>(null);
   return useCallback((unread: number) => {
-    const before = previous.current;
-    previous.current = unread;
     /* Swallowed rather than reported: a platform that cannot draw a badge (Windows carries an
        overlay icon instead) must not leave an unhandled rejection behind a piece of decoration.
        The BADGE is deliberately outside the notification switches: it is a number on an icon the
        user is already looking at, not an interruption, and turning notifications off should not
        cost somebody their unread count. */
     void setBadge(unread).catch(() => {});
-    if (typeof document !== "undefined" && document.hasFocus()) return;
-
-    /* ── THE GATE, AND WHY THIS CALL EXISTS ──────────────────────────────────────────────
-       This emitter used to fire unconditionally while Settings said ohmail "doesn't send
-       notifications yet" — the sentence renders whenever the mirror carries no notifications
-       row, which on the desktop is always. So the app told you about new mail and its own
-       settings screen said it never would. Now it asks the shared gate, exactly as the
-       browser and the phone do: `decideNotices` is handed the counts and the stored switches
-       and answers with what may be drawn — nothing at all when the master is off. */
-    const sampled = (ohboxUnread: number): NoticeSample => ({ ohboxUnread, screenerWaiting: 0, sends: new Map(), devices: null });
-    const spec = decideNotices(
-      before === null ? null : sampled(before),
-      sampled(unread),
-      noticeChoicesOf(readChannels(), null, { ohcalPhone: false }),
-      /* The shell holds the OS permission, not this window: its `notify` command asks the
-         platform itself on first use and reports a refusal as a rejection, which the catch below
-         absorbs. Passing "granted" here says "this window may ask the shell", not "the OS has
-         agreed" — the gate's other three states belong to hosts that can read the answer. */
-      "granted",
-      // What this sink draws: new mail, as a count.
-      ["ohbox"],
-    ).find((n): n is Extract<Notice, { kind: "ohbox" }> => n.kind === "ohbox");
-    if (spec === undefined) return;
-
-    const fresh = spec.count;
-    void postOsNotice("ohmail", DOOR_COPY.notifyNewMail(fresh)).catch(() => {
-      /* Notifications are off for ohmail, or this platform has none. Not a reason to fail. */
-    });
   }, []);
 }
 

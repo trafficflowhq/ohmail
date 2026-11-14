@@ -10,13 +10,14 @@ export interface NotificationsPaneProps {
 
 /**
  * Notifications on this device. The master says the stored choice AND the platform's answer: no switch claims on
- * while nothing can be drawn, and a refusing platform leaves it unpressable. The events' switches stand only while
- * the master is live, and only for the events something delivers.
+ * while nothing can be drawn, and a refusing platform leaves it unpressable. A kind's switch stands only while the
+ * master is live, and only for a kind this surface's emitter draws: a switch that could change nothing is none.
  */
 export function NotificationsPane({ model }: NotificationsPaneProps) {
   const t = useText("settings");
   const n = useText(NOTIFICATIONS_NAMESPACE);
-  const { channels, permission, live, deliverable, osHolds, delivery } = model;
+  const { channels, permission, live, carries, osHolds, delivery } = model;
+  const rows = NOTIFY_ROWS.filter((row) => carries.includes(row.key));
   const blocked = permission === "denied";
   return (
     <>
@@ -35,33 +36,21 @@ export function NotificationsPane({ model }: NotificationsPaneProps) {
         {osHolds ? <SettingNote>{t("notifyOsHeld")}</SettingNote> : null}
         {delivery ? <SettingNote warn>{t(DELIVERY_SENTENCE[delivery])}</SettingNote> : null}
       </SettingsSheet>
-      {live ? (
-        <>
-          <SettingsSheet title={n("about")}>
-            {NOTIFY_ROWS.filter((row) => deliverable.includes(row.key)).map((row) => (
-              <Fragment key={row.key}>
-                <SettingLine
-                  label={t(row.label)}
-                  toggle={{
-                    on: channels[row.key],
-                    onChange: (on) => model.set({ ...channels, [row.key]: on }),
-                  }}
-                />
-                <SettingNote>{t(row.why)}</SettingNote>
-              </Fragment>
-            ))}
-          </SettingsSheet>
-          <SettingsSheet>
-            <SettingLine
-              label={t("notifyIdentify")}
-              toggle={{
-                on: channels.showSenderAndSubject,
-                onChange: (on) => model.set({ ...channels, showSenderAndSubject: on }),
-              }}
-            />
-            <SettingNote>{t("notifyIdentifyWhy")}</SettingNote>
-          </SettingsSheet>
-        </>
+      {live && rows.length > 0 ? (
+        <SettingsSheet title={n("about")}>
+          {rows.map((row) => (
+            <Fragment key={row.key}>
+              <SettingLine
+                label={t(row.label)}
+                toggle={{
+                  on: channels[row.key],
+                  onChange: (on) => model.set({ ...channels, [row.key]: on }),
+                }}
+              />
+              <SettingNote>{t(row.why)}</SettingNote>
+            </Fragment>
+          ))}
+        </SettingsSheet>
       ) : null}
       <SettingsSheet>
         <SettingNote>{t("notifyReach")}</SettingNote>

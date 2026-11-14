@@ -123,8 +123,6 @@ describe("with a German catalogue set, the standalone window answers German", ()
       .toBe("Mit dem Schlüssel dieser Installation versiegelt — er liegt im Schlüsselbund dieses "
         + "Mac und in einer Datei neben den Daten der App — und es funktioniert.");
     expect(DOOR_COPY.engineNoKey("PC")).toBe("Der Schlüsselspeicher dieses PC hat nicht geantwortet");
-    expect(DOOR_COPY.notifyNewMail(1)).toBe("Eine neue Nachricht für dich.");
-    expect(DOOR_COPY.notifyNewMail(4)).toBe("4 neue Nachrichten für dich.");
     expect(DOOR_COPY.changesWaiting(1, "anna@example.com", "Mac")).toBe(
       "Eine Änderung für anna@example.com wartet auf diesem Mac. Sie wird gesendet, sobald sich anna@example.com hier wieder anmeldet.",
     );
@@ -155,8 +153,6 @@ describe("with a German catalogue set, the standalone window answers German", ()
   it("the same ICU messages render in English when no catalogue is set", () => {
     expect(DOOR_COPY.bootMigratingOf(3, 12)).toBe("Updating your local mail store… (3 of 12)");
     expect(DOOR_COPY.doorLocalName("PC")).toBe("On this PC");
-    expect(DOOR_COPY.notifyNewMail(1)).toBe("One new message for you.");
-    expect(DOOR_COPY.notifyNewMail(4)).toBe("4 new messages for you.");
     expect(DOOR_COPY.changesWaiting(1, "anna@example.com", "Mac"))
       .toBe("One change for anna@example.com waiting on this Mac. Sent when anna@example.com signs in again here.");
     expect(DOOR_COPY.changesWaiting(3, "kestrel", "PC"))

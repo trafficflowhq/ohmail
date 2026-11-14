@@ -313,6 +313,20 @@
       "more": "{count} weitere",
       "moreName": "{count, plural, one {# weiterer Hinweis} other {# weitere Hinweise}}"
     },
+    "systemNotice": {
+      "ohboxTitle": "Neue Mail",
+      "ohboxBody": "{count, plural, one {Eine neue Nachricht für dich.} other {# neue Nachrichten für dich.}}",
+      "screenerTitle": "Screener",
+      "screenerBody": "{count, plural, one {Ein neuer Absender wartet im Screener.} other {# weitere Absender warten im Screener.}}",
+      "sentTitle": "Geplante Mail gesendet",
+      "sentBody": "{count, plural, one {Deine geplante Nachricht wurde gesendet.} other {# geplante Nachrichten wurden gesendet.}}",
+      "failedTitle": "Geplante Mail nicht gesendet",
+      "failedBody": "{count, plural, one {Eine geplante Nachricht konnte nicht gesendet werden. Sie liegt wieder in deinen Entwürfen.} other {# geplante Nachrichten konnten nicht gesendet werden. Sie liegen wieder in deinen Entwürfen.}}",
+      "pairedTitle": "Gerät gekoppelt",
+      "pairedBody": "{device, select, desktop {Eine Desktop-App kann jetzt deine Mail lesen.} phone {Ein Handy kann jetzt deine Mail lesen.} browser {Ein Browser kann jetzt deine Mail lesen.} other {Ein neues Gerät kann jetzt deine Mail lesen.}}",
+      "revokedTitle": "Gerät abgemeldet",
+      "revokedBody": "{device, select, desktop {Eine Desktop-App wurde von deiner Mail abgemeldet.} phone {Ein Handy wurde von deiner Mail abgemeldet.} browser {Ein Browser wurde von deiner Mail abgemeldet.} other {Ein Gerät wurde von deiner Mail abgemeldet.}}"
+    },
     "report": {
       "undo": "Rückgängig"
     },

@@ -20,6 +20,7 @@
  * engine; a do-nothing stub would be a promise the type makes and the surface breaks.
  */
 import type { NotificationHost } from "../../webapp/app/shell/notification-settings";
+import { desktopEmitter } from "./notice-emitter.js";
 
 export const desktopNotificationHost: NotificationHost = {
   permission: () => "granted",
@@ -32,4 +33,6 @@ export const desktopNotificationHost: NotificationHost = {
   request: async () => "granted",
   /** See the header: the OS has the last word and this window cannot read it. */
   osHoldsPermission: true,
+  /** The window hands the shell a kind and its numbers; the shell words and shows it (`notice-emitter.ts`). */
+  emitter: desktopEmitter,
 };

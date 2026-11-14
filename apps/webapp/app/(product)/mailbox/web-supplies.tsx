@@ -5,7 +5,7 @@
  * the account's entries, and the account strip's two notices. Values live at module scope where today's did, so a
  * wire keeps one identity for the life of the page.
  */
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useRef, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { NONE, type FeatureEntry, type FrameSupplies, type HostContract } from "@ohmail/app/host";
 import type { FrameNotice } from "@ohmail/app/frame";
@@ -22,7 +22,8 @@ import type { GapLettersTransport } from "../../shell/GapLettersNotice";
 import { cloudWire as junkWire } from "../../shell/junk-window";
 import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilings";
 import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
-import { browserNotificationHost } from "../../shell/notification-settings";
+import { browserNoticePage, noticeWordingOf, webNoticeEmitter } from "../../shell/notice-emitter";
+import { browserNotificationHost, type NotificationHost } from "../../shell/notification-settings";
 import { CLOUD_OLDER_BODY } from "../../shell/older-body";
 import type { OrganizerNoticeTransport } from "../../shell/OrganizerNotice";
 import { HOSTED as PROFILE_IMPORT } from "../../shell/ProfileImportCard";
@@ -169,6 +170,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     screener: entryOf("screener", <ScreeningSection />),
     help: { name: "help", render: drawsNothing },
   }), [subscriptionPage, withdrawManage, devices]);
+  const notifications = useWebNotifications();
   const supplies = useMemo((): WebSupplies => ({
     session: { resolve: words.resolve, confirmed: words.confirmed, signOut: signOutHere },
     reads: { mailboxes: words.mailboxFacts, access: accessHere },
@@ -194,9 +196,9 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
       mailboxes: NONE,
     },
     features,
-    notifications: browserNotificationHost,
+    notifications,
     frame,
-  }), [words.resolve, words.confirmed, words.mailboxFacts, firstRun, features, frame]);
+  }), [words.resolve, words.confirmed, words.mailboxFacts, firstRun, features, frame, notifications]);
   return useMemo(() => webHost(engine, {
     selfHost: SELF_HOST_BUILD,
     server: { pairing: server.pairing, remoteImages: server.remoteImages, searchPeople: server.searchPeople },
@@ -209,4 +211,19 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     account: confirmed,
     build: { version: process.env.NEXT_PUBLIC_APP_VERSION ?? null, commit: process.env.NEXT_PUBLIC_BUILD ?? null },
   }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, invites, subscriptionPage, storageBlock, scope, confirmed, supplies]);
+}
+
+/**
+ * THE BROWSER'S NOTIFICATIONS, WITH THE PAGE'S EMITTER. Made once for the page's life: the caller
+ * takes back what was drawn whenever the emitter it is handed changes, so the emitter keeps one
+ * identity and reads the person's words at the moment it draws.
+ */
+function useWebNotifications(): NotificationHost {
+  const t = useTranslations("frame.systemNotice");
+  const say = useRef(t);
+  say.current = t;
+  return useMemo(() => ({
+    ...browserNotificationHost,
+    emitter: webNoticeEmitter(browserNoticePage, () => noticeWordingOf((key, values) => say.current(key, values))),
+  }), []);
 }

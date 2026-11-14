@@ -1970,8 +1970,6 @@
     "notifyScheduledWhy": "And when one could not be sent — the half that silence reports wrongly.",
     "notifyPairing": "A device paired or was signed out",
     "notifyPairingWhy": "A device reached your mailbox, or stopped being able to.",
-    "notifyIdentify": "Show who it is from and the subject",
-    "notifyIdentifyWhy": "Off by default. A notification is read by whoever is looking at the screen.",
     "notifyAskFirst": "Your device will ask the first time you turn this on.",
     "notifyDenied": "This device is set to refuse notifications from ohmail. That is changed in the system settings, not here.",
     "notifyUnsupported": "This device has no notification centre, so there is nothing to send here.",
@@ -5081,7 +5079,6 @@
     "bootCompacting": "Compacting your local mail store — one-time maintenance…",
     "errorUnknown": "Something went wrong and said nothing about what.",
     "errorRefused": "The request was refused ({status}).",
-    "notifyNewMail": "{count, plural, one {One new message for you.} other {# new messages for you.}}",
     "doorHostName": "Another computer",
     "doorHostSay": "ohmail on another computer of yours organizes; this {machine} works through it. While that computer is off, this one shows its copy and can change nothing.",
     "doorHostUnavailable": "Pairing with another computer isn't available in this version yet.",
@@ -5974,6 +5971,20 @@
     "notice": {
       "more": "{count} more",
       "moreName": "{count, plural, one {# more notice} other {# more notices}}"
+    },
+    "systemNotice": {
+      "ohboxTitle": "New mail",
+      "ohboxBody": "{count, plural, one {One new message for you.} other {# new messages for you.}}",
+      "screenerTitle": "Screener",
+      "screenerBody": "{count, plural, one {A new sender is waiting in the Screener.} other {# more senders are waiting in the Screener.}}",
+      "sentTitle": "Scheduled mail sent",
+      "sentBody": "{count, plural, one {Your scheduled message went out.} other {# scheduled messages went out.}}",
+      "failedTitle": "Scheduled mail not sent",
+      "failedBody": "{count, plural, one {A scheduled message could not be sent. It is back in your drafts.} other {# scheduled messages could not be sent. They are back in your drafts.}}",
+      "pairedTitle": "Device paired",
+      "pairedBody": "{device, select, desktop {A desktop app can now read your mail.} phone {A phone can now read your mail.} browser {A browser can now read your mail.} other {A new device can now read your mail.}}",
+      "revokedTitle": "Device signed out",
+      "revokedBody": "{device, select, desktop {A desktop app was signed out of your mail.} phone {A phone was signed out of your mail.} browser {A browser was signed out of your mail.} other {A device was signed out of your mail.}}"
     },
     "report": {
       "undo": "Undo"

@@ -13,7 +13,10 @@ import {
   type NoticePermission,
   type NotificationChannels,
 } from "@ohmail/client-engine";
+import { NONE, type None } from "@ohmail/app/host";
+import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import { apiConfigured, push as pushApi } from "../api-client";
+import { browserNoticePage } from "./notice-emitter";
 import { durableRemove, durableSet } from "@ohmail/app-logic/storage/durable";
 import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";
 
@@ -58,8 +61,27 @@ export function readChannels(): NotificationChannels {
  * because the switch still governs this session and the pane still reads back what it holds.
  */
 export function writeChannels(next: NotificationChannels): void {
+  const record: Record<string, unknown> = { ...storedBeside() };
+  for (const k of Object.keys(DEFAULT_CHANNELS) as (keyof NotificationChannels)[]) record[k] = next[k];
   // The in-memory value still drives this session; the refusal is no longer silent.
-  durableSet(NOTIFICATION_CHANNELS_KEY, JSON.stringify(next), "notifications.channels");
+  durableSet(NOTIFICATION_CHANNELS_KEY, JSON.stringify(record), "notifications.channels");
+}
+
+/**
+ * The members the stored record holds beside this build's own: an older install's switch, or a
+ * newer build's. Kept as they are and read by nothing, so a write here never changes a record
+ * another build of this device still reads.
+ */
+function storedBeside(): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(globalThis.localStorage?.getItem(NOTIFICATION_CHANNELS_KEY) ?? "null");
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return {};
+    const beside: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed)) if (!(k in DEFAULT_CHANNELS) && k !== "__proto__") beside[k] = v;
+    return beside;
+  } catch {
+    return {};
+  }
 }
 
 /**
@@ -130,6 +152,12 @@ export interface NotificationHost {
    * that could not be turned on and said nothing (`apps/desktop/src/notify-host.ts`).
    */
   osHoldsPermission?: boolean;
+  /**
+   * What draws this surface's notices while the app runs, or `none`. The page's own emitter is made
+   * where the page's words are (`web-supplies.tsx`); a host that hands this object in as it stands
+   * draws none.
+   */
+  readonly emitter: HostNoticeEmitter | None;
 }
 
 /**
@@ -138,6 +166,7 @@ export interface NotificationHost {
  * block, and one that is refused can never be asked for again.
  */
 export const browserNotificationHost: NotificationHost = {
+  emitter: NONE,
   /**
    * Registration is attempted only where there is a server to register WITH. `apiConfigured()`
    * is false in every desktop build — its Cloud adapter is aliased out of the bundle — so this
@@ -589,7 +618,12 @@ const WAKE_BUDGET_MS = 4_000;
 async function revokeWakeRegistrationNow(opts?: { signingOutOf?: string }): Promise<PushSyncOutcome | null> {
   // The words go first and unconditionally: it is the one half that needs neither the network nor
   // a live subscription, so a browser that fails everything below still refuses to draw.
-  try { await disarmNotifyState("", ""); } catch { /* no Cache API, or storage refused */ }
+  // And what is still listed goes with the account: a notice of the account left is no one's now. It
+  // is awaited: a sign-out that unloads the page runs no cleanup of the shell, so this is the one take-back.
+  try {
+    await disarmNotifyState("", "");
+    await browserNoticePage.closeAll();
+  } catch { /* no Cache API, or storage refused */ }
   try {
     return (await browserNotificationHost.syncSubscription?.(false, opts)) ?? null;
   } catch {

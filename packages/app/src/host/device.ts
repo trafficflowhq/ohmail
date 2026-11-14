@@ -1,4 +1,5 @@
 import type { NoticePermission } from "@ohmail/client-engine";
+import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 import type { None } from "./contract.js";
 import type { Signal } from "./signals.js";
 
@@ -27,6 +28,11 @@ export interface DeviceNotifications {
     opts?: { forceAnnounce?: boolean; signingOutOf?: string },
   ) => Promise<PushSyncOutcome | null>;
   osHoldsPermission?: boolean;
+  /**
+   * What draws this surface's notices: the kinds it carries, and the drawing. `none` where the surface
+   * draws none; the Notifications pane then offers no switch for a kind.
+   */
+  readonly emitter: HostNoticeEmitter | None;
 }
 
 export type Pointer = "fine" | "coarse";

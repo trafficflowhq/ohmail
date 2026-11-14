@@ -16,12 +16,17 @@ function isSpace(cp: number): boolean {
 
 /**
  * What never reaches a notice: the control characters, the marks that turn the reading direction,
- * the characters with no width, and half of a surrogate pair.
+ * the characters with no width or no mark of their own (the tag characters, the variation
+ * selectors, the grapheme joiner, the Hangul fillers, the blank Braille pattern), and half of a
+ * surrogate pair. The desktop's shell drops the same (`notice.rs`): one table holds both
+ * (`test/notice-text-dropped.json`).
  */
 function isDropped(cp: number): boolean {
   return cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f)
     || cp === 0x61c || cp === 0x200e || cp === 0x200f || (cp >= 0x202a && cp <= 0x202e) || (cp >= 0x2066 && cp <= 0x2069)
     || cp === 0xad || cp === 0x180e || (cp >= 0x200b && cp <= 0x200d) || (cp >= 0x2060 && cp <= 0x2064) || cp === 0xfeff
+    || cp === 0x34f || cp === 0x115f || cp === 0x1160 || cp === 0x3164 || cp === 0xffa0 || cp === 0x2800
+    || (cp >= 0xfe00 && cp <= 0xfe0f) || (cp >= 0xe0000 && cp <= 0xe007f) || (cp >= 0xe0100 && cp <= 0xe01ef)
     || (cp >= 0xd800 && cp <= 0xdfff);
 }
 

@@ -17,6 +17,16 @@ import {
   type Clock, type Notice, type NoticeChoices, type NoticeKind, type NoticeSample, type SyncChange,
 } from "@ohmail/client-engine";
 import type { CalendarEventRecord, CalendarSuggestionRecord } from "@ohmail/wire";
+import EN from "../apps/webapp/messages/en.json" with { type: "json" };
+import { noticeWordingOf, webNoticeEmitter } from "../apps/webapp/app/shell/notice-emitter.js";
+import { desktopNoticeEmitter } from "../apps/desktop/src/notice-emitter.js";
+
+/**
+ * The page's words: each sentence of the catalogue as it ships, unformatted, with every value it was
+ * handed written beside it, so whatever reached a sentence is in the strings the arm walks.
+ */
+const SYSTEM_NOTICE: Record<string, string> = EN.frame.systemNotice;
+const WEB_WORDS = noticeWordingOf((key, values) => `${SYSTEM_NOTICE[key] ?? key} ${JSON.stringify(values ?? {})}`);
 
 /** The letter's own markers, one for each field a notice could have copied. */
 const LETTER = {
@@ -68,6 +78,34 @@ const ARMS: readonly Arm[] = [
         label: (as) => `the word for ${as}`,
       });
       return { title: fields.title, rest: [fields.body, ...handed] };
+    },
+  },
+  {
+    // The page: its real emitter, over a page that records every notice it is asked to draw.
+    name: "web",
+    carries: webNoticeEmitter({ focused: () => false, visible: () => true, show: () => {}, closeAll: async () => {} }, () => WEB_WORDS).carries,
+    draw(notice) {
+      const shown: string[][] = [];
+      webNoticeEmitter(
+        { focused: () => false, visible: () => true, show: (title, body, tag) => { shown.push([title, body, tag]); }, closeAll: async () => {} },
+        () => WEB_WORDS,
+      ).post(notice);
+      if (shown.length === 0) return { title: "", rest: [] };
+      return { title: shown[0]![0]!, rest: [...shown[0]!.slice(1), ...shown.slice(1).flat()] };
+    },
+  },
+  {
+    // The desktop's window: its real emitter, over a shell that records what crosses to it. The
+    // shell writes the words (`notice.rs`): an event's label, where one crosses, is its title field.
+    name: "desktop",
+    carries: desktopNoticeEmitter({ focused: () => false, post: async () => {} }).carries,
+    draw(notice) {
+      const crossed: unknown[] = [];
+      desktopNoticeEmitter({ focused: () => false, post: async (n) => { crossed.push(n); } }).post(notice);
+      if (crossed.length === 0) return { title: "", rest: [] };
+      const { label, ...rest } = crossed[0] as { label?: { as: string; text?: string } };
+      const title = label?.as === "title" ? label.text ?? "" : "";
+      return { title, rest: [...stringsOf(rest), ...(label ? stringsOf({ as: label.as }) : []), ...stringsOf(crossed.slice(1))] };
     },
   },
 ];

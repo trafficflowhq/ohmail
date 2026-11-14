@@ -7,36 +7,16 @@
  */
 
 import type { NoticeChoices } from "./notices/choices.js";
-import { MAIL_NOTICE_KINDS, noticeCount, type MailNoticeKind, type Notice, type NoticeKind } from "./notices/kinds.js";
+import { noticeCount, type Notice, type NoticeKind } from "./notices/kinds.js";
 import type { NoticeGate, NoticePermission } from "./notices/gate.js";
 
 export type { NoticePermission };
 
-/** Mail's four kinds, under the names this door has always handed them out by: one list, kept in `notices/kinds.ts`. */
-export type NoticeEvent = MailNoticeKind;
-
-/** Every mail kind, in the order the Settings pane lists them. */
-export const NOTICE_EVENTS: readonly NoticeEvent[] = MAIL_NOTICE_KINDS;
-
-/**
- * The events some surface can actually deliver today — a statement about
- * which emitters exist, not a preference or a roadmap. The Settings pane
- * offers a switch only for an event whose position changes something. Only
- * `ohbox` qualifies at present (the desktop's unread sink, the browser
- * service worker's closed-window case); screener, scheduled and pairing are
- * modelled by {@link decideNotices} but reach no emitter, so their switches
- * are withheld. A census over the emitters' own source keeps this list
- * honest in both directions.
- */
-export const DELIVERABLE_EVENTS: readonly NoticeEvent[] = ["ohbox"] as const;
-
 /**
  * Mail's stored record, as this device has always kept it. The operating system's permission is
- * not in it: that is a fact about one device.
- *
- * `showSenderAndSubject` is a member older installs stored. Nothing reads it: no notice has a
- * place for a sender or a subject. It stays in this type only until the pane's row that still
- * writes it is gone.
+ * not in it: that is a fact about one device. A member an older install stored beside these (the
+ * switch that once showed a sender and a subject) stays in the stored record and is read by
+ * nothing: no notice has a place for either.
  */
 export interface NotificationChannels {
   /** The master. Off ⇒ nothing is drawn, whatever the four below say. */
@@ -45,8 +25,6 @@ export interface NotificationChannels {
   screener: boolean;
   scheduled: boolean;
   pairing: boolean;
-  /** Stored by older installs; read by nothing. */
-  showSenderAndSubject: boolean;
 }
 
 /**
@@ -62,21 +40,29 @@ export const DEFAULT_CHANNELS: NotificationChannels = {
   screener: true,
   scheduled: true,
   pairing: true,
-  showSenderAndSubject: false,
 };
 
 /**
- * The gate. Everything that draws a notice comes through here. The two refusals come first
- * because both are absolute: a platform that has not granted is not something a switch can
- * override, and the master is not something a kind can. Then the seeding sample: nothing is an
- * event until there is something to compare against. Ignoring an empty answer draws nothing,
- * which is the right way to fail for a feature whose fault is interrupting people.
+ * The four refusals every notice passes, whatever made it: the platform has granted, the master is
+ * on, the kind's own switch is on, and this surface carries the kind. The first two are absolute: a
+ * switch cannot override a platform that has not granted, and a kind cannot override the master.
+ * One function for the gate and for {@link mayPost}, so a refusal added here holds for both.
+ */
+function mayDraw(
+  kind: NoticeKind, choices: NoticeChoices, permission: NoticePermission, carries: readonly NoticeKind[],
+): boolean {
+  return permission === "granted" && choices.master === true && choices[kind] === true && carries.includes(kind);
+}
+
+/**
+ * The gate. Everything that draws a notice comes through here, each kind past {@link mayDraw}. The
+ * seeding sample answers nothing: nothing is an event until there is something to compare against.
+ * Ignoring an empty answer draws nothing, which is the right way to fail for a feature whose fault
+ * is interrupting people.
  */
 export const decideNotices: NoticeGate = (before, after, choices, permission, carries) => {
-  if (permission !== "granted") return [];
-  if (choices.master !== true) return [];
   if (before === null) return [];
-  const may = (kind: NoticeKind): boolean => choices[kind] === true && carries.includes(kind);
+  const may = (kind: NoticeKind): boolean => mayDraw(kind, choices, permission, carries);
   const out: Notice[] = [];
 
   // New mail in the Ohbox: a RISE only. A falling count is somebody reading their own mail.
@@ -126,7 +112,7 @@ export const decideNotices: NoticeGate = (before, after, choices, permission, ca
 export function mayPost(
   notice: Notice, choices: NoticeChoices, permission: NoticePermission, carries: readonly NoticeKind[],
 ): boolean {
-  return permission === "granted" && choices.master === true && choices[notice.kind] === true && carries.includes(notice.kind);
+  return mayDraw(notice.kind, choices, permission, carries);
 }
 
 /**

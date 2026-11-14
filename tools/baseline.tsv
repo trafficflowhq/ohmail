@@ -24,8 +24,8 @@ apps/desktop/src/DesktopDevices.tsx	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/src/DesktopDevices.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/DesktopFrame.tsx	ohmail/declared-dependency	6	ruling:frame-hosts
 apps/desktop/src/DesktopFrame.tsx	ohmail/package-borders:apps/webapp	9	ruling:frame-hosts
-apps/desktop/src/DesktopGate.tsx	ohmail/declared-dependency	11	ruling:frame-hosts
-apps/desktop/src/DesktopGate.tsx	ohmail/package-borders:apps/webapp	9	desktop-layer
+apps/desktop/src/DesktopGate.tsx	ohmail/declared-dependency	10	ruling:frame-hosts
+apps/desktop/src/DesktopGate.tsx	ohmail/package-borders:apps/webapp	8	desktop-layer
 apps/desktop/src/DesktopLocale.tsx	ohmail/declared-dependency	1	ruling:frame-hosts
 apps/desktop/src/DesktopLocale.tsx	ohmail/package-borders:apps/webapp	4	desktop-layer
 apps/desktop/src/DesktopMailboxes.tsx	ohmail/declared-dependency	10	desktop-layer
@@ -88,6 +88,7 @@ apps/desktop/src/mailbox-facts-wire.ts	ohmail/declared-dependency	1	desktop-laye
 apps/desktop/src/main.tsx	ohmail/declared-dependency	6	desktop-layer
 apps/desktop/src/main.tsx	ohmail/package-borders:apps/webapp	5	desktop-layer
 apps/desktop/src/no-api-client.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
+apps/desktop/src/notice-emitter.ts	ohmail/declared-dependency	2	ruling:frame-hosts
 apps/desktop/src/notify-host.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/omarchy-paint.ts	ohmail/declared-dependency	2	desktop-layer
 apps/desktop/src/omarchy.ts	ohmail/declared-dependency	1	desktop-layer
@@ -355,6 +356,7 @@ apps/desktop/test/journeys-doors.test.tsx	ohmail/package-borders:apps/webapp	1	d
 apps/desktop/test/journeys-host.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/journeys-host.test.ts	ohmail/package-borders:apps/sidecar	2	desktop-layer
 apps/desktop/test/mailto.test.ts	ohmail/declared-dependency	1	desktop-layer
+apps/desktop/test/notice-emitter.test.ts	ohmail/declared-dependency	1	ruling:frame-hosts
 apps/desktop/test/opencode-go-form.test.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/opencode-go-form.test.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/test/opencode-go-manager.test.ts	ohmail/declared-dependency	3	desktop-layer

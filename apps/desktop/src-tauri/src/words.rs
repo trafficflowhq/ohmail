@@ -413,6 +413,99 @@ impl Words {
     }
 }
 
+/// THE WORDS OF A NOTICE THIS SHELL SHOWS, in both languages. A table of its own beside [`Words`]:
+/// its sentences take a count (`{count}`, filled by `notice.rs`), and every one of them is the
+/// window's catalogue's own sentence (`frame.systemNotice`), so the browser and this shell say the
+/// same thing for the same notice. No sentence has a place for a name, a subject or an address.
+#[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+pub struct NoticeWords {
+    pub ohbox_title: &'static str,
+    pub ohbox_one: &'static str,
+    pub ohbox_many: &'static str,
+    pub screener_title: &'static str,
+    pub screener_one: &'static str,
+    pub screener_many: &'static str,
+    pub sent_title: &'static str,
+    pub sent_one: &'static str,
+    pub sent_many: &'static str,
+    pub failed_title: &'static str,
+    pub failed_one: &'static str,
+    pub failed_many: &'static str,
+    pub paired_title: &'static str,
+    pub paired_desktop: &'static str,
+    pub paired_phone: &'static str,
+    pub paired_browser: &'static str,
+    pub paired_unknown: &'static str,
+    pub revoked_title: &'static str,
+    pub revoked_desktop: &'static str,
+    pub revoked_phone: &'static str,
+    pub revoked_browser: &'static str,
+    pub revoked_unknown: &'static str,
+}
+
+/// English notices.
+pub const EN_NOTICES: NoticeWords = NoticeWords {
+    ohbox_title: "New mail",
+    ohbox_one: "One new message for you.",
+    ohbox_many: "{count} new messages for you.",
+    screener_title: "Screener",
+    screener_one: "A new sender is waiting in the Screener.",
+    screener_many: "{count} more senders are waiting in the Screener.",
+    sent_title: "Scheduled mail sent",
+    sent_one: "Your scheduled message went out.",
+    sent_many: "{count} scheduled messages went out.",
+    failed_title: "Scheduled mail not sent",
+    failed_one: "A scheduled message could not be sent. It is back in your drafts.",
+    failed_many: "{count} scheduled messages could not be sent. They are back in your drafts.",
+    paired_title: "Device paired",
+    paired_desktop: "A desktop app can now read your mail.",
+    paired_phone: "A phone can now read your mail.",
+    paired_browser: "A browser can now read your mail.",
+    paired_unknown: "A new device can now read your mail.",
+    revoked_title: "Device signed out",
+    revoked_desktop: "A desktop app was signed out of your mail.",
+    revoked_phone: "A phone was signed out of your mail.",
+    revoked_browser: "A browser was signed out of your mail.",
+    revoked_unknown: "A device was signed out of your mail.",
+};
+
+/// German notices.
+pub const DE_NOTICES: NoticeWords = NoticeWords {
+    ohbox_title: "Neue Mail",
+    ohbox_one: "Eine neue Nachricht für dich.",
+    ohbox_many: "{count} neue Nachrichten für dich.",
+    screener_title: "Screener",
+    screener_one: "Ein neuer Absender wartet im Screener.",
+    screener_many: "{count} weitere Absender warten im Screener.",
+    sent_title: "Geplante Mail gesendet",
+    sent_one: "Deine geplante Nachricht wurde gesendet.",
+    sent_many: "{count} geplante Nachrichten wurden gesendet.",
+    failed_title: "Geplante Mail nicht gesendet",
+    failed_one: "Eine geplante Nachricht konnte nicht gesendet werden. Sie liegt wieder in deinen Entwürfen.",
+    failed_many: "{count} geplante Nachrichten konnten nicht gesendet werden. Sie liegen wieder in deinen Entwürfen.",
+    paired_title: "Gerät gekoppelt",
+    paired_desktop: "Eine Desktop-App kann jetzt deine Mail lesen.",
+    paired_phone: "Ein Handy kann jetzt deine Mail lesen.",
+    paired_browser: "Ein Browser kann jetzt deine Mail lesen.",
+    paired_unknown: "Ein neues Gerät kann jetzt deine Mail lesen.",
+    revoked_title: "Gerät abgemeldet",
+    revoked_desktop: "Eine Desktop-App wurde von deiner Mail abgemeldet.",
+    revoked_phone: "Ein Handy wurde von deiner Mail abgemeldet.",
+    revoked_browser: "Ein Browser wurde von deiner Mail abgemeldet.",
+    revoked_unknown: "Ein Gerät wurde von deiner Mail abgemeldet.",
+};
+
+impl NoticeWords {
+    /// The notices of a language.
+    #[cfg_attr(not(feature = "local-engine"), allow(dead_code))]
+    pub fn of(language: Language) -> &'static NoticeWords {
+        match language {
+            Language::En => &EN_NOTICES,
+            Language::De => &DE_NOTICES,
+        }
+    }
+}
+
 #[cfg(test)]
 #[path = "words_tests.rs"]
 mod tests;

@@ -5,6 +5,7 @@
  * types, so the last case compiles this file itself and expects it clean: each line marked below
  * expects the compiler's refusal, and a member that became free text leaves its line unrefused.
  */
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -19,14 +20,19 @@ import {
 
 const HERE = fileURLToPath(import.meta.url);
 
+/** Any text at all can be reached in `T`: itself, an element of a list, or a member at any depth. */
+type HoldsText<T> = string extends T ? true
+  : T extends readonly (infer E)[] ? HoldsText<E>
+  : T extends object ? (true extends { [K in keyof T]-?: HoldsText<T[K]> }[keyof T] ? true : false)
+  : false;
 /** The members of each arm of `T` that could hold any text at all, not only words of a closed set. */
-type FreeText<T> = T extends unknown ? { [K in keyof T]-?: string extends T[K] ? K : never }[keyof T] : never;
+type FreeText<T> = T extends unknown ? { [K in keyof T]-?: true extends HoldsText<T[K]> ? K : never }[keyof T] : never;
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
 type Holds<T extends true> = T;
 
 /** No mail notice has a member that takes text. The calendar's take an id, and a title only inside its label. */
 export type MailTakesNoText = Holds<Same<FreeText<MailNotice>, never>>;
-export type CalendarTakesAnIdOnly = Holds<Same<FreeText<CalendarNotice>, "eventId">>;
+export type CalendarTakesAnIdAndItsLabel = Holds<Same<FreeText<CalendarNotice>, "eventId" | "label">>;
 export type LabelTakesItsTextOnly = Holds<Same<FreeText<EventLabel>, "text">>;
 
 describe("what the compiler refuses", () => {
@@ -136,6 +142,25 @@ describe("an event's words in a notice", () => {
     expect(cleanNoticeText("\u0000\u001b[31m")).toBe("[31m");
     expect(cleanNoticeText("​‍⁠")).toBeNull();
     expect(cleanNoticeText("")).toBeNull();
+  });
+
+  it("each character is spaced, dropped or kept as the table the desktop's shell reads too says", () => {
+    const table = JSON.parse(readFileSync(join(dirname(HERE), "notice-text-dropped.json"), "utf8")) as Record<"space" | "dropped", string[]>;
+    const outcome = new Uint8Array(0x110000); // 0 kept, 1 space, 2 dropped
+    for (const [list, mark] of [[table.dropped, 2], [table.space, 1]] as const) {
+      for (const range of list) {
+        const [from, to = from] = range.split("-").map((hex) => parseInt(hex, 16));
+        outcome.fill(mark, from, to! + 1);
+      }
+    }
+    const wrong: string[] = [];
+    for (let cp = 0; cp <= 0x10ffff; cp += 1) {
+      if (cp >= 0xd800 && cp <= 0xdfff) continue; // the shell's strings cannot hold half a pair
+      const ch = String.fromCodePoint(cp);
+      const want = outcome[cp] === 1 ? "a b" : outcome[cp] === 2 ? "ab" : `a${ch}b`;
+      if (cleanNoticeText(`a${ch}b`) !== want) wrong.push(cp.toString(16).toUpperCase().padStart(4, "0"));
+    }
+    expect({ differ: wrong.length, first: wrong.slice(0, 24) }).toEqual({ differ: 0, first: [] });
   });
 
   it("cuts at the bound in code points, and never ends on a gap", () => {

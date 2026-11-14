@@ -694,6 +694,12 @@
       "node": "./dist/mailboxes/pane/verbs.js",
       "default": "./src/mailboxes/pane/verbs.ts"
     },
+    "./notices/use-notices": {
+      "types": "./src/notices/use-notices.ts",
+      "ohmail-source": "./src/notices/use-notices.ts",
+      "node": "./dist/notices/use-notices.js",
+      "default": "./src/notices/use-notices.ts"
+    },
     "./ohbox": {
       "types": "./src/ohbox/index.ts",
       "ohmail-source": "./src/ohbox/index.ts",
