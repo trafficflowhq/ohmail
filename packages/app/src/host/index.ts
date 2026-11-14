@@ -20,8 +20,8 @@ export type { Entries, FrameSupplies, MayBeNone, Transports } from "./supplies.j
 export { createFeed } from "./feed.js";
 export type { Feed } from "./feed.js";
 export type {
-  AutoFiledWire, AwayWire, ConsentWire, DraftReplyWire, FirstRunWire, FolderSummaryWire, GapLettersWire, HostWires,
-  ImageWire, JunkWire, LiveBodyRefusal, LiveBodyWire, MailboxesWire, OrganizerNoticeWire, OwnModelAutoSuggestWire,
-  ProfileImportWire, ScreeningWire, SeedReviewWire, SuggestWire, TrashWire,
+  AutoFiledWire, AwayWire, ConnectWire, ConsentWire, DraftReplyWire, FirstRunWire, FolderSummaryWire, GapLettersWire,
+  HostWires, ImageWire, JunkWire, LiveBodyRefusal, LiveBodyWire, MailboxesWire, OrganizerNoticeWire,
+  OwnModelAutoSuggestWire, ProfileImportWire, ProviderSignInWire, ScreeningWire, SeedReviewWire, SuggestWire, TrashWire,
 } from "./wires.js";
 export type * as Payloads from "./payloads.js";

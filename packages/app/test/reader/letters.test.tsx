@@ -585,6 +585,134 @@ describe("the head", () => {
     expect(within(head).getByText("Studio")).toBeTruthy();
     expect(head.textContent).not.toContain("Ben Kiln");
   });
+
+  const MILA = { name: "Mila Brunner", address: "me@studio.example" };
+  const GIULIA = { name: "Giulia Ferrari", address: "giulia@terracotta.example" };
+  const BEN = { name: "Ben Arnold", address: "ben@terracotta.example" };
+
+  it("names who is in the conversation, oldest voice first; the account's own is not one of them", async () => {
+    const t1 = { threadId: "t1" };
+    mountReader({
+      letters: [
+        letter("c1", { ...t1, date: "2026-11-05T15:20:00.000Z", from: MILA, to: [GIULIA] }),
+        letter("c2", { ...t1, date: "2026-11-06T08:05:00.000Z", from: GIULIA }),
+        letter("c3", { ...t1, date: "2026-11-09T16:30:00.000Z", from: BEN }),
+        letter("c4", { ...t1, date: "2026-11-10T08:12:00.000Z", from: GIULIA }),
+      ],
+      open: "c4",
+      host: { mailboxes: async () => ME },
+    });
+    const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
+    expect(await within(head).findByText("Giulia Ferrari, Ben Arnold")).toBeTruthy();
+    expect(head.textContent).not.toContain("Mila Brunner");
+  });
+
+  it("names a conversation by its own subject, the one its thread carries; a single letter by its own", () => {
+    const t1 = { threadId: "t1" };
+    const glaze = [
+      letter("g1", { ...t1, subject: "Glaze order #2291", date: "2026-11-05T15:20:00.000Z" }),
+      letter("g2", { ...t1, subject: "Re: Glaze order #2291", date: "2026-11-10T08:12:00.000Z" }),
+    ];
+    mountReader({
+      letters: glaze,
+      open: "g2",
+      rows: { "thread:t1": { id: "t1", subject: "Glaze order #2291" } },
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Glaze order #2291");
+    cleanup();
+    // Before its thread has synced, the opened letter's own.
+    mountReader({ letters: glaze, open: "g2" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Re: Glaze order #2291");
+    cleanup();
+    mountReader({
+      letters: [letter("s1", { threadId: "t2", subject: "Re: Kiln schedule" })],
+      open: "s1",
+      rows: { "thread:t2": { id: "t2", subject: "Kiln schedule" } },
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Re: Kiln schedule");
+  });
+
+  it("prints You for the sender of a letter of the account's own, once the room has read the mailboxes", async () => {
+    mountReader({
+      letters: [letter("y1", { from: MILA, to: [{ name: "Ben Kiln", address: "ben@kiln.example" }] })],
+      open: "y1",
+      host: { mailboxes: async () => ME },
+    });
+    expect(await screen.findByRole("button", { name: /You\s*me@studio\.example$/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Mila Brunner/ })).toBeNull();
+  });
+
+  it("the recipients' line says to and cc as the head says them", async () => {
+    mountReader({
+      letters: [letter("k1", { cc: [{ name: "Ada Kiln", address: "ada@kiln.example" }] })],
+      open: "k1",
+      host: { mailboxes: async () => ME },
+    });
+    await screen.findByRole("button", { name: "you" });
+    const line = screen.getByRole("button", { name: "Ada Kiln" }).closest("p")!;
+    expect(line.textContent).toBe("to you · cc Ada Kiln details");
+  });
+
+  it("Later, Park and Resurface are toggles that say whether the letter is filed there", () => {
+    const filed = (state: "reply_later" | "set_aside" | "bubbled_up" | null) =>
+      letter("f1", {
+        triage:
+          state === null
+            ? null
+            : {
+                messageId: "f1",
+                state,
+                bubbleUpAt: state === "bubbled_up" ? "2026-11-13T08:00:00.000Z" : null,
+                setAt: "2026-11-10T09:00:00.000Z",
+                updatedAt: "2026-11-10T09:00:00.000Z",
+              },
+      });
+    const pressed = () => {
+      const panel = screen.getByRole("toolbar", { name: "Actions" });
+      return ["Later", "Park", "Resurface"].map((name) =>
+        within(panel).getByRole("button", { name }).getAttribute("aria-pressed"),
+      );
+    };
+    for (const [state, held] of [
+      ["reply_later", ["true", "false", "false"]],
+      ["set_aside", ["false", "true", "false"]],
+      ["bubbled_up", ["false", "false", "true"]],
+      [null, ["false", "false", "false"]],
+    ] as const) {
+      mountReader({ letters: [filed(state)], open: "f1" });
+      expect(pressed(), String(state)).toEqual(held);
+      cleanup();
+    }
+  });
+});
+
+describe("a letter the account sent", () => {
+  const SAID =
+    "The copy for your Sent folder could not be saved. The message went out; nothing to send again.";
+  const t1 = { threadId: "t1" };
+  const SENT = [
+    letter("s1", { ...t1, date: "2026-11-09T10:00:00.000Z" }),
+    letter("s2", {
+      ...t1,
+      date: "2026-11-10T10:00:00.000Z",
+      from: { name: "Mila Brunner", address: "me@studio.example" },
+      to: [{ name: "Ben Kiln", address: "ben@kiln.example" }],
+    }),
+  ];
+
+  it("carries what the shell says of its copy in Sent as a note under its recipients; the others carry none", () => {
+    mountReader({
+      letters: SENT,
+      open: "s2",
+      parts: { sentCopy: (id: string) => (id === "s2" ? SAID : null) },
+    });
+    const notes = screen.getAllByRole("note");
+    expect(notes.map((n) => n.textContent)).toEqual([SAID]);
+    expect(notes[0]!.closest("[data-conv-id]")!.getAttribute("data-conv-id")).toBe("s2");
+    cleanup();
+    mountReader({ letters: SENT, open: "s2", parts: { sentCopy: "none" } });
+    expect(screen.queryAllByRole("note")).toEqual([]);
+  });
 });
 
 describe("the panel's menus", () => {

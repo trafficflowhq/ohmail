@@ -60,7 +60,8 @@ const mod = async (): Promise<Mod> => import("../../../packages/letter-body/src/
 /** Mount the component inside a theme, which is the only way the dark path engages at all. */
 async function renderIn(
   preference: "light" | "dark",
-  props: Parameters<Mod["MessageBody"]>[0],
+  /* A case may name the account its choices are kept under; else the mount below hands one. */
+  props: Omit<Parameters<Mod["MessageBody"]>[0], "owner"> & { owner?: string | null },
 ): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await mod();
@@ -224,7 +225,7 @@ describe("a host that draws the body's controls itself", () => {
   it("reports again only when a control changes, not on every render", async () => {
     await renderIn("dark", { text: "fallback", html: LIGHT_TABLE, onControls });
     const before = reported.length;
-    await act(async () => { root!.render(h(ThemeProvider, { defaultPreference: "dark", storageKey: null, children: h((await mod()).MessageBody, { text: "fallback", html: LIGHT_TABLE, onControls }) })); });
+    await act(async () => { root!.render(h(ThemeProvider, { defaultPreference: "dark", storageKey: null, children: h((await mod()).MessageBody, { owner: null, text: "fallback", html: LIGHT_TABLE, onControls }) })); });
     expect(reported.length, "a render with nothing changed reported the controls again").toBe(before);
   });
 });
@@ -329,7 +330,7 @@ describe("dark viewing is offered for light mail and withheld from dark mail", (
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
-    await act(async () => { root!.render(h(MessageBody, { text: "fallback", html: LIGHT_TABLE, scheme: "dark" })); });
+    await act(async () => { root!.render(h(MessageBody, { owner: null, text: "fallback", html: LIGHT_TABLE, scheme: "dark" })); });
     expect(adapt(), "a dark host with no theme provider drew the letter light").toEqual([COPY.darkOriginal]);
     expect(rootTag()).toContain('data-ohmail-dark="1"');
     await renderIn("dark", { text: "fallback", html: LIGHT_TABLE, scheme: "light" });
@@ -496,7 +497,7 @@ describe("a letter's page and ink read together", () => {
       await act(async () => {
         root!.render(h(ThemeProvider, {
           defaultPreference: "light", storageKey: null,
-          children: [h("p", { key: "a" }, "The letter above"), h(MessageBody, { key: "b", text: "Plain words of the letter", html: "<p>Rich words</p>" })],
+          children: [h("p", { key: "a" }, "The letter above"), h(MessageBody, { owner: null, key: "b", text: "Plain words of the letter", html: "<p>Rich words</p>" })],
         }));
       });
       expect(spy).toHaveBeenCalled();

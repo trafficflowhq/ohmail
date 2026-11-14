@@ -88,6 +88,7 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
   const loaded = "kind" in live.live && live.live.kind === "loaded" ? live.live : null;
 
   const kept = body.state === "withheld" && loaded === null;
+  const copy = parts.sentCopy === NONE ? null : parts.sentCopy(message.id);
   const views = controls.filter((c) => c.id !== "history");
   const history = controls.find((c) => c.id === "history");
   const Body = parts.body;
@@ -121,6 +122,7 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
             message={message}
             unread={look === "dot" && unread}
             notice={notice}
+            copy={copy}
             narrow={narrow ?? false}
             onPerson={onPerson}
           />
@@ -152,17 +154,22 @@ export function Letter({ message, unread, look, reading, presented, narrow, onPe
   );
 }
 
-/** Who wrote it, to whom and when; every name opens the contact card; what the body kept out, as its chip. */
+/**
+ * Who wrote it, to whom and when; every name opens the contact card; what the body kept out, as its chip; what the
+ * shell says of its copy in Sent, as a note under the recipients.
+ */
 function LetterHead({
   message,
   unread,
   notice,
+  copy,
   narrow,
   onPerson,
 }: {
   message: EngineMessage;
   unread: boolean;
   notice: LetterNotice | null;
+  copy: string | null;
   narrow: boolean;
   onPerson: (person: ContactOf) => void;
 }) {
@@ -184,7 +191,7 @@ function LetterHead({
   const mine = (address: string): boolean => own.some((a) => a.toLowerCase() === address.toLowerCase());
   const groups = [
     { word: t("head.to"), people: message.to },
-    { word: tm("ccLabel"), people: message.cc },
+    { word: t("head.cc"), people: message.cc },
   ]
     .filter((g) => g.people.length > 0)
     .map((g) => ({
@@ -213,7 +220,12 @@ function LetterHead({
   return (
     <>
       <MessageHead
-        sender={{ name: nameOf(message.from), address: message.from.address, onPress: person(message.from) }}
+        sender={{
+          name: nameOf(message.from),
+          address: message.from.address,
+          printed: mine(message.from.address) ? t("head.youSender") : undefined,
+          onPress: person(message.from),
+        }}
         unread={unread}
         note={
           notice ? (
@@ -240,6 +252,7 @@ function LetterHead({
           onToggle: () => setDetails((d) => !d),
           lines: details ? detailLines() : [],
         }}
+        marks={copy === null ? undefined : [{ text: copy }]}
       />
       <LetterMenu message={message} anchor={menu} onClose={() => setMenu(null)} />
     </>

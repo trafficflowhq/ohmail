@@ -2,6 +2,36 @@
   "receipts": {
     "title": "Receipts",
     "tail": "Older receipts live in Search.",
-    "streamAria": "Reading stream"
+    "streamAria": "Reading stream",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "Receipts",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "Receipts stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "search": {
+      "older": "Older in Search"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
   }
 }

@@ -784,7 +784,37 @@
   "receipts": {
     "title": "Receipts",
     "tail": "Older receipts live in Search.",
-    "streamAria": "Reading stream"
+    "streamAria": "Reading stream",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "Receipts",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "Receipts stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "search": {
+      "older": "Older in Search"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
   },
   "stream": {
     "newSince": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here"
@@ -1168,7 +1198,55 @@
     "listClaimScreenOut": "Screening out sets aside only the messages that claim to be {brand}. The list's other mail stays where it is.",
     "barHalvesLabel": "What each half of the button does",
     "barHalves": "The name files the mail waiting here; the ✓ files it and marks it read.",
-    "noSuggestionComing": "A suggestion is coming for this sender. Choose where their mail goes, or wait a moment."
+    "noSuggestionComing": "A suggestion is coming for this sender. Choose where their mail goes, or wait a moment.",
+    "place": {
+      "deliveredTo": "Delivered to {label}",
+      "empty": {
+        "waiting": "No one’s waiting",
+        "screened": "No senders screened out",
+        "spam": "No spam held",
+        "junk": "Junk is empty"
+      },
+      "allow": "Allow",
+      "bodyFailed": "This letter could not be loaded.",
+      "checkFailed": "Check failed",
+      "checkFailedTitle": "The sender check failed",
+      "choose": "Choose a place",
+      "chooseWord": "Choose",
+      "decides": "{name} decides",
+      "decidesUnknown": "Another install decides",
+      "goes": "{who} goes to <slot>{place}</slot>",
+      "goesLabel": "Goes to",
+      "held": "{count, plural, one {1 letter} other {# letters}}",
+      "heldLabel": "{count} held",
+      "heldTitle": "{count, plural, one {1 held, already decided} other {# held, already decided}}",
+      "keyCard": "Change this sender's screening",
+      "keyClose": "Close",
+      "listMenu": "List",
+      "loading": "Loading your mail",
+      "lookalike": "Lookalike",
+      "more": "More",
+      "notSpam": "Not spam",
+      "noticesMore": "{count, plural, one {1 more} other {# more}}",
+      "noticesMoreName": "More that needs you here",
+      "nowhere": "a place",
+      "panel": "Actions",
+      "show": "Show",
+      "starting": "Organizing here starts on its next pass — within a minute. Changes can be made once it has.",
+      "suggested": "suggested {sure, number, percent}",
+      "sure": "{sure, number, percent} sure",
+      "toWaiting": "Screener",
+      "unsub": {
+        "final": "Once sent, it cannot be undone.",
+        "screened": "Screen out and unsubscribe",
+        "spam": "Mark spam and unsubscribe",
+        "service": "The request goes from ohmail’s servers, never from your browser, so your address and reading times stay out of their logs.",
+        "computer": "The request goes from your computer, so the sender sees its network address."
+      },
+      "unsubFailed": "That did not go through. Try again.",
+      "views": "How this letter is shown",
+      "yesterday": "yesterday {time}"
+    }
   },
   "triage": {
     "title": "Triage",
@@ -1198,7 +1276,10 @@
     "runPlaceholder": "Your reply",
     "runReplyAria": "Reply",
     "runExit": "exit",
-    "pileResurfaces": "resurfaces {when}"
+    "pileResurfaces": "resurfaces {when}",
+    "list": {
+      "menu": "List"
+    }
   },
   "seed": {
     "title": "You've written to {count, plural, one {1 person} other {# people}}.",
@@ -1242,8 +1323,22 @@
     "storeRetry": "Try again",
     "railLabel": "Jump to a month",
     "railUndated": "No date",
+    "month": "Month",
+    "year": "Year",
     "railCount": "{count, plural, one {1 message} other {# messages}}",
-    "placeChip": "History"
+    "placeChip": "History",
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "list": {
+      "menu": "List"
+    }
   },
   "trash": {
     "emptyTitle": "Nothing deleted in ohmail.",
@@ -1276,7 +1371,8 @@
     "liveOlder": "Show older",
     "liveOlderLoading": "Looking further back…",
     "liveBodyLoading": "Reading the message from your mail server…",
-    "liveBodyFailed": "The message couldn’t be read from your mail server."
+    "liveBodyFailed": "The message couldn’t be read from your mail server.",
+    "title": "Trash"
   },
   "tag": {
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
@@ -1310,7 +1406,57 @@
     "metaCount": "{count, plural, one {1 message} other {# messages}}",
     "emptyTitle": "Nothing in this folder",
     "emptyHint": "It holds no mail. The folder list follows your mail server, so a folder deleted there leaves it.",
-    "gone": "“{name}” is no longer on your mail server."
+    "gone": "“{name}” is no longer on your mail server.",
+    "loading": "Loading this folder",
+    "group": {
+      "new": "New",
+      "earlier": "Earlier"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "title": "Folder",
+    "way": {
+      "all": "Folders"
+    },
+    "rail": {
+      "label": "Folders",
+      "all": "All folders",
+      "allUnread": "All folders, {count} unread",
+      "unread": "{name}, {count} unread",
+      "find": "Find a folder",
+      "none": "No folder matches.",
+      "expand": "Expand {name}",
+      "collapse": "Collapse {name}",
+      "menu": "Folder menu for {name}",
+      "pin": "Pin",
+      "unpin": "Unpin"
+    },
+    "list": {
+      "menu": "List"
+    },
+    "move": {
+      "moved": "Moved to {name}.",
+      "outdated": "{by} organizes this mailbox with an older ohmail, which can't move into folders. Update ohmail there.",
+      "outdatedUnknown": "The install that organizes this mailbox runs an older ohmail, which can't move into folders. Update ohmail there.",
+      "nobody": "Nothing organizes this mailbox, so the message stays where it is.",
+      "elsewhere": "Nothing moved — {by} organizes this mailbox, so moves into folders are made where it runs.",
+      "elsewhereUnknown": "Nothing moved — moves into folders are made where the install that organizes this mailbox runs.",
+      "busy": "“{name}” is being changed. Try again in a moment.",
+      "cannot": "This message can't move to “{name}”.",
+      "refused": "That move didn't go through.",
+      "queued": "Waiting for {by}, which organizes this mailbox.",
+      "queuedUnknown": "Waiting for the install that organizes this mailbox.",
+      "waitingGone": "Nothing moved — this mailbox no longer has a folder “{name}”.",
+      "waitingLetterGone": "Nothing moved — the message is no longer in the mailbox.",
+      "waitingUnreadable": "Nothing moved — the install that organizes this mailbox couldn't read the request."
+    }
   },
   "search": {
     "title": "Search",
@@ -1595,6 +1741,7 @@
     "running": "Drafting…",
     "failed": "The draft could not be written.",
     "unavailable": "Drafting needs a connected account.",
+    "letterLeft": "The draft is in Drafts.",
     "noModelHere": "No AI model is set up on this computer. Choose one in Settings → Desktop.",
     "noModelHost": "No AI model is set up on the computer this mail comes from. Choose one there, in Settings → Desktop.",
     "replaceTitle": "You have already written something",
@@ -2055,11 +2202,15 @@
     "goneShort": "Moved or deleted elsewhere",
     "hint": "to return",
     "back": "Back",
+    "latest": "Latest message",
     "pane": "Open message",
     "closeColumn": "Close",
     "hintReturn": "to return",
     "blank": {
       "none": "Nothing open"
+    },
+    "key": {
+      "reply": "Reply inside the message"
     },
     "verb": {
       "reply": "Reply",
@@ -2112,7 +2263,9 @@
     "panel": "Actions",
     "head": {
       "to": "to",
+      "cc": "cc",
       "you": "you",
+      "youSender": "You",
       "yesterday": "yesterday {time}",
       "menu": "Message"
     }
@@ -4318,7 +4471,14 @@
     "filesNotKeptNote": "{count, plural, one {Its file was not kept. Attach it again before you send.} other {Its # files were not kept. Attach them again before you send.}}",
     "scheduleCancelled": "Scheduled send cancelled. The message is in Drafts.",
     "scheduleCancelTooLate": "Too late to cancel — this message is already being sent.",
-    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does."
+    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does.",
+    "rowTo": "To {name}",
+    "listLoading": "Loading your drafts",
+    "heldActs": "A send not confirmed",
+    "heldItWasSent": "It was sent",
+    "reportDiscarded": "Discarded",
+    "reportUndo": "Undo",
+    "listMenu": "List"
   },
   "mailBody": {
     "blockedOne": "1 remote image blocked.",
@@ -5251,6 +5411,147 @@
       }
     }
   },
+  "news": {
+    "title": "News",
+    "waterline": {
+      "label": "Seen up to here"
+    },
+    "markAll": {
+      "label": "Mark all read",
+      "done": "{count, plural, one {1 item} other {# items}} marked read",
+      "undo": "Undo"
+    },
+    "list": {
+      "label": "News",
+      "menu": "List"
+    },
+    "stream": {
+      "label": "News stream",
+      "empty": "Nothing here"
+    },
+    "item": {
+      "expand": "Expand",
+      "collapse": "Collapse",
+      "full": "Read in full",
+      "markUnread": "Mark unread",
+      "loading": "Loading",
+      "file": "Has an attachment"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    }
+  },
+  "later": {
+    "title": "Answer Later",
+    "empty": "Nothing to answer later",
+    "switch": {
+      "label": "Piles",
+      "segment": "{name} {count}"
+    },
+    "run": {
+      "start": "Reply Run",
+      "label": "Reply run",
+      "progress": "{step} of {total}",
+      "done": "Done → next",
+      "skip": "Skip",
+      "exit": "Exit",
+      "empty": "Nothing to answer later"
+    },
+    "row": {
+      "done": "Done",
+      "resurfaces": "back {when}"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    },
+    "step": {
+      "up": "Previous",
+      "down": "Next"
+    }
+  },
+  "parked": {
+    "title": "Parked",
+    "empty": "Nothing parked"
+  },
+  "resurface": {
+    "title": "Resurface",
+    "empty": "Nothing set to come back"
+  },
+  "tags": {
+    "title": "Tags",
+    "loading": "Loading your tags",
+    "gone": "This tag is gone",
+    "empty": {
+      "none": "No tags yet",
+      "tag": "Nothing carries this tag"
+    },
+    "count": {
+      "tags": "{count, plural, one {1 tag} other {# tags}}",
+      "letters": "{count, plural, one {1 message} other {# messages}}"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "row": {
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "menu": {
+      "rename": "Rename",
+      "delete": "Delete"
+    },
+    "rename": {
+      "title": "Rename {name}.",
+      "field": "Name",
+      "save": "Save",
+      "cancel": "Cancel",
+      "taken": "You already have a tag called {name}."
+    },
+    "delete": {
+      "title": "Delete {name}.",
+      "stay": "{count, plural, one {1 message carries it and stays where it is.} other {# messages carry it and stay where they are.}}",
+      "nothing": "Nothing carries it.",
+      "confirm": "Delete",
+      "cancel": "Keep"
+    },
+    "list": {
+      "menu": "List"
+    }
+  },
+  "address": {
+    "title": "All mail",
+    "loading": "Loading their mail",
+    "count": "{count, plural, one {1 message} other {# messages}}",
+    "side": {
+      "label": "Direction",
+      "all": "All",
+      "from": "From them",
+      "to": "To them"
+    },
+    "sideCount": {
+      "all": "All {count}",
+      "from": "From them {count}",
+      "to": "To them {count}"
+    },
+    "empty": {
+      "all": "Nothing with them",
+      "from": "Nothing from them",
+      "to": "Nothing to them"
+    },
+    "row": {
+      "to": "To {name}",
+      "unread": "unread",
+      "read": "read",
+      "file": "Has an attachment"
+    },
+    "step": {
+      "up": "Newer",
+      "down": "Older"
+    },
+    "close": "Close"
+  },
   "stepUp": {
     "titlePasskey": "Confirm with my passkey.",
     "titleCode": "Confirm with a one-time code.",
@@ -5685,5 +5986,196 @@
     "privacy": "Privacy",
     "subprocessors": "Subprocessors",
     "imprint": "Imprint"
+  },
+  "write": {
+    "held": {
+      "sendAgain": "Send again",
+      "itWasSent": "It was sent — dismiss"
+    },
+    "letter": "New message",
+    "foot": "Formatting and files",
+    "text": "Message",
+    "placeholder": "Write your message",
+    "to": "To",
+    "cc": "Cc",
+    "bcc": "Bcc",
+    "more": "Cc Bcc",
+    "subject": "Subject",
+    "subjectPlaceholder": "Subject",
+    "remove": "Remove {name}",
+    "refused": "Not an address: {list}",
+    "verbs": "Send or discard",
+    "send": "Send",
+    "discard": "Discard",
+    "status": {
+      "previousSending": "Your last message is still being sent. You can send this one once it has gone.",
+      "sending": "Sending your message.",
+      "sendingLong": "Still sending.",
+      "queued": "Not sent yet. ohmail is still trying.",
+      "unverified": "We're not sure this was sent. It isn't in your Sent folder.",
+      "failed": "Sending didn't work — your draft is kept. Try again.",
+      "mailboxDisabled": "Not sent. That address is disconnected and cannot send.",
+      "unreachable": "Not sent. Your mail server couldn't be reached. It's kept in Drafts — send it again once your mail server answers.",
+      "busy": "Not sent. Your mail server is busy and wouldn't take it right now — your draft is kept. Try again in a moment.",
+      "notSecured": "Not sent. The connection to your mail server couldn't be secured — your draft is kept.",
+      "loginRefused": "Not sent. Your mail server refused the sign-in — your draft is kept.",
+      "notSignedIn": "Not sent — your draft is kept. This mailbox isn't signed in here — sign in again in Settings.",
+      "forwardOriginalUnavailable": "Not sent. The original could not be loaded, so it was not forwarded.",
+      "forwardPartsUnsupported": "Not sent. Your server sends every file of a forward and can't leave out the ones you removed.",
+      "forwardPartsChanged": "Nothing was sent. The files of the message you're forwarding changed. Open it again and forward it.",
+      "attachmentMismatch": "Not sent. An attachment of the original didn't come back from your mail server the way it arrived, so nothing was forwarded — your draft is kept. Try again in a minute.",
+      "forwardSourceMoved": "Not sent. The message you're forwarding has moved on your mail server — your draft is kept. Try again once your mailbox has caught up.",
+      "timeout": "Not sent. Your mail server didn't answer in time — your draft is kept. Try again.",
+      "tooLong": "Not sent. It's too long to send — the limit is {size}. Shorten it and send again.",
+      "tooLarge": "Not sent. It's too large to send. Shorten it and send again.",
+      "stagingRefused": "Not sent. Files this large can't be uploaded from this page — your draft is kept. Remove the largest attachments and send again.",
+      "draftChanged": "Not sent. This draft was changed in another window or on another device — review it before sending.",
+      "notSavedFirst": "Not sent. This message could not be saved first, so nothing went out. Check it and send again.",
+      "draftUnsaved": "Not sent. This draft couldn't be saved, so ohmail can't tell whether the message here is the one that would go. Try again.",
+      "duplicate": "Not sent again. An identical message was already sent from this address. Change it to send another copy.",
+      "duplicateSent": "Not sent again. You already sent this exact message — change it to send another copy.",
+      "duplicateUnverified": "Not sent again. An identical message went out and we couldn't confirm it. Check your Sent folder.",
+      "duplicatePending": "Not sent again. This exact message is going out right now.",
+      "offline": "You're offline. This message is kept here and goes once you're back online.",
+      "unknown": "This message has not been sent."
+    },
+    "marks": {
+      "bar": "Formatting",
+      "show": "Show formatting",
+      "word": "Aa",
+      "bold": "Bold",
+      "italic": "Italic",
+      "underline": "Underline",
+      "strike": "Strikethrough",
+      "code": "Code",
+      "link": "Link",
+      "bullets": "Bulleted list",
+      "numbers": "Numbered list",
+      "quote": "Quote"
+    },
+    "link": {
+      "title": "Link",
+      "field": "Address",
+      "apply": "Apply",
+      "remove": "Remove link",
+      "refused": "Links can use http, https or mailto."
+    },
+    "signature": {
+      "label": "Signature — part of this message; edit or remove it here",
+      "remove": "Remove signature for this message",
+      "formatted": "Signature as it is sent",
+      "editAsText": "Edit as text",
+      "editAsTextHint": "Edit as text: its formatting is removed"
+    },
+    "keys": {
+      "send": "Send the message",
+      "leave": "Leave the message"
+    },
+    "files": {
+      "attach": "Attach files, at most {size} in all",
+      "attachForward": "Attach your own files, up to {size}",
+      "capSurface": "Your mail server would take more; this is what ohmail can send from here.",
+      "used": "{used} of {total}",
+      "list": "Files on this message",
+      "refused": "Some files were not added — they would have put the total over {size}.",
+      "unreadable": "Some files couldn't be read and were not added.",
+      "still": "{count, plural, one {Still attaching {name}.} other {Still attaching # files.}}",
+      "remove": "Remove {filename}",
+      "saved": "Pictures compressed: {from} → {to}",
+      "quality": "Pictures go at <level>{word}</level> quality.",
+      "qualityLabel": "Picture quality",
+      "qualityScope": "Pictures already attached are re-encoded at this quality too, always from the original. Other files are unchanged.",
+      "qualityKept": "Some pictures kept their previous size — the total must stay under {size}.",
+      "twice": "Already attached: {filenames}",
+      "level": {
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High",
+        "original": "Original"
+      }
+    },
+    "forwarded": {
+      "head": "Forwarded with it",
+      "embedded": "{filename} (embedded)",
+      "line": "Forwarded files: {kept}.",
+      "allGo": "Forwarded files: {size}. All of them go with it.",
+      "reading": "Reading the message's files…",
+      "unreadKept": "The message's files could not be read here. The ones you kept go with it.",
+      "unreadAllGo": "The message's files could not be read here. All of them go with it.",
+      "removedGo": "Forwarded files: {size}. Your server sends all of them, the ones you removed too.",
+      "unreadRemovedGo": "The message's files could not be read here. Your server sends all of them, the ones you removed too.",
+      "tooLarge": "The forwarded files are over {limit}. Remove some to send it.",
+      "totalTooLarge": "This is over the {limit} your mail server takes. Remove some files to send it.",
+      "unknown": "The forwarded files could not be counted here."
+    },
+    "from": {
+      "label": "From",
+      "choose": "From {address}: choose another address",
+      "matched": "Switched to match the recipient's domain",
+      "substituted": "{was} is disconnected, so this message sends from the address above."
+    },
+    "reply": {
+      "label": "Reply to {name}",
+      "forwardLabel": "Forward",
+      "text": "Reply body",
+      "forwardText": "Forward body",
+      "placeholder": "Write your reply…",
+      "forwardPlaceholder": "Write your message…",
+      "to": "To",
+      "names": "{to}",
+      "namesCc": "{to}; Cc {cc}",
+      "change": "Change recipients",
+      "forwarding": "The original message is added when you send.",
+      "ask": {
+        "otp": "ohmail flagged this message as containing a one-time code.",
+        "verification": "ohmail flagged this message as an account verification.",
+        "password_reset": "ohmail flagged this message as a password reset.",
+        "security_alert": "ohmail flagged this message as a security alert about an account.",
+        "sensitive": "ohmail flagged this message as sensitive.",
+        "question": "Forward it anyway?",
+        "confirm": "Forward",
+        "cancel": "Cancel"
+      }
+    },
+    "draft": {
+      "verb": "Draft reply",
+      "again": "Draft again",
+      "running": "Drafting…",
+      "waiting": "Another reply is being drafted…",
+      "fromText": "Draft from your text",
+      "fromTextTitle": "Draft from your text, {cost, plural, one {# credit} other {# credits}}",
+      "noCredits": "This account has no AI credits left.",
+      "cost": "{cost, plural, one {# credit} other {# credits}}",
+      "title": "Draft reply, {cost, plural, one {# credit} other {# credits}}",
+      "tabs": "The text",
+      "yours": "Your text",
+      "draft": "Draft",
+      "letterVerb": "Draft",
+      "nothingYet": "Nothing to draft from yet.",
+      "waitingLetter": "A new message is being drafted…"
+    },
+    "later": {
+      "verb": "Send later",
+      "title": "Send later",
+      "what": "When should this message be sent?",
+      "evening": "This evening ({when})",
+      "tomorrow": "Tomorrow morning ({when})",
+      "monday": "Monday morning ({when})",
+      "at": "At {when}",
+      "pick": "Pick a date and time",
+      "day": "Date",
+      "time": "Time",
+      "confirm": "Schedule send",
+      "back": "Back",
+      "past": "That time has passed. Pick a future time.",
+      "skipped": "That will send at {booked} — the clocks skip {asked} that night.",
+      "zone": "Times are in your time zone ({zone}).",
+      "filesDays": "A message with files can be scheduled up to {days, plural, one {# day} other {# days}} ahead.",
+      "filesTooFar": "A message with files can be scheduled at most {days, plural, one {# day} other {# days}} ahead. Pick a closer time.",
+      "thisComputer": "It goes at that time if ohmail is open on this computer; otherwise when ohmail next opens, up to a day later.",
+      "unavailable": "Send later isn't available for messages with attachments or forwards yet.",
+      "filesNotHere": "This server can't keep files for a later send, so this message can't be scheduled with them. Send it now, or remove the files to schedule it.",
+      "noForwards": "Send later isn't available for a forwarded message. Send it now."
+    }
   }
 }

@@ -75,7 +75,7 @@ import {
   type ReplyEnvelopeEdit,
 } from "./compose-from";
 import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
-import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
+import { NEW_LETTER, useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
 import { dropCopy, handleOf, twins } from "@ohmail/app-logic/writing/draft-creates";
 import { accountSigOf, useReplyAutosave, type ReplyDraftForm } from "@ohmail/app-logic/writing/reply-autosave";
 import { forwardEnvelopePlan, forwardSend } from "./forward-send";
@@ -133,6 +133,7 @@ import {
   type SignatureState,
 } from "./signature";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { UNDO_MS } from "@ohmail/app-logic/press";
 import type { StorageScope } from "@ohmail/app-logic/storage/scope";
 import { noteReplyPress } from "./sent-reveal";
 import type { OhboxReplyDone } from "@ohmail/app-logic/ohbox";
@@ -959,7 +960,13 @@ export function useShellCompose({
    * `draft-reply-wiring.test.tsx`. An empty editor takes the draft
    * directly; a non-empty one is asked, and keeps its text until answered.
    */
-  const onDraft = useStableCallback((draft: DraftedReply, messageId: string) => {
+  const onDraft = useStableCallback((draft: DraftedReply, messageId: string, of: "reply" | "letter") => {
+    /* A new letter's draft takes the letter's words; the person's own stay one tab away (`own`), as a reply's. */
+    if (of === "letter") {
+      // `onComposeFields` is declared below; a stable callback reads it when the answer lands.
+      onComposeFields({ ...composeRef.current, body: draft.text, html: draft.html });
+      return;
+    }
     // The FORWARD dock's body is not "existing reply text": when the open editor is the
     // forward on this message, the reply's own scratch is the honest source.
     const existing =
@@ -1079,6 +1086,10 @@ export function useShellCompose({
     // Delivered: nothing is owed back to a door any more.
     handedPress.current.delete(key);
     if (key === COMPOSE_SEND_KEY) {
+      /* The letter went: its own text kept beside a draft of it is let go, and a draft still out for it fills no
+         letter. Only when the settlement is about the letter on screen: an earlier letter's send settling after the
+         hand-off leaves the current letter's alone. */
+      if (aboutThisCompose) draftReply.moved(NEW_LETTER);
       /* Invariant T(b), and this is the one implementation of it: the live
          confirmed path and the reload path both call `settleCompose` now
          (they used to clear the compose in different statements and
@@ -1159,6 +1170,8 @@ export function useShellCompose({
     // This is the ONLY thing that discards an unplaced draft other than answering the
     // question, because the AI action behind it has already been spent.
     setPendingDraft((p) => (p?.messageId === key ? null : p));
+    // …and the person's own text kept beside a draft of it is let go with it, unless another draft of it stands now.
+    if (!moved) draftReply.forget(key);
 
     /**
      * Guarded on the item the run is STANDING ON, not on "a run is open". A confirmation can arrive from a flush
@@ -2181,6 +2194,8 @@ export function useShellCompose({
    * then the binding is let go, and the form, the buffer and the session are the new letter's.
    */
   const replaceComposer = useStableCallback((seeded: ComposeFields) => {
+    // Another letter takes the composer: the one leaving lets its own text go, and a draft still out for it fills none.
+    draftReply.moved(NEW_LETTER);
     const outgoing = readComposeRow(scope);
     const held = holdOf(engine, {
       lane: COMPOSE_SEND_KEY, draftId: outgoing, session: composeSessionId(scope),
@@ -2464,6 +2479,9 @@ export function useShellCompose({
         return;
       }
       const openSeeded = (): void => {
+        /* Another letter takes the composer: the one leaving lets its own text go, and a draft still out for it fills
+           none. The letter's own row opened again is the same letter: its draft and its own text stay. */
+        if (readComposeRow(scope) !== d.id) draftReply.moved(NEW_LETTER);
         if (waiting) letGoOfWaiting();
         setCompose(seeded);
         /**
@@ -2992,7 +3010,15 @@ export function useShellCompose({
     const row = autosave.draftId ?? readComposeRow(scope);
     return discardKeepsRow(holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: row, session: composeSessionId(scope) }, scope), row);
   });
-  const cancelCompose = useStableCallback(() => {
+  /**
+   * THE DISCARD, with or without its Undo. `undo` (the new screen's Discard, which asks nothing first): the words on
+   * screen are kept in memory before the first await, and once the row and the buffer are gone the report offers them
+   * back for the undo window. Undo is the new-letter door's own move (`mayReplace`, then `replaceComposer`), so the
+   * autosave keeps them as a new row; nothing is stored for it and nothing replays at launch. A held row is kept and
+   * says so instead, and the three early answers (sent, unknown, unreachable) offer nothing back.
+   */
+  const abandonCompose = useStableCallback((undo: boolean) => {
+    const snapshot = composeRef.current;
     void (async () => {
       /**
        * CANCEL CANCELS, AND THE SEND IS THE FIRST THING IT CANCELS. A queued send is an intent
@@ -3027,16 +3053,79 @@ export function useShellCompose({
          and closing in silence after a question that promised a delete left the person thinking it
          was gone. Asked before the discard, which spends the binding it reads. */
       const keeps = discardKeepsCompose();
+      // Its own text kept beside a draft goes with it, and a draft still out fills no letter; Undo puts both back.
+      const kept = draftReply.own.get(NEW_LETTER);
+      draftReply.moved(NEW_LETTER);
       // This message's own press, withdrawn or thrown away with it, owes no door anything.
       if (own) handedPress.current.delete(COMPOSE_SEND_KEY);
       if (autosave.draftId) writeReplyMeta(`draft:${autosave.draftId}`, {}, scope);
       void autosave.discard();
       if (keeps !== null) toast(t(keeps === "held" ? "compose.discardHeld" : "compose.discardUnknown"));
+      else if (undo && worthSaving(snapshot)) {
+        const back = (): void => {
+          const may = mayReplace(snapshot);
+          const open = (): void => {
+            replaceComposer(snapshot);
+            if (kept !== undefined) draftReply.keep(kept);
+            draftReply.restore(NEW_LETTER);
+            go("compose");
+          };
+          if (may === true) open();
+          else if (may !== false) void may.then((ok) => { if (ok) open(); });
+        };
+        toast(t("compose.toastDiscard"), { action: t("ohbox.undo"), duration: UNDO_MS, onAction: back });
+      }
       setCompose(EMPTY_COMPOSE);
       clearComposeDraft(scope);
       setComposeCloseRefusal(null);
       go("ohbox");
     })();
+  });
+  const cancelCompose = useStableCallback(() => abandonCompose(false));
+  const discardCompose = useStableCallback(() => abandonCompose(true));
+  /**
+   * THE REPLY'S DISCARD, with its Undo. The open lane is read whole first. A lane with a row goes through
+   * `discardDraft` (its holds and refusals stand; a refusal keeps the lane and offers nothing back); a lane with words
+   * alone is forgotten as `emptyEditorsOf` forgets one. Undo opens the reply again and puts each part back through the
+   * composition's own setters; the reply's autosave then keeps them as a new row. A send on its way is never discarded.
+   */
+  const discardReply = useStableCallback(() => {
+    const id = replyToRef.current;
+    if (id === null) return;
+    const mode = replyModeRef.current;
+    const lane = mode === "forward" ? inlineForwardKey(id) : id;
+    if (SEND_IN_FLIGHT_PHASES.has(mailSend.stateOf(lane).phase)) return;
+    const snapshot = {
+      all: replyAll, body: replyBody, envelope: replyEnvelope, from: replyFromId, sig: replySig,
+      subject: replySubjectEdit, files: replyAttachments,
+    };
+    const row = replyRows.current.get(lane)?.row ?? replySeedDrafts.current.get(lane) ?? readReplyMeta(lane, scope).row?.id ?? null;
+    if (row !== null) {
+      discardDraft(row);
+      // Refused at once: the lane still holds its row, the refusal stands in `discardRefusal`, nothing comes back.
+      if (replyRows.current.get(lane)?.row === row || replySeedDrafts.current.get(lane) === row) return;
+    } else {
+      replyAutosave.forget(lane);
+      clearReplyLane(lane, scope);
+    }
+    setReplyTo((cur) => (cur === id ? null : cur));
+    // A discarded reply's own text, kept beside a draft of it, goes with it; Undo puts it back.
+    const kept = mode === "reply" ? draftReply.own.get(id) : undefined;
+    if (mode === "reply") draftReply.forget(id);
+    if (isRichEmpty(snapshot.body) && snapshot.files.length === 0) return;
+    const back = (): void => {
+      if (mode === "forward") openForward(id);
+      else openReply(id, snapshot.all);
+      onReplyBody(snapshot.body);
+      setReplyEnvelope(snapshot.envelope);
+      setReplyFromId(snapshot.from);
+      onReplySig(snapshot.sig);
+      if (snapshot.subject !== null) onReplySubject(snapshot.subject);
+      setReplyAttachments(snapshot.files);
+      if (kept !== undefined) draftReply.keep(kept);
+      if (mode === "reply") draftReply.restore(id);
+    };
+    toast(t("compose.toastDiscard"), { action: t("ohbox.undo"), duration: UNDO_MS, onAction: back });
   });
 
   /**
@@ -3204,7 +3293,9 @@ export function useShellCompose({
     confirmForward,
     forwardAsk,
     composeFrom,
+    discardCompose,
     discardDraft,
+    discardReply,
     notSentRows,
     draftRepliesHere,
     draftReply,

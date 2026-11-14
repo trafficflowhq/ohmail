@@ -8,6 +8,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import { mailboxProbes } from "./join-mailbox-probes.js";
 import { launchRefused } from "@trafficflow/services/mail";
 
 const ADDRESS = "mila.brunner@lichtgrat.example";
@@ -120,8 +121,10 @@ async function wizard() {
   });
   for (let i = 0; i < 10; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  const picked = () => host.querySelector('[role="radio"][aria-checked="true"]')?.textContent ?? null;
-  const alert = () => host.querySelector('[role="alert"]')?.textContent ?? null;
+  /* The step is the one connect form: the chosen tile by its name, the refusal by its role. */
+  const probes = mailboxProbes(host, en, act);
+  const picked = () => probes.checked()[0] ?? null;
+  const alert = () => probes.refusal();
   const button = (label: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === label) ?? null;
   return { host, picked, alert, button };
 }

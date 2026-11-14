@@ -12,5 +12,6 @@ export type {
   ReaderFileList,
   ReaderFiles,
   ReaderParts,
+  ReaderReply,
 } from "./ports.js";
 export type { PictureSeam } from "@ohmail/app-logic/reader";

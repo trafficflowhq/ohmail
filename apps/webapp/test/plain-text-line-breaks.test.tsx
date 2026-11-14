@@ -152,7 +152,7 @@ describe("no container takes the line breaks away", () => {
     it(`${what} (.${cls})`, async () => {
       loadSheets();
       const { MessageBody } = await import("../../../packages/letter-body/src/MessageBody.js");
-      const el = await render(h("div", { className: cls }, h(MessageBody as never, { text: SIGNED, html: null } as never)));
+      const el = await render(h("div", { className: cls }, h(MessageBody as never, { owner: null, text: SIGNED, html: null } as never)));
       expect(whiteSpaceOf(signatureIn(el))).toBe("pre-line");
     });
   }

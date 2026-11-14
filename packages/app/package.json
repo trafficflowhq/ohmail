@@ -262,6 +262,48 @@
       "node": "./dist/text/index.js",
       "default": "./src/text/index.ts"
     },
+    "./news": {
+      "types": "./src/news/index.ts",
+      "ohmail-source": "./src/news/index.ts",
+      "node": "./dist/news/index.js",
+      "default": "./src/news/index.ts"
+    },
+    "./receipts": {
+      "types": "./src/receipts/index.ts",
+      "ohmail-source": "./src/receipts/index.ts",
+      "node": "./dist/receipts/index.js",
+      "default": "./src/receipts/index.ts"
+    },
+    "./piles": {
+      "types": "./src/piles/index.ts",
+      "ohmail-source": "./src/piles/index.ts",
+      "node": "./dist/piles/index.js",
+      "default": "./src/piles/index.ts"
+    },
+    "./mailboxes": {
+      "types": "./src/mailboxes/index.ts",
+      "ohmail-source": "./src/mailboxes/index.ts",
+      "node": "./dist/mailboxes/index.js",
+      "default": "./src/mailboxes/index.ts"
+    },
+    "./mailboxes/connect": {
+      "types": "./src/mailboxes/connect/index.ts",
+      "ohmail-source": "./src/mailboxes/connect/index.ts",
+      "node": "./dist/mailboxes/connect/index.js",
+      "default": "./src/mailboxes/connect/index.ts"
+    },
+    "./mailboxes/connect/contract": {
+      "types": "./src/mailboxes/connect/contract.ts",
+      "ohmail-source": "./src/mailboxes/connect/contract.ts",
+      "node": "./dist/mailboxes/connect/contract.js",
+      "default": "./src/mailboxes/connect/contract.ts"
+    },
+    "./mailboxes/first-run": {
+      "types": "./src/mailboxes/first-run/index.ts",
+      "ohmail-source": "./src/mailboxes/first-run/index.ts",
+      "node": "./dist/mailboxes/first-run/index.js",
+      "default": "./src/mailboxes/first-run/index.ts"
+    },
     "./doors": {
       "types": "./src/doors/index.ts",
       "ohmail-source": "./src/doors/index.ts",
@@ -375,6 +417,84 @@
       "ohmail-source": "./src/ohbox/index.ts",
       "node": "./dist/ohbox/index.js",
       "default": "./src/ohbox/index.ts"
+    },
+    "./drafts": {
+      "types": "./src/drafts/index.ts",
+      "ohmail-source": "./src/drafts/index.ts",
+      "node": "./dist/drafts/index.js",
+      "default": "./src/drafts/index.ts"
+    },
+    "./history": {
+      "types": "./src/history/index.ts",
+      "ohmail-source": "./src/history/index.ts",
+      "node": "./dist/history/index.js",
+      "default": "./src/history/index.ts"
+    },
+    "./tags": {
+      "types": "./src/tags/index.ts",
+      "ohmail-source": "./src/tags/index.ts",
+      "node": "./dist/tags/index.js",
+      "default": "./src/tags/index.ts"
+    },
+    "./folder": {
+      "types": "./src/folder/index.ts",
+      "ohmail-source": "./src/folder/index.ts",
+      "node": "./dist/folder/index.js",
+      "default": "./src/folder/index.ts"
+    },
+    "./address": {
+      "types": "./src/address/index.ts",
+      "ohmail-source": "./src/address/index.ts",
+      "node": "./dist/address/index.js",
+      "default": "./src/address/index.ts"
+    },
+    "./trash": {
+      "types": "./src/trash/index.ts",
+      "ohmail-source": "./src/trash/index.ts",
+      "node": "./dist/trash/index.js",
+      "default": "./src/trash/index.ts"
+    },
+    "./write": {
+      "types": "./src/write/index.ts",
+      "ohmail-source": "./src/write/index.ts",
+      "node": "./dist/write/index.js",
+      "default": "./src/write/index.ts"
+    },
+    "./write/editor": {
+      "types": "./src/write/editor/index.ts",
+      "ohmail-source": "./src/write/editor/index.ts",
+      "node": "./dist/write/editor/index.js",
+      "default": "./src/write/editor/index.ts"
+    },
+    "./write/plain": {
+      "types": "./src/write/plain/index.ts",
+      "ohmail-source": "./src/write/plain/index.ts",
+      "node": "./dist/write/plain/index.js",
+      "default": "./src/write/plain/index.ts"
+    },
+    "./write/editor/schema": {
+      "types": "./src/write/editor/schema.ts",
+      "ohmail-source": "./src/write/editor/schema.ts",
+      "node": "./dist/write/editor/schema.js",
+      "default": "./src/write/editor/schema.ts"
+    },
+    "./write/editor/commands": {
+      "types": "./src/write/editor/commands.ts",
+      "ohmail-source": "./src/write/editor/commands.ts",
+      "node": "./dist/write/editor/commands.js",
+      "default": "./src/write/editor/commands.ts"
+    },
+    "./write/editor/marks": {
+      "types": "./src/write/editor/marks.ts",
+      "ohmail-source": "./src/write/editor/marks.ts",
+      "node": "./dist/write/editor/marks.js",
+      "default": "./src/write/editor/marks.ts"
+    },
+    "./screener": {
+      "types": "./src/screener/index.ts",
+      "ohmail-source": "./src/screener/index.ts",
+      "node": "./dist/screener/index.js",
+      "default": "./src/screener/index.ts"
     }
   },
   "dependencies": {
@@ -384,7 +504,12 @@
     "@ohmail/letter-body": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
-    "use-intl": "3.26.5"
+    "use-intl": "3.26.5",
+    "@tiptap/extension-code": "3.31.3",
+    "@tiptap/extension-link": "3.31.3",
+    "@tiptap/pm": "3.31.3",
+    "@tiptap/react": "3.31.3",
+    "@tiptap/starter-kit": "3.31.3"
   },
   "devDependencies": {
     "react-dom": "19.2.3"

@@ -45,7 +45,7 @@ async function srcdocOf(html: string, cidImages: ReadonlyMap<string, string>): P
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, { text: "Twelve pictures.", html, cidImages })); });
+  await act(async () => { root!.render(h(MessageBody, { owner: null, text: "Twelve pictures.", html, cidImages })); });
   return host.querySelector("iframe")?.getAttribute("srcdoc") ?? "";
 }
 

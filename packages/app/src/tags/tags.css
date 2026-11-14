@@ -1,0 +1,6 @@
+/* Tags' own placement: Rename's two answers in one line under its field. Every look is the kit's. */
+.tg-answers {
+  display: flex;
+  gap: var(--s1);
+  padding-top: var(--s2);
+}

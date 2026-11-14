@@ -174,6 +174,20 @@ describe("the open", () => {
     expect(mail.mutations).toEqual([]);
   });
 
+  it("opens as today's reader opens: the opened letter's top 14 px under the head that stays over the column", () => {
+    mountReader({ letters: LETTERS, open: "c" });
+    const head = screen.getByRole("heading", { level: 1 }).closest("header")!;
+    head.style.position = "sticky";
+    head.getBoundingClientRect = () => rect(0, 100);
+    layOut();
+    expect(topOf("c")).toBe(114);
+    // Where nothing stays over it, 14 px under the column's top.
+    cleanup();
+    mountReader({ letters: LETTERS, open: "b" });
+    layOut();
+    expect(topOf("b")).toBe(14);
+  });
+
   it("a sibling growing above keeps the opened letter where it stood", () => {
     mountReader({ letters: LETTERS, open: "c" });
     layOut();
@@ -224,6 +238,31 @@ describe("the open", () => {
     geo.height = 3600;
     grow();
     expect(scroller.scrollTop).toBe(0);
+  });
+});
+
+describe("the way to the latest message", () => {
+  const way = () => screen.queryByRole("button", { name: "Latest message" });
+
+  it("stands while the column is far above the conversation's end; its press lands the last letter, and it leaves", () => {
+    mountReader({ letters: LETTERS, open: "a" });
+    layOut();
+    expect(way()).toBeTruthy();
+    fireEvent.click(way()!);
+    grow();
+    expect(topOf("c")).toBeGreaterThanOrEqual(0);
+    expect(topOf("c")).toBeLessThan(400);
+    expect(ringAt()).toBe(2);
+    expect(way()).toBeNull();
+  });
+
+  it("does not stand where the column is at the end, nor for a single letter", () => {
+    mountReader({ letters: LETTERS, open: "c" });
+    layOut();
+    expect(way()).toBeNull();
+    cleanup();
+    mountReader({ letters: [letter("solo")], open: "solo" });
+    expect(screen.queryByRole("button", { name: "Latest message", hidden: true })).toBeNull();
   });
 });
 
