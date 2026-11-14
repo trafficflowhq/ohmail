@@ -1,0 +1,16 @@
+packages/wire
+packages/cal-core
+packages/cal-providers
+packages/mail-io
+packages/organizer
+packages/app
+packages/app-logic
+packages/testing
+packages/tokens
+packages/ui
+apps/paired-page
+tools
+test/tools
+eslint.config.mjs
+stylelint.config.mjs
+.prettierrc.json

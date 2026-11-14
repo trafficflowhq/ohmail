@@ -1,0 +1,20 @@
+{
+  "id": "react-hooks/rules-of-hooks",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "a hook called under a condition",
+      "file": "packages/app-logic/src/planted/hook-order.ts",
+      "line": 5,
+      "refused": "React Hook \"useState\" is called conditionally. React Hooks must be called in the exact same order in every component render. Did you accidentally call a React Hook after an early return?"
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

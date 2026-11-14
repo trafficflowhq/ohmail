@@ -642,7 +642,10 @@ jobs:
     runs-on: ${{ vars.OHMAIL_LINUX_RUNNER == 'zorin' && github.repository == 'trafficflowhq/ohmail' && !endsWith(github.actor, '[bot]') && !endsWith(github.triggering_actor, '[bot]') && (github.event_name == 'schedule' || github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next') || github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next' || startsWith(github.ref, 'refs/heads/pr/')) || github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'pr/') && github.event.pull_request.user.type == 'User' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.pull_request.author_association)) && fromJSON('["self-hosted","ohmail-zorin"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
+      # Two commits deep: the tools read their baseline against this run's base, HEAD^1.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -657,6 +660,16 @@ jobs:
       # tsc -b over the project graph tsconfig.json references.
       - name: The project build
         run: npm run build
+
+      # The linter with the import borders, the style linter and the formatter, read against
+      # tools/baseline.tsv, and that file against the base's: a new violation is refused, and so is a
+      # baseline that grows (tools/README.md).
+      - name: The tools
+        run: node tools/check.mjs --base HEAD^1
+
+      # Every rule refuses its planted violation, in a copy of the tree.
+      - name: The tools' controls
+        run: node tools/check.mjs --controls
 
       # The web app's own program, over every .ts it can see, its tests included: the root's type
       # packages cover the drivers its tests reach. No test directory is dropped here.

@@ -121,6 +121,16 @@ describe("the guard script, over real fixture histories", () => {
     expect(guard(w, publish)).toMatchObject({ rc: 0 });
   });
 
+  it("refuses an outside change to the tools' own files, and admits a maintainer's", () => {
+    for (const path of ["tools/borders.json", "tools/baseline.tsv", "eslint.config.mjs", "stylelint.config.mjs", ".prettierrc.json", ".prettierignore"]) {
+      const w = world({ [path]: "changed\n" });
+      const r = guard(w, fromFork());
+      expect(r.rc, `${path}\n${r.out}`).toBe(1);
+      expect(r.out).toContain(`    ${path}\n`);
+      expect(guard(w, fromHere("pr/tools")).rc).toBe(0);
+    }
+  });
+
   it("refuses a Monorepo-Commit line in a commit, the title or the description, in any spelling", () => {
     const c = guard(world({ "a.txt": "c\n" }, `docs: c\n\nMonorepo-Commit: ${"a".repeat(40)}`), fromFork());
     expect(c.rc).toBe(1);

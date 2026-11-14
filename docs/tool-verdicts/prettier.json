@@ -1,0 +1,28 @@
+{
+  "id": "prettier",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "an unformatted file in a new package",
+      "file": "packages/wire/src/planted/unformatted.ts",
+      "line": 1,
+      "refused": "not formatted: run `npm run format`"
+    }
+  ],
+  "green": [
+    {
+      "control": "an unformatted file in the old tree",
+      "file": "packages/core/src/planted/unformatted.ts"
+    },
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    },
+    {
+      "control": "a clean stylesheet of the kit",
+      "file": "packages/ui/src/planted/clean.css"
+    }
+  ]
+}

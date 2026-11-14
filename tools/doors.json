@@ -1,0 +1,56 @@
+{
+  "platforms": [
+    { "id": "vercel", "packages": ["vercel", "@vercel"], "names": ["VERCEL_", "NEXT_PUBLIC_VERCEL_"] },
+    { "id": "railway", "packages": ["railway", "@railway"], "names": ["RAILWAY_"] },
+    { "id": "supabase", "packages": ["supabase", "@supabase"], "names": ["SUPABASE_"] }
+  ],
+  "doors": [
+    {
+      "id": "fallback-door",
+      "platform": "vercel",
+      "reason": "The fallback door itself: the API as that host's functions. It retires with its folder.",
+      "files": ["apps/api-vercel/**"]
+    },
+    {
+      "id": "web-shell-build",
+      "platform": "vercel",
+      "reason": "The web shell is built on the door's host: its build reads the host's build identity and production marker.",
+      "files": ["apps/webapp/next.config.mjs"],
+      "tests": [
+        "apps/webapp/test/engine-armed.test.ts",
+        "apps/webapp/test/landing-zone.test.ts",
+        "apps/webapp/test/selfhost-flavor.test.ts"
+      ]
+    },
+    {
+      "id": "server-settings",
+      "platform": "supabase",
+      "reason": "The one server program's settings list: the storage setting's variant for that provider. The plain object-storage variant beside it is the way out.",
+      "files": ["apps/server/src/config.ts"]
+    },
+    {
+      "id": "worker-settings",
+      "platform": "railway",
+      "reason": "The worker's settings and its build identity on the always-on host.",
+      "files": ["apps/worker/src/config.ts", "apps/worker/src/build-version.ts"],
+      "tests": ["apps/worker/test/config.test.ts"]
+    },
+    {
+      "id": "request-log-reader",
+      "platform": "vercel",
+      "reason": "The reader of the door host's request log, a feature of the managed service only.",
+      "files": ["apps/worker/src/platform-signal-poll.ts", "packages/db/src/platform-signals.ts"],
+      "tests": [
+        "apps/worker/test/platform-signal-poll.test.ts",
+        "apps/worker/test/observability.e2e.test.ts",
+        "packages/services/test/platform-signals.test.ts"
+      ]
+    },
+    {
+      "id": "data-door-lockdown",
+      "platform": "supabase",
+      "reason": "The lockdown of that provider's open data door. A plain Postgres has no such door.",
+      "files": ["packages/db/src/supabase-lockdown.ts", "packages/db/src/supabase-lockdown-core.ts"]
+    }
+  ]
+}

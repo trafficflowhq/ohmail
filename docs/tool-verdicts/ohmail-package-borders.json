@@ -1,0 +1,92 @@
+{
+  "id": "ohmail/package-borders",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "the kit imports the engine",
+      "file": "packages/ui/src/planted/border.ts",
+      "line": 1,
+      "refused": "packages/ui imports client-engine; its row names tokens"
+    },
+    {
+      "control": "the core imports the services by path",
+      "file": "packages/core/src/planted/by-path.ts",
+      "line": 1,
+      "refused": "packages/core imports services by path; its row names wire"
+    },
+    {
+      "control": "the web shell imports the worker by path",
+      "file": "apps/webapp/app/planted/by-path.ts",
+      "line": 1,
+      "refused": "apps/webapp imports the app apps/worker by path; an app is never imported"
+    },
+    {
+      "control": "a feature imports a value of the engine",
+      "file": "packages/app/src/planted/value.ts",
+      "line": 1,
+      "refused": "packages/app imports a value of client-engine; its row allows types only (import type)"
+    },
+    {
+      "control": "a kit test imports the services",
+      "file": "packages/ui/test/planted-services.test.ts",
+      "line": 1,
+      "refused": "packages/ui imports services; its row names tokens, testing"
+    },
+    {
+      "control": "a dynamic import crosses a border",
+      "file": "packages/ui/src/planted/dynamic.ts",
+      "line": 1,
+      "refused": "packages/ui imports db; its row names tokens"
+    },
+    {
+      "control": "a re-export crosses a border",
+      "file": "packages/ui/src/planted/reexport.ts",
+      "line": 1,
+      "refused": "packages/ui imports core; its row names tokens"
+    },
+    {
+      "control": "a require crosses a border",
+      "file": "packages/ui/src/planted/require.cjs",
+      "line": 1,
+      "refused": "packages/ui imports core; its row names tokens"
+    },
+    {
+      "control": "a folder without a row",
+      "file": "packages/planted-no-row/src/index.ts",
+      "line": 1,
+      "refused": "packages/planted-no-row has no row in tools/borders.json: add its row before its first file"
+    },
+    {
+      "control": "a border crossing under a switch-off comment for the next line",
+      "file": "packages/core/src/planted/switched-off-next-line.ts",
+      "line": 2,
+      "refused": "packages/core imports services; its row names wire"
+    },
+    {
+      "control": "a crossing and a platform's name under a switch-off comment for the whole file",
+      "file": "packages/core/src/planted/switched-off-file.ts",
+      "line": 2,
+      "refused": "packages/core imports services; its row names wire"
+    }
+  ],
+  "green": [
+    {
+      "control": "the fallback door imports the server",
+      "file": "apps/api-vercel/src/planted/server.ts"
+    },
+    {
+      "control": "a feature imports a type of the engine",
+      "file": "packages/app/src/planted/type.ts"
+    },
+    {
+      "control": "a kit test imports the test package",
+      "file": "packages/ui/test/planted-testing.test.ts"
+    },
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

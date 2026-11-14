@@ -1,0 +1,20 @@
+{
+  "id": "no-empty",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "an error caught and dropped",
+      "file": "packages/app/src/planted/swallow.ts",
+      "line": 4,
+      "refused": "Empty block statement."
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

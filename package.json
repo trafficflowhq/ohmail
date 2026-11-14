@@ -12,6 +12,9 @@
     "typecheck:mobile": "tsc --noEmit -p apps/mobile/tsconfig.json && tsc --noEmit -p apps/mobile/tsconfig.test.json",
     "test:mobile": "node scripts/apply-patches.mjs apply && vitest run apps/mobile/test packages/client-engine/test && vitest run --config vitest.sqlite.config.ts apps/mobile/test",
     "build": "tsc -b",
+    "lint": "node tools/check.mjs --list",
+    "format": "node tools/check.mjs --format",
+    "check:tools": "node tools/check.mjs --base origin/next && node tools/check.mjs --controls",
     "db:setup:prod": "tsx --conditions=ohmail-source packages/db/src/setup-prod-cli.ts"
   },
   "workspaces": [
@@ -93,6 +96,11 @@
     "@testing-library/react": "16.3.2",
     "@types/nodemailer": "6.4.24",
     "@types/mailparser": "3.4.6",
-    "@types/sanitize-html": "2.16.1"
+    "@types/sanitize-html": "2.16.1",
+    "eslint": "9.39.5",
+    "typescript-eslint": "8.72.2",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "stylelint": "16.26.1",
+    "prettier": "3.10.1"
   }
 }

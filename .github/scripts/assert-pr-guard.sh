@@ -7,8 +7,9 @@
 # Every pull request is refused when (c) a file of a font kind is in its tree, or any commit it would
 # merge adds or changes one, unless `.github/scripts/admitted-fonts.tsv` admits it. A maintainer's
 # `publish/<utc>-<sha12>` branch is otherwise admitted as it is. Any other pull request is refused when
-# (a) it changes `.github/`, `scripts/` or `.gate/` and is not a maintainer's `pr/<name>` branch (a name
-# of letters, digits, `.`, `_` and `-`), or (b) it carries a `Monorepo-Commit:` line in a commit message,
+# (a) it changes `.github/`, `scripts/`, `.gate/` or the tools' own files (`tools/` and the linters' and
+# the formatter's files at the root) and is not a maintainer's `pr/<name>` branch (a name of letters,
+# digits, `.`, `_` and `-`), or (b) it carries a `Monorepo-Commit:` line in a commit message,
 # its title or its description (the merge message is the description). A maintainer's branch is a branch
 # of THIS repository, which only write access can push (a MEMBER association alone is membership of the
 # organization, not write access), whose pull request a person opened (`user.type` User, never an app's
@@ -203,7 +204,9 @@ if [ "$maintainer" = yes ] && [[ "$head_ref" =~ ^pr/[A-Za-z0-9._-]+$ ]]; then do
 machinery=""
 if [ "$door" = no ]; then
   mb=$(git merge-base "$base" "$head") || fail "no merge base between $base and $head"
-  machinery=$(git diff --name-only --no-renames "$mb" "$head" -- .github scripts .gate) || fail "the change $mb..$head could not be listed"
+  # tools/ and the four root files are the linters' and the formatter's rules: a change that could edit
+  # them would be checked by its own rules.
+  machinery=$(git diff --name-only --no-renames "$mb" "$head" -- .github scripts .gate tools eslint.config.mjs stylelint.config.mjs .prettierrc.json .prettierignore) || fail "the change $mb..$head could not be listed"
 fi
 if [ -n "$machinery" ]; then
   refusals=$((refusals + 1))
@@ -238,6 +241,6 @@ if [ "$refusals" -gt 0 ]; then
   say "guard: REFUSED — $who, $refusals reason(s) above"
   exit 1
 fi
-what="changes none of .github/, scripts/ and .gate/"
+what="changes none of .github/, scripts/ and .gate/, nor the tools' own files"
 if [ "$door" = yes ]; then what="is a maintainer branch of this repository"; fi
 say "guard: ADMITTED — $who $what, and carries no Monorepo-Commit: line and no font file beyond the admitted"
