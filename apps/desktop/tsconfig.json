@@ -150,5 +150,5 @@
       "@trafficflow/core/diagnostics": ["../../packages/core/src/diagnostics/index.ts"]
     }
   },
-  "include": ["src", "vite.config.ts"]
+  "include": ["src", "../paired-page/src", "vite.config.ts"]
 }

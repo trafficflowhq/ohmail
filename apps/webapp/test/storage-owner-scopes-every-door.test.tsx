@@ -284,7 +284,7 @@ describe("the reply buffers are partitioned by the storage owner", () => {
   });
 
   it("the host door's sweep takes the reply text a pairing named, and its letters' copy notes", async () => {
-    const { HOST_SCRATCH_PREFIXES } = await import("../../desktop/src/host-client/HostGate");
+    const { HOST_SCRATCH_PREFIXES } = await import("../../paired-page/src/HostGate");
     setStorageOwner("pairing-scope-1");
     writeReplyDraft("m-1", words("typed on a phone"));
     writeReplyMeta("m-1", { subject: "a title" });
@@ -492,7 +492,7 @@ const DOORS: readonly Door[] = [
     key: /key=\{shellKey\}/,
   },
   {
-    file: "apps/desktop/src/host-client/HostGate.tsx",
+    file: "apps/paired-page/src/HostGate.tsx",
     call: /setStorageOwner\(paired \? scope\b/,
     key: /key=\{scope\b/,
   },
@@ -500,7 +500,7 @@ const DOORS: readonly Door[] = [
 
 /** Every file in the tree that mounts the shell — derived, never remembered. */
 function mountsOfShell(): string[] {
-  const roots = ["apps/webapp/app", "apps/desktop/src"];
+  const roots = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src"];
   const found: string[] = [];
   const walk = (dir: string): void => {
     for (const name of readdirSync(resolve(ROOT, dir)).sort()) {
@@ -606,7 +606,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
    * The partition, the shell and the engine must all name the same identity or none of them does.
    */
   it("the host door rebuilds its engine on the pairing it is keyed and partitioned by", () => {
-    const src = readFileSync(resolve(ROOT, "apps/desktop/src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(ROOT, "apps/paired-page/src/HostGate.tsx"), "utf8");
     const deps = /\n\s*\[paired, bearer([^\]]*)\],/.exec(src);
     expect(deps, "the engine memo's dependency list is no longer where this can see it").not.toBeNull();
     expect(
@@ -617,7 +617,7 @@ describe("every door that mounts the shared shell names its storage owner", () =
   });
 
   it("the host door sweeps its at-rest scratch on BOTH departures, not only on a dead session", () => {
-    const src = readFileSync(resolve(ROOT, "apps/desktop/src/host-client/HostGate.tsx"), "utf8");
+    const src = readFileSync(resolve(ROOT, "apps/paired-page/src/HostGate.tsx"), "utf8");
     const sweeps = src.match(/dropLocalStorageKeys\(HOST_SCRATCH_PREFIXES\)/g) ?? [];
     expect(
       sweeps.length,

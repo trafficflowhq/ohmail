@@ -178,7 +178,7 @@ describe("no container takes the line breaks away", () => {
 describe("one rule, declared once", () => {
   /* Every stylesheet the product ships (the web app, the desktop's shell, the ui kit, the tokens).
      A second `pre-line` is a second copy of the rule some other container will lack. */
-  const ROOTS = ["apps/webapp/app", "apps/desktop/src", "packages/ui/src", "packages/tokens/src"];
+  const ROOTS = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src", "packages/ui/src", "packages/tokens/src"];
   const sheets = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
     if (name === "node_modules" || name === "dist") return [];

@@ -3140,7 +3140,7 @@ describe("the UI bundle's build config", () => {
         typeof find === "string" ? spec === find || spec.startsWith(`${find}/`) : find.test(spec));
       return hit && path.resolve(spec.replace(hit.find, hit.replacement));
     };
-    const reached = new Set(["src/main.tsx", "src/host-client/main.tsx"].map((f) => path.join(APP, f)));
+    const reached = new Set(["src/main.tsx", "../paired-page/src/main.tsx"].map((f) => path.join(APP, f)));
     for (const from of reached) for (const [spec, file] of imports.get(from) ?? []) {
       const target = aliased(spec);
       if (workspace(spec)) {

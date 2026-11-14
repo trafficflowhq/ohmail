@@ -84,6 +84,7 @@ const HAVE_PUBLISHER = fs.existsSync(path.join(REPO, PUBLISHER));
  */
 const MIRROR_SOURCE_DIRS = [
   "apps/desktop/src",
+  "apps/paired-page/src",
   "apps/webapp/app/components",
   "apps/webapp/app/letter-body",
   "apps/webapp/app/shell",
@@ -248,7 +249,7 @@ function computedKeyNamespaces(raw: string): Set<string> {
  * floors below are what keeps that honest.
  */
 const ENTRY_WINDOW = "apps/desktop/src/main.tsx";
-const ENTRY_HOST = "apps/desktop/src/host-client/main.tsx";
+const ENTRY_HOST = "apps/paired-page/src/main.tsx";
 
 function importGraph(entryRel: string): string[] {
   const seen = new Set<string>();
@@ -395,7 +396,7 @@ describe("desktop message filter", () => {
    * seconds instead of after a platform build.
    *
    * The leak was copy, not code. The served bundle contains no provider component — the desktop
-   * host passes it in, and `src/host-client/HostGate.tsx` mounts `AppShell` with no `firstRun`
+   * host passes it in, and `apps/paired-page/src/HostGate.tsx` mounts `AppShell` with no `firstRun`
    * host at all — but `shellMessagesOnly()` filters by NAMESPACE and both artifacts asked for the
    * same namespaces, so `aiProvider`'s `choiceOllama` / `choiceAnthropicWhy` and `onboarding`'s
    * self-host fact screens ("the operator has set an Anthropic key on this server") shipped to a
@@ -460,7 +461,7 @@ describe("desktop message filter", () => {
     // they catch a resolver that stopped following, not a refactor.
     expect(windowFiles.length).toBeGreaterThan(100);
     expect(hostFiles.length).toBeGreaterThan(100);
-    expect(hostFiles).toContain("apps/desktop/src/host-client/HostGate.tsx");
+    expect(hostFiles).toContain("apps/paired-page/src/HostGate.tsx");
 
     /* EXACTLY ONE READER, and that is the design rather than an accident: `door-copy.ts` holds
        the whole namespace as one `liveCopy` table and every pane imports `DOOR_COPY` from it.

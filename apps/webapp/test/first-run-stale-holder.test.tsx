@@ -219,7 +219,7 @@ describe("holderStopped reads the decider's stop and nothing else", () => {
  */
 describe("census: one step, one predicate", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/app", "apps/mobile/src"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/app", "apps/mobile/src"];
   const KEYS = [
     "elsewhereLead", "elsewhereLeadStopped", "elsewhereChoiceHereWhy", "elsewhereChoiceHereStoppedWhy",
     "elsewhereChoiceReadWhy", "elsewhereChoiceReadStoppedWhy",

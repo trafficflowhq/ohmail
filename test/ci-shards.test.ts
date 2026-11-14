@@ -318,7 +318,7 @@ describe("the suite workflow", () => {
     expect(window.roots).toEqual(whole.roots.filter((f) => f !== "apps/desktop/vite.config.ts"));
     expect(window.options).toEqual(whole.options);
     // The two answers to the host contract that live in this program.
-    expect(window.roots).toEqual(expect.arrayContaining(["apps/desktop/src/host-contract.ts", "apps/desktop/src/host-client/host.ts"]));
+    expect(window.roots).toEqual(expect.arrayContaining(["apps/desktop/src/host-contract.ts", "apps/paired-page/src/host.ts"]));
   });
 
   it("plans the alone jobs from the marker and refuses a list the shard map's own walk disagrees with", () => {

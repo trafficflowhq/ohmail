@@ -14,7 +14,7 @@ const BAKED = vi.hoisted(() => {
 });
 afterAll(() => { delete (globalThis as Record<string, unknown>).__OHMAIL_ENGINE_VERSION__; });
 import { freshDataDir } from "./_datadir.js";
-import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../desktop/src/host-client/bearer.js";
+import { BearerManager, PAIR_SCOPE_STORAGE_KEY, REFRESH_STORAGE_KEY } from "../../paired-page/src/bearer.js";
 import { BearerManager as ShippedBearerManager } from "../../desktop/test/fixtures/host-bearer-0.30.13.js";
 
 /* The engine's own devDependency, reached through its package: neither app carries one. */

@@ -76,7 +76,7 @@ import fs from "node:fs";
 import path from "node:path";
 import ts from "typescript";
 
-/** The interface sources: the shared UI package, the shell and views, and the desktop window. */
+/** The interface sources: the shared UI package, the shell and views, and the desktop window, the paired page. */
 export const COPY_CENSUS_ROOTS = [
   "packages/ui/src",
   "apps/webapp/app/shell",
@@ -84,6 +84,7 @@ export const COPY_CENSUS_ROOTS = [
   "apps/webapp/app/components",
   "apps/webapp/app/letter-body",
   "apps/desktop/src",
+  "apps/paired-page/src",
 ];
 
 /**

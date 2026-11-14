@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import messages from "../../webapp/messages/en.json";
 import type { JunkWire } from "../../webapp/app/shell/junk-window";
 import type { TrashWire } from "../../webapp/app/shell/trash-window";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * ═══ THE PAIRED PHONE'S TWO LIVE WINDOWS — the wires the host door was not handing in ════════
@@ -286,7 +286,7 @@ describe("what the wires DO to the two windows, through the shared hooks", () =>
 });
 
 describe("the host client's transports add no door of their own", () => {
-  const src = read("apps/desktop/src/host-client/transports.ts");
+  const src = read("apps/paired-page/src/transports.ts");
   const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
   it("spells no request: no fetch call, no method, no path — every wire is the window's factory", () => {
@@ -307,7 +307,7 @@ describe("the host client's transports add no door of their own", () => {
     // export leaves the other window absent for the reason this file's header gives.
     expect(code).toContain("export function junkOverBearer");
     expect(code).toContain("export function trashOverBearer");
-    const gate = read("apps/desktop/src/host-client/HostGate.tsx");
+    const gate = read("apps/paired-page/src/HostGate.tsx");
     expect(gate).toContain("junkWire={junk}");
     expect(gate).toContain("trashWire={trash}");
   });

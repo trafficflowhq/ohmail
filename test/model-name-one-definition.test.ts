@@ -48,7 +48,7 @@ describe("there is one definition of the match, and both surfaces import it", ()
 
   it("the family-and-tag grammar is spelled in exactly one file", () => {
     const hits: string[] = [];
-    for (const root of ["apps/desktop/src", "apps/sidecar/src", "packages/core/src"]) {
+    for (const root of ["apps/desktop/src", "apps/paired-page/src", "apps/sidecar/src", "packages/core/src"]) {
       for (const f of walk(join(ROOT, root))) {
         if (/\.split\(":",\s*2\)/.test(withoutComments(readFileSync(f, "utf8")))) hits.push(f);
       }

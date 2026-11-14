@@ -3,7 +3,7 @@
  * transport, with no door here. The card is the shared client's; the route, the narrowing
  * and the engine's-own-sentence rule for a refusal live here once for both doors: the desktop
  * window over its bridge (`local-profile-import.ts`) and the served host client over its bearer
- * socket (`host-client/transports.ts`). No transport is imported — the served host client has
+ * socket (`apps/paired-page/src/transports.ts`). No transport is imported — the served host client has
  * no bridge, and `scan:host` refuses the shell command's name in the phone bundle. The fetch
  * shape is the LOOSE one on purpose: `init` is `unknown` so both of the adapter option
  * declarations this source is published beside accept it.
@@ -62,7 +62,7 @@ async function refusedAs(res: Response, code: string): Promise<boolean> {
  * A factory over the FETCH rather than over anything else, because the desktop now has two
  * consumers of the same four routes and the same refusal contract: the window (the bridge down
  * the pipe) and the served host-client (the loopback socket, bearer-authenticated — see
- * `host-client/transports.ts`). The wire narrowing and the engine's-own-sentence rule live once,
+ * `apps/paired-page/src/transports.ts`). The wire narrowing and the engine's-own-sentence rule live once,
  * here, whichever transport carries the bytes.
  */
 export function profileImportVia(fetchImpl: ProfileImportFetch): ProfileImportTransport {

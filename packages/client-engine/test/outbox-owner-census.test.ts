@@ -8,7 +8,7 @@
  */
 /* @reads: packages/client-engine/src/idb.ts */
 /* @reads: packages/client-engine/src/engine.ts */
-/* @reads: apps/desktop/src/host-client/outbox-store.ts */
+/* @reads: apps/paired-page/src/outbox-store.ts */
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -16,7 +16,7 @@ import ts from "typescript";
 
 const ROOT = process.cwd();
 const IDB = resolve(ROOT, "packages/client-engine/src/idb.ts");
-const HOST = resolve(ROOT, "apps/desktop/src/host-client/outbox-store.ts");
+const HOST = resolve(ROOT, "apps/paired-page/src/outbox-store.ts");
 const ENGINE = resolve(ROOT, "packages/client-engine/src/engine.ts");
 
 const parse = (src: string): ts.SourceFile => ts.createSourceFile("x.ts", src, ts.ScriptTarget.Latest, true);

@@ -38,8 +38,8 @@
 
 import { clientHeaders, isCredentialRefusal, isSessionRefusal, readRefreshAnswer } from "@ohmail/client-engine";
 import { durableIdbCommit, storageDoor, type StorageDoor } from "@ohmail/client-engine/durable";
-import { BUILD_VERSION } from "../build-id.js";
-import { RELOAD_REMEDY, hearUpdateAnswer } from "../../../webapp/app/shell/update-answer.js";
+import { BUILD_VERSION } from "../../desktop/src/build-id.js";
+import { RELOAD_REMEDY, hearUpdateAnswer } from "../../webapp/app/shell/update-answer.js";
 
 /** The wire pair the redeem and the refresh both answer. */
 export interface BearerTokens {

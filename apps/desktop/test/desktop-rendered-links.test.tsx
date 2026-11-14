@@ -449,7 +449,7 @@ function bodyOf(src: string, signature: string): string {
 
 describe("the wiring, from source", () => {
   it("only the renderers, the minted account page and the desktop entry reach the seam", () => {
-    const sources = ["apps/webapp/app", "apps/desktop/src", "packages"].flatMap(filesUnder);
+    const sources = ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src", "packages"].flatMap(filesUnder);
     const reaching = sources.filter((f) => /from\s+["'][^"']*\/rendered-links(?:\.js)?["']/.test(source(f))).sort();
     expect(reaching).toEqual([
       "apps/desktop/src/DesktopSubscription.tsx",

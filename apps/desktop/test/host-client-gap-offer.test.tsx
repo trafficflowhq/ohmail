@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 
 import messages from "../../webapp/messages/en.json";
 import type { GapLettersTransport } from "../../webapp/app/shell/GapLettersNotice";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * THE GAP OFFER ON A PAIRED DEVICE (the host door). The host counts the offer and serves

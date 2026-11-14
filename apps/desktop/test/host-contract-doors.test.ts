@@ -10,7 +10,7 @@ import type { EngineStatus } from "../src/bridge-fetch.js";
 import { DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES, desktopSendSurface } from "../src/desktop-send-surface.js";
 import { isPreview, linksOutToBilling } from "../src/distribution.js";
 import { CLOUD_URL } from "../src/doors.js";
-import { pairedHost, type PairedSupplies } from "../src/host-client/host.js";
+import { pairedHost, type PairedSupplies } from "../../paired-page/src/host.js";
 import { desktopHost, type DesktopFacts, type DesktopSupplies } from "../src/host-contract.js";
 
 const WIRES = [

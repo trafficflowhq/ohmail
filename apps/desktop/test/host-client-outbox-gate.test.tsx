@@ -7,8 +7,8 @@ import type { OhmailEngine } from "@ohmail/client-engine";
 
 import messages from "../../webapp/messages/en.json";
 import { COMPOSE_DRAFT_PREFIX } from "../../webapp/app/shell/compose";
-import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager, OWED_SIGN_OUTS_STORAGE_KEY } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * WHAT THE PAIRED PAGE KEEPS GOES WITH THE PAIRING, AND A BROWSER THAT KEEPS NOTHING SAYS SO.
@@ -40,18 +40,18 @@ vi.mock("../../webapp/app/shell/AppShell", async () => {
   );
   return { ...real, AppShell: (props: Record<string, unknown>) => { shellProps = props; return null; } };
 });
-vi.mock("../src/host-client/PairScreen.js", async () => {
-  const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>(
-    "../src/host-client/PairScreen.js",
+vi.mock("../../paired-page/src/PairScreen.js", async () => {
+  const real = await vi.importActual<typeof import("../../paired-page/src/PairScreen.js")>(
+    "../../paired-page/src/PairScreen.js",
   );
   return {
     ...real,
     PairScreen: (props: { onPaired: () => void } & Record<string, unknown>) => { pairProps = props; return null; },
   };
 });
-vi.mock("../src/host-client/outbox-store.js", async () => {
-  const real = await vi.importActual<typeof import("../src/host-client/outbox-store.js")>(
-    "../src/host-client/outbox-store.js",
+vi.mock("../../paired-page/src/outbox-store.js", async () => {
+  const real = await vi.importActual<typeof import("../../paired-page/src/outbox-store.js")>(
+    "../../paired-page/src/outbox-store.js",
   );
   return {
     ...real,
@@ -288,7 +288,7 @@ describe("Sign out on the paired browser", () => {
   }
 
   async function landing(): Promise<string> {
-    const real = await vi.importActual<typeof import("../src/host-client/PairScreen.js")>("../src/host-client/PairScreen.js");
+    const real = await vi.importActual<typeof import("../../paired-page/src/PairScreen.js")>("../../paired-page/src/PairScreen.js");
     return textOf(h(real.PairScreen, pairProps as unknown as Parameters<typeof real.PairScreen>[0]));
   }
 

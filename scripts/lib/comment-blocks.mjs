@@ -87,7 +87,7 @@ export const SWEPT_ROOTS = [
   "apps/admin/app", "apps/admin/lib", "apps/" + "admin/middleware.ts", "apps/api-vercel/src",
   "apps/webapp/app", "packages/api/src", "packages/client-engine/src", "packages/core/src",
   "packages/db-mail/src", "packages/db/src", "packages/services/src", "packages/ui/src",
-  "apps/mobile/app", "apps/mobile/src", "apps/desktop/src", "apps/sidecar/src", "apps/worker/src",
+  "apps/mobile/app", "apps/mobile/src", "apps/desktop/src", "apps/paired-page/src", "apps/sidecar/src", "apps/worker/src",
 ];
 
 /** The `.mjs` script roots, walked non-recursively; the public-message store is not comment prose. */

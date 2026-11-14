@@ -12,7 +12,7 @@ import {
   OUTBOX_ABANDONED_TYPE, OUTBOX_MAX_SERVER_FAILURES, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
   type EngineLocks, type EngineMutation, type MirrorStore, type MutationResult,
 } from "@ohmail/client-engine";
-import { HostOutboxStore } from "../../../apps/desktop/src/host-client/outbox-store.js";
+import { HostOutboxStore } from "../../../apps/paired-page/src/outbox-store.js";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
 async function until(cond: () => boolean, what: string): Promise<void> {

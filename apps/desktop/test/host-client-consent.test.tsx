@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url";
 import messages from "../../webapp/messages/en.json";
 import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
 import { consentOverBridge } from "../src/local-consent.js";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * ═══ THE PAIRED PHONE'S CONSENT ROW — the wire the host door was not handing in ══════════════

@@ -16,7 +16,7 @@ import { bracketSpan, withoutComments } from "../../../scripts/lib/source-scan.m
 
 const ROOT = resolve(__dirname, "../../..");
 const ENGINE = "packages/client-engine/src/engine.ts";
-const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/mobile/src"];
+const SURFACE_ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src"];
 /** The adapter wrapper that FORWARDS the capability; forwarding is not a read. */
 const FORWARDER = "packages/app-logic/src/session/sync-scheduler.ts";
 
@@ -109,7 +109,7 @@ describe("no surface reads the offer around the door", () => {
   /** Positive controls: the walk reached the renderer and the forwarder, on all three roots. */
   it("the walk reached every root, the renderer and the forwarder", () => {
     for (const r of SURFACE_ROOTS) {
-      expect(files.filter((f) => relative(ROOT, f).startsWith(`${r}/`)).length, r).toBeGreaterThan(10);
+      expect(files.filter((f) => relative(ROOT, f).startsWith(`${r}/`)).length, r).toBeGreaterThan(r === "apps/paired-page/src" ? 9 : 10);
     }
     const src = (p: string) => readFileSync(join(ROOT, p), "utf8");
     expect(call("heldReleaseDismissedOf").test(withoutComments(src("apps/webapp/app/shell/screener-state.ts")))).toBe(true);

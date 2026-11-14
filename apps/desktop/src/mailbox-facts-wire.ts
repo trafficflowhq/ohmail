@@ -3,7 +3,7 @@
  *
  * `GET /mailboxes` is asked by two surfaces: the desktop window over its bridge
  * (`local-mailbox-facts.ts`) and the served host client over its bearer socket
- * (`host-client/transports.ts`), so the narrowing — which fields are forwarded, and the
+ * (`apps/paired-page/src/transports.ts`), so the narrowing — which fields are forwarded, and the
  * absent-versus-null discipline — lives once for both. It imports no transport because the
  * served host client has no bridge; a file shared with the bridge binding would put the shell
  * command's name into the bundle a phone is handed, which `scan:host` refuses.
@@ -163,7 +163,7 @@ interface MailboxWire {
 
 /**
  * The same read over an INJECTED transport — the served host-client asks the identical question
- * over its bearer socket (`host-client/transports.ts`), and the absent-versus-null discipline
+ * over its bearer socket (`apps/paired-page/src/transports.ts`), and the absent-versus-null discipline
  * below must not be duplicated to be reused.
  */
 export async function readMailboxFactsVia(

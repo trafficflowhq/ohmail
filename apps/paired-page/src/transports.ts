@@ -13,22 +13,22 @@
  * measures it on the built artifact.
  */
 
-import type { GapLettersTransport } from "../../../webapp/app/shell/GapLettersNotice";
-import type { JunkWire } from "../../../webapp/app/shell/junk-window";
+import type { GapLettersTransport } from "../../webapp/app/shell/GapLettersNotice";
+import type { JunkWire } from "../../webapp/app/shell/junk-window";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ProfileImportTransport } from "../../../webapp/app/shell/ProfileImportCard";
-import type { ConsentTransport } from "../../../webapp/app/shell/consent-state";
-import type { OlderBodyWire } from "../../../webapp/app/shell/older-body";
-import type { TrashWire } from "../../../webapp/app/shell/trash-window";
-import type { DraftReplyWire } from "../../../webapp/app/shell/draft-reply";
+import type { ProfileImportTransport } from "../../webapp/app/shell/ProfileImportCard";
+import type { ConsentTransport } from "../../webapp/app/shell/consent-state";
+import type { OlderBodyWire } from "../../webapp/app/shell/older-body";
+import type { TrashWire } from "../../webapp/app/shell/trash-window";
+import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply";
 import { olderBodyVia } from "@ohmail/client-engine";
-import { consentVia } from "../consent-wire.js";
-import { draftReplyVia } from "../draft-reply-wire.js";
-import { gapLettersVia } from "../gap-letters-wire.js";
-import { junkVia } from "../junk-wire.js";
-import { readMailboxFactsVia } from "../mailbox-facts-wire.js";
-import { profileImportVia } from "../profile-import-wire.js";
-import { trashVia } from "../trash-wire.js";
+import { consentVia } from "../../desktop/src/consent-wire.js";
+import { draftReplyVia } from "../../desktop/src/draft-reply-wire.js";
+import { gapLettersVia } from "../../desktop/src/gap-letters-wire.js";
+import { junkVia } from "../../desktop/src/junk-wire.js";
+import { readMailboxFactsVia } from "../../desktop/src/mailbox-facts-wire.js";
+import { profileImportVia } from "../../desktop/src/profile-import-wire.js";
+import { trashVia } from "../../desktop/src/trash-wire.js";
 import type { BearerManager } from "./bearer.js";
 
 /** The sync strip's mailbox facts — `GET /mailboxes` over the bearer, window rules verbatim. */

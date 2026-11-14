@@ -11,7 +11,7 @@ import {
   type EngineLocks, type EngineMutation, type MutationResult,
 } from "@ohmail/client-engine";
 
-import { HostOutboxStore } from "../../../apps/desktop/src/host-client/outbox-store.js";
+import { HostOutboxStore } from "../../../apps/paired-page/src/outbox-store.js";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
 async function until(cond: () => boolean, what: string): Promise<void> {

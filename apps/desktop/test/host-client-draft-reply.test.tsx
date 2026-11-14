@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 
 import messages from "../../webapp/messages/en.json";
 import type { DraftReplyWire } from "../../webapp/app/shell/draft-reply";
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 
 /**
  * DRAFT REPLY ON A PAIRED BROWSER. `HostGate` handed the shared shell no draft wire, so the control

@@ -2,7 +2,7 @@
  * ANSWERING THE GAP OFFER (mail 0151, 0158) — both counts the person was shown, so the door refuses a
  * pair that moved; the answer's shape is `GapLettersTransport`'s. Over an injected transport, with no door in this module, on
  * `junk-wire.ts`'s rule: the desktop window hands in its bridge (`local-gap-letters.ts`) and the
- * served host client its bearer socket (`host-client/transports.ts`), which has no bridge — a file
+ * served host client its bearer socket (`apps/paired-page/src/transports.ts`), which has no bridge — a file
  * shared with the bridge binding would put the shell command into the bundle a phone is handed.
  */
 

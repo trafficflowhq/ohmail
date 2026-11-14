@@ -5,8 +5,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { IntlProvider } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
-import { BearerManager } from "../src/host-client/bearer.js";
-import { HostGate } from "../src/host-client/HostGate.js";
+import { BearerManager } from "../../paired-page/src/bearer.js";
+import { HostGate } from "../../paired-page/src/HostGate.js";
 import { setActiveCatalog } from "../../webapp/app/shell/locale.js";
 import en from "../../webapp/messages/en.json";
 import de from "../../webapp/messages/de.json";
@@ -20,7 +20,7 @@ import de from "../../webapp/messages/de.json";
  * posts through `nodeOneClickPost`), so the list's endpoint sees that computer's network address and
  * no server of ours stands between. The gate handed the shell no `imagesFromComputer`, so the note
  * under the Settings switch read the Cloud sentence: from our servers, the address kept out of the
- * sender's log. Rendered as `host-client/main.tsx` renders the gate, at `#/settings/screener`, in
+ * sender's log. Rendered as `apps/paired-page/src/main.tsx` renders the gate, at `#/settings/screener`, in
  * both languages. The sender sheet's confirm reads the same prop in the shell
  * (`test/desktop-unsubscribe-note.test.tsx` holds that wiring), so the switch's note stands for both.
  */
