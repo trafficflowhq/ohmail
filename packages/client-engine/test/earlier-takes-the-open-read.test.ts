@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getFixtures, type MessageFixture } from "@ohmail/fixtures";
+import { getFixtures, type MessageFixture } from "@ohmail/testing";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MemoryMirrorStore,
   inverseMutations,
   OhmailEngine,
@@ -13,6 +11,7 @@ import {
   type EngineMutation,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { OPEN_READ_SHAPES, type OpenReadRow } from "./fixtures/open-read-shapes.js";
 import { earlierPlaceComparisons, placeEarlier } from "../src/selectors.js";
 import { openReadFloorScanCount } from "../src/mutations.js";

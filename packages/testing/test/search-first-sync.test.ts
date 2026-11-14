@@ -3,11 +3,11 @@ import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import { mailboxes } from "@trafficflow/db";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { FIXED_NOW, makeDeps, seedBody, seedMailbox, seedMessage, seedSession } from "../../api/test/helpers.js";
-import { HttpAdapter } from "../src/adapters/http-adapter.js";
-import { OhmailEngine } from "../src/engine.js";
-import { MemoryMirrorStore } from "../src/store.js";
-import { StoreSearchWalker } from "../src/store-timeline.js";
-import type { FetchLike } from "../src/index.js";
+import { HttpAdapter } from "@ohmail/client-engine";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { MemoryMirrorStore } from "@ohmail/client-engine";
+import { StoreSearchWalker } from "@ohmail/client-engine";
+import type { FetchLike } from "@ohmail/client-engine";
 
 /**
  * THE REAL SEARCH ROUTE OVER A STORE MID-IMPORT, through the transport and the

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
@@ -13,6 +12,7 @@ import {
   type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * HISTORY IS A LENS OVER THE USER'S OWN FOLDERS — spec §16.5, foundation stage.

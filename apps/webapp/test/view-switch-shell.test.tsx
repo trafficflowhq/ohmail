@@ -17,8 +17,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { OhmailEngine, type UnscreenedPileWire } from "@ohmail/client-engine";
-import { FixturesAdapter } from "../../../packages/client-engine/src/adapters/fixtures-adapter";
-import { getFixtures } from "@ohmail/fixtures";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
+import { getFixtures } from "@ohmail/testing";
 
 (globalThis as unknown as { React: unknown }).React = React;
 const h = React.createElement;

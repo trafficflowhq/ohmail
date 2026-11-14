@@ -4,7 +4,8 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
-import { FixturesAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { noteReplyPress } from "../app/shell/sent-reveal";
 
 /**

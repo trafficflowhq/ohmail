@@ -91,7 +91,7 @@ const rel = (p: string): string => relative(REPO, p);
 /**
  * THIS REPOSITORY'S OWN WORKSPACE SCOPE, COMPOSED RATHER THAN WRITTEN OUT.
  *
- * `packages/fixtures/src/privacy.ts` bans the company name as REAL IDENTITY, and `privacy.test.ts`
+ * `packages/testing/src/privacy.ts` bans the company name as REAL IDENTITY, and `privacy.test.ts`
  * scans every file under `apps/mobile` for it — test files deliberately included, on the stated
  * grounds that "a real brand in a test file is still a real brand in this repository". This census
  * was red on exactly that rule the first time it ran beside the rest of the suite.

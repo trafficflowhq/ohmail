@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { EngineMutation } from "@ohmail/client-engine";
 import {
   allSendLocks, claimSendLock, holdOf, SEND_LOCK_FORMAT, sendLocksKey, type Hold, type SendLock,
@@ -255,9 +255,10 @@ describe("the send hold is answered in one place, and every write site asks", ()
      *    most likely to add innocently: `compose-autosave.ts` wants this answer too and must go on
      *    receiving it through `onSettled`, never by pulling the map itself.
      */
-    const engine = readFileSync(
-      resolve(process.cwd(), "packages/client-engine/src/engine.ts"), "utf8",
-    );
+    // The engine's door and every file of its folder: the writers stand in more than one of them.
+    const folder = resolve(process.cwd(), "packages/client-engine/src/engine");
+    const engine = [resolve(process.cwd(), "packages/client-engine/src/engine.ts"), ...readdirSync(folder).sort().map((n) => join(folder, n))]
+      .map((f) => readFileSync(f, "utf8")).join("\n");
     const code = (src: string): string[] => src.split("\n").map((l) => l.trim())
       .filter((l) => !l.startsWith("*") && !l.startsWith("//") && !l.startsWith("/*"));
 

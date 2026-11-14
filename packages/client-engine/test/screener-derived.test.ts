@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { getFixtures } from "@ohmail/fixtures";
+import { getFixtures } from "@ohmail/testing";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
@@ -15,6 +13,7 @@ import {
   type ScreenerSenderDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * THE SCREENER, DERIVED FROM THE MESSAGE MIRROR.

@@ -87,11 +87,21 @@ const SEND = {
   to: [{ name: "Ada", address: "ada@fake.test" }],
 } as unknown as EngineMutation;
 type Tab = { store: IndexedDbMirrorStore; engine: OhmailEngine; name: () => string | null };
+/** The registry as one window asks it, and the name that window's lock was granted under. */
+function grantOf(locks: EngineLocks | null) {
+  let granted: string | null = null;
+  const api: EngineLocks | null = locks === null ? null : {
+    request: (name, o, cb) => locks.request(name, o, (l) => { granted = name; return cb(l); }),
+    query: () => locks.query(),
+  };
+  return { api, name: () => granted };
+}
 async function open(factory: IDBFactory, locks: EngineLocks | null, srv: ReturnType<typeof server>): Promise<Tab> {
+  const lock = grantOf(locks);
   const store = new IndexedDbMirrorStore({ owner: "acct-row", factory });
-  const engine = new OhmailEngine({ adapter: srv.adapter as never, store, locks } as never);
+  const engine = new OhmailEngine({ adapter: srv.adapter as never, store, locks: lock.api } as never);
   await engine.start().catch(() => undefined);
-  return { store, engine, name: () => (engine as unknown as { ownerName: string | null }).ownerName };
+  return { store, engine, name: lock.name };
 }
 type Row = { key: string; owner?: string; withdrawn?: boolean; confirmed?: boolean; sending?: string; protocol?: number };
 const rows = (t: Tab) => t.store.entries<Row>(OUTBOX_TYPE).map((e) => e.entity);

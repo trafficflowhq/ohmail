@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
-import { getFixtures } from "@ohmail/fixtures";
+import { getFixtures } from "@ohmail/testing";
 import { DE } from "../apps/mobile/src/copy.de";
 import { EN } from "../apps/mobile/src/copy.en";
 import webDe from "../apps/webapp/messages/de.json";
@@ -22,7 +22,7 @@ import webEn from "../apps/webapp/messages/en.json";
  * `.test`, `.localhost`, or `example.com|net|org`). Parsed, not grepped: string literals, template
  * text, JSX text and JSON values; member access such as `wohnfalz.art` in code is not a host.
  *
- * Not read: `packages/fixtures/src`, the corpus, judged through `getFixtures()` below, and whose
+ * Not read: `packages/testing/src` but its `adapters/`: the corpus, judged through `getFixtures()` below, and whose
  * naming registry spells the real namesakes a coined name was checked against, on purpose.
  */
 
@@ -98,7 +98,7 @@ function unreservedPlaceholderHosts(value: unknown, at = ""): string[] {
 const NAMES = demoNames();
 const FILES = execFileSync("git", ["ls-files", "-z", "apps", "packages", "test"], { cwd: ROOT, encoding: "utf8" })
   .split("\0")
-  .filter((f) => f !== "" && !f.startsWith("packages/fixtures/src/") && (PARSED.test(f) || TEXT.test(f) || f.endsWith(".json")));
+  .filter((f) => f !== "" && (!f.startsWith("packages/testing/src/") || f.startsWith("packages/testing/src/adapters/")) && (PARSED.test(f) || TEXT.test(f) || f.endsWith(".json")));
 
 describe("the demo world's domains are reserved names everywhere they are spelled", () => {
   it("reads the corpus's names and the trees that spell them", () => {

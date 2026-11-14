@@ -2,7 +2,8 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { FixturesAdapter, HttpAdapter } from "@ohmail/client-engine";
+import { HttpAdapter } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine, EngineUnarmedError } from "../app/shell/engine-config.js";
 import { transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 
@@ -295,7 +296,7 @@ describe("?demo=1 — and it is still zero after minutes of wall clock", () => {
  *
  * It had already failed three times in two files, and every one of them was invisible to a test
  * because the import compiles and the strings render. `ComposeView` read a placeholder, an AI
- * tag and a send-note out of `@ohmail/fixtures` unconditionally, so `#/compose` showed a paying
+ * tag and a send-note out of `@ohmail/testing` unconditionally, so `#/compose` showed a paying
  * customer copy written for a persona. `ScreenerView` read its three empty states the
  * same way. `SettingsView` was the worst of them: it rendered `notificationSettings.vips` —
  * "Petra Wyss", "Giulia Ferrari" — and a learned suggestion claiming *"You usually open Petra's
@@ -329,12 +330,12 @@ describe("no fixture content can reach a live account", () => {
     return out;
   }
 
-  it("NO module under apps/webapp/app imports @ohmail/fixtures", () => {
+  it("NO module under apps/webapp/app imports @ohmail/testing", () => {
     const files = [...sources(APP_DIR), ...sources(fileURLToPath(new URL("../../../packages/app-logic/src", import.meta.url)))];
     // The control: if this walk finds nothing, the assertion below passes for the wrong reason.
     expect(files.length, "the source walk found no modules under app/").toBeGreaterThan(30);
 
-    const offenders = files.filter((f) => /from\s+["']@ohmail\/fixtures["']/.test(readFileSync(f, "utf8")));
+    const offenders = files.filter((f) => /from\s+["']@ohmail\/testing["']/.test(readFileSync(f, "utf8")));
     expect(
       offenders.map((f) => f.slice(APP_DIR.length + 1)),
       "these modules would render Mila's world to whoever is signed in",

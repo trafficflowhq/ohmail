@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MutationRejectedError,
   OhmailEngine,
@@ -13,6 +12,7 @@ import {
   type ServerMessageView,
   type SyncResponse,
 } from "../src/index.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * ═══ READING PAST THE END OF THE WINDOW ═══════════════════════════════════════════════

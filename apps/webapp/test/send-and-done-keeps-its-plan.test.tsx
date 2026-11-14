@@ -7,10 +7,11 @@ import { join } from "node:path";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  DEMO_NOW, FixturesAdapter, MutationRejectedError, OhmailEngine, OUTBOX_BACKOFF_CAP_MS,
+  MutationRejectedError, OhmailEngine, OUTBOX_BACKOFF_CAP_MS,
   OUTBOX_MAX_SERVER_FAILURES, intentOf, ohboxView, sendAndDonePlanFor,
   type EngineMessage, type EngineMutation, type MutationResult, type SendAndDonePlan,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
 import { releaseSendAndDone, SendReleaseProvider, type SendRelease } from "../app/shell/send-release";

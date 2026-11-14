@@ -1,5 +1,4 @@
 import {
-  FixturesAdapter,
   HttpAdapter,
   IndexedDbMirrorStore,
   OhmailEngine,
@@ -9,6 +8,7 @@ import {
   SYNC_BODY_TIMEOUT_MS,
   type StorePolicy,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ERASED_DECLARATION, erasedAwareFetch } from "@ohmail/app-logic/session/account-erased";
 import { clientDeclaration } from "./client-declaration";
 import { RELOAD_REMEDY, updateAwareFetch } from "./update-answer";

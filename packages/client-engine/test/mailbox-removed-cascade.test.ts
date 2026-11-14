@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  MemoryMirrorStore,
+  MemoryMirrorStore, OhmailEngine, consentPartition, ohboxView, presentationReader, screenerSegments, senderKey,
+  type EngineAdapter,
   type MessageBodyRecord,
+  type ScreenerWaitingWire,
   type SyncChange,
 } from "@ohmail/client-engine";
 
@@ -218,5 +220,107 @@ describe("a draft the removal keeps is announced after its receipt, and survives
       cursor: "20", hasMore: false, serverTime: iso(),
     });
     expect(idsOf(store, "draft")).toEqual(["d-kept"]);
+  });
+});
+
+describe("removing a mailbox leaves the other mailbox's Screener as it was before it was added", () => {
+  const NOW = new Date("2026-09-26T08:00:00.000Z");
+  const RECENT = "2026-09-25T09:00:00.000Z";
+  /** A letter held at the gate of one mailbox: a sender nobody decided. */
+  const heldAt = (id: string, mailboxId: string, from: string, seq: number): SyncChange => change("message", id, "create", seq, {
+    id, accountId: "acct", mailboxId, threadId: null, messageIdHeader: `<${id}@t>`, subject: id,
+    from: { name: null, address: from }, to: [], cc: [], date: RECENT, folder: "ohmail/Screener", snippet: "",
+    unread: true, hasAttachments: false, attachmentCount: 0,
+    sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
+    triage: null, labels: [], remoteContent: "none", updatedAt: RECENT,
+  });
+  const ownMail: SyncChange[] = [
+    heldAt("k-1", KEPT, "ada@stranger.test", 1), heldAt("k-2", KEPT, "ada@stranger.test", 2),
+    heldAt("k-3", KEPT, "bo@stranger.test", 3), heldAt("k-4", KEPT, "both@stranger.test", 4),
+  ];
+  // The added mailbox's own strangers, and one sender who wrote to both.
+  const addedMail: SyncChange[] = [
+    heldAt("g-1", GONE, "cy@stranger.test", 5), heldAt("g-2", GONE, "both@stranger.test", 6),
+    heldAt("g-3", GONE, "dee@stranger.test", 7),
+  ];
+
+  /** An engine and its server: `arrives(page)` is what the next drain brings, `queue` the store's own Screener page. */
+  async function windowOver(queue?: () => ScreenerWaitingWire) {
+    let next: SyncChange[] = [];
+    let cursor = 0;
+    const adapter = {
+      ...(queue ? { screenerWaiting: async () => queue() } : {}),
+      sync: async () => {
+        const page = next;
+        next = [];
+        cursor = page.reduce((n, c) => Math.max(n, c.seq), cursor);
+        return {
+          changes: {
+            creates: page.filter((c) => c.op === "create"), updates: [], moves: [],
+            deletes: page.filter((c) => c.op === "delete"),
+          },
+          cursor: String(cursor), hasMore: false, serverTime: NOW.toISOString(),
+        };
+      },
+      mutate: async () => ({ changes: [], seq: null }),
+      fetchBody: async () => null,
+    } as unknown as EngineAdapter;
+    const engine = new OhmailEngine({ adapter, store: new MemoryMirrorStore(), now: () => NOW, storePolicy: { mode: "full" } });
+    await engine.start();
+    return { engine, arrives: async (page: SyncChange[]) => { next = page; await engine.syncOnce(); } };
+  }
+  /** The Screener as the window shows it: each waiting sender and the letters held under the row. */
+  const screener = (engine: OhmailEngine) => {
+    const raw = engine.read();
+    const pres = presentationReader(raw, consentPartition(raw, { now: NOW, ownAddresses: [] }));
+    const seg = screenerSegments(pres, NOW, "en", "UTC", []);
+    const held = raw.list<{ id: string; mailboxId: string; folder: string; from: { address: string } }>("message")
+      .filter((m) => m.folder === "ohmail/Screener");
+    const box = ohboxView(pres);
+    return {
+      total: seg.waitingTotal,
+      waiting: seg.waiting.map((row) => senderKey(row.from.address)).sort(),
+      held: held.map((m) => m.id).sort(),
+      ohbox: [...box.resurfaced, ...box.newForYou, ...box.previouslySeen].map((m) => m.id).sort(),
+    };
+  };
+
+  it("the count and the rows are the kept mailbox's own again, and the removed one's are gone", async () => {
+    const { engine, arrives } = await windowOver();
+    await arrives(ownMail);
+    const before = screener(engine);
+    expect(before.waiting, "the kept mailbox's strangers are not waiting").toEqual(["ada@stranger.test", "bo@stranger.test", "both@stranger.test"]);
+
+    await arrives(addedMail);
+    expect(screener(engine).total, "the added mailbox's strangers never reached the Screener").toBe(5);
+
+    await arrives([change("mailbox", GONE, "delete", 8)]);
+    expect(screener(engine), "the removal changed the Screener of the mailbox that stays").toEqual(before);
+  });
+
+  it("removed with its copy kept: the store's page leaves it out, and its strangers are neither waiting nor let in", async () => {
+    // The store's queue, as it answers once the mailbox is removed: the kept mailbox's senders, the whole
+    // queue, and the name of the mailbox it left out. The removed mailbox's letters stay in the mirror.
+    const waitingAt = (id: string, address: string) =>
+      ({ messageId: id, address, name: null, receivedAt: RECENT, subject: id, snippet: "", mailboxId: KEPT });
+    let removed = false;
+    const queue = (): ScreenerWaitingWire => ({
+      items: [waitingAt("k-2", "ada@stranger.test"), waitingAt("k-3", "bo@stranger.test"), waitingAt("k-4", "both@stranger.test")],
+      nextCursor: null, total: 3, inFlight: [], ...(removed ? { gone: [GONE] } : {}),
+    });
+    const { engine, arrives } = await windowOver(queue);
+    await arrives(ownMail);
+    await engine.refreshScreenerWaiting();
+    const before = screener(engine);
+    expect({ total: before.total, waiting: before.waiting, ohbox: before.ohbox })
+      .toEqual({ total: 3, waiting: ["ada@stranger.test", "bo@stranger.test", "both@stranger.test"], ohbox: [] });
+
+    await arrives(addedMail);
+    removed = true;
+    await engine.refreshScreenerWaiting();
+    const after = screener(engine);
+    expect({ total: after.total, waiting: after.waiting }, "the removal changed the Screener of the mailbox that stays")
+      .toEqual({ total: before.total, waiting: before.waiting });
+    expect(after.ohbox, "a removed mailbox's stranger was read as let in").toEqual([]);
   });
 });

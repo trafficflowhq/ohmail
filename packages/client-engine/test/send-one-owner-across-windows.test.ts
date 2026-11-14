@@ -9,7 +9,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   IndexedDbMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
-  type EngineLocks, type EngineMutation, type MutationResult,
+  type EngineLocks, type EngineMutation, type MutationResult, type NoticeChannel,
 } from "@ohmail/client-engine";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
@@ -93,16 +93,42 @@ const SEND = (body: string): EngineMutation => ({
   to: [{ name: "Ada", address: "ada@fake.test" }],
 } as unknown as EngineMutation);
 
-type Tab = { store: IndexedDbMirrorStore; engine: OhmailEngine; name: () => string | null };
+type Tab = { store: IndexedDbMirrorStore; engine: OhmailEngine; name: () => string | null; silence: () => void };
+
+/** One window's notice channel; `silence()` is the channel going dead: the window neither says nor hears. */
+function channel() {
+  let real: BroadcastChannel | null = null;
+  let dead = false;
+  const open = (name: string): NoticeChannel => {
+    const ch = new BroadcastChannel(name);
+    (ch as { unref?: () => void }).unref?.();
+    real = ch;
+    const face: NoticeChannel = { postMessage: (d) => { if (!dead) ch.postMessage(d); }, close: () => ch.close(), onmessage: null };
+    ch.onmessage = (ev) => { if (!dead) face.onmessage?.({ data: ev.data }); };
+    return face;
+  };
+  return { open, silence: () => { dead = true; real?.close(); } };
+}
+
+/** The registry as one window asks it, and the name that window's lock was granted under. */
+function lockOf(locks: EngineLocks | null) {
+  let granted: string | null = null;
+  const api: EngineLocks | null = locks === null ? null : {
+    request: (name, o, cb) => locks.request(name, o, (l) => { granted = name; return cb(l); }),
+    query: () => locks.query(),
+  };
+  return { api, name: () => granted };
+}
 
 async function open(factory: IDBFactory, locks: EngineLocks | null, srv: ReturnType<typeof server>): Promise<Tab> {
-  const store = new IndexedDbMirrorStore({ owner: "acct-windows", factory });
+  const said = channel();
+  const lock = lockOf(locks);
+  const store = new IndexedDbMirrorStore({ owner: "acct-windows", factory, notices: said.open });
   const engine = new OhmailEngine({
-    adapter: srv.adapter as never, store, locks,
+    adapter: srv.adapter as never, store, locks: lock.api,
   } as never);
   await engine.start().catch(() => undefined);
-  const name = (): string | null => (engine as unknown as { ownerName: string | null }).ownerName;
-  return { store, engine, name };
+  return { store, engine, name: lock.name, silence: said.silence };
 }
 
 type Row = { key: string; owner?: string; withdrawn?: boolean; confirmed?: boolean };
@@ -202,8 +228,7 @@ describe("a waiting send has exactly one engine that sends it", () => {
         flight = A.engine.retryQueued(res.id);
         await until(() => A.engine.inFlightMutations().some((p) => p.key === res.key), "A's request is out");
       }
-      if (arm === "silent") (A.engine as unknown as { notices: unknown }).notices = null; // A hears and says nothing
-      if (arm === "silent") (A.store as unknown as { bus: { close: () => void } }).bus.close();
+      if (arm === "silent") A.silence(); // A hears and says nothing
       const said = await B.engine.withdrawQueued(res.key);
       expect(said).toBe(arm === "on_the_wire" ? "on_the_wire" : "withdrawn");
       release?.();
@@ -243,7 +268,7 @@ describe("a waiting send has exactly one engine that sends it", () => {
     expect(res.status).toBe("queued");
     await until(() => rows(B).some((r) => r.key === res.key), "B reads it");
     // Missed: A's next dispatch meets B's answered mark on the disk row instead.
-    if (heard === "misses") (A.store as unknown as { bus: { close: () => void } }).bus.close();
+    if (heard === "misses") A.silence();
     expect(await B.engine.withdrawQueued(res.key)).toBe("withdrawn");
     if (heard === "hears") await until(() => A.engine.hasLateResults(), "A hears the Cancel");
     const ended = (await A.engine.flushPending()).find((r) => r.key === res.key);
@@ -292,7 +317,7 @@ describe("a waiting send has exactly one engine that sends it", () => {
       query: () => reg.api.query(),
     };
     const store = new IndexedDbMirrorStore({ owner: "acct-windows", factory });
-    const A: Tab = { store, engine: new OhmailEngine({ adapter: srv.adapter as never, store, locks: late } as never), name: () => null };
+    const A: Tab = { store, engine: new OhmailEngine({ adapter: srv.adapter as never, store, locks: late } as never), name: () => null, silence: () => undefined };
     await A.engine.start().catch(() => undefined);
     srv.net.offline = true;
     const res = await A.engine.mutate(SEND("Thanks, Ada."));

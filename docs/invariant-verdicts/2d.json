@@ -1,0 +1,21 @@
+{
+  "id": "2d",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "npx vitest run packages/testing/test/mail-send.test.ts",
+  "tests": [
+    "packages/testing/test/mail-send.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/client-engine/src/adapters/http-adapter.ts",
+      "line": "if (init.idempotencyKey) headers[\"idempotency-key\"] = init.idempotencyKey;",
+      "to": "/* arm: the key never reaches the wire */",
+      "failed": 29
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 55
+  }
+}

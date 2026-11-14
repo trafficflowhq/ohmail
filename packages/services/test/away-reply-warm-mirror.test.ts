@@ -6,7 +6,7 @@ import {
   consentPartition, ohboxView, presentationReader,
   type EngineMessage, type MemoryMirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
-import { verbWorld, type VerbWorld } from "../../client-engine/test/verb-parity/world.js";
+import { verbWorld, type VerbWorld } from "../../testing/test/verb-parity/world.js";
 import {
   AWAY_REPLY_REDELIVER_BATCH, awayReplyFlagRedeliverPass,
 } from "../../../apps/worker/src/away-reply-flag-redeliver.js";

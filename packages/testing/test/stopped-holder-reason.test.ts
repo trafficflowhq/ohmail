@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mailboxes } from "@trafficflow/db";
-import type { RuleDTO } from "../src/index.js";
+import type { RuleDTO } from "@ohmail/client-engine";
 import { verbWorld, type VerbWorld } from "./verb-parity/world.js";
 
 /**

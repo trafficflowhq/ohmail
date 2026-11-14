@@ -124,10 +124,11 @@ never adds to what breaks one.
   | `packages/tokens` | nothing |
   | `packages/ui` | `tokens` |
   | `packages/wire` | nothing; it exports types only |
-  | `packages/db-mail`, `packages/fixtures` | nothing |
+  | `packages/db-mail` | nothing |
   | `packages/db` | `db-mail`, `wire` |
   | `packages/core` | `db`, `wire` |
-  | `packages/client-engine` | `core`, `fixtures`, `wire` |
+  | `packages/client-engine` | `core`, `wire` |
+  | `packages/testing` | `client-engine`; tests import it, and the web's demo until that is removed |
   | `packages/app-logic` | `client-engine`, `core` |
   | `packages/app` | `ui`, `tokens`, `app-logic`; of `client-engine`, types only |
   | `packages/services` | `core`, `db`, `wire` |

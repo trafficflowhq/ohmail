@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   MutationRejectedError,
   OhmailEngine,
@@ -16,6 +14,7 @@ import {
   type RuleDTO,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { PUBLISHED_RULE_ID } from "@trafficflow/core/rule-order";
 import { LEGACY_NEWS_FOLDER } from "@trafficflow/core/folder-name";
 

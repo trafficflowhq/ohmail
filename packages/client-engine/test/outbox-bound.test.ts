@@ -25,7 +25,6 @@
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  FixturesAdapter,
   IndexedDbMirrorStore,
   MutationRejectedError,
   OhmailEngine,
@@ -38,6 +37,7 @@ import {
   type EngineAdapter,
   type EngineMutation,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** A 500 with no `retryable` field — what an unhandled server fault actually looks like. */
 const SERVER_500 = (): MutationRejectedError =>

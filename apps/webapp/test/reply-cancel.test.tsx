@@ -278,7 +278,8 @@ describe("Cancel returns to the message and strands nothing", () => {
 
     /* THE SEND IS MADE TO QUEUE: the fixtures adapter refuses retryably, which is exactly the
        state Cancel exists for — nothing on the wire, an intent under its key. */
-    const { FixturesAdapter, MutationRejectedError, OhmailEngine } = await import("@ohmail/client-engine");
+    const { MutationRejectedError, OhmailEngine } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(async () => {
       throw new MutationRejectedError("offline", { status: 0, code: "network", retryable: true });
     });

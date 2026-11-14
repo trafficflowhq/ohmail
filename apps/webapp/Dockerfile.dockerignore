@@ -4,7 +4,7 @@
 # states the same rule).
 #
 # Same discipline: DENY EVERYTHING, RE-ADMIT THE BUILD'S INPUTS. This app's closure is the
-# packages `next.config.mjs` transpiles from source — ui, tokens, fixtures, client-engine, app-logic, app and
+# packages `next.config.mjs` transpiles from source — ui, tokens, testing, client-engine, app-logic, app and
 # @trafficflow/core (imported only through its dependency-free /ics entry) — plus every
 # workspace manifest and the lockfile, because `npm ci` validates the lock against ALL
 # workspace manifests it finds. packages/db and packages/db-mail contribute manifests only:
@@ -25,7 +25,7 @@
 !packages/app
 !packages/app-logic
 !packages/client-engine
-!packages/fixtures
+!packages/testing
 !packages/tokens
 !packages/ui
 !packages/core

@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { FixturesAdapter, HttpAdapter } from "@ohmail/client-engine";
+import { HttpAdapter } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine, EngineUnarmedError } from "../app/shell/engine-config.js";
 import { transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 import { assertApiArmed, API_ORIGIN_VAR } from "../next.config.mjs";

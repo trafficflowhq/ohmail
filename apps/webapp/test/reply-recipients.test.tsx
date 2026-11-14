@@ -340,7 +340,7 @@ describe("the reply's subject edits in place — and threading never depends on 
    * subject says, so no warning banner is owed and none renders.
    */
   it("plain text → input on press; the FULL subject (Re: exposed); the edit rides the wire beside inReplyTo", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
@@ -420,7 +420,7 @@ describe("the reply's subject edits in place — and threading never depends on 
   });
 
   it("untouched, the wire carries the DERIVED subject — the edit state attaches nothing", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
@@ -485,7 +485,7 @@ describe("the reply head opens into editable recipients", () => {
   });
 
   it("an edited envelope reaches the adapter: recipients added, Bcc typed, all on the mutation", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (

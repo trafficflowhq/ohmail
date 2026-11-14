@@ -854,7 +854,11 @@ export default defineConfig({
       { find: "@ohmail/tokens/faces.css", replacement: r("../../packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("../../packages/tokens/src/ohmarchy.css") },
       { find: "@ohmail/tokens", replacement: r("../../packages/tokens/src/index.ts") },
-      /* `@ohmail/fixtures` needs no entry: its one importer was the real fixtures adapter, which
+      /* The sample adapter's entry, which the shared shell's demo arm imports. It resolves to
+         the real entry file, and that file's one statement re-exports from
+         `./adapters/fixtures-adapter.js`: the stub alias above. */
+      { find: "@ohmail/testing/adapter", replacement: r("../../packages/testing/src/adapter.ts") },
+      /* `@ohmail/testing` needs no entry: its one importer was the real fixtures adapter, which
          the stub alias above takes out of the graph — so the corpus is unresolvable here by
          construction, not merely unimported. */
       /* The durable-write door, BEFORE the bare package name: `find` matches as a path prefix,

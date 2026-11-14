@@ -102,6 +102,7 @@ async function openTab() {
   await import("../app/session-refresh");
   const locale = await import("../app/shell/locale");
   const engineMod = await import("@ohmail/client-engine");
+  const { FixturesAdapter } = await import("@ohmail/testing/adapter");
   const { erasedAwareFetch } = await import("@ohmail/app-logic/session/account-erased");
   const { createSyncGate } = await import("@ohmail/app-logic/session/sync-scheduler");
   client.bindApiOwner("acct_A");
@@ -112,7 +113,7 @@ async function openTab() {
     headers: () => ({}),
     fetch: erasedAwareFetch(truth.sessionFetch, engineMod.sessionEndedResponse),
   }) as never) as unknown as { mutate: EngineAdapter["mutate"] };
-  const fixtures = new engineMod.FixturesAdapter();
+  const fixtures = new FixturesAdapter();
   const adapter: EngineAdapter = {
     fetchBody: fixtures.fetchBody.bind(fixtures),
     sync: fixtures.sync.bind(fixtures),

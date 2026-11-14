@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { FixturesAdapter, HttpAdapter, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
+import { HttpAdapter, MutationRejectedError, OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { createEngine } from "../app/shell/engine-config.js";
 import { createSyncGate, transportOf } from "@ohmail/app-logic/session/sync-scheduler";
 /* The `chrome` memo below is located by its DECLARED NAME, never by the hook it is declared

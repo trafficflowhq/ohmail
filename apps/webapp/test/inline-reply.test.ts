@@ -4,7 +4,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { triage } from "@ohmail/fixtures";
+import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
@@ -551,7 +551,7 @@ describe("the outgoing reply is exactly what was typed", () => {
   const TYPED = "Donnerstag um zehn passt.";
 
   it("carries no part of the parent — asserted through the render path that shows it", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
@@ -641,7 +641,7 @@ describe("the draft", () => {
  */
 describe("reply attachments ride the send, never the account and never the scratch (R9-3)", () => {
   it("a picked file reaches the built mutation and stays out of the reply buffer", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const realMutate = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (

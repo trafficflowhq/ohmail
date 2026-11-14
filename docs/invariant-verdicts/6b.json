@@ -1,0 +1,21 @@
+{
+  "id": "6b",
+  "base": "7e05933c7810cb75ad07a93fd9d23df612598ac4",
+  "recorded": "2026-11-14",
+  "command": "npx vitest run packages/testing/test/shape.test.ts",
+  "tests": [
+    "packages/testing/test/shape.test.ts"
+  ],
+  "arms": [
+    {
+      "file": "packages/testing/src/data.ts",
+      "line": "screenedOn: \"12 Jul\",",
+      "to": "screenedOn: \"12 Jul\", heldCount: 8,",
+      "failed": 1
+    }
+  ],
+  "green": {
+    "failed": 0,
+    "passed": 40
+  }
+}
