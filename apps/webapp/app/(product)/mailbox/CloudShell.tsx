@@ -100,7 +100,14 @@ function tabAccount(): string | null {
  * an answer: `session-outcome.ts` classifies into three, `EngineProvider` retries the middle one, and
  * only an ANSWERED refusal reaches the signed-out screen (`AUTH-FLICKER-DIAGNOSIS.md`).
  */
-export function CloudShell({ demo }: { demo: boolean }) {
+export function CloudShell({ demo, drawMail }: {
+  demo: boolean;
+  /**
+   * The page's word for the first frame: `page.tsx`, the one mount, always passes it (`now` only after the edge's probe
+   * named a full session). Absent is the warm open as before, for the harnesses that mount this shell directly.
+   */
+  drawMail?: "now" | "wait";
+}) {
   /**
    * WHAT THE EFFECTS BELOW ASK, as opposed to what the shell RENDERS.
    *
@@ -306,6 +313,7 @@ export function CloudShell({ demo }: { demo: boolean }) {
         /* The classifier answers; THIS commits. See `EngineProvider.onConfirmed` for why the
            binding cannot live inside `resolveOwnerOutcome`. */
         onConfirmed={onConfirmed}
+        drawMail={drawMail}
         /* WITHHELD ON THE DEMO, and this is the shared shell's own rule rather than a new one:
            an absent probe already MEANS "no roster and never will be — the desktop, the demo",
            and the host is the only thing that knows which it is. Handed over unconditionally,

@@ -597,6 +597,7 @@ export function AppShell({
   engine,
   resolveOwner,
   onConfirmed,
+  drawMail,
   mailboxFacts,
   organizerNoticeTransport,
   gapLettersTransport,
@@ -660,6 +661,8 @@ export function AppShell({
    * Absent on the desktop and the demo, like `resolveOwner`.
    */
   onConfirmed?: (accountId: string) => void;
+  /** Threaded to {@link EngineProvider.drawMail}: the web page's word for its first frame. Absent elsewhere. */
+  drawMail?: "now" | "wait";
   /**
    * "What state are this account's mailboxes in?", as a function the SHELL does not know how
    * to answer — the seventh injected prop, and the same seam as `resolveOwner` for the same
@@ -1017,7 +1020,7 @@ export function AppShell({
 }) {
   return (
     <ManagedServiceContext.Provider value={managedService ?? true}>
-    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed}>
+    <EngineProvider demo={demo} engine={engine} resolveOwner={resolveOwner} onConfirmed={onConfirmed} drawMail={drawMail}>
       {/* ONE keydown listener for the whole client. Outside `ShellInner` so
           every view mounted under it can declare bindings into the same table, which is
           also the table the `?` sheet is generated from. */}

@@ -703,4 +703,70 @@ describe.skipIf(!ENABLED)("the /api rewrite, over a real socket", () => {
     expect(refresh.status).not.toBe(405);
     expect(seen.some((r) => r.path === "/auth/refresh" && r.method === "POST"), "refresh not proxied").toBe(true);
   });
+
+  /**
+   * THE FIRST PAGE WITHOUT THE PROBE, on a second `next start` of the same build with the setting on. Off (the server
+   * above), a token and the marker cost one session read and the page's word is `now`.
+   */
+  describe("with OHMAIL_FIRST_PAGE_NO_PROBE=1", () => {
+    let unasked: ChildProcess | null = null;
+    let unaskedPort = 0;
+    const at = (path: string): string => `http://127.0.0.1:${unaskedPort}${path}`;
+    const jar = (session: string) => ({ cookie: `tf_session=${session}; tf_resume=${"m".repeat(43)}` });
+    const wordIn = (html: string): string | null => /drawMail\\?":\\?"(now|wait)/.exec(html)?.[1] ?? null;
+    const nonceOf = (res: Response): string | null => /'nonce-([^']+)'/.exec(res.headers.get("content-security-policy") ?? "")?.[1] ?? null;
+
+    beforeAll(async () => {
+      unaskedPort = await freePort();
+      unasked = spawn(process.execPath, [NEXT_CLI, "start", "-p", String(unaskedPort)], {
+        cwd: WEBAPP,
+        env: { ...process.env, TF_API_ORIGIN: `http://127.0.0.1:${upstreamPort}`, OHMAIL_FIRST_PAGE_NO_PROBE: "1" },
+        stdio: "pipe",
+      });
+      await waitFor(at("/"));
+    }, 120_000);
+    afterAll(() => { unasked?.kill("SIGTERM"); });
+
+    it("off: a token and the marker cost one session read, and the page says now", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      const res = await fetch(app("/"), { headers: jar(TOKEN) });
+      expect(res.status).toBe(200);
+      expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
+      expect(wordIn(await res.text())).toBe("now");
+    });
+
+    it("on: the app's empty document, no request upstream, private, two nonces, no cookie value in it, and the word wait", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      const one = await fetch(at("/"), { headers: { ...jar(TOKEN), "x-ohmail-first-page": "now" }, redirect: "manual" });
+      const other = await fetch(at("/"), { headers: jar(`${TOKEN}-other-jar`), redirect: "manual" });
+      expect(seen, "the upstream was asked").toHaveLength(0);
+      for (const res of [one, other]) {
+        expect(res.status).toBe(200);
+        expect(res.headers.get("cache-control")).toContain("private");
+        expect(res.headers.get("cache-control")).toContain("no-store");
+        expect(res.headers.get("set-cookie")).toBeNull();
+      }
+      expect(nonceOf(one)).toBeTruthy();
+      expect(nonceOf(one)).not.toBe(nonceOf(other));
+      const a = await one.text();
+      const b = await other.text();
+      expect(wordIn(a), "a client-sent word was believed").toBe("wait");
+      expect(a).not.toContain(TOKEN);
+      expect(a).not.toContain("m".repeat(43));
+      const blank = (html: string, res: Response) => html.split(nonceOf(res)!).join("N");
+      expect(blank(a, one)).toBe(blank(b, other));
+      const head = await fetch(at("/"), { method: "HEAD", headers: jar(TOKEN) });
+      expect(head.headers.get("set-cookie")).toBeNull();
+      expect(seen).toHaveLength(0);
+    });
+
+    it("on: a token without the marker is still probed", async () => {
+      sessionUpstream(200, FULL);
+      seen = [];
+      await fetch(at("/"), { headers: { cookie: `tf_session=${TOKEN}` } });
+      expect(seen.map((r) => r.path)).toEqual(["/auth/session"]);
+    });
+  });
 });
