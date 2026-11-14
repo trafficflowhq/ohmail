@@ -63,10 +63,10 @@ describe("listScreenerBacklog — the user's rule is as wide as its own terms", 
       nativeLocator: { folder: SCREENER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await w.db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {},
     });
     await w.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

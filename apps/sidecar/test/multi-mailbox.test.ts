@@ -2,7 +2,7 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
@@ -595,16 +595,23 @@ describe("one install, two mailboxes", () => {
     /* THE REFUSAL IS FORCED BEFORE THE FIRST PASS, while the mailbox still holds no message.
        Nine tables key on (mailbox_id, account_id) since 0118, so a mailbox cannot be lent to
        another account while its mail sits under it — and no product path re-parents a mailbox
-       across accounts, so this fixture was the only site that ever did. Lending it empty asks
-       the same question of the same row: `MailboxService.delete` reads the row by (id, account)
-       and refuses before it writes anything. */
+       across accounts, so this fixture was the only site that ever did. Since mail 0201 the
+       mailbox's stored credentials key on the pair too, and they exist from the moment it is
+       added, so the mailbox is lent TOGETHER WITH THEM, in one statement: the keys are read at
+       its end, when both rows name the same account again. That asks the same question of the
+       same row: `MailboxService.delete` reads the row by (id, account) and refuses before it
+       writes anything. */
     const stranger = randomUUID();
     await s.db.insert(accounts).values({ id: stranger, name: "somebody else" });
-    await s.db.update(mailboxes).set({ accountId: stranger }).where(eq(mailboxes.id, dto.id));
+    const lendTo = (accountId: string) => s.db.execute(sql`
+      with its_credentials as (
+        update mailbox_credentials set account_id = ${accountId} where mailbox_id = ${dto.id}
+      )
+      update mailboxes set account_id = ${accountId} where id = ${dto.id}`);
+    await lendTo(stranger);
     expect((await remove(s, dto.id)).status, "the service did not refuse — the case measures nothing")
       .toBe(404);
-    await s.db.update(mailboxes).set({ accountId: s.world.accountId })
-      .where(eq(mailboxes.id, dto.id));
+    await lendTo(s.world.accountId);
     /* A pass that ran while the row was lent hands its mail to nobody and marks the world handed,
        so the world is given its hand back before the mailbox is asked to read for the first time. */
     b.handed = false;

@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -82,7 +83,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
     // one. Non-zero watermarks, because that is what a mailbox that had been syncing looks like.
     const epoch = await serverEpoch(cfg);
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: epoch - 1n, uidnext: 1n, highestmodseq: 1n,
     });
 
@@ -125,7 +126,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
 
     // The state a truncated cold drain leaves: the SENTINEL epoch on the folder row…
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: 0n, uidnext: 0n, highestmodseq: 0n,
     });
     // …beside a committed locator from the PREVIOUS epoch whose UID number the new epoch reused.
@@ -171,7 +172,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
 
     // The reset is already learned: the row names the CURRENT epoch…
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: epoch, uidnext: 1n, highestmodseq: 0n,
     });
     // …while one locator from the previous epoch survives at UID 2, which holds the second message today.
@@ -332,7 +333,7 @@ describe("UIDVALIDITY reset composed with a bounded drain (GreenMail + Postgres)
     // No locators exist yet, so `soleEpochOf` cannot name an epoch either and the cursor handed to
     // the adapter really is `uidValidity: "0"`.
     await h.db.insert(mailboxFolders).values({
-      mailboxId: h.mailboxId, folder: "INBOX",
+      mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: "INBOX",
       uidvalidity: 0n, uidnext: 0n, highestmodseq: 5n,
     });
 

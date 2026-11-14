@@ -78,7 +78,6 @@ export interface ProfileUpdatePayload {
   screeningPreference?: {
     ohboxPolicy?: string | null;
     ohboxBar?: string | null;
-    screenerAutoApply?: boolean;
     impersonationFiling?: boolean;
   };
 }

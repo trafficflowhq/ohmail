@@ -65,8 +65,8 @@ describe("what a search says about its reach (real Postgres)", () => {
         date: new Date(NOW.getTime() - i * 3_600_000), unread: false, hasAttachments: false,
         nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: hit ? "The amount is due." : "See you soon." });
-      await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: hit ? "The amount is due." : "See you soon." });
+      await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
     }
     let marked = false;
     for (let r = 0; r < 10 && !marked; r++) marked = (await searchIndexBackfillPass({ db: db as never, accountId: A })).marked;

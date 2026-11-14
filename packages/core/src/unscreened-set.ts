@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, sql, type SQL } from "drizzle-orm";
 import {
-  accountSettings, approvals, auditAction, auditLog, cutlineInstant, drafts, folderState, mailboxes,
+  accountOfMessage, accountSettings, approvals, auditAction, auditLog, cutlineInstant, drafts, folderState, mailboxes,
   messageBodies, messageStates, messageTags, messages, readOwnAddresses, recordChanges, senderIsDecidedSql,
   weAnsweredThisSenderWhere, type LedgerTx, type Tx,
 } from "@trafficflow/db";
@@ -414,7 +414,7 @@ export async function writeScreenerIntents(
      and held the phone store's only transaction slot for minutes on a slow device. */
   for (let i = 0; i < rows.length; i += INTENT_SLICE) {
     await t.insert(folderState).values(rows.slice(i, i + INTENT_SLICE).map((row) => ({
-      messageId: row.messageId, desiredFolder: SCREENER, observedFolder: row.observedFolder,
+      messageId: row.messageId, accountId: accountOfMessage(row.messageId), desiredFolder: SCREENER, observedFolder: row.observedFolder,
       lastSetBy: "us" as const, reconcileStatus: SCREENER === row.observedFolder ? "reconciled" as const : "pending" as const,
       conflict: false,
     }))).onConflictDoUpdate({

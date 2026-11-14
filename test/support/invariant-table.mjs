@@ -8,7 +8,7 @@ export const VERDICTS = "docs/invariant-verdicts";
 export const HEADER = ["id", "claim", "status", "tests", "verdict", "waits"];
 export const STATUSES = ["bitten", "not yet run", "no test", "out of tree"];
 export const WAITS = ["-", "restatement", "scope"];
-const ID = /^(?:[1-9]|1[01])[a-z]?$|^junk$/;
+const ID = /^(?:[1-9]|1[0-2])[a-z]?$|^junk$/;
 const VERDICT_KEYS = ["arms", "base", "command", "green", "id", "recorded", "tests"];
 const count = (text, part) => text.split(part).length - 1;
 

@@ -840,7 +840,7 @@ export const consentRoutes: Route[] = [
      * `cost: "work"` because of auto-suggest: with the flag on, the Screener buys classifier
      * suggestions without a per-batch click — future paid AI actions; the other knobs spend
      * nothing. The dial must not travel through a tidy-arming writer: `setScreeningPreference`
-     * stamps `ohbox_tidy_requested_at`, arming a pass that moves mail, so the dial stays here.
+     * writes the tidy's request mark, arming a pass that moves mail, so the dial stays here.
      * Not idempotent-keyed: set-to-a-value writes replay to the same state.
      */
     method: "PATCH",

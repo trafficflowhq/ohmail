@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
-import { accounts, mailboxes, messages, folderState, flagState } from "@trafficflow/db";
+import { accountOfMessage, accounts, mailboxes, messages, folderState, flagState } from "@trafficflow/db";
 import { makeOwnedDb, schema, type OwnedDb } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "../../src/adapters/drizzle-repo.js";
@@ -72,7 +72,7 @@ describe.skipIf(!AVAILABLE)("listPendingFolderStates — the reconciler's budget
       }).returning({ id: messages.id });
       ids[i] = row!.id;
       await owned.db.insert(folderState).values({
-        messageId: row!.id, desiredFolder: "INBOX", observedFolder: "ohmail/Screener",
+        messageId: row!.id, accountId: accountOfMessage(row!.id), desiredFolder: "INBOX", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "pending", conflict: false,
         updatedAt: new Date(base + i * 1000),
       });
@@ -150,8 +150,8 @@ describe.skipIf(!AVAILABLE)("mail 0181 — the reconcile polls ride their pendin
       accountId, mailboxId, bodyHash: "h", dedupKey: `d:${randomUUID()}`, fromAddress: "a@example.com",
       nativeLocator: { folder: "INBOX", ref: "1:1" },
     }).returning({ id: messages.id });
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "Junk", lastSetBy: "us" });
-    await db.insert(flagState).values({ messageId: m!.id, desiredSeen: true, observedSeen: false, lastSetBy: "us" });
+    await db.insert(folderState).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "INBOX", observedFolder: "Junk", lastSetBy: "us" });
+    await db.insert(flagState).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), desiredSeen: true, observedSeen: false, lastSetBy: "us" });
   }, 180_000);
 
   afterAll(async () => { await client.end({ timeout: 5 }); });
@@ -171,18 +171,18 @@ describe.skipIf(!AVAILABLE)("mail 0181 — the reconcile polls ride their pendin
   it("listPendingFolderStates reads folder_state_pending_queue_idx at the mailbox's account, in queue order", async () => {
     const plan = await planOf("folder_state", () => makeDrizzleRepo(db).listPendingFolderStates(mailboxId, 11));
     expect(plan).toContain("Index Scan using folder_state_pending_queue_idx on folder_state");
-    expect(plan).toMatch(/Index Cond: \(outstanding_account_id = /);
+    expect(plan).toMatch(/Index Cond: \(account_id = /);
     expect(plan).not.toMatch(/\bSort\b/);
     const [ix] = await client`select indexdef from pg_indexes where indexname = 'folder_state_pending_queue_idx'`;
-    expect(ix!.indexdef).toContain("(outstanding_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)");
+    expect(ix!.indexdef).toContain("(account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)");
   });
 
   it("listPendingFlagStates reads flag_state_pending_queue_idx at the mailbox's account, in queue order", async () => {
     const plan = await planOf("flag_state", () => makeDrizzleRepo(db).listPendingFlagStates(mailboxId, 11));
     expect(plan).toContain("Index Scan using flag_state_pending_queue_idx on flag_state");
-    expect(plan).toMatch(/Index Cond: \(pending_account_id = /);
+    expect(plan).toMatch(/Index Cond: \(account_id = /);
     expect(plan).not.toMatch(/\bSort\b/);
     const [ix] = await client`select indexdef from pg_indexes where indexname = 'flag_state_pending_queue_idx'`;
-    expect(ix!.indexdef).toContain("(pending_account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)");
+    expect(ix!.indexdef).toContain("(account_id, updated_at, message_id) WHERE (reconcile_status = 'pending'::text)");
   });
 });

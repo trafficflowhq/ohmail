@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { accounts, attachments, mailboxes, messages, sessions, users } from "@trafficflow/db";
 import { makeOwnedDb, type OwnedDb } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import {
@@ -119,6 +120,8 @@ describe.skipIf(!PG_UP)("input bounds against real Postgres", () => {
       nativeLocator: { folder: "INBOX", ref: "1:1" },
     }).returning();
     messageId = m!.id;
+    // As ingest does: the letter's search document with the letter.
+    await reindexMessageSearch(db as never, accountId, messageId);
     await db.insert(attachments).values({
       accountId, messageId, filename: "one.bin", contentType: "application/octet-stream",
       sizeBytes: 10, inline: false, partId: "2",

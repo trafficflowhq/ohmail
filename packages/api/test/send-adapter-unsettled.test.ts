@@ -33,7 +33,7 @@ async function seed(
   }).returning();
   const imapSecret = await deps.deps.keyProvider.encrypt("imap-pass");
   await deps.db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap",
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap",
     secretEnc: imapSecret.ciphertext, keyVersion: imapSecret.keyVersion,
     meta: {
       host: "imap.example.net", port: 993, secure: true, user: "u@example.net",
@@ -43,7 +43,7 @@ async function seed(
   if (withSmtpRow) {
     const enc = await deps.deps.keyProvider.encrypt("smtp-pass");
     await deps.db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp",
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp",
       secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "smtp.example.net", port: 587, secure: false, user: "u@example.net" },
     });

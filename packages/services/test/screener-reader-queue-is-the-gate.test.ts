@@ -60,7 +60,7 @@ async function world(o: { ownBaseline?: Date | null; ownDays?: number; mailboxes
       nativeLocator: { folder: GATE, ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   const ctx: ServiceContext = {

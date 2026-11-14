@@ -35,9 +35,9 @@ async function seedMailbox(
     await db.run(sql`with recursive g(n) as (select 1 union all select n + 1 from g where n < ${n})
       insert into messages (account_id, mailbox_id, dedup_key, body_hash)
       select ${account}, ${mailbox}, 'mid:<' || ${tag} || '-' || n || '@example.test>', 'm-' || n from g`);
-    await db.run(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status,
+    await db.run(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status,
         updated_at, attempts, next_attempt_at, last_error_class)
-      select id,
+      select id, account_id,
         case when g <= ${k} then 'ohmail/News' else 'Archive' end,
         case when g <= ${k} then 'INBOX' else 'Archive' end,
         'us',
@@ -46,16 +46,16 @@ async function seedMailbox(
         case when g <= ${k} and g % 3 = 0 then 2 when g <= ${k} and g % 3 = 1 then 1 else 0 end,
         case when g <= ${k} and g % 3 = 1 then ${t + HOUR} when g <= ${k} and g % 3 = 0 then ${t - MIN} else null end,
         case when g <= ${k} and g % 3 = 0 then 'read_only' when g <= ${k} and g % 3 = 1 then 'no_such_folder' else null end
-      from (select id, cast(substr(body_hash, 3) as integer) as g from messages where mailbox_id = ${mailbox})`);
+      from (select id, account_id, cast(substr(body_hash, 3) as integer) as g from messages where mailbox_id = ${mailbox})`);
     return;
   }
   const now = NOW.toISOString();
   await db.execute(sql`insert into messages (account_id, mailbox_id, dedup_key, body_hash)
     select ${account}::uuid, ${mailbox}::uuid, 'mid:<' || ${tag} || '-' || g || '@example.test>', 'm-' || g
       from generate_series(1, ${n}::int) g`);
-  await db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status,
+  await db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status,
       updated_at, attempts, next_attempt_at, last_error_class)
-    select id,
+    select id, account_id,
       case when g <= ${k}::int then 'ohmail/News' else 'Archive' end,
       case when g <= ${k}::int then 'INBOX' else 'Archive' end,
       'us',
@@ -67,7 +67,7 @@ async function seedMailbox(
       case when g <= ${k}::int and g % 3 = 1 then ${now}::timestamptz + interval '1 hour'
            when g <= ${k}::int and g % 3 = 0 then ${now}::timestamptz - interval '1 minute' else null end,
       case when g <= ${k}::int and g % 3 = 0 then 'read_only' when g <= ${k}::int and g % 3 = 1 then 'no_such_folder' else null end
-    from (select id, substr(body_hash, 3)::int as g from messages where mailbox_id = ${mailbox}::uuid) s`);
+    from (select id, account_id, substr(body_hash, 3)::int as g from messages where mailbox_id = ${mailbox}::uuid) s`);
 }
 
 /** The fixture; `analyze`d, so the planner sees it as a store that has settled. */
@@ -143,10 +143,10 @@ export function costOf(top: PlanNode): { buffers: number; folderState: number; m
   return out;
 }
 
-/** The filing statement with the caller's bound on `outstanding_account_id` taken out (a control). */
+/** The filing statement with the caller's bound on the filing's account taken out (a control). */
 export function withoutAccountBound(text: string, sqlite: boolean): { text: string; replaced: number } {
   let replaced = 0;
-  const re = sqlite ? /"folder_state"\."outstanding_account_id" = \?/g : /"folder_state"\."outstanding_account_id" = (\$\d+)/g;
+  const re = sqlite ? /"folder_state"\."account_id" = \?/g : /"folder_state"\."account_id" = (\$\d+)/g;
   const out = text.replace(re, (_m, p: string | undefined) => { replaced += 1; return sqlite ? "? is not null" : `${p}::uuid is not null`; });
   return { text: out, replaced };
 }
@@ -158,13 +158,13 @@ export function withoutAccountBound(text: string, sqlite: boolean): { text: stri
  * other pending rows; the device store cannot rank them (equal estimates) and reads the newer.
  */
 const CALLERS_QUEUE = new Set([
-  "SEARCH folder_state USING INDEX folder_state_outstanding_idx (outstanding_account_id=?)",
-  "SEARCH folder_state USING INDEX folder_state_pending_queue_idx (outstanding_account_id=?)",
+  "SEARCH folder_state USING INDEX folder_state_outstanding_idx (account_id=?)",
+  "SEARCH folder_state USING INDEX folder_state_pending_queue_idx (account_id=?)",
 ]);
 
 /** The SQLite plan lines that break the budget: every `folder_state` read is the caller's queue. */
 export function sqliteFilingFaults(plan: string[]): string[] {
   return plan.filter((l) => /^SCAN /.test(l)
-    || l.includes("messages_account_mailbox_unread_idx")
+    || l.includes("messages_account_mailbox_idx")
     || (/\bfolder_state\b/.test(l) && !CALLERS_QUEUE.has(l)));
 }

@@ -79,10 +79,10 @@ async function seedOhbox(w: World, o: {
     nativeLocator: { folder, ref: `1:${i}` },
   }).returning();
   await db.insert(messageBodies).values({
-    messageId: m!.id, text: o.body ?? "", html: null, headers: o.headers ?? {},
+    messageId: m!.id, accountId: m!.accountId, text: o.body ?? "", html: null, headers: o.headers ?? {},
   });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
     lastSetBy: o.lastSetBy ?? "external", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;

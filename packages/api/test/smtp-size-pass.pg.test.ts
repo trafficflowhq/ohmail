@@ -111,7 +111,7 @@ describe.skipIf(!AVAILABLE)("the SIZE back-fill's statements against real Postgr
     }).returning();
     const imap = await kp.encrypt(opts.oauth ? "a-refresh-token" : "imap-pass");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap",
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap",
       secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
       meta: opts.oauth
         ? {
@@ -124,7 +124,7 @@ describe.skipIf(!AVAILABLE)("the SIZE back-fill's statements against real Postgr
     if (!opts.oauth) {
       const smtp = await kp.encrypt("smtp-pass");
       await db.insert(mailboxCredentials).values({
-        mailboxId: mb!.id, transport: "smtp",
+        mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp",
         secretEnc: smtp.ciphertext, keyVersion: smtp.keyVersion,
         meta: { host: "smtp.x.test", port: 587, secure: false, user: "u@x.test" },
         updatedAt: new Date(FIXED_NOW.getTime() + 1000),

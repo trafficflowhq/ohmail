@@ -8,7 +8,9 @@ import {
   CLOUD_SCHEMA_MARKERS, CLOUD_INDEX_MARKERS, CLOUD_CHECK_DEFINITION_MARKERS, CLOUD_FK_MARKERS,
   CLOUD_FUNCTION_MARKERS,
 } from "../src/routes/health-cloud.js";
-import { pinsByMigration, unpinnedVerdict, type MarkerSet } from "./journal-marker-derivation.js";
+import {
+  droppedByTheJournal, entryObjects, markersOfDroppedObjects, pinsByMigration, unpinnedVerdict, type MarkerSet,
+} from "./journal-marker-derivation.js";
 
 /**
  * EVERY MIGRATION THE CENSUS CAN PROVE IS PINNED BY A MARKER ITS OWN SQL CREATES. The column class
@@ -40,7 +42,6 @@ const MAIL_UNPINNED: Record<string, string> = {
   "0001_cute_black_queen": `${BASELINE}; contacts and rules`,
   "0004_graduations": `${BASELINE}; the graduations ledger`,
   "0005_warm_black_bird": `${BASELINE}; learning_signals`,
-  "0008_hybrid_search": `${BASELINE}; the tsvector columns and their indexes`,
   "0009_tracker_events": `${BASELINE}; the tracker ledger`,
   "0010_optimal_roland_deschain": `${BASELINE}; notes, snippets, notify rules, away_responders`,
   "0011_attachments": `${BASELINE}; attachments`,
@@ -50,7 +51,6 @@ const MAIL_UNPINNED: Record<string, string> = {
   "0015_workflow_step_dedup": `${BASELINE}; the workflow dedup keys`,
   "0016_workflow_proposals": `${BASELINE}; workflow_proposals`,
   "0032_unsubscribe_records": "the unsubscribe ledger: no API path selects it (a staff read would be a delivery oracle)",
-  "0067_device_sync_health": "a withdrawn SECURITY DEFINER carrier; its absence is the alert rule's own tolerated state (`health.ts`)",
   "0068_retire_device_sync_fn": "drops 0067's function; nothing to probe, and its absence is the same tolerated state",
   "0069_folders_enabled_reissue": "a reissue of 0066 (REISSUED_ORIGINALS); folders_enabled_at is probed at 0066",
 };
@@ -144,14 +144,65 @@ describe("the deletions this census exists for are each red, and the ordinary ca
     expect(unpinnedVerdict(mailPins(m), MAIL_UNPINNED).missing).toEqual(["0153_rule_revoke_keeps_its_decisions"]);
   });
 
-  it("a CHECK name pins only its first creator: without 0185's needle, the six replacements are unpinned", () => {
-    // `mailboxes_sync_blocked_reason_closed` stays in SCHEMA_CHECK_MARKERS and pins 0029 alone;
-    // 0130 keeps its column marker. A name probe cannot tell 0102, 0105, 0124, 0142, 0143 or 0185 from 0029.
-    const m = { ...MAIL, definitions: without(MAIL_CHECK_DEFINITION_MARKERS, ([n]) => n === "mailboxes_sync_blocked_reason_closed") };
-    expect(unpinnedVerdict(mailPins(m), MAIL_UNPINNED).missing).toEqual([
-      "0102_sync_blocked_reason_read_limited", "0105_sync_blocked_reason_clock_off",
+  it("a CHECK name pins only its first creator: without the newest needle, the replacements are unpinned", () => {
+    // `away_responders_piles_closed` is made by 0096 and replaced under its name by 0101 and 0123.
+    // A name probe cannot tell either replacement from 0096; the definition's needle does.
+    const m = { ...MAIL, definitions: without(MAIL_CHECK_DEFINITION_MARKERS, ([n]) => n === "away_responders_piles_closed") };
+    expect(unpinnedVerdict(mailPins(m), MAIL_UNPINNED).missing).toEqual(["0101_away_piles_wider", "0123_news_pile_check"]);
+  });
+
+  it("the seven entries that made and widened a list mail 0202 dropped ask for no marker", () => {
+    // 0029 made `mailboxes_sync_blocked_reason_closed`; 0102, 0105, 0124, 0142, 0143 and 0185
+    // replaced it under its name. The constraint is gone, so nothing in a catalog records them.
+    const pins = mailPins();
+    for (const tag of ["0102_sync_blocked_reason_read_limited", "0105_sync_blocked_reason_clock_off",
       "0124_sync_blocked_reason_account_closed", "0142_sync_blocked_reason_meta_folder_full",
-      "0143_sync_blocked_reason_meta_undeletable", "0185_sync_blocked_reason_mailbox_full",
+      "0143_sync_blocked_reason_meta_undeletable", "0185_sync_blocked_reason_mailbox_full"]) {
+      expect(unpinnedVerdict(pins, MAIL_UNPINNED).missing, tag).not.toContain(tag);
+    }
+    expect(unpinnedVerdict(pins, MAIL_UNPINNED).missing).toEqual([]);
+  });
+});
+
+describe("what a later entry dropped asks for no marker, and no marker names it", () => {
+  it("no marker probes an object the journal has dropped: it would hold /health at 503 for ever", () => {
+    expect(markersOfDroppedObjects(MAIL_JOURNAL, MAIL)).toEqual([]);
+    expect(markersOfDroppedObjects(CLOUD_JOURNAL, CLOUD)).toEqual([]);
+  });
+
+  it("a marker left behind on a dropped column, index or function is red", () => {
+    const gone = droppedByTheJournal(MAIL_JOURNAL).gone;
+    // Mail 0200 took these three; each was probed until it did.
+    expect([...gone]).toEqual(expect.arrayContaining([
+      "index messages_account_arrival_order_idx", "index messages_account_mailbox_unread_idx", "function message_bodies_body_tsv_bounded",
+    ]));
+    const left: MarkerSet = {
+      ...MAIL,
+      indexes: [...SCHEMA_INDEX_MARKERS, ["messages_account_arrival_order_idx", "x"]],
+      functions: [...MAIL_FUNCTION_MARKERS, ["message_bodies_body_tsv_bounded", "x"]],
+      columns: [...MAIL_SCHEMA_MARKERS, ["messages", "subject_tsv"]],
+    };
+    expect(markersOfDroppedObjects(MAIL_JOURNAL, left)).toEqual([
+      "column messages.subject_tsv", "index messages_account_arrival_order_idx", "function message_bodies_body_tsv_bounded",
     ]);
+  });
+
+  it("an entry whose every object was dropped is asked for no marker; one that keeps an object still is", () => {
+    const { retired, gone } = droppedByTheJournal(MAIL_JOURNAL);
+    expect(retired.has("0008_hybrid_search"), "its columns and indexes left with 0200").toBe(true);
+    expect(mailPins().pins.has("0008_hybrid_search")).toBe(false);
+    // 0125 made the History index, which stays, beside objects 0200 dropped: still provable.
+    expect(gone.has("index messages_account_msg_order_idx")).toBe(false);
+    expect(retired.has("0125_message_search")).toBe(false);
+    expect(mailPins().pins.has("0125_message_search")).toBe(true);
+  });
+
+  it("reads what one entry makes and drops, a guarded drop and a table's columns included", () => {
+    const o = entryObjects(`CREATE TABLE "t" (\n  "id" uuid,\n  "n" integer\n);
+      CREATE INDEX IF NOT EXISTS "t_n_idx" ON "t" USING btree ("n");
+      ALTER TABLE "u" DROP COLUMN IF EXISTS "old", ADD COLUMN "fresh" text;
+      DROP INDEX IF EXISTS "u_old_idx"; DROP FUNCTION IF EXISTS "f"(); DROP TRIGGER "tg" ON "u";`);
+    expect(o.made.map((m) => m.key)).toEqual(["table t", "column t.id", "column t.n", "index t_n_idx", "column u.fresh"]);
+    expect(o.dropped.map((m) => m.key)).toEqual(["column u.old", "index u_old_idx", "function f", "trigger tg"]);
   });
 });

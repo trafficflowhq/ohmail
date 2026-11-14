@@ -83,7 +83,7 @@ async function seed(opts: { from?: string; folder?: string } = {}): Promise<stri
     snippet: "hi", unread: false,
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;

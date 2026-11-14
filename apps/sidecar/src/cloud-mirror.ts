@@ -11,14 +11,14 @@ import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILI
 } from "@trafficflow/db";
 import {
   accountSyncState, approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
-  listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
+  junkRescues, listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
   messageTags,
   organizerRequests, outboundSends, routingDecisions, rules, tags, threadNotes, threads,
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
-import { StoreStatementFaultError } from "@trafficflow/core/mail";
+import { StoreStatementFaultError, searchInputsFromStore, upsertMessageSearchRows } from "@trafficflow/core/mail";
 // THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
 // freshness states, and of the dense-page limit, held with `packages/client-engine`
 // (INSTANT-ARCH §6.7, stage 7's first adopted responsibility). Dependency-free core source —
@@ -1276,12 +1276,14 @@ function mailboxRow(world: LocalWorld, m: MailboxDTO, now: Date) {
  * Every table the MIGRATIONS key to `mailboxes` — the set {@link mailboxReferenced} must probe.
  * Hand-kept lists of foreign keys go stale silently, so `cloud-mirror-mailbox-refs.test.ts`
  * derives the same set from the migration SQL and refuses a difference. It was SEVEN until mail
- * 0118 added four more in SQL the ORM schema does not declare.
+ * 0118 added four more in SQL the ORM schema does not declare. `junk_rescues` has keyed onto the
+ * mailbox since mail 0117, inside its CREATE TABLE where that census did not read; mail 0201 names
+ * the key, and a queued "not junk" holds its mailbox's row like any other reference.
  */
 export const MAILBOX_REFERENCE_TABLES: readonly string[] = [
   "messages", "drafts", "message_instances", "message_failures", "unsubscribe_records",
   "mailbox_folders", "mailbox_credentials", "folder_ops", "away_replies",
-  "mailbox_profile_mirror", "organizer_requests",
+  "mailbox_profile_mirror", "organizer_requests", "junk_rescues",
 ];
 
 /**
@@ -1306,6 +1308,7 @@ async function mailboxReferenced(tx: Tx, id: string): Promise<boolean> {
   if (await hit(tx.select({ x: awayReplies.id }).from(awayReplies).where(eq(awayReplies.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror).where(eq(mailboxProfileMirror.mailboxId, id)).limit(1))) return true;
   if (await hit(tx.select({ x: organizerRequests.id }).from(organizerRequests).where(eq(organizerRequests.mailboxId, id)).limit(1))) return true;
+  if (await hit(tx.select({ x: junkRescues.id }).from(junkRescues).where(eq(junkRescues.mailboxId, id)).limit(1))) return true;
   return false;
 }
 
@@ -1807,7 +1810,7 @@ async function applyUpsert(
          is what the unknown mailbox already gets. */
       if (await readMailboxErasedAt(tx, dia, f.mailboxId) !== null) return false;
       await tx.insert(mailboxFolders).values({
-        id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
+        id: ch.id, mailboxId: f.mailboxId, accountId: world.accountId, folder: f.name, updatedAt: now,
       }).onConflictDoUpdate({
         target: mailboxFolders.id,
         set: { mailboxId: f.mailboxId, folder: f.name, updatedAt: now },
@@ -1916,6 +1919,7 @@ async function applyUpsert(
       // `folder_state.desired_folder` is what `message-service.ts` projects as the message's folder.
       await tx.insert(folderState).values({
         messageId: m.id,
+        accountId: world.accountId,
         desiredFolder: m.folder,
         observedFolder: m.folder,
         lastSetBy: "external",
@@ -2275,6 +2279,23 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
  * `gen`, when present, is the bootstrap generation this page belongs to: every upsert marks the row
  * it touched so the trailing sweep can tell survivors from phantoms.
  */
+/**
+ * THE SEARCH DOCUMENTS OF THE LETTERS A PAGE STORED, in the page's own transaction. A Postgres
+ * store finds a letter by its document alone (mail 0200 took the columns that read a letter
+ * without one), and no pass builds documents on a mirror, so the mirror writes each letter's with
+ * the letter and again with its body. The device's own tables cover every row: nothing is written
+ * there. Chunked for the reason the detached batch is.
+ */
+async function writeSearchDocuments(
+  tx: Tx, world: LocalWorld, messageIds: readonly string[], hold: () => Promise<void>,
+): Promise<void> {
+  if (messageIds.length === 0 || dialect(tx).name !== "pg") return;
+  for (let i = 0; i < messageIds.length; i += DETACHED_BATCH_MAX) {
+    await hold();
+    await upsertMessageSearchRows(tx, await searchInputsFromStore(tx, world.accountId, messageIds.slice(i, i + DETACHED_BATCH_MAX)));
+  }
+}
+
 async function applyPage(
   db: LocalDb,
   world: LocalWorld,
@@ -2424,6 +2445,7 @@ async function applyPage(
         inArray(messageBodies.withheldReason, [...REFILLABLE_WITHHELD]),
       ));
     }
+    await writeSearchDocuments(tx, world, touchedMessages, hold);
     // A page that moved the folder inventory also settles the local flag it is read behind —
     // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
     if (changes.some((c) => c.type === "folder")) {
@@ -3843,6 +3865,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /** Upsert one page of bodies. Not a `/sync` entity, so no change-log row. */
   const storeBodies = async (items: readonly MessageBodyBatchItem[]): Promise<number> => {
     let written = 0;
+    const stored: string[] = [];
     await cfg.db.transaction(async (tx) => {
       const hold = loopHold();
       for (const item of items) {
@@ -3863,10 +3886,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           // changes. The mirror's own counter is untouched — this store copies the hosted one.
           withheldReason: mirroredWithheld(item.withheld),
         };
-        await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
+        await tx.insert(messageBodies).values({ messageId: item.messageId, accountId: cfg.world.accountId, ...row })
           .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
+        stored.push(item.messageId);
         written++;
       }
+      // The body's words join each letter's search document.
+      await writeSearchDocuments(tx as unknown as Tx, cfg.world, stored, hold);
       await loopTurn();
     });
     await loopTurn();

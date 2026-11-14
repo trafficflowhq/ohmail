@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accountSettings, idempotencyKeys, mailboxes, type Tx } from "@trafficflow/db";
+import { accountSettings, idempotencyKeys, mailboxes, type Tx, accountPass, readPassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { setScreeningPreference, type ScreeningPreferenceUpdate } from "@trafficflow/services/mail";
 import { profileRoundTrip } from "./_profile-round-trip.js";
@@ -32,7 +32,7 @@ async function screening(update: ScreeningPreferenceUpdate, seed?: Omit<typeof a
     organizerDb: db, accountId, now: NOW, press: (ctx) => setScreeningPreference(ctx, update),
   });
   const [stored] = await db.select().from(accountSettings).where(eq(accountSettings.accountId, accountId));
-  return { rt, stored };
+  return { rt, stored, tidy: await readPassProgress(db as unknown as Tx, accountPass("ohbox_tidy", accountId)) };
 }
 
 describe.skipIf(!AVAILABLE)("a reader's screening edit reaches an organizer on real Postgres", () => {
@@ -47,27 +47,23 @@ describe.skipIf(!AVAILABLE)("a reader's screening edit reaches an organizer on r
   afterAll(async () => { await sql.end({ timeout: 5 }); });
 
   it("the object travels, the drain applies it, the reader is told applied", async () => {
-    const { rt, stored } = await screening({
-      ohboxPolicy: "people_only", ohboxBar: "People I write back to.", screenerAutoApply: true,
-    });
+    const { rt, stored, tidy } = await screening({ ohboxPolicy: "people_only", ohboxBar: "People I write back to." });
     expect(rt.drain).toEqual({ applied: 1, refused: 0, deferred: 0, standing: 0 });
     expect(rt.ack?.outcome, `refused: ${rt.ack?.reason}`).toBe("applied");
     expect(rt.readerRow?.state).toBe("applied");
     expect(stored?.ohboxPolicy).toBe("people_only");
     expect(stored?.ohboxBar).toBe("People I write back to.");
-    expect(stored?.screenerAutoApplyAt).not.toBeNull();
-    expect(stored?.ohboxTidyRequestedAt).not.toBeNull();
+    expect(tidy.requestedAt).not.toBeNull();
   }, T);
 
   it("a partial edit leaves the keys it does not carry, and does not re-arm the backlog", async () => {
-    const on = new Date("2026-09-01T00:00:00.000Z");
-    const { rt, stored } = await screening({ screenerAutoApply: false }, {
-      ohboxPolicy: "people_only", ohboxBar: "old words", screenerAutoApplyAt: on,
+    const { rt, stored, tidy } = await screening({ impersonationFiling: false }, {
+      ohboxPolicy: "people_only", ohboxBar: "old words",
     });
     expect(rt.readerRow?.state).toBe("applied");
-    expect(stored?.screenerAutoApplyAt).toBeNull();
+    expect(stored?.impersonationFilingOffAt).not.toBeNull();
     expect(stored?.ohboxPolicy).toBe("people_only");
     expect(stored?.ohboxBar).toBe("old words");
-    expect(stored?.ohboxTidyRequestedAt).toBeNull();
+    expect(tidy.requestedAt).toBeNull();
   }, T);
 });

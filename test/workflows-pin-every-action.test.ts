@@ -627,8 +627,9 @@ describe("every container image a workflow runs is named by its digest, unless t
     const all = FILES.map(workflowImages);
     const imageOf = (entry: string) => entry.slice(entry.lastIndexOf(" — ") + 3);
     const pinned = [...new Set(all.flatMap((r) => r.pinned).map(imageOf))].sort();
-    expect(pinned.map((i) => i.replace(/@sha256:[0-9a-f]{64}$/, "")), "the positive control: Dovecot, gitleaks, GreenMail and Fedora").toEqual([
-      "dovecot/dovecot:2.3.21", "ghcr.io/gitleaks/gitleaks:v8.30.1", "greenmail/standalone:2.1.3", "registry.fedoraproject.org/fedora:42",
+    /* Postgres 17.6 is upstream's image by digest: the second server the 2.0 transition's nightly runs on, until it is mirrored. */
+    expect(pinned.map((i) => i.replace(/@sha256:[0-9a-f]{64}$/, "")), "the positive control: Dovecot, gitleaks, GreenMail, Postgres 17 and Fedora").toEqual([
+      "dovecot/dovecot:2.3.21", "ghcr.io/gitleaks/gitleaks:v8.30.1", "greenmail/standalone:2.1.3", "postgres:17.6", "registry.fedoraproject.org/fedora:42",
     ]);
     const own = all.flatMap((r) => r.own).map(imageOf);
     const mirrors = own.filter((i) => MIRROR.test(i));

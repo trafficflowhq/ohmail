@@ -5,6 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accounts, accountSettings, contacts, LIST_ADDRESSES_PER_ACCOUNT_MAX, listAddresses, listBrandsOf, mailboxes, messageBodies,
   messages, type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { createLogger } from "@trafficflow/core/mail";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -31,14 +32,13 @@ async function world() {
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `lb:${randomUUID()}`, subject: `m${n}`,
       fromAddress: `sender${n}@elsewhere.invalid`, authVerdict: auth, nativeLocator: { folder: "INBOX", ref: `1:${n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "hi", headers });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hi", headers });
   };
   const rows = async () => (await db.select({ address: listAddresses.address, brands: listAddresses.consentedBrands })
     .from(listAddresses).where(eq(listAddresses.accountId, accountId)))
     .map((r) => ({ address: r.address, brands: listBrandsOf(r.brands) }))
     .sort((a, b) => a.address.localeCompare(b.address));
-  const stamp = async () => (await db.select({ at: accountSettings.listAddressesScannedAt }).from(accountSettings)
-    .where(eq(accountSettings.accountId, accountId)))[0]?.at ?? null;
+  const stamp = async () => (await readPassProgress(db, accountPass("list_address_backfill", accountId))).doneAt;
   const contactCount = async () => (await db.select({ a: contacts.address }).from(contacts)
     .where(and(eq(contacts.accountId, accountId)))).length;
   return { db, accountId, stored, rows, stamp, contactCount, me: `me-${accountId.slice(0, 8)}@own.invalid` };

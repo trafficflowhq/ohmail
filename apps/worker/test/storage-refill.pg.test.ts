@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -656,7 +657,7 @@ describe.skipIf(!AVAILABLE)("the storage refill against real Postgres", () => {
       accountId: other.accountId, mailboxId: other.mailboxIds[0]!, bodyHash: `o${i}`, dedupKey: `${other.accountId}:${i}`,
       subject: "o", date: new Date(Date.UTC(2024, 0, 1, 0, i)),
     }))).returning({ id: messages.id });
-    await db.insert(messageBodies).values(ins.map((m) => ({ messageId: m.id, text: "", withheldReason: "storage_cap" as const, headers: {} })));
+    await db.insert(messageBodies).values(ins.map((m) => ({ messageId: m.id, accountId: accountOfMessage(m.id), text: "", withheldReason: "storage_cap" as const, headers: {} })));
     const w = await seed(300, () => 50);
     const total = w.letters.reduce((n, l) => n + l.bytes, 0);
     // Just inside the trim's band: the trim empties the oldest few, the rest keep their text.

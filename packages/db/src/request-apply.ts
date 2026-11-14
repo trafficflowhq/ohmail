@@ -5,6 +5,7 @@ import {
 } from "./schema-mail.js";
 import { recordChange, recordRuleDelta, type LedgerTx, type Tx } from "./change-log.js";
 import { dialect } from "./dialect/index.js";
+import { accountPass, requestPass } from "./pass-progress.js";
 import {
   insertOrganizerRequest, listLaterRuleLegs, listPressLegs, listUnfinishedRuleLegs, TERMINAL_REQUEST_STATES,
   type OrganizerRequestRow,
@@ -219,7 +220,7 @@ export async function applyMessageMove(
 
   // DESIRED ONLY, observed preserved on conflict. See the header.
   await tx.insert(folderState).values({
-    messageId: msg.id, desiredFolder: to, observedFolder: from,
+    messageId: msg.id, accountId, desiredFolder: to, observedFolder: from,
     lastSetBy: "us", reconcileStatus: "pending", conflict: false, trashedFrom,
     decidedAt: pressed,
   }).onConflictDoUpdate({
@@ -295,14 +296,17 @@ const OHBOX_POLICY_VALUES: ReadonlySet<string> = new Set(["people_only", "people
  * `profile-fan-out-round-trip.test.ts` holds the two doors to one boundary.
  */
 export const TRAVELLING_OHBOX_BAR_MAX_BYTES = 2048;
-/** The three sub-keys the reader's screening door sends. Anything else refuses the record. */
+/**
+ * The sub-keys the reader's screening door sends. Anything else refuses the record.
+ * `screenerAutoApply` is still admitted and no longer read: the pass it switched was retired and its
+ * column went with mail 0202, but an install one release older sends the key with every change.
+ */
 const SCREENING_KEYS: ReadonlySet<string> = new Set(["ohboxPolicy", "ohboxBar", "screenerAutoApply", "impersonationFiling"]);
 
 /** The screening preference as it travels: partial, each present key replaces. */
 export interface ProfileScreeningUpdate {
   ohboxPolicy?: string | null;
   ohboxBar?: string | null;
-  screenerAutoApply?: boolean;
   /** Filing a held impersonation to Spam (mail 0184): `false` turns it off, `true` on. */
   impersonationFiling?: boolean;
 }
@@ -372,10 +376,8 @@ function readScreeningUpdate(v: unknown): ProfileScreeningUpdate | null {
       && (Buffer.byteLength(b, "utf8") > TRAVELLING_OHBOX_BAR_MAX_BYTES || b.includes("\u0000"))) return null;
     out.ohboxBar = b;
   }
-  if ("screenerAutoApply" in r) {
-    if (typeof r.screenerAutoApply !== "boolean") return null;
-    out.screenerAutoApply = r.screenerAutoApply;
-  }
+  // Admitted for an older sender, held to its type, and carried nowhere.
+  if ("screenerAutoApply" in r && typeof r.screenerAutoApply !== "boolean") return null;
   if ("impersonationFiling" in r) {
     if (typeof r.impersonationFiling !== "boolean") return null;
     out.impersonationFiling = r.impersonationFiling;
@@ -605,16 +607,12 @@ export async function applyProfileUpdate(
   }
 
   const screening = payload.screeningPreference;
+  /** The posture moved INTO `people_only`: the backlog tidy is owed, from the top. */
+  let armTidy = false;
   if (screening?.ohboxBar !== undefined) {
     settings.ohboxBar = screening.ohboxBar;
     insert.ohboxBar = screening.ohboxBar;
     wrote.push("ohboxBar");
-  }
-  if (screening?.screenerAutoApply !== undefined) {
-    // A boolean on the wire, a timestamp in the column: the local door's own mapping.
-    settings.screenerAutoApplyAt = screening.screenerAutoApply ? now : null;
-    insert.screenerAutoApplyAt = screening.screenerAutoApply ? now : null;
-    wrote.push("screenerAutoApply");
   }
   if (screening?.impersonationFiling !== undefined) {
     // A boolean on the wire, a timestamp in the column: when it was turned off, NULL for on.
@@ -633,12 +631,7 @@ export async function applyProfileUpdate(
          re-arms an idempotent pass, which re-examines a drained backlog and writes zero. */
       const [prior] = await tx.select({ ohboxPolicy: accountSettings.ohboxPolicy })
         .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
-      if ((prior?.ohboxPolicy ?? null) !== "people_only") {
-        settings.ohboxTidyRequestedAt = now;
-        settings.ohboxTidyCursor = null;
-        insert.ohboxTidyRequestedAt = now;
-        insert.ohboxTidyCursor = null;
-      }
+      armTidy = (prior?.ohboxPolicy ?? null) !== "people_only";
     }
   }
 
@@ -649,6 +642,10 @@ export async function applyProfileUpdate(
       set: settings,
     });
   }
+  // AFTER the settings row, never before it: the tidy pass serializes on that row and writes its
+  // cursor under its lock, so a request that took the pass's row first would wait on a page that
+  // waits on it.
+  if (armTidy) await requestPass(tx, accountPass("ohbox_tidy", accountId), now);
 
   return { wrote, lastSeq: null };
 }

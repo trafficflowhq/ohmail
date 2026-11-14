@@ -76,7 +76,7 @@ async function seedFold(c: FoldCase) {
       nativeLocator: { folder: m.folder, ref: `1:${m.id}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: row!.id, desiredFolder: m.folder, observedFolder: m.folder, lastSetBy: "us",
+      messageId: row!.id, accountId: row!.accountId, desiredFolder: m.folder, observedFolder: m.folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false,
     });
     if (m.state) {

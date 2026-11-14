@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
@@ -106,7 +107,7 @@ async function fixture(): Promise<Fixture> {
     accountId, provider: "imap", address: `frc-lo-${tag}@example.test`, organizerRole: "reader",
   }).returning();
   await db().insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   await db().insert(accountSettings).values({ accountId, updatedAt: NOW });
   return { accountId, mailboxId: mb!.id };
@@ -405,7 +406,7 @@ async function doors(): Promise<Doors> {
       organizerRole: "organizer", organizeConsentedAt: NOW, trashFolder: "Trash",
     }).returning();
     await db().insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
     });
     return { id: mb!.id, address: mb!.address };
   };
@@ -416,7 +417,7 @@ async function doors(): Promise<Doors> {
       accountId, mailboxId, bodyHash: `frc-lo-${tag}-${i}`, dedupKey: `frc-lo:${tag}:${i}`,
       subject: "hello", fromAddress: `p-${tag}@example.test`, nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db().insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external" });
+    await db().insert(folderState).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external" });
     return m!.id;
   };
   const letterA = await letter(a.id, 1);
@@ -425,7 +426,7 @@ async function doors(): Promise<Doors> {
   await db().update(folderState).set({ desiredFolder: "Trash", trashedFrom: "INBOX", lastSetBy: "us" })
     .where(eq(folderState.messageId, trashed));
   await db().update(messages).set({ deletedAt: NOW }).where(eq(messages.id, trashed));
-  const [f] = await db().insert(mailboxFolders).values({ mailboxId: a.id, folder: "Projects" }).returning();
+  const [f] = await db().insert(mailboxFolders).values({ mailboxId: a.id, accountId: accountOfMailbox(a.id), folder: "Projects" }).returning();
   // A first contact held in the Screener of mailbox a, its sender checked.
   const heldFrom = `new-${tag}@example.test`;
   const [h] = await db().insert(messages).values({
@@ -433,7 +434,7 @@ async function doors(): Promise<Doors> {
     fromAddress: heldFrom, senderCheck: "none", nativeLocator: { folder: "ohmail/Screener", ref: "1:4" },
   }).returning();
   await db().insert(folderState).values({
-    messageId: h!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled",
+    messageId: h!.id, accountId: accountOfMessage(h!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled",
   });
   return { accountId, a: a.id, b: b.id, addressA: a.address, letterA, letterB, trashed, folderId: f!.id, held: h!.id, heldFrom };
 }

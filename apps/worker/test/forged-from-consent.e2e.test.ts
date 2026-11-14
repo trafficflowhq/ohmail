@@ -47,7 +47,7 @@ async function seedMailbox(db: Db, imapHost: string): Promise<{ accountId: strin
     .values({ accountId, provider: "imap", address: `${randomUUID()}@trafficflow.test`, ...ORGANIZER_CONSENT }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: imapHost, port: 993, secure: true, user: "u" },
   });
   // Anna is a KNOWN SENDER: `evaluateRules` admits her mail to the Ohbox. The whole attack is

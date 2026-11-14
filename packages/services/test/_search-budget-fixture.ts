@@ -175,15 +175,15 @@ export async function seedDocumented(h: BudgetHandle, acct: string, n: number, s
     from generate_series(1, ${n}) g`);
   // Planted: kestrel 1, osprey 4, plover 12, egret 24, avocet 37 bodies.
   await h.execute(sql`
-    insert into message_bodies (message_id, text)
-    select m.id, ${words(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
+    insert into message_bodies (message_id, account_id, text)
+    select m.id, m.account_id, ${words(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
       || case when x.g = 31337 then ' kestrel' else '' end || case when x.g % 18500 = 17 then ' osprey' else '' end
       || case when x.g % 6166 = 11 then ' plover' else '' end || case when x.g % 3083 = 7 then ' egret' else '' end
       || case when x.g % 2000 = 13 then ' avocet' else '' end
     from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
   await h.execute(sql`
-    insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
+    insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+    select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
   await h.execute(sql`
     insert into attachments (account_id, message_id, filename, content_type)
     select m.account_id, m.id, f.name, 'application/octet-stream'

@@ -106,15 +106,6 @@ export const mailboxes = sqliteTable("mailboxes", {
   // release does not reset it: freeing a mailbox must not hand a struggling provider a fresh
   // minimum-interval retry loop.
   retryAfter: integer("retry_after", { mode: "timestamp_ms" }),
-  // ── Mail 0025 — the once-per-mailbox inbox-shaping kickstart ran ──
-  //
-  // The worker scans the Sent folder at CONNECT, imports its recipients into `contacts` (which
-  // IS `knownSenders`) and re-routes the Screener backlog once. This column is the whole of the
-  // idempotency: NULL means "never run", a timestamp means "done, never again". It is a MARKER
-  // and not a schedule — nothing reads it to decide anything other than skip-or-run, and the
-  // worker writes it only AFTER the pass succeeds, so a crash mid-kickstart retries on the next
-  // attach rather than leaving a half-shaped mailbox marked complete.
-  kickstartAt: integer("kickstart_at", { mode: "timestamp_ms" }),
   // Mail 0027 — the organizer lease. `disabledReason` is WHY this mailbox is `status='disabled'`
   // when the reason is the lease rather than a person. A CLOSED set (`MAILBOX_DISABLED_REASONS`)
   // with a CHECK, because it is read by the account's own user and must never hold a string a
@@ -341,50 +332,6 @@ export const mailboxes = sqliteTable("mailboxes", {
   // the value derives from an SMTP AUTH failure — a server's own text can echo the credential.
   smtpSizeProbedAt: integer("smtp_size_probed_at", { mode: "timestamp_ms" }),
   smtpSizeProbeCode: text("smtp_size_probe_code"),
-  // Mail 0030 — the one-time re-evaluation of mail the sensitivity override already misrouted. A
-  // fix stopped a sender-chosen subject or body carrying a stranger past the consent gate; it is
-  // forward-looking only, and the damage was already filed — most of the measured Ohbox rows were
-  // sensitive and nearly all came from senders absent from `contacts`. This column is the
-  // correction's idempotency: NULL means "never re-screened", a timestamp "done, never again". A
-  // MARKER, stamped AFTER the pass, never before: claiming it first would make a crash permanent.
-  // Re-running is safe without it — the candidate query is the idempotency (a moved message is no
-  // longer a candidate); the marker saves the scan, not the correctness. NOT `kickstart_at`
-  // re-used: `listScreenerBacklog` selects the INVERSE candidate set, and that marker is already
-  // stamped on every live mailbox.
-  sensitiveRescreenAt: integer("sensitive_rescreen_at", { mode: "timestamp_ms" }),
-  /**
-   * Where the re-screen got to — the last `messages.id` of the last COMMITTED page (mail 0081).
-   * The marker says whether the pass is FINISHED; this says where it is. The pass is bounded, and
-   * without a resume point the next run started at the beginning: MOVERS drop out of the
-   * candidate query, STAYERS do not, so a prefix of stayers was re-read forever. Same column,
-   * same reason as `rules.retro_cursor`. Written inside the page's own transaction; advanced
-   * under `WHERE cursor IS NULL OR cursor < <new>` so two operators cannot rewind one another;
-   * NULLed in the same UPDATE that stamps the marker. Known limit: an exclusion REMOVED mid-pass
-   * is invisible — the remedy is to NULL all three re-screen columns together.
-   */
-  sensitiveRescreenCursor: text("sensitive_rescreen_cursor"),
-  /**
-   * When the walk that cursor belongs to BEGAN — the window the completion check looks back over
-   * (mail 0081). NULL exactly when the cursor is NULL. The check needs the WALK's start, not the
-   * RUN's: the cursor outlives an invocation — run A stores a prefix and exits, the worker
-   * restores one of A's rows to the Ohbox, run B resumes past it. Against B's own start that
-   * restoration is invisible, and B stamps; against the WALK's start it is inside the window, B
-   * declines the marker and clears both columns, so the next run re-walks the prefix. Written
-   * with `coalesce(existing, <run start>)` in the same guarded UPDATE as the cursor; cleared with
-   * the cursor when the marker lands.
-   */
-  sensitiveRescreenStartedAt: integer("sensitive_rescreen_started_at", { mode: "timestamp_ms" }),
-  // Mail 0036 — the one-time repair of bodies a classifier FALSE POSITIVE stored redacted. A
-  // click tracker's percent-escaped slash (`-2F`) put word boundaries around `2Fa`, read as the
-  // acronym `2fa`; mail judged sensitive is stored with text redacted and NO HTML, so ordinary
-  // newsletters were filed unreadable. The fix (`proseOnly`) is forward-looking; the only
-  // remaining copy of the discarded HTML is on the IMAP server. A MARKER, for the reason
-  // `thread-backfill` needed none: THIS candidate set does not shrink — a message still sensitive
-  // under the fixed classifier is a candidate forever, so without a marker the pass would re-read
-  // every categorised message off the server every cycle. Stamped AFTER the pass (claiming first
-  // makes a crash permanent); re-running is safe — the marker saves the IMAP reads, not the
-  // correctness. NULLing it asks again.
-  sensitiveFpBackfillAt: integer("sensitive_fp_backfill_at", { mode: "timestamp_ms" }),
   // Mail 0038 — when this mailbox's FIRST IMPORT actually finished. A first import drains
   // newest-first in bounded batches, so the server holds a PARTIAL mailbox for the whole of it.
   // The client watches its own mirror grow and says "still syncing"; what it could not see is the
@@ -446,10 +393,7 @@ export const mailboxes = sqliteTable("mailboxes", {
   organizedThrough: integer("organized_through", { mode: "timestamp_ms" }),
   /** Mail 0169 — the last instant this row said another install held it; see the pg twin. LAST for 0111's reason. */
   heldElsewhereUntil: integer("held_elsewhere_until", { mode: "timestamp_ms" }),
-  /** Mail 0182 — when a full read found no pre-0.22 News spelling; see the pg twin. LAST for 0111's reason. */
-  legacyNewsCleanAt: integer("legacy_news_clean_at", { mode: "timestamp_ms" }),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.
   ixAccount: index("mailboxes_account_idx").on(t.accountId, t.id),
   // ONE ACTIVE MAILBOX PER ADDRESS (mail 0021). PARTIAL, because `delete` is a soft delete to
@@ -511,6 +455,8 @@ export const mailboxCredentials = sqliteTable("mailbox_credentials", {
   keyVersion: integer("key_version").notNull(),                            // KeyProvider KEK version
   meta: text("meta", { mode: "json" }),                                                     // non-secret conn params (host/port/user/secure)
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  // The mailbox's account (mail 0201). Nullable here: NOT NULL is a table rebuild on this store.
+  accountId: text("account_id"),
 }, (t) => ({ pk: primaryKey({ columns: [t.mailboxId, t.transport] }) }));
 
 export const mailboxFolders = sqliteTable("mailbox_folders", {
@@ -545,8 +491,9 @@ export const mailboxFolders = sqliteTable("mailbox_folders", {
    */
   budgetStopUid: int64("budget_stop_uid"),
   budgetStopUidvalidity: int64("budget_stop_uidvalidity"),
+  // The mailbox's account (mail 0201). Nullable here: NOT NULL is a table rebuild on this store.
+  accountId: text("account_id"),
 }, (t) => ({
-  ixIdMailbox: uniqueIndex("mailbox_folders_id_mailbox_uq").on(t.id, t.mailboxId),
   uq: unique().on(t.mailboxId, t.folder) }));
 
   /**
@@ -686,7 +633,6 @@ export const messages = sqliteTable("messages", {
   /** Held for want of confirmation (mail 0176), the pg column's twin — see `schema-mail.ts`. */
   unconfirmedHold: integer("unconfirmed_hold", { mode: "boolean" }),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("messages_id_account_uq").on(t.id, t.accountId),
   uqDedup: unique().on(t.mailboxId, t.dedupKey),
   ixThread: index("messages_account_thread_idx").on(t.accountId, t.threadId),
   // ── Mail 0026 — the THREADING key ──
@@ -697,7 +643,7 @@ export const messages = sqliteTable("messages", {
   // Message-ID is attacker-choosable (anybody can send you mail carrying one), so the account
   // has to be the first key rather than a filter applied to a cross-account result.
   ixMessageIdHeader: index("messages_account_message_id_header_idx").on(t.accountId, t.messageIdHeader),
-  ixUnread: index("messages_account_mailbox_unread_idx").on(t.accountId, t.mailboxId, t.unread),
+  ixAccountMailbox: index("messages_account_mailbox_idx").on(t.accountId, t.mailboxId),
   // Mail 0034 — WHO sent it, which nothing could look up. There was no index on `from_address` at
   // all, so every reader — the retro pass, the re-screen's candidate query, `heldRowsForDomain` —
   // was a sequential scan over the account's messages, and the retro pass runs one PER PAGE, per
@@ -836,12 +782,16 @@ export const folderState = sqliteTable("folder_state", {
   // Mail 0138: the person put back the Screener's automatic filing; the pass files it never again.
   autoFilingUndoneAt: integer("auto_filing_undone_at", { mode: "timestamp_ms" }),
   // Mail 0141: the auto-apply pass's floor verdict; no device runs that pass.
-  screenerFloorVersion: integer("screener_floor_version"),
   // Mail 0145: when a decision about the placement was placed — the stale-press floor's stamp.
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
   // Mail 0160: the message's account while the row is outstanding, and since mail 0181 while it is
   // pending, written by the four triggers alone. See the server twin.
-  outstandingAccountId: text("outstanding_account_id"),
+  /**
+   * The message's account (mail 0201): a row can never hang under another account's letter, and
+   * every writer names it. It replaced `outstanding_account_id`, a copy two triggers kept while
+   * the row was pending. Nullable here: NOT NULL is a table rebuild on this store.
+   */
+  accountId: text("account_id"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
@@ -852,11 +802,11 @@ export const folderState = sqliteTable("folder_state", {
     .on(t.desiredFolder, t.updatedAt, t.messageId),
   // Mail 0160: the mailbox poll's outstanding filings, by account.
   ixOutstanding: index("folder_state_outstanding_idx")
-    .on(t.outstandingAccountId, t.messageId)
+    .on(t.accountId, t.messageId)
     .where(sql.raw(OUTSTANDING_FILING_WHERE)),
   // Mail 0181: the reconcile poll's pending rows, by account and then in its queue order.
   ixPendingQueue: index("folder_state_pending_queue_idx")
-    .on(t.outstandingAccountId, t.updatedAt, t.messageId)
+    .on(t.accountId, t.updatedAt, t.messageId)
     .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
@@ -888,12 +838,13 @@ export const flagState = sqliteTable("flag_state", {
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
   // Mail 0181: the message's account while the row is pending, written by the two triggers alone.
   // See the server twin.
-  pendingAccountId: text("pending_account_id"),
+  /** The message's account (mail 0201): `folder_state.account_id`'s pair. Nullable here: NOT NULL is a table rebuild on this store. */
+  accountId: text("account_id"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // Mail 0181: the folder queue's twin.
   ixPendingQueue: index("flag_state_pending_queue_idx")
-    .on(t.pendingAccountId, t.updatedAt, t.messageId)
+    .on(t.accountId, t.updatedAt, t.messageId)
     .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
@@ -966,7 +917,6 @@ export const rules = sqliteTable("rules", {
   refileFrom: text("refile_from"),
   refileAt: integer("refile_at", { mode: "timestamp_ms" }),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("rules_id_account_uq").on(t.id, t.accountId),
   /**
    * The owed-work probe, run once per account per worker cycle. Without it that is a full scan
    * of `rules` on every cycle for every account; partial, so the index holds only the rules that
@@ -974,9 +924,6 @@ export const rules = sqliteTable("rules", {
    */
   ixRetroOwed: index("rules_retro_owed_idx").on(t.accountId)
     .where(sql`${t.retroRequestedAt} is not null and ${t.retroDoneAt} is null`),
-  // Mail 0136 — the rule key within the account, as the server twin declares it.
-  ixAccountMatchKey: index("rules_account_match_key_idx").on(t.accountId, ruleMatchKeySql(t.match))
-    .where(sql`${t.enabled}`),
   // Mail 0144 — the same key over every row, paused included, as the server twin declares it.
   ixAccountKey: index("rules_account_key_idx").on(t.accountId, ruleMatchKeySql(t.match)),
 }));
@@ -993,7 +940,6 @@ export const contacts = sqliteTable("contacts", {
   /** Who made the row (mail 0148) — see `schema-mail.ts`. NULL reads as `'person'`. */
   source: text("source"),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("contacts_id_account_uq").on(t.id, t.accountId),
   uq: unique().on(t.accountId, t.address) }));
 
 /** The addresses a mailing list posts as (mail 0150) — see `schema-mail.ts`. Brands as JSON text. */
@@ -1094,7 +1040,6 @@ export const threads = sqliteTable("threads", {
    */
   rootMessageIdHeader: text("root_message_id_header"),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("threads_id_account_uq").on(t.id, t.accountId),
   ix: index("threads_account_last_message_idx").on(t.accountId, t.lastMessageAt),
   // Declared here to keep the TS schema honest; the index is created by mail 0026 and a test
   // diffs this declaration against the real catalog.
@@ -1123,6 +1068,8 @@ export const messageBodies = sqliteTable("message_bodies", {
   // (on `message_bodies`, not `messages`), over the full stored `text`. Bodies are stored
   // unredacted (the mailbox on the server holds them in full anyway), so search reaches all of
   // the reader's own mail. DB-generated; the app never writes it. ──
+  /** The message's account (mail 0201): `folder_state.account_id`'s pair. Nullable here: NOT NULL is a table rebuild on this store. */
+  accountId: text("account_id"),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   /**
@@ -1201,7 +1148,6 @@ export const routingDecisions = sqliteTable("routing_decisions", {
   // Mail 0156: the fact that capped a stored suggestion, or `none`. See the server twin. LAST.
   senderReason: text("sender_reason"),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("routing_decisions_id_account_uq").on(t.id, t.accountId),
   ix: index("routing_decisions_account_message_idx").on(t.accountId, t.messageId),
   ckActRefusal: check("routing_decisions_act_refusal_closed",
     sql`${t.actRefusal} in ('account_erased', 'not_organizer', 'mailbox_removed', 'store_fault')`),
@@ -1290,7 +1236,6 @@ export const learningSignals = sqliteTable("learning_signals", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
   uqAction: unique().on(t.accountId, t.triggeringActionId),    // deduped by triggering-action id
-  ixAccount: index("learning_signals_account_idx").on(t.accountId),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1359,7 +1304,6 @@ export const users = sqliteTable("users", {
   emailVerifiedAt: integer("email_verified_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("users_id_account_uq").on(t.id, t.accountId),
   uqEmail: unique().on(t.accountId, t.email),
   /**
    * The login identity, and the only constraint that actually enforces it (migration 0021).
@@ -1387,7 +1331,6 @@ export const devices = sqliteTable("devices", {
   // statement; the `device_sync_stale` alert reads it. Never projected into a DTO.
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("devices_id_account_uq").on(t.id, t.accountId),
   ixUser: index("devices_user_idx").on(t.userId) }));
 
 export const sessions = sqliteTable("sessions", {
@@ -1417,7 +1360,6 @@ export const sessions = sqliteTable("sessions", {
   // `last_seen_at` (still requesting + not converging = a wedged mirror). Never in a DTO.
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("sessions_id_account_uq").on(t.id, t.accountId),
   ixUser: index("sessions_user_idx").on(t.userId),
   ixFamily: index("sessions_family_idx").on(t.familyId),
   // mail 0080 — THE AUTHENTICATION LOOKUP. `resolveSession` matches on this column on every
@@ -1484,6 +1426,11 @@ export const pairingTokens = sqliteTable("pairing_tokens", {
   consumedAt: integer("consumed_at", { mode: "timestamp_ms" }),
   revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+  /**
+   * The creator's account (mail 0201); NULL exactly when there is no creator (the first setup
+   * token), which a CHECK holds on a server.
+   */
+  accountId: text("account_id"),
 }, (t) => ({
   uqToken: unique().on(t.tokenHash),
 }));
@@ -1629,35 +1576,6 @@ export const awayResponders = sqliteTable("away_responders", {
   lastConsideredAt: integer("last_considered_at", { mode: "timestamp_ms" })
     .notNull().default(new Date(0)),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
-
-/**
- * One automatic reply per sender, and the row that proves it — keyed `(account, sender,
- * episode)`; the UNIQUE is the guard. The episode key is the responder row's own `updated_at`: a
- * boolean "replied" flag would permanently silence every first-trip correspondent after an
- * off-and-on. Stated: ANY edit is a new episode, so a mid-trip typo fix may answer a
- * correspondent twice — deliberate, because twice is recoverable and never is not. Written BEFORE
- * the send: SMTP is not transactional, so claiming first costs a crash ONE unsent reply. `ON
- * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender`, the
- * lowercased envelope author, is on the row, so nulling `message_id` un-answers nobody.
- */
-export const awayResponderSent = sqliteTable("away_responder_sent", {
-  id: text("id").default(UUID_V4).primaryKey(),
-  accountId: text("account_id").notNull(),
-  sender: text("sender").notNull(),
-  responderUpdatedAt: integer("responder_updated_at", { mode: "timestamp_ms" }).notNull(),
-  /** The message that triggered it, as evidence. Nullable — see the header. */
-  messageId: text("message_id"),
-  /** The minted `<uuid@domain>` of the reply we sent, so a Sent-folder copy is attributable. */
-  mintedMessageId: text("minted_message_id"),
-  sentAt: integer("sent_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-}, (t) => ({
-  // THE GUARD. Not an index for speed — the ON CONFLICT target that makes "reply once" a
-  // property of the schema instead of a property of the pass's control flow. Named explicitly
-  // (rather than letting drizzle derive one) because the migration creates it by name.
-  uqEpisode: uniqueIndex("away_responder_sent_episode_uq")
-    .on(t.accountId, t.sender, t.responderUpdatedAt),
-  ixAccount: index("away_responder_sent_account_idx").on(t.accountId),
-}));
 
 /**
  * The away reply ledger (mail 0087) — one row per DECIDED candidate, not only the sends: a
@@ -1921,7 +1839,6 @@ export const drafts = sqliteTable("drafts", {
   // Mail 0179, appended last — see `schema-mail.ts`.
   sendFiles: integer("send_files").notNull().default(0),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("drafts_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("drafts_account_updated_idx").on(t.accountId, t.updatedAt),
   uqWfDedup: unique("drafts_workflow_dedup_key_unique").on(t.workflowDedupKey),   // per-step idempotency
   // Mail 0077 — the worker's due scan (`status = 'scheduled' AND send_at <= now()`), partial so
@@ -1994,7 +1911,6 @@ export const workflows = sqliteTable("workflows", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("workflows_id_account_uq").on(t.id, t.accountId),
   ixAccount: index("workflows_account_idx").on(t.accountId) }));
 
 export const workflowRuns = sqliteTable("workflow_runs", {
@@ -2056,7 +1972,6 @@ export const tags = sqliteTable("tags", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
-  ixIdAccount: uniqueIndex("tags_id_account_uq").on(t.id, t.accountId),
   // ONE TAG PER NAME PER ACCOUNT, case-insensitively. On `lower(name)` and not on
   // `name`, because nothing lowercases this column on write — it is the label the
   // user typed and it is shown back to them verbatim — so "Invoices" and "invoices"
@@ -2137,6 +2052,47 @@ export const unsubscribeExamined = sqliteTable("unsubscribe_examined", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
 }, (t) => ({
   ixRecord: index("unsubscribe_examined_record_idx").on(t.recordId),
+}));
+
+/** The progress of the one-time passes (mail 0203): the server twin's table, instants in epoch ms. */
+export const passProgress = sqliteTable("pass_progress", {
+  accountId: text("account_id").notNull(),
+  job: text("job").notNull(),
+  subjectId: text("subject_id").notNull(),
+  requestedAt: integer("requested_at", { mode: "timestamp_ms" }),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }),
+  doneAt: integer("done_at", { mode: "timestamp_ms" }),
+  cursor: text("cursor"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({ pk: primaryKey({ name: "pass_progress_pk", columns: [t.accountId, t.job, t.subjectId] }) }));
+
+/**
+ * THE IDENTITY OF AN INVITATION, kept at ingest (mail 0204). A letter that carries a calendar
+ * invitation gets one row: which event it speaks of, which revision, what it asks, when the event
+ * starts, who organizes it and which of the account's addresses was invited. No calendar bytes.
+ *
+ * A child of its letter: the row goes with it (ON DELETE CASCADE; the composite key
+ * `(message_id, account_id)` is in the journal). `mailboxId` is a plain column, with no key into
+ * `mailboxes`; the removals delete by it. `method` is iTIP's list, held at the write door.
+ */
+export const messageInvitations = sqliteTable("message_invitations", {
+  accountId: text("account_id").notNull(),
+  messageId: text("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+  mailboxId: text("mailbox_id").notNull(),
+  /** The event's UID as the invitation spelled it, and the instance it names ('' for the series). */
+  uid: text("uid").notNull(),
+  recurrenceId: text("recurrence_id").notNull().default(""),
+  sequence: integer("sequence").notNull().default(0),
+  method: text("method").notNull(),
+  /** The start as the invitation wrote it, and the instant it means where one can be told. */
+  startRaw: text("start_raw"),
+  startsAt: integer("starts_at", { mode: "timestamp_ms" }),
+  organizer: text("organizer"),
+  invitedAddress: text("invited_address"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),
+  byUid: index("message_invitations_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),
 }));
 
 /**
@@ -2220,31 +2176,6 @@ export const accountSettings = sqliteTable("account_settings", {
    * turn, never routing itself. Length-capped at 2 KiB by the migration's CHECK.
    */
   ohboxBar: text("ohbox_bar"),
-  /**
-   * The Ohbox backlog tidy — the resumable, re-armable marker for the worker pass that re-routes
-   * mail ALREADY misfiled into the Ohbox under `people_only` (mail 0043). New mail is demoted
-   * live; these are the retroactive clean-up's durable state — `rules.retro_*` lifted to a
-   * per-ACCOUNT marker. `requested_at`: stamped ONLY on the transition INTO `people_only`, with
-   * the cursor NULLed in the same UPDATE — re-arming without resetting the cursor would resume at
-   * the end and move nothing. `done_at`: written LAST (claiming first makes a crash permanent);
-   * owed = requested and not yet done since. `cursor`: the last `messages.id` of the last
-   * COMMITTED page. NULL on every existing account: shipping the columns moves no mail.
-   */
-  ohboxTidyRequestedAt: integer("ohbox_tidy_requested_at", { mode: "timestamp_ms" }),
-  ohboxTidyDoneAt: integer("ohbox_tidy_done_at", { mode: "timestamp_ms" }),
-  ohboxTidyCursor: text("ohbox_tidy_cursor"),
-  /**
-   * Screener auto-apply — when the account opted in, or NULL for off (mail 0046). ON means: the
-   * worker files obvious strong-bulk senders (`migrationBulkPlacement`: `List-Unsubscribe` plus a
-   * corroborating list marker) out of the Screener into Reads/Receipts. DETERMINISTIC routing
-   * only: no classifier call, no credit debit. Every move is durable and user-reversible, never a
-   * delete, and it writes NO `rules` row — the sender still screens next time. A
-   * sensitivity-flagged message is NEVER auto-moved, so a stranger's login code stays at the gate
-   * for a human. NULL, no row, and a FAILED read all read as OFF — the other default would move
-   * mail on a fetch error. Retired (2026-11-02): only a person lets a stranger in, so nothing acts
-   * on the column; the setting's route still reads and writes it until a later migration drops it.
-   */
-  screenerAutoApplyAt: integer("screener_auto_apply_at", { mode: "timestamp_ms" }),
   /**
    * "Use folders" — when the account turned the optional folders feature on, or NULL for off
    * (FOLDERS-SPEC.md §6). ON means: the mailbox's OWN folders — the passive inventory minus the
@@ -2355,11 +2286,6 @@ export const accountSettings = sqliteTable("account_settings", {
   // the password changes the key, which is exactly when older records should stop verifying.
   createdAt: integer("created_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).default(NOW_MS).notNull(),
-  // The one-time gate release's per-account marker (mail 0109) — the twin of the server column,
-  // as epoch milliseconds like every timestamp on this store. NULL is "not swept yet". LAST in
-  // the declaration because `ALTER TABLE … ADD COLUMN` appends, and `sqlite-baseline.test.ts`
-  // compares the store's PRAGMA order with this one.
-  gateReleaseDoneAt: integer("gate_release_done_at", { mode: "timestamp_ms" }),
   // The wall clock resurfaced mail comes back at (mail 0110) — the twin of the server column,
   // TEXT on both stores because it holds `'HH:MM'` and not an instant. NULL is the built-in
   // 09:00. LAST in the declaration because `ALTER TABLE … ADD COLUMN` appends, and
@@ -2373,15 +2299,8 @@ export const accountSettings = sqliteTable("account_settings", {
    * compares the store's PRAGMA order with this one.
    */
   heldReleaseDismissed: text("held_release_dismissed"),
-  /** Mail 0125 — the search backfill's completion marker. See the server twin. */
-  searchIndexBuiltAt: integer("search_index_built_at", { mode: "timestamp_ms" }),
   /** The act on suggestions' own consent. See the server twin. LAST. */
   screenerAutoActAt: integer("screener_auto_act_at", { mode: "timestamp_ms" }),
-  /** The list-address backfill's stamp (mail 0150). See the server twin. LAST. */
-  listAddressesScannedAt: integer("list_addresses_scanned_at", { mode: "timestamp_ms" }),
-  /** The html-words backfill's stamp and cursor (mail 0172). See the server twin. LAST. */
-  htmlWordsBackfillAt: integer("html_words_backfill_at", { mode: "timestamp_ms" }),
-  htmlWordsBackfillCursor: text("html_words_backfill_cursor"),
   /** Mail 0184 — the impersonation filing switch, off when set. See the server twin. LAST. */
   impersonationFilingOffAt: integer("impersonation_filing_off_at", { mode: "timestamp_ms" }),
 });
@@ -2481,5 +2400,5 @@ export const scheduledSendFiles = sqliteTable("scheduled_send_files", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings, messageSearch,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, passProgress, messageInvitations, accountSettings, messageSearch,
 };

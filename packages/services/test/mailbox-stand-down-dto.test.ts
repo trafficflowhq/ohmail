@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, it, expect } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, MAILBOX_DISABLED_REASONS, UNMETERED_ACCESS,} from "@trafficflow/db";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
 import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
 
@@ -137,14 +137,11 @@ describe("MailboxDTO carries WHY a disabled mailbox is disabled", () => {
      * original defect, restored by deploy order. The closed set ships its own catch-all for this
      * and `markMailboxStoodDown` applies the same rule at the write site.
      *
-     * The CHECK constraint is dropped for this one row, because the point is a value that reaches
-     * the column from a deployment whose constraint already permits it.
+     * The value reaches the column as a newer build's write would: since mail 0202 the column's
+     * CHECK holds the shape of a reason word, which a new member fits.
      */
     const db = await makeTestDb();
     const mb = await seed(db, { status: "disabled" });
-    await db.execute(
-      sql`alter table "mailboxes" drop constraint if exists "mailboxes_disabled_reason_closed"`,
-    );
     await db.update(mailboxes)
       .set({ disabledReason: "organized_elsewhere:quantum" })
       .where(eq(mailboxes.id, mb.id));

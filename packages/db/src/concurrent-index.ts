@@ -99,6 +99,80 @@ export function plainIndexDdl(ddl: SQL): SQL {
   return new SQL(chunks);
 }
 
+function assertLockTimeout(): void {
+  if (!Number.isInteger(MIGRATION_LOCK_TIMEOUT_MS) || MIGRATION_LOCK_TIMEOUT_MS < 0) {
+    throw new Error("MIGRATION_LOCK_TIMEOUT_MS must be a non-negative integer");
+  }
+}
+
+/**
+ * `body` under the migration's advisory lock, on this session.
+ *
+ * BOUNDED ACQUISITION, exactly as `runMigrations` bounds the same one: with the session default
+ * `lock_timeout = 0` a sibling holding the key would park this setup for ever, silently. The
+ * timeout is acquisition-only and reset before any DDL: a concurrent build must not be abortable
+ * by it. `label` names the caller in the acquisition-failure message.
+ */
+async function underMigrationLock<T>(db: SqlExecutor, label: string, body: () => Promise<T>): Promise<T> {
+  const key = MIGRATION_LOCK_KEY as unknown as number;
+  await db.execute(sql.raw(`set lock_timeout = ${MIGRATION_LOCK_TIMEOUT_MS}`));
+  try {
+    await db.execute(sql`select pg_advisory_lock(${key})`);
+  } catch (err) {
+    throw new Error(
+      `could not take the migration advisory lock (${MIGRATION_LOCK_KEY}) within ` +
+        `${MIGRATION_LOCK_TIMEOUT_MS}ms for ${label} — another setup or migration is running ` +
+        `against this database. Wait for it and re-run; this step is idempotent. ` +
+        `Cause: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  await db.execute(sql.raw("set lock_timeout = 0"));
+  try {
+    return await body();
+  } finally {
+    await db.execute(sql`select pg_advisory_unlock(${key})`);
+  }
+}
+
+/**
+ * DROP WHAT AN INTERRUPTED BUILD LEFT, of the names given, ahead of the migrator. A concurrent
+ * build or drop that was cut leaves its index in the catalog, not valid: no read uses it, every
+ * write still maintains it, and `IF NOT EXISTS` takes it for the index. Each of `names` that
+ * stands so in `public` is dropped; whatever builds it makes it again.
+ *
+ * ONLY NAMES THE CALLER OWNS. An index that is not valid may be a build in flight: under the
+ * migration's lock it is not one of this setup's, and an index of another name may be somebody
+ * else's. A run that finds none takes no lock. Returns what it dropped.
+ */
+export async function dropInvalidLeftovers(
+  db: SqlExecutor, names: readonly string[],
+  opts: { label: string; log?: (msg: string) => void; concurrently?: boolean },
+): Promise<string[]> {
+  const concurrently = opts.concurrently !== false;
+  assertLockTimeout();
+  if (names.length === 0) return [];
+  /** Which of the caller's names stand not valid. The catalog answers; a statement carries only the caller's spelling. */
+  const leftovers = async (): Promise<string[]> => {
+    const found = new Set(rowsOf<{ name: string }>(await db.execute(sql`
+      select c.relname::text as name
+        from pg_index i join pg_class c on c.oid = i.indexrelid join pg_namespace s on s.oid = c.relnamespace
+       where s.nspname = 'public' and not i.indisvalid
+         and c.relname in (${sql.join(names.map((n) => sql`${n}`), sql`, `)})`)).map((r) => r.name));
+    return names.filter((n) => found.has(n));
+  };
+  if ((await leftovers()).length === 0) return [];
+  return underMigrationLock(db, opts.label, async () => {
+    // Read again under the lock: what another setup was building a moment ago is valid by now.
+    const dropped: string[] = [];
+    for (const name of await leftovers()) {
+      opts.log?.(`${name}: left not valid by an interrupted build, dropped ahead of the migrator`);
+      await db.execute(sql.raw(`drop index ${concurrently ? "concurrently " : ""}if exists public."${name}"`));
+      dropped.push(name);
+    }
+    return dropped;
+  });
+}
+
 /**
  * Build every admitted spec, idempotently, and safe against a database at any migration position.
  *
@@ -112,30 +186,11 @@ export async function ensureConcurrentIndexes(
   opts: { label: string; log?: (msg: string) => void; concurrently?: boolean },
 ): Promise<void> {
   const concurrently = opts.concurrently !== false;
-  if (!Number.isInteger(MIGRATION_LOCK_TIMEOUT_MS) || MIGRATION_LOCK_TIMEOUT_MS < 0) {
-    throw new Error("MIGRATION_LOCK_TIMEOUT_MS must be a non-negative integer");
-  }
+  assertLockTimeout();
   const wanted = await admit(db, specs, opts.log);
   if (wanted.length === 0) return;
 
-  // BOUNDED ACQUISITION, exactly as `runMigrations` bounds the same one: with the session default
-  // `lock_timeout = 0` a sibling holding the key would park this setup for ever, silently. The
-  // timeout is acquisition-only and reset before any DDL — a concurrent build must not be
-  // abortable by it.
-  const key = MIGRATION_LOCK_KEY as unknown as number;
-  await db.execute(sql.raw(`set lock_timeout = ${MIGRATION_LOCK_TIMEOUT_MS}`));
-  try {
-    await db.execute(sql`select pg_advisory_lock(${key})`);
-  } catch (err) {
-    throw new Error(
-      `could not take the migration advisory lock (${MIGRATION_LOCK_KEY}) within ` +
-        `${MIGRATION_LOCK_TIMEOUT_MS}ms for ${opts.label} — another setup or migration is running ` +
-        `against this database. Wait for it and re-run; this step is idempotent. ` +
-        `Cause: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  await db.execute(sql.raw("set lock_timeout = 0"));
-  try {
+  await underMigrationLock(db, opts.label, async () => {
     for (const spec of wanted) {
       for (const statement of spec.prelude ?? []) await db.execute(statement);
       const state = rowsOf<{ valid: boolean }>(await db.execute(sql`
@@ -157,7 +212,5 @@ export async function ensureConcurrentIndexes(
       opts.log?.(`${spec.name}: building ${concurrently ? "concurrently " : ""}on ${spec.table}`);
       await db.execute(concurrently ? spec.ddl : plainIndexDdl(spec.ddl));
     }
-  } finally {
-    await db.execute(sql`select pg_advisory_unlock(${key})`);
-  }
+  });
 }

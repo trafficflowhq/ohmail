@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "../src/testing.js";
@@ -44,7 +45,7 @@ async function seedHeldMessage(
     sensitivityCategory: over.sensitivityCategory ?? null, authVerdict: over.authVerdict ?? null,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
     lastSetBy: over.lastSetBy ?? "us", reconcileStatus: "reconciled", conflict: false,
   });
   return { mailboxId, messageId: msg!.id };

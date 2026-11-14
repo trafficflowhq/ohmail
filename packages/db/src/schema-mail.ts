@@ -10,6 +10,7 @@
  */
 
 import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/pg-core";
+import { shapeCheck } from "./closed-set-shape.js";
 import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
 import { OUTSTANDING_FILING_WHERE } from "./folder-state-outstanding-where.js";
@@ -103,15 +104,6 @@ export const mailboxes = pgTable("mailboxes", {
   // release does not reset it: freeing a mailbox must not hand a struggling provider a fresh
   // minimum-interval retry loop.
   retryAfter: timestamp("retry_after", { withTimezone: true }),
-  // ── Mail 0025 — the once-per-mailbox inbox-shaping kickstart ran ──
-  //
-  // The worker scans the Sent folder at CONNECT, imports its recipients into `contacts` (which
-  // IS `knownSenders`) and re-routes the Screener backlog once. This column is the whole of the
-  // idempotency: NULL means "never run", a timestamp means "done, never again". It is a MARKER
-  // and not a schedule — nothing reads it to decide anything other than skip-or-run, and the
-  // worker writes it only AFTER the pass succeeds, so a crash mid-kickstart retries on the next
-  // attach rather than leaving a half-shaped mailbox marked complete.
-  kickstartAt: timestamp("kickstart_at", { withTimezone: true }),
   // Mail 0027 — the organizer lease. `disabledReason` is WHY this mailbox is `status='disabled'`
   // when the reason is the lease rather than a person. A CLOSED set (`MAILBOX_DISABLED_REASONS`)
   // with a CHECK, because it is read by the account's own user and must never hold a string a
@@ -396,50 +388,6 @@ export const mailboxes = pgTable("mailboxes", {
   // the value derives from an SMTP AUTH failure — a server's own text can echo the credential.
   smtpSizeProbedAt: timestamp("smtp_size_probed_at", { withTimezone: true }),
   smtpSizeProbeCode: text("smtp_size_probe_code"),
-  // Mail 0030 — the one-time re-evaluation of mail the sensitivity override already misrouted. A
-  // fix stopped a sender-chosen subject or body carrying a stranger past the consent gate; it is
-  // forward-looking only, and the damage was already filed — most of the measured Ohbox rows were
-  // sensitive and nearly all came from senders absent from `contacts`. This column is the
-  // correction's idempotency: NULL means "never re-screened", a timestamp "done, never again". A
-  // MARKER, stamped AFTER the pass, never before: claiming it first would make a crash permanent.
-  // Re-running is safe without it — the candidate query is the idempotency (a moved message is no
-  // longer a candidate); the marker saves the scan, not the correctness. NOT `kickstart_at`
-  // re-used: `listScreenerBacklog` selects the INVERSE candidate set, and that marker is already
-  // stamped on every live mailbox.
-  sensitiveRescreenAt: timestamp("sensitive_rescreen_at", { withTimezone: true }),
-  /**
-   * Where the re-screen got to — the last `messages.id` of the last COMMITTED page (mail 0081).
-   * The marker says whether the pass is FINISHED; this says where it is. The pass is bounded, and
-   * without a resume point the next run started at the beginning: MOVERS drop out of the
-   * candidate query, STAYERS do not, so a prefix of stayers was re-read forever. Same column,
-   * same reason as `rules.retro_cursor`. Written inside the page's own transaction; advanced
-   * under `WHERE cursor IS NULL OR cursor < <new>` so two operators cannot rewind one another;
-   * NULLed in the same UPDATE that stamps the marker. Known limit: an exclusion REMOVED mid-pass
-   * is invisible — the remedy is to NULL all three re-screen columns together.
-   */
-  sensitiveRescreenCursor: uuid("sensitive_rescreen_cursor"),
-  /**
-   * When the walk that cursor belongs to BEGAN — the window the completion check looks back over
-   * (mail 0081). NULL exactly when the cursor is NULL. The check needs the WALK's start, not the
-   * RUN's: the cursor outlives an invocation — run A stores a prefix and exits, the worker
-   * restores one of A's rows to the Ohbox, run B resumes past it. Against B's own start that
-   * restoration is invisible, and B stamps; against the WALK's start it is inside the window, B
-   * declines the marker and clears both columns, so the next run re-walks the prefix. Written
-   * with `coalesce(existing, <run start>)` in the same guarded UPDATE as the cursor; cleared with
-   * the cursor when the marker lands.
-   */
-  sensitiveRescreenStartedAt: timestamp("sensitive_rescreen_started_at", { withTimezone: true }),
-  // Mail 0036 — the one-time repair of bodies a classifier FALSE POSITIVE stored redacted. A
-  // click tracker's percent-escaped slash (`-2F`) put word boundaries around `2Fa`, read as the
-  // acronym `2fa`; mail judged sensitive is stored with text redacted and NO HTML, so ordinary
-  // newsletters were filed unreadable. The fix (`proseOnly`) is forward-looking; the only
-  // remaining copy of the discarded HTML is on the IMAP server. A MARKER, for the reason
-  // `thread-backfill` needed none: THIS candidate set does not shrink — a message still sensitive
-  // under the fixed classifier is a candidate forever, so without a marker the pass would re-read
-  // every categorised message off the server every cycle. Stamped AFTER the pass (claiming first
-  // makes a crash permanent); re-running is safe — the marker saves the IMAP reads, not the
-  // correctness. NULLing it asks again.
-  sensitiveFpBackfillAt: timestamp("sensitive_fp_backfill_at", { withTimezone: true }),
   // Mail 0038 — when this mailbox's FIRST IMPORT actually finished. A first import drains
   // newest-first in bounded batches, so the server holds a PARTIAL mailbox for the whole of it.
   // The client watches its own mirror grow and says "still syncing"; what it could not see is the
@@ -495,12 +443,6 @@ export const mailboxes = pgTable("mailboxes", {
    * resolved none", and every row attached before this column until its next attach.
    */
   sentFolder: text("sent_folder"),
-  /**
-   * Mail 0182 — when a full read found no letter of this mailbox spelled the pre-0.22 way
-   * (`ohmail/Reads`): the News repair never walks its letters again. Written once, by the repair
-   * pass inside the visit's fenced write, never reset; NULL = not found clean yet.
-   */
-  legacyNewsCleanAt: timestamp("legacy_news_clean_at", { withTimezone: true }),
 }, (t) => ({
   ixIdAccount: uniqueIndex("mailboxes_id_account_uq").on(t.id, t.accountId),
   // Mail 0161: the list read, the caller's mailboxes in id order. Prebuilt CONCURRENTLY on a server.
@@ -514,36 +456,25 @@ export const mailboxes = pgTable("mailboxes", {
   uqActiveAddress: uniqueIndex("mailboxes_active_address_uq")
     .on(t.accountId, sql`lower(${t.address})`)
     .where(sql`${t.status} <> 'disabled'`),
-  // THE CLOSED SET, AT REST (mail 0027). The members are `MAILBOX_DISABLED_REASONS`
-  // (mailbox-errors.ts) and the two are reconciled by a test against real Postgres, which
-  // inserts every member and one foreign string and watches the constraint refuse the last one.
-  // Declared here to keep the TS schema honest; the constraint is created by the migration.
-  ckDisabledReason: check(
-    "mailboxes_disabled_reason_closed",
-    sql`${t.disabledReason} is null or ${t.disabledReason} in ('organized_elsewhere:cloud', 'organized_elsewhere:local', 'organized_elsewhere:mobile', 'organized_elsewhere:unknown')`,
-  ),
-  // THE SECOND CLOSED SET, AT REST (mail 0029). Members are `MAILBOX_SYNC_BLOCK_REASONS`, and a
-  // Postgres test reconciles the two the way the set above is reconciled: insert every member plus
-  // one foreign string, and watch the CHECK refuse the last. Declared here to keep the TS schema
-  // honest; the constraint is created by the migration.
-  ckSyncBlockedReason: check(
-    "mailboxes_sync_blocked_reason_closed",
-    sql`${t.syncBlockedReason} is null or ${t.syncBlockedReason} in ('lease_unreadable', 'awaiting_credentials', 'at_capacity', 'read_limited', 'clock_off', 'account_closed', 'provider_unavailable', 'meta_folder_full', 'meta_undeletable', 'mailbox_full')`,
-  ),
-  // THE THIRD AND FOURTH CLOSED SETS . `organizerRole` has no `is null` arm because
-  // the column is NOT NULL — the set really is two members, and spelling a third state that
-  // cannot exist would invite a reader to handle it. Members are `ORGANIZER_ROLES` and
-  // `ORGANIZER_KINDS` (organizer-role.ts); a real-Postgres test reconciles each against its
-  // constraint the way 0027's and 0029's are reconciled. Declared here to keep the TS schema
-  // honest; both constraints are created by the migration.
+  // THREE LISTS THAT GROW, HELD TO A SHAPE AT REST (mail 0202): the reason a mailbox is disabled, the
+  // reason its sync is blocked, and the kind of install that organizes it (below). Until 0202 each
+  // was a member list in a CHECK, which a new word had to drop and re-add on this table and a device
+  // could not carry at all. The members are enforced at the write door on every store
+  // (`closed-sets.ts`); the database keeps the shape, one lower-case word, so no value a mail
+  // server chose can reach a column the staff role reads. Declared here to keep the TS schema
+  // honest; the constraints are created by the migration.
+  ckDisabledReason: check("mailboxes_disabled_reason_shape", sql.raw(shapeCheck("disabled_reason"))),
+  ckSyncBlockedReason: check("mailboxes_sync_blocked_reason_shape", sql.raw(shapeCheck("sync_blocked_reason"))),
+  // THE CLOSED SET OF ROLES. `organizerRole` has no `is null` arm because the column is NOT NULL —
+  // the set really is two members, and spelling a third state that cannot exist would invite a
+  // reader to handle it. Members are `ORGANIZER_ROLES` (organizer-role.ts); a real-Postgres test
+  // reconciles them against the constraint. Declared here to keep the TS schema honest; the
+  // constraint is created by the migration.
   ckOrganizerRole: check(
     "mailboxes_organizer_role_closed",
     sql`${t.organizerRole} in ('organizer', 'reader')`,
   ),
-  ckOrganizedByKind: check(
-    "mailboxes_organized_by_kind_closed",
-    sql`${t.organizedByKind} is null or ${t.organizedByKind} in ('cloud', 'local', 'mobile', 'unknown')`,
-  ),
+  ckOrganizedByKind: check("mailboxes_organized_by_kind_shape", sql.raw(shapeCheck("organized_by_kind"))),
   // THE FIFTH . `organizerState` is the lease's occupancy as a reader cycle last saw
   // it; NULL is "we have not looked", which is every row until its first cycle.
   ckOrganizerState: check(
@@ -575,6 +506,8 @@ export const mailboxCredentials = pgTable("mailbox_credentials", {
   keyVersion: integer("key_version").notNull(),                            // KeyProvider KEK version
   meta: jsonb("meta"),                                                     // non-secret conn params (host/port/user/secure)
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  // The mailbox's account (mail 0201).
+  accountId: uuid("account_id").notNull(),
 }, (t) => ({ pk: primaryKey({ columns: [t.mailboxId, t.transport] }) }));
 
 export const mailboxFolders = pgTable("mailbox_folders", {
@@ -609,6 +542,8 @@ export const mailboxFolders = pgTable("mailbox_folders", {
    */
   budgetStopUid: bigint("budget_stop_uid", { mode: "bigint" }),
   budgetStopUidvalidity: bigint("budget_stop_uidvalidity", { mode: "bigint" }),
+  // The mailbox's account (mail 0201).
+  accountId: uuid("account_id").notNull(),
 }, (t) => ({
   ixIdMailbox: uniqueIndex("mailbox_folders_id_mailbox_uq").on(t.id, t.mailboxId),
   uq: unique().on(t.mailboxId, t.folder) }));
@@ -741,10 +676,9 @@ export const messages = pgTable("messages", {
    */
   authVerdict: text("auth_verdict"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-  // ── Migration 0008: lexical index over subject + from_address, DB-generated. ──
-  subjectTsv: tsvector("subject_tsv").generatedAlwaysAs(
-    sql`to_tsvector('english', coalesce(subject, '') || ' ' || coalesce(from_address, ''))`,
-  ),
+  // `subject_tsv` (migration 0008) left with mail 0200. It is declared nowhere: a store whose
+  // search pass still owes documents keeps the column until the search setup retires it, and the
+  // one reader names it in SQL (`dialect/pg.ts`, the arm for letters without a document).
   /**
    * The honest arrival — the IMAP server's INTERNALDATE, NULL where the adapter could not say
    * (mail 0119). NOT `created_at`, which is when THIS mirror ingested the row and lies by months
@@ -807,8 +741,9 @@ export const messages = pgTable("messages", {
   // Message-ID is attacker-choosable (anybody can send you mail carrying one), so the account
   // has to be the first key rather than a filter applied to a cross-account result.
   ixMessageIdHeader: index("messages_account_message_id_header_idx").on(t.accountId, t.messageIdHeader),
-  ixUnread: index("messages_account_mailbox_unread_idx").on(t.accountId, t.mailboxId, t.unread),
-  ixSubjectTsv: index("messages_subject_tsv_idx").using("gin", t.subjectTsv),
+  // Mail 0200: the read flag left this index. A flag that flips with every letter read churned
+  // it, and the unread count is bounded by the two leading columns already.
+  ixAccountMailbox: index("messages_account_mailbox_idx").on(t.accountId, t.mailboxId),
   // Mail 0034 — WHO sent it, which nothing could look up. There was no index on `from_address` at
   // all, so every reader — the retro pass, the re-screen's candidate query, `heldRowsForDomain` —
   // was a sequential scan over the account's messages, and the retro pass runs one PER PAGE, per
@@ -956,16 +891,6 @@ export const folderState = pgTable("folder_state", {
    */
   autoFilingUndoneAt: timestamp("auto_filing_undone_at", { withTimezone: true }),
   /**
-   * The Screener auto-apply pass's verdict on this message's strong-bulk floor (mail 0141). NULL =
-   * unjudged, or withdrawn; N = the pass read the floor empty under `STRONG_BULK_FLOOR_VERSION` N
-   * with a body row present, and its hourly walk skips the row. Written by that pass alone, one
-   * column and nothing else: no `updated_at`, no change row. A mark under another version is
-   * withdrawn by the pass's next full walk, and a returned letter's by its header restore. That pass
-   * is retired (2026-11-02): nothing reads the column, only that restore still clears it, and a later
-   * migration drops it.
-   */
-  screenerFloorVersion: integer("screener_floor_version"),
-  /**
    * When a DECISION about this message's placement was placed (mail 0145): the press's floor (the
    * server clock minus the press age) when the request carried one, else the server's now. A press
    * replayed past its idempotency record is refused when this is later than its floor. NULL admits
@@ -974,15 +899,11 @@ export const folderState = pgTable("folder_state", {
    */
   decidedAt: timestamp("decided_at", { withTimezone: true }),
   /**
-   * The message's account while this row is an outstanding filing of ours (mail 0160), so the
-   * mailbox poll reads one account's outstanding filings from a small index instead of every
-   * message of the mailbox; since mail 0181 on every other pending row too, so the reconcile poll
-   * reads one account's queue. Written by two BEFORE triggers alone, each re-deriving it from
-   * `messages` on every write that leaves the row pending; never by application code (a test scans
-   * for it). Stale or NULL on settled rows, which every reader excludes with the predicate. Not
-   * `account_id`: it is no account scope, and erasure and export stay keyed by message.
+   * The message's account (mail 0201): a row can never hang under another account's letter, and
+   * every writer names it. It replaced `outstanding_account_id`, a copy two triggers kept while
+   * the row was pending.
    */
-  outstandingAccountId: uuid("outstanding_account_id"),
+  accountId: uuid("account_id").notNull(),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // THE DRAIN'S WINDOW, INDEXED (UD-R4-02 / DB-R10-01). Its walk asks `desired_folder IN (…)` and
@@ -993,12 +914,12 @@ export const folderState = pgTable("folder_state", {
     .on(t.desiredFolder, t.updatedAt, t.messageId),
   // Mail 0160: the mailbox poll's outstanding filings, by account. Prebuilt CONCURRENTLY on a server.
   ixOutstanding: index("folder_state_outstanding_idx")
-    .on(t.outstandingAccountId, t.messageId)
+    .on(t.accountId, t.messageId)
     .where(sql.raw(OUTSTANDING_FILING_WHERE)),
   // Mail 0181: the reconcile poll's pending rows, by account and then in its queue order. Prebuilt
   // CONCURRENTLY on a server.
   ixPendingQueue: index("folder_state_pending_queue_idx")
-    .on(t.outstandingAccountId, t.updatedAt, t.messageId)
+    .on(t.accountId, t.updatedAt, t.messageId)
     .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
@@ -1028,18 +949,13 @@ export const flagState = pgTable("flag_state", {
   nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
   /** When a read-state DECISION was placed (mail 0145) — `folder_state.decided_at`'s pair. */
   decidedAt: timestamp("decided_at", { withTimezone: true }),
-  /**
-   * The message's account while this row is pending (mail 0181), so the reconcile poll reads one
-   * account's queue: `folder_state.outstanding_account_id`'s twin. Written by the BEFORE trigger
-   * alone, re-derived from `messages` on every write that leaves the row pending; never by
-   * application code. Stale or NULL on settled rows, which the poll excludes with its predicate.
-   */
-  pendingAccountId: uuid("pending_account_id"),
+  /** The message's account (mail 0201): `folder_state.account_id`'s pair. */
+  accountId: uuid("account_id").notNull(),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
   // Mail 0181: the folder queue's twin.
   ixPendingQueue: index("flag_state_pending_queue_idx")
-    .on(t.pendingAccountId, t.updatedAt, t.messageId)
+    .on(t.accountId, t.updatedAt, t.messageId)
     .where(sql.raw(`"reconcile_status" = 'pending'`)),
 }));
 
@@ -1147,10 +1063,6 @@ export const rules = pgTable("rules", {
    */
   ixRetroOwed: index("rules_retro_owed_idx").on(t.accountId)
     .where(sql`${t.retroRequestedAt} is not null and ${t.retroDoneAt} is null`),
-  // Mail 0136 — "has the user ruled on this sender?", asked per held row by the Screener passes:
-  // the key the router keys a rule by, within the account, enabled rules only.
-  ixAccountMatchKey: index("rules_account_match_key_idx").on(t.accountId, ruleMatchKeySql(t.match))
-    .where(sql`${t.enabled}`),
   // Mail 0144 — the same key over EVERY row, paused included: the one read of a graduation asks
   // whether a person decided under a sender's key (`routeIsLearned`), and a pause is a decision.
   ixAccountKey: index("rules_account_key_idx").on(t.accountId, ruleMatchKeySql(t.match)),
@@ -1312,14 +1224,13 @@ export const messageBodies = pgTable("message_bodies", {
    * seven of its header lines (`gone-letter-headers.ts`).
    */
   withheldReason: text("withheld_reason"),
-  // ── Migration 0008: the body-text lexical index lives HERE (on `message_bodies`, not
-  // `messages`). Kept by a trigger since mail 0140, over the first 65,536 characters of `text`:
-  // a generated column over the whole body overflowed the tsvector ceiling. The app never writes
-  // it; `text` itself is never cut. ──
-  bodyTsv: tsvector("body_tsv"),
+  // `body_tsv` (migration 0008, trigger-kept since mail 0140) left with mail 0200, as
+  // `messages.subject_tsv` did: declared nowhere, standing only on a store that still owes
+  // search documents.
+  /** The message's account (mail 0201): `folder_state.account_id`'s pair. */
+  accountId: uuid("account_id").notNull(),
 }, (t) => ({
   uqMessage: unique().on(t.messageId),
-  ixBodyTsv: index("message_bodies_body_tsv_idx").using("gin", t.bodyTsv),
   /**
    * THE HUSK-PROVENANCE INDEX (mail 0071). The readers that walk withheld bodies BY REASON — the
    * worker's `junk_filed` convergence pass (`junk-restore.ts` → `listJunkFiledHusks`, once per
@@ -1509,7 +1420,6 @@ export const learningSignals = pgTable("learning_signals", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   uqAction: unique().on(t.accountId, t.triggeringActionId),    // deduped by triggering-action id
-  ixAccount: index("learning_signals_account_idx").on(t.accountId),
 }));
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1703,6 +1613,11 @@ export const pairingTokens = pgTable("pairing_tokens", {
   consumedAt: timestamp("consumed_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  /**
+   * The creator's account (mail 0201); NULL exactly when there is no creator (the first setup
+   * token), which a CHECK holds on a server.
+   */
+  accountId: uuid("account_id"),
 }, (t) => ({
   uqToken: unique().on(t.tokenHash),
 }));
@@ -1868,35 +1783,6 @@ export const awayResponders = pgTable("away_responders", {
   lastConsideredAt: timestamp("last_considered_at", { withTimezone: true })
     .notNull().default(EPOCH),
 }, (t) => ({ uqAccount: unique().on(t.accountId) }));   // one row per account ⇒ PUT upserts
-
-/**
- * One automatic reply per sender, and the row that proves it — keyed `(account, sender,
- * episode)`; the UNIQUE is the guard. The episode key is the responder row's own `updated_at`: a
- * boolean "replied" flag would permanently silence every first-trip correspondent after an
- * off-and-on. Stated: ANY edit is a new episode, so a mid-trip typo fix may answer a
- * correspondent twice — deliberate, because twice is recoverable and never is not. Written BEFORE
- * the send: SMTP is not transactional, so claiming first costs a crash ONE unsent reply. `ON
- * CONFLICT DO NOTHING` returning zero rows IS the already-answered branch. `sender`, the
- * lowercased envelope author, is on the row, so nulling `message_id` un-answers nobody.
- */
-export const awayResponderSent = pgTable("away_responder_sent", {
-  id: uuid("id").defaultRandom().primaryKey(),
-  accountId: uuid("account_id").notNull(),
-  sender: text("sender").notNull(),
-  responderUpdatedAt: timestamp("responder_updated_at", { withTimezone: true }).notNull(),
-  /** The message that triggered it, as evidence. Nullable; the key SETs it NULL — see the header. */
-  messageId: uuid("message_id"),
-  /** The minted `<uuid@domain>` of the reply we sent, so a Sent-folder copy is attributable. */
-  mintedMessageId: text("minted_message_id"),
-  sentAt: timestamp("sent_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({
-  // THE GUARD. Not an index for speed — the ON CONFLICT target that makes "reply once" a
-  // property of the schema instead of a property of the pass's control flow. Named explicitly
-  // (rather than letting drizzle derive one) because the migration creates it by name.
-  uqEpisode: uniqueIndex("away_responder_sent_episode_uq")
-    .on(t.accountId, t.sender, t.responderUpdatedAt),
-  ixAccount: index("away_responder_sent_account_idx").on(t.accountId),
-}));
 
 /**
  * The away reply ledger (mail 0087) — one row per DECIDED candidate, not only the sends: a
@@ -2561,6 +2447,8 @@ export const unsubscribeRecords = pgTable("unsubscribe_records", {
 }, (t) => ({
   uqMailboxList: uniqueIndex("unsubscribe_records_mailbox_list_uq").on(t.mailboxId, t.listKey),
   ixAccount: index("unsubscribe_records_account_idx").on(t.accountId),
+  // Mail 0201: the target of `unsubscribe_examined`'s key onto (record_id, account_id).
+  ixIdAccount: uniqueIndex("unsubscribe_records_id_account_uq").on(t.id, t.accountId),
 }));
 
 /**
@@ -2579,6 +2467,58 @@ export const unsubscribeExamined = pgTable("unsubscribe_examined", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   ixRecord: index("unsubscribe_examined_record_idx").on(t.recordId),
+}));
+
+/**
+ * THE PROGRESS OF THE ONE-TIME PASSES (mail 0203): one row per pass and subject, where a pass was
+ * asked for, begun and finished, and the place it stopped. `subjectId` is the mailbox's id for a
+ * pass over one mailbox and the account's id for a pass over the account; a plain column, no key
+ * into `mailboxes`, and the two erasures delete by it. `job` is the pass's name in the worker's
+ * registry: a closed list that grows, with no CHECK on any store. Written through ONE door,
+ * `pass-progress.ts`, which refuses a foreign name; no other module inserts here.
+ *
+ * No row means every mark is empty: the pass never ran. Until 0203 these were fourteen columns on
+ * `mailboxes` and `account_settings`.
+ */
+export const passProgress = pgTable("pass_progress", {
+  accountId: uuid("account_id").notNull(),
+  job: text("job").notNull(),
+  subjectId: uuid("subject_id").notNull(),
+  requestedAt: timestamp("requested_at", { withTimezone: true }),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  doneAt: timestamp("done_at", { withTimezone: true }),
+  /** Where the pass stopped: the id of the last row it finished, as text. Never granted to staff. */
+  cursor: text("cursor"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ pk: primaryKey({ name: "pass_progress_pk", columns: [t.accountId, t.job, t.subjectId] }) }));
+
+/**
+ * THE IDENTITY OF AN INVITATION, kept at ingest (mail 0204). A letter that carries a calendar
+ * invitation gets one row: which event it speaks of, which revision, what it asks, when the event
+ * starts, who organizes it and which of the account's addresses was invited. No calendar bytes.
+ *
+ * A child of its letter: the row goes with it (ON DELETE CASCADE; the composite key
+ * `(message_id, account_id)` is in the journal). `mailboxId` is a plain column, with no key into
+ * `mailboxes`; the removals delete by it. `method` is iTIP's list, held at the write door.
+ */
+export const messageInvitations = pgTable("message_invitations", {
+  accountId: uuid("account_id").notNull(),
+  messageId: uuid("message_id").notNull().references(() => messages.id, { onDelete: "cascade" }),
+  mailboxId: uuid("mailbox_id").notNull(),
+  /** The event's UID as the invitation spelled it, and the instance it names ('' for the series). */
+  uid: text("uid").notNull(),
+  recurrenceId: text("recurrence_id").notNull().default(""),
+  sequence: integer("sequence").notNull().default(0),
+  method: text("method").notNull(),
+  /** The start as the invitation wrote it, and the instant it means where one can be told. */
+  startRaw: text("start_raw"),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  organizer: text("organizer"),
+  invitedAddress: text("invited_address"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "message_invitations_pk", columns: [t.accountId, t.messageId] }),
+  byUid: index("message_invitations_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),
 }));
 
 /**
@@ -2672,31 +2612,6 @@ export const accountSettings = pgTable("account_settings", {
    * turn, never routing itself. Length-capped at 2 KiB by the migration's CHECK.
    */
   ohboxBar: text("ohbox_bar"),
-  /**
-   * The Ohbox backlog tidy — the resumable, re-armable marker for the worker pass that re-routes
-   * mail ALREADY misfiled into the Ohbox under `people_only` (mail 0043). New mail is demoted
-   * live; these are the retroactive clean-up's durable state — `rules.retro_*` lifted to a
-   * per-ACCOUNT marker. `requested_at`: stamped ONLY on the transition INTO `people_only`, with
-   * the cursor NULLed in the same UPDATE — re-arming without resetting the cursor would resume at
-   * the end and move nothing. `done_at`: written LAST (claiming first makes a crash permanent);
-   * owed = requested and not yet done since. `cursor`: the last `messages.id` of the last
-   * COMMITTED page. NULL on every existing account: shipping the columns moves no mail.
-   */
-  ohboxTidyRequestedAt: timestamp("ohbox_tidy_requested_at", { withTimezone: true }),
-  ohboxTidyDoneAt: timestamp("ohbox_tidy_done_at", { withTimezone: true }),
-  ohboxTidyCursor: uuid("ohbox_tidy_cursor"),
-  /**
-   * Screener auto-apply — when the account opted in, or NULL for off (mail 0046). ON means: the
-   * worker files obvious strong-bulk senders (`migrationBulkPlacement`: `List-Unsubscribe` plus a
-   * corroborating list marker) out of the Screener into Reads/Receipts. DETERMINISTIC routing
-   * only: no classifier call, no credit debit. Every move is durable and user-reversible, never a
-   * delete, and it writes NO `rules` row — the sender still screens next time. A
-   * sensitivity-flagged message is NEVER auto-moved, so a stranger's login code stays at the gate
-   * for a human. NULL, no row, and a FAILED read all read as OFF — the other default would move
-   * mail on a fetch error. Retired (2026-11-02): only a person lets a stranger in, so nothing acts
-   * on the column; the setting's route still reads and writes it until a later migration drops it.
-   */
-  screenerAutoApplyAt: timestamp("screener_auto_apply_at", { withTimezone: true }),
   /**
    * "Use folders" — when the account turned the optional folders feature on, or NULL for off
    * (FOLDERS-SPEC.md §6). ON means: the mailbox's OWN folders — the passive inventory minus the
@@ -2809,16 +2724,6 @@ export const accountSettings = pgTable("account_settings", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   /**
-   * THE ONE-TIME GATE RELEASE, PER ACCOUNT — when `gateReleasePass` last swept this account (mail
-   * 0109). An account that confirmed its seed before 0.19.0 carries rules with no retro request,
-   * so mail already at the screening gate from those senders is behind a decision nothing will
-   * ever act on; the pass arms the release, frees what the gate holds from contact-only senders,
-   * and stamps this. Read as `IS NOT NULL`; NULL, an absent row and a failed read all mean "not
-   * swept", the only default that can still repair an account. LAST in the declaration because
-   * `ADD COLUMN` appends and `schema-twin-parity.test.ts` compares this order with the twin's.
-   */
-  gateReleaseDoneAt: timestamp("gate_release_done_at", { withTimezone: true }),
-  /**
    * THE WALL CLOCK RESURFACED MAIL COMES BACK AT — `'HH:MM'`, 24-hour, in the reader's own zone
    * (mail 0110). NOT an instant: the product's horizons have always minted a wall clock through
    * `zonedInstant`, and this is that hour and minute made choosable. NULL, an absent row and an
@@ -2840,13 +2745,6 @@ export const accountSettings = pgTable("account_settings", {
    */
   heldReleaseDismissed: text("held_release_dismissed"),
   /**
-   * When every living message of this account first had its search document (mail 0125) — the
-   * backfill's completion marker, written once when the derived count reaches the living count.
-   * NULL = still indexing (or never measured); search then also reads the unindexed rows through
-   * the pre-0125 arms. LAST: `ADD COLUMN` appends and the twins are compared in order.
-   */
-  searchIndexBuiltAt: timestamp("search_index_built_at", { withTimezone: true }),
-  /**
    * The act on suggestions — when the account let the Screener file a waiting sender whose stored
    * suggestion is confident, or NULL for off. Its own consent: never
    * `screener_auto_apply_at`. Needs `auto_suggest_at`; turning that off clears this. Read under
@@ -2854,25 +2752,219 @@ export const accountSettings = pgTable("account_settings", {
    */
   screenerAutoActAt: timestamp("screener_auto_act_at", { withTimezone: true }),
   /**
-   * When the list-address backfill (mail 0150) read every stored message's `List-Post`, stamped
-   * after its last row. NULL, an absent row and a failed read all mean "not scanned"; mail stored
-   * afterwards is ingest's to record. LAST: `ADD COLUMN` appends and the twins are compared in order.
-   */
-  listAddressesScannedAt: timestamp("list_addresses_scanned_at", { withTimezone: true }),
-  /**
-   * Mail 0172 — when the html-words backfill had walked every stored message: an html-only letter
-   * stored before ingest kept its html's words now has them as its text. NULL = still owed.
-   * LAST, with its cursor below: `ADD COLUMN` appends and the twins are compared in order.
-   */
-  htmlWordsBackfillAt: timestamp("html_words_backfill_at", { withTimezone: true }),
-  /** The walk's resume point: the last message id it decided, in id order. NULL = from the start. */
-  htmlWordsBackfillCursor: uuid("html_words_backfill_cursor"),
-  /**
    * Mail 0184 — when the person turned off filing a held letter that impersonates a company to Spam
    * on its own; NULL = on, every account's default. Read by the organizer's screening pass; a failed
    * read reads as off. LAST: `ADD COLUMN` appends and the twins are compared in order.
    */
   impersonationFilingOffAt: timestamp("impersonation_filing_off_at", { withTimezone: true }),
+});
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+// THE CALENDAR (mail 0205). Ten tables, servers only: a desktop's engine runs this journal and
+// holds them, a phone's own store has none (`drizzle-sqlite/0205.noop`), so they have no twin in
+// `schema-mail-sqlite.ts`. Nothing writes them yet; the calendar's store is built on them, and
+// their columns may change in place until the 2.0 journal is frozen.
+//
+// Every one is born with `account_id NOT NULL`. Keys run inside the family only, and in the
+// journal they are composite, `(x, account_id)` onto the parent's `(id, account_id)`; the two
+// roots key to `accounts`. A mailbox or a letter is named by a plain column, with no key into the
+// mail tables. Closed lists carry no CHECK: they grow, and the write doors hold them.
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/** One way an account reaches a calendar: a provider, and where its sign-in and sync stand. */
+export const calConnections = pgTable("cal_connections", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull().references(() => accounts.id),
+  provider: text("provider").notNull(),
+  label: text("label").notNull().default(""),
+  status: text("status").notNull().default("active"),
+  errorCode: text("error_code"),
+  /** The mailbox whose sign-in this connection rides, where it rides one. A plain column. */
+  mailboxId: uuid("mailbox_id"),
+  serverUrl: text("server_url"),
+  principal: text("principal"),
+  consentedAt: timestamp("consented_at", { withTimezone: true }),
+  listToken: text("list_token"),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  nextPollAt: timestamp("next_poll_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqAccount: uniqueIndex("cal_connections_id_account_uq").on(t.id, t.accountId),
+  byAccount: index("cal_connections_account_idx").on(t.accountId, t.id),
+}));
+
+/** A connection's sealed secret, one row per kind. `secretEnc` is wrapped like a mailbox's. */
+export const calCredentials = pgTable("cal_credentials", {
+  accountId: uuid("account_id").notNull(),
+  connectionId: uuid("connection_id").notNull().references(() => calConnections.id),
+  kind: text("kind").notNull(),
+  secretEnc: text("secret_enc").notNull(),
+  keyVersion: integer("key_version").notNull(),
+  meta: jsonb("meta"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "cal_credentials_pk", columns: [t.accountId, t.connectionId, t.kind] }),
+}));
+
+/** One calendar of a connection, and where its sync stands. */
+export const calCalendars = pgTable("cal_calendars", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  connectionId: uuid("connection_id").notNull().references(() => calConnections.id),
+  providerId: text("provider_id").notNull(),
+  name: text("name").notNull().default(""),
+  color: text("color"),
+  access: text("access").notNull().default("reader"),
+  shown: boolean("shown").notNull().default(true),
+  isDefault: boolean("is_default").notNull().default(false),
+  timeZone: text("time_zone"),
+  syncToken: text("sync_token"),
+  fetchEtag: text("fetch_etag"),
+  /** The two dates the last comparison covered; empty means never fetched. */
+  windowStart: date("window_start"),
+  windowEnd: date("window_end"),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  nextPollAt: timestamp("next_poll_at", { withTimezone: true }),
+  errorCode: text("error_code"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqAccount: uniqueIndex("cal_calendars_id_account_uq").on(t.id, t.accountId),
+  uqProvider: uniqueIndex("cal_calendars_provider_uq").on(t.accountId, t.connectionId, t.providerId),
+}));
+
+/** An event: a series' master, an exception to one, or a single event. Expanded by the reader. */
+export const calEvents = pgTable("cal_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  calendarId: uuid("calendar_id").notNull().references(() => calCalendars.id),
+  providerId: text("provider_id").notNull(),
+  versionTag: text("version_tag"),
+  uid: text("uid").notNull(),
+  recurrenceId: text("recurrence_id").notNull().default(""),
+  sequence: integer("sequence").notNull().default(0),
+  status: text("status").notNull().default("confirmed"),
+  title: text("title").notNull().default(""),
+  notes: text("notes"),
+  place: text("place"),
+  callLink: text("call_link"),
+  startKind: text("start_kind").notNull(),
+  startLocal: text("start_local").notNull(),
+  startZone: text("start_zone"),
+  endLocal: text("end_local"),
+  endZone: text("end_zone"),
+  startsAt: timestamp("starts_at", { withTimezone: true }),
+  endsAt: timestamp("ends_at", { withTimezone: true }),
+  /** One grammar for every provider: iCalendar's. */
+  repeatRule: text("repeat_rule"),
+  excludedDates: jsonb("excluded_dates"),
+  addedDates: jsonb("added_dates"),
+  busy: boolean("busy").notNull().default(true),
+  private: boolean("private").notNull().default(false),
+  organizer: text("organizer"),
+  myAnswer: text("my_answer"),
+  heldBack: boolean("held_back").notNull().default(false),
+  original: text("original"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqAccount: uniqueIndex("cal_events_id_account_uq").on(t.id, t.accountId),
+  uqProvider: uniqueIndex("cal_events_provider_uq").on(t.accountId, t.calendarId, t.providerId),
+  byRange: index("cal_events_account_range_idx").on(t.accountId, t.startsAt, t.endsAt),
+  byUid: index("cal_events_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),
+}));
+
+/** Who is invited to an event, and what each answered. */
+export const calAttendees = pgTable("cal_attendees", {
+  accountId: uuid("account_id").notNull(),
+  eventId: uuid("event_id").notNull().references(() => calEvents.id),
+  address: text("address").notNull(),
+  name: text("name"),
+  role: text("role").notNull().default("required"),
+  answer: text("answer").notNull().default("none"),
+}, (t) => ({
+  pk: primaryKey({ name: "cal_attendees_pk", columns: [t.accountId, t.eventId, t.address] }),
+  byAddress: index("cal_attendees_account_address_idx").on(t.accountId, t.address),
+}));
+
+/** A reminder: of one event, or a calendar's default. Exactly one of the two owners. */
+export const calAlarms = pgTable("cal_alarms", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  eventId: uuid("event_id").references(() => calEvents.id),
+  calendarId: uuid("calendar_id").references(() => calCalendars.id),
+  minutesBefore: integer("minutes_before").notNull(),
+  method: text("method").notNull().default("notice"),
+}, (t) => ({
+  oneOwner: check("cal_alarms_one_owner", sql`(${t.eventId} IS NULL) <> (${t.calendarId} IS NULL)`),
+  byEvent: index("cal_alarms_account_event_idx").on(t.accountId, t.eventId),
+}));
+
+/** A change a person made, owed to the provider: the calendar's desired state. */
+export const calWrites = pgTable("cal_writes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  calendarId: uuid("calendar_id").notNull().references(() => calCalendars.id),
+  /** The event the write is about, where it has one yet. A plain column. */
+  eventId: uuid("event_id"),
+  op: text("op").notNull(),
+  payload: jsonb("payload").notNull(),
+  baseVersionTag: text("base_version_tag"),
+  idempotencyKey: text("idempotency_key").notNull(),
+  state: text("state").notNull().default("pending"),
+  refusal: text("refusal"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  uqIdempotency: uniqueIndex("cal_writes_idempotency_uq").on(t.accountId, t.idempotencyKey),
+  pending: index("cal_writes_pending_idx").on(t.accountId, t.nextAttemptAt, t.id).where(sql`${t.state} = 'pending'`),
+}));
+
+/** A letter that speaks of an event. The letter and its mailbox are named by plain columns. */
+export const calLinks = pgTable("cal_links", {
+  accountId: uuid("account_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull(),
+  uid: text("uid").notNull(),
+  recurrenceId: text("recurrence_id").notNull().default(""),
+  kind: text("kind").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  pk: primaryKey({ name: "cal_links_pk", columns: [t.accountId, t.messageId, t.uid, t.recurrenceId] }),
+  byUid: index("cal_links_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),
+}));
+
+/** An event a letter seems to propose, until a person decides. The letter is a plain column. */
+export const calSuggestions = pgTable("cal_suggestions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  messageId: uuid("message_id").notNull(),
+  mailboxId: uuid("mailbox_id").notNull(),
+  evidence: text("evidence").notNull(),
+  proposed: jsonb("proposed").notNull(),
+  sourceWords: text("source_words"),
+  state: text("state").notNull().default("open"),
+  eventId: uuid("event_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+}, (t) => ({
+  open: index("cal_suggestions_account_open_idx").on(t.accountId, t.createdAt, t.id).where(sql`${t.state} = 'open'`),
+  byMessage: index("cal_suggestions_account_message_idx").on(t.accountId, t.messageId),
+}));
+
+/** The account's calendar settings: one row. */
+export const calSettings = pgTable("cal_settings", {
+  accountId: uuid("account_id").primaryKey().references(() => accounts.id),
+  enabledAt: timestamp("enabled_at", { withTimezone: true }),
+  secondZone: text("second_zone"),
+  weekNumbers: boolean("week_numbers").notNull().default(false),
+  dayFromMinute: integer("day_from_minute"),
+  dayToMinute: integer("day_to_minute"),
+  newEventsCalendarId: uuid("new_events_calendar_id"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
 /**
@@ -2882,5 +2974,6 @@ export const accountSettings = pgTable("account_settings", {
  * install passes THIS one and nothing else — see `apps/sidecar/src/db.ts`.
  */
 export const mailSchema = {
-  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, awayResponderSent, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, accountSettings, messageSearch,
+  mailboxes, mailboxCredentials, mailboxFolders, messages, messageInstances, messageFailures, folderState, flagState, rules, contacts, auditLog, accountSyncState, changeLog, threads, messageBodies, routingDecisions, approvals, messageStates, graduations, learningSignals, accounts, users, devices, sessions, refreshTokens, pairingTokens, idempotencyKeys, trackerEvents, contactNotes, threadNotes, snippets, notifyRules, awayResponders, attachments, kbEntries, drafts, outboundSends, workflows, workflowRuns, workflowProposals, tags, messageTags, unsubscribeRecords, unsubscribeExamined, unsubscribeDrainState, passProgress, messageInvitations,
+  calConnections, calCredentials, calCalendars, calEvents, calAttendees, calAlarms, calWrites, calLinks, calSuggestions, calSettings, accountSettings, messageSearch,
 };

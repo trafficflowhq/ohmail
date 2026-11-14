@@ -12,6 +12,19 @@ export {
   MAIL_MIGRATIONS_DIR, CLOUD_MIGRATIONS_DIR, LEGACY_MIGRATIONS_DIR,
   MAIL_JOURNAL, CLOUD_JOURNAL, JOURNALS,
 } from "./journal-specs.js";
+/** Where the 1.0 line ends and 2.0 begins: data, no driver. */
+export {
+  OLD_HEADS, LINE_2_0_START, TRANSITION_WINDOW, entryNumber, inTransitionWindow, windowEntries,
+  type ServerJournal,
+} from "./journal-heads.js";
+/**
+ * The 2.0 transition, for a desktop's own store: the same function a server runs, on PGlite. Its
+ * closure is the journal's files, the heads and its own map; no server driver, no Cloud schema.
+ */
+export {
+  runTransition, transitionState, sealedOpener, describeEvent, TransitionRefused, TransitionFailed, NOTHING_OPENS,
+  type SealedOpener, type Decrypts, type TransitionEvent, type TransitionReport, type TransitionState,
+} from "./transition/index.js";
 export {
   adoptBaseline, adoptReissuedOriginals, adoptionVerdict, baselineEntries, baselineObjects, readJournalOf,
   findLegacyMigrationsTable, missingObjects, AdoptionRefused,

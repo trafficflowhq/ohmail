@@ -448,7 +448,7 @@ apps/sidecar/test/local-retention.test.ts	data	through apps/sidecar/test/_datadi
 apps/sidecar/test/local-roster.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/local-search-store.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/local-server-said-apart.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
-apps/sidecar/test/local-store-body-vector.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/local-store-body-vector.test.ts	data	the old search's stored vector on a desktop's store (mail 0200 retires it); read the migrations and a data folder it made, through apps/sidecar/test/_datadir.ts	test on real Postgres: packages/db/test/transition.pg.test.ts, packages/db/test/old-search-retirement.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 apps/sidecar/test/local-store-cut-emulated.test.ts	data	through apps/sidecar/test/_cut-disk.ts, apps/sidecar/test/_datadir.ts: reads a data folder it made; the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/local-store-durability.test.ts	source-text	reads source as text (ts)	layer 1	desktop-engine	
 apps/sidecar/test/local-store-fsync.test.ts	data	reads data files (conf, json)	none	desktop-engine	
@@ -1103,7 +1103,7 @@ packages/db/test/arrival-order-setup-order.test.ts	source-text	reads source as t
 packages/db/test/automatic-ai-one-predicate.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/away-piles-closed.pg.test.ts	data	reads data files (json)	none	services-proof	
 packages/db/test/baseline-adoption.pg.test.ts	data	reads data files (json)	none	services-proof	
-packages/db/test/body-tsv-bounded.pg.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/body-tsv-bounded.pg.test.ts	data	the old search's stored vector and its bound (mail 0200 retires it); read data files (sql)	test on real Postgres: packages/db/test/transition.pg.test.ts, packages/db/test/old-search-retirement.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/change-notify-chokepoint.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/cli-exit-drain.test.ts	source-text	reads source as text (js, mjs, ts)	layer 1	services-proof	
 packages/db/test/closed-set-parity.test.ts	data	reads data files (sql)	none	services-proof	
@@ -1113,10 +1113,11 @@ packages/db/test/entitlements-client.test.ts	data	reads data files (md, until)	n
 packages/db/test/entitlements-fault-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/entitlements-fault-row.pg.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/flag-intent-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
-packages/db/test/folder-state-outstanding-account.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/folder-state-outstanding-parity.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/folder-state-outstanding-prebuild.pg.test.ts	data	mail 0160's trigger-kept account copy on folder_state, built ahead of the migrator (mail 0201 removes it); read the journal through the product's reader	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/inbound-header-index-bounds.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/journal-drops-a-referenced-table.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/journal-heads.test.ts	data	reads data files (json, sql): the released-migrations lock, the journals and the migration folders	none	services-proof	
 packages/db/test/journal-lockstep.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/journal-reissue.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/journal-split.pg.test.ts	data	reads data files (columns, json)	none	services-proof	
@@ -1133,12 +1134,12 @@ packages/db/test/migration-0100-reader-window.pg.test.ts	data	reads data files (
 packages/db/test/migration-0144-person-decided.test.ts	data	reads data files (sql, test)	none	services-proof	
 packages/db/test/migration-0146-person-decided-followup.test.ts	data	reads data files (sql, test)	none	services-proof	
 packages/db/test/migration-0154-recipient-keys.test.ts	data	reads data files (sql)	none	services-proof	
-packages/db/test/migration-0160-folder-state-outstanding.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0160-folder-state-outstanding.test.ts	data	mail 0160's trigger-kept account copy on folder_state (mail 0201 removes it); read data files (sql)	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/migration-0165-0166-one-pass.pg.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-0165-account-storage-recount.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-0166-account-storage-facts.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-0166-staff-grant.pg.test.ts	data	reads data files (json)	none	services-proof	
-packages/db/test/migration-0181-reconcile-pending-queue.test.ts	data	reads data files (sql)	none	services-proof	
+packages/db/test/migration-0181-reconcile-pending-queue.test.ts	data	mail 0181's account copy on the reconcile queues' pending rows (mail 0201 removes it; the row carries its account); read data files (sql)	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/migration-allowance-0120.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-breakpoints.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/migration-cloud-0056.roundtrip.test.ts	data	reads data files (sql)	none	services-proof	
@@ -1149,6 +1150,7 @@ packages/db/test/migration-replay-idempotence.pg.test.ts	data	through packages/d
 packages/db/test/no-drizzle-kit.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/no-organizer-one-predicate.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/notice-sink.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
+packages/db/test/old-search-retirement.pg.test.ts	data	reads data files (sql): the migrations	none	services-proof	
 packages/db/test/organizer-event-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/own-address-one-set-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/pg-harness-brand.test.ts	source-text	walks the Postgres test files as text	layer 1	services-proof	
@@ -1157,6 +1159,7 @@ packages/db/test/phantom-rollback.pg.test.ts	source-text	reads source as text (j
 packages/db/test/plane-ops.test.ts	data	reads data files (json)	none	services-proof	
 packages/db/test/pool-wedge.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/recipient-keys-index.test.ts	data	reads data files (json, sql)	none	services-proof	
+packages/db/test/reconcile-queue-account.test.ts	data	mail 0181's account copy on the reconcile queues' pending rows, kept by triggers for every writer (mail 0201 removes it); read no file of its own	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/released-migrations-are-frozen.test.ts	data	reads data files (json, sql)	none	services-proof	
 packages/db/test/request-apply-by-key-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/retire-billing-functions.pg.test.ts	data	reads data files (sql)	none	services-proof	
@@ -1184,6 +1187,8 @@ packages/db/test/staff-role.pg.test.ts	source-text	reads source as text (ts)	lay
 packages/db/test/stand-down-sends-census.test.ts	source-text	reads source as text (ts, tsx)	layer 1	services-proof	
 packages/db/test/testing-template.test.ts	data	reads data files (json, sql, tar)	none	services-proof	
 packages/db/test/transaction-carries-dialect.test.ts	source-text	an import census: walks source files	ohmail/package-borders	tools	
+packages/db/test/transition-window.test.ts	data	reads data files (json): a journal copied to its own folder, and a fixture	none	services-proof	
+packages/db/test/transition.pg.test.ts	data	reads data files (json, sql): a journal and its migrations copied to its own folder	none	services-proof	
 packages/db/test/tx-dialect-carry-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/worker-timeouts.pg.test.ts	source-text	reads source as text (ts): the database client and the worker's leader lock	layer 1	services-proof	
 packages/services/test/admin-freetext-projection.test.ts	source-text	reads source as text (ts): the admin service	layer 1	services-proof	

@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -43,7 +44,7 @@ async function held(folder: string): Promise<string> {
     fromAddress: `s-${randomUUID().slice(0, 8)}@example.com`, subject: "s", date: NOW, snippet: "",
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: folder, observedFolder: folder,
     lastSetBy: "us", reconcileStatus: "reconciled",
   });
   return m!.id;

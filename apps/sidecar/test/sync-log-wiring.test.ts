@@ -171,7 +171,7 @@ describe("the standalone door's sync loop can be heard", () => {
       isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       desiredFolder: "INBOX/Old",
       observedFolder: "INBOX/Old",
       lastSetBy: "external",

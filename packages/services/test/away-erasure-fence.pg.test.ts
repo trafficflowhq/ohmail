@@ -109,9 +109,9 @@ async function arrive(
     bodyHash: randomUUID(), dedupKey: randomUUID(),
     subject: "the roof", fromAddress: from, date: at, createdAt: at,
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder, observedFolder: desiredFolder, lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder, observedFolder: desiredFolder, lastSetBy: "us",
   });
   return m!.id;
 }

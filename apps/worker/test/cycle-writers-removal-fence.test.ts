@@ -64,7 +64,7 @@ async function seedHusk(
   await db.insert(messageInstances).values({
     accountId, messageId: m!.id, mailboxId, folder: "INBOX", uid, uidvalidity: 1n, isPrimary: true,
   });
-  await db.insert(messageBodies).values({ messageId: m!.id, text: norm.textBody, html: null });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: norm.textBody, html: null });
   await db.insert(accountStorage).values({
     accountId, bytes: bodyBytesOf({ text: norm.textBody, html: null }),
   });
@@ -116,7 +116,7 @@ async function seedPendingMove(
     accountId, messageId: m!.id, mailboxId, folder: "INBOX", uid, uidvalidity: 1n, isPrimary: true,
   });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Feed", observedFolder: "INBOX",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Feed", observedFolder: "INBOX",
     lastSetBy: "us", reconcileStatus: "pending",
   });
   return m!.id;

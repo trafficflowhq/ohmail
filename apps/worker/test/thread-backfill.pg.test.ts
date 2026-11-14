@@ -78,7 +78,7 @@ describe.skipIf(!AVAILABLE)("thread find-or-create under concurrency", () => {
       subject: "Roof detail", fromAddress: "anna@example.com", date: o.date,
       nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers });
     return m!.id;
   }
 

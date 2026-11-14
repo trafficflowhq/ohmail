@@ -26,7 +26,7 @@ async function seed(at: string): Promise<{ db: Db; ctx: ServiceContext; id: stri
     fromAddress: "stranger@example.test", subject: "s", date: t0, bodyHash: "h", nativeLocator: { folder: at, ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: at, observedFolder: at, lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: at, observedFolder: at, lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
   return { db, ctx: { db, accountId: a!.id, userId: null, now: () => t0, requestId: "r" } as ServiceContext, id: m!.id };
 }

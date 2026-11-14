@@ -157,7 +157,7 @@ describe.skipIf(!AVAILABLE)("the move completion is atomic and one refusal is co
         uidvalidity: 1n, isPrimary: true,
       });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: DEST, observedFolder: "INBOX",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: DEST, observedFolder: "INBOX",
         reconcileStatus: "pending", lastSetBy: "us",
         // Oldest-first ordering is the queue, so the fixture pins it rather than relying on
         // insertion order: message 0 is the head, and it is the one the poison tests refuse.
@@ -165,7 +165,7 @@ describe.skipIf(!AVAILABLE)("the move completion is atomic and one refusal is co
       });
       if (opts.flags) {
         await db.insert(flagState).values({
-          messageId: m!.id, desiredSeen: true, observedSeen: false,
+          messageId: m!.id, accountId: m!.accountId, desiredSeen: true, observedSeen: false,
           reconcileStatus: "pending", lastSetBy: "us",
         });
       }

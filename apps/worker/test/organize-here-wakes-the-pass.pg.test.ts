@@ -42,7 +42,7 @@ async function handedBack(db: Db, fresh = false): Promise<ServiceContext & { mai
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { db, accountId, userId: null, now: () => new Date(), requestId: randomUUID(), mailboxId: row!.id };

@@ -244,8 +244,8 @@ const DENIED_READS: ReadonlyArray<readonly [string, string]> = [
   ["messages.to_addresses", "select to_addresses from messages where false"],
   ["messages.cc_addresses", "select cc_addresses from messages where false"],
   ["messages.message_id_header", "select message_id_header from messages where false"],
-  // The subtle one: generated from subject + from_address, and its lexemes reconstruct both.
-  ["messages.subject_tsv", "select subject_tsv from messages where false"],
+  // `messages.subject_tsv`, whose lexemes reconstructed subject and sender, left with mail 0200; a
+  // store that still carries it grants it no more than any other column of `messages`: none.
   ["messages.*", "select * from messages where false"],
   ["message_bodies", "select * from message_bodies where false"],
   // `root_message_id_header` carries sender domains.
@@ -1855,12 +1855,12 @@ describe.skipIf(!PG_UP)("ohmail_admin is content-blind, and the console still wo
                 '${chosenMid}', 'h2', 'mid:${chosenMid}',
                 'ZZCHOSENSUBJECTZZ', 'attacker@example.test', 'ZZCHOSENSNIPPETZZ')`);
       await ownerClient.unsafe(
-        `insert into message_bodies (id, message_id, text)
-         values ('${randomUUID()}', '${deliveredMessage}', 'ZZCHOSENBODYZZ')`);
+        `insert into message_bodies (id, message_id, account_id, text)
+         values ('${randomUUID()}', '${deliveredMessage}', '${targetAccount}', 'ZZCHOSENBODYZZ')`);
       await ownerClient.unsafe(`
         insert into folder_state
-          (id, message_id, desired_folder, observed_folder, last_set_by, reconcile_status)
-        values ('${randomUUID()}', '${deliveredMessage}', 'ohmail/Answer Later', 'INBOX',
+          (id, message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status)
+        values ('${randomUUID()}', '${deliveredMessage}', '${targetAccount}', 'ohmail/Answer Later', 'INBOX',
                 'us', 'pending')`);
       await ownerClient.unsafe(`
         insert into change_log (account_id, seq, entity_type, entity_id, op, meta)
@@ -1960,8 +1960,8 @@ async function seedWorld(db: PostgresJsDatabase<typeof schema>): Promise<Seeded>
             now() + interval '1 hour', now() + interval '30 days');
   `);
   await db.execute(sql`
-    insert into mailbox_credentials (mailbox_id, transport, secret_enc, key_version, meta)
-    values (${mailboxId}, 'imap', 'ZZSECRETZZ', 1, '{"host":"imap.example.test"}'::jsonb);
+    insert into mailbox_credentials (mailbox_id, account_id, transport, secret_enc, key_version, meta)
+    values (${mailboxId}, ${accountId}, 'imap', 'ZZSECRETZZ', 1, '{"host":"imap.example.test"}'::jsonb);
   `);
   await db.execute(sql`
     insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, snippet)
@@ -1969,11 +1969,11 @@ async function seedWorld(db: PostgresJsDatabase<typeof schema>): Promise<Seeded>
             'ZZSUBJECTZZ', 'ZZSENDERZZ@example.test', 'ZZSNIPPETZZ');
   `);
   await db.execute(sql`
-    insert into message_bodies (id, message_id, text) values (${randomUUID()}, ${messageId}, 'ZZBODYZZ');
+    insert into message_bodies (id, message_id, account_id, text) values (${randomUUID()}, ${messageId}, ${accountId}, 'ZZBODYZZ');
   `);
   await db.execute(sql`
-    insert into folder_state (id, message_id, desired_folder, observed_folder, last_set_by, reconcile_status)
-    values (${randomUUID()}, ${messageId}, 'Answer Later', 'Ohbox', 'us', 'pending');
+    insert into folder_state (id, message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status)
+    values (${randomUUID()}, ${messageId}, ${accountId}, 'Answer Later', 'Ohbox', 'us', 'pending');
   `);
   await db.execute(sql`
     insert into drafts (id, account_id, mailbox_id, subject, body)

@@ -77,7 +77,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
     mb = box!.id;
     const folder = async (path: string): Promise<string> => {
       const [r] = await db.insert(mailboxFolders)
-        .values({ mailboxId: mb, folder: path, uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n })
+        .values({ mailboxId: mb, accountId: ACCOUNT, folder: path, uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n })
         .returning();
       return r!.id;
     };
@@ -93,11 +93,11 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
     m1 = await msg("Proj");
     m2 = await msg("Proj/Sub");
     await db.insert(folderState).values({
-      messageId: m2, desiredFolder: "Proj/Sub", observedFolder: "Proj/Sub", lastSetBy: "external",
+      messageId: m2, accountId: ACCOUNT, desiredFolder: "Proj/Sub", observedFolder: "Proj/Sub", lastSetBy: "external",
     });
     m3 = await msg("Elsewhere");
     await db.insert(folderState).values({
-      messageId: m3, desiredFolder: "Proj/Sub", observedFolder: "Elsewhere", lastSetBy: "us",
+      messageId: m3, accountId: ACCOUNT, desiredFolder: "Proj/Sub", observedFolder: "Elsewhere", lastSetBy: "us",
     });
     m4 = await msg("Proj", { deleted: true });
     await db.insert(messageFailures).values({
@@ -221,7 +221,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
     const repo = makeDrizzleRepo(db as never);
     const folder = async (path: string): Promise<string> => {
       const [r] = await db.insert(mailboxFolders)
-        .values({ mailboxId: mb, folder: path, uidvalidity: 9n, uidnext: 1n, highestmodseq: 1n })
+        .values({ mailboxId: mb, accountId: ACCOUNT, folder: path, uidvalidity: 9n, uidnext: 1n, highestmodseq: 1n })
         .returning();
       return r!.id;
     };
@@ -243,7 +243,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("the delete's tombstone PROMOTES a surviving watched copy instead of hiding the message", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders)
-      .values({ mailboxId: mb, folder: "Sweep", uidvalidity: 11n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Sweep", uidvalidity: 11n, uidnext: 1n, highestmodseq: 1n });
     // One message, primary copy in the swept folder, a second WATCHED copy elsewhere.
     const twin = randomUUID();
     await db.insert(messages).values({
@@ -287,7 +287,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("a pending-move-out straggler keeps its message: swept instances go, the survivor question is asked, never a bulk delete", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders)
-      .values({ mailboxId: mb, folder: "Sweep2", uidvalidity: 21n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Sweep2", uidvalidity: 21n, uidnext: 1n, highestmodseq: 1n });
     // Renders ELSEWHERE (desired points away) so the victims pick never sees it — but its
     // PRIMARY copy physically lived in the swept folder, with a watched twin elsewhere whose
     // dead-epoch sibling must be vetoed by the inventory's current UIDVALIDITY.
@@ -297,7 +297,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
       nativeLocator: { folder: "Sweep2", ref: "21:9" },
     });
     await db.insert(folderState).values({
-      messageId: out, desiredFolder: "Elsewhere", observedFolder: "Sweep2", lastSetBy: "us",
+      messageId: out, accountId: ACCOUNT, desiredFolder: "Elsewhere", observedFolder: "Sweep2", lastSetBy: "us",
     });
     await db.insert(messageInstances).values([
       { accountId: ACCOUNT, mailboxId: mb, messageId: out, folder: "Sweep2", uidvalidity: 21n, uid: 9, isPrimary: true },
@@ -329,7 +329,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("a cursor-less copy DEMOTES to tier 2 but never tombstones — a missing cursor is unknown, not deletion", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders)
-      .values({ mailboxId: mb, folder: "Sweep3", uidvalidity: 31n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Sweep3", uidvalidity: 31n, uidnext: 1n, highestmodseq: 1n });
     const ghost = randomUUID();
     await db.insert(messages).values({
       id: ghost, accountId: ACCOUNT, mailboxId: mb, bodyHash: "h-g", dedupKey: `d-${ghost}`,
@@ -356,8 +356,8 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("a pending move whose survivor is NOT the destination CONTINUES from the survivor — user moves are never discarded", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders).values([
-      { mailboxId: mb, folder: "Sweep4", uidvalidity: 41n, uidnext: 1n, highestmodseq: 1n },
-      { mailboxId: mb, folder: "Ziel", uidvalidity: 43n, uidnext: 1n, highestmodseq: 1n },
+      { mailboxId: mb, accountId: ACCOUNT, folder: "Sweep4", uidvalidity: 41n, uidnext: 1n, highestmodseq: 1n },
+      { mailboxId: mb, accountId: ACCOUNT, folder: "Ziel", uidvalidity: 43n, uidnext: 1n, highestmodseq: 1n },
     ]);
     // Pending S→Ziel; S ("Sweep4") is deleted first; a confirmed copy lives at "Elsewhere".
     const mover = randomUUID();
@@ -366,7 +366,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
       nativeLocator: { folder: "Sweep4", ref: "41:3" },
     });
     await db.insert(folderState).values({
-      messageId: mover, desiredFolder: "Ziel", observedFolder: "Sweep4", lastSetBy: "us",
+      messageId: mover, accountId: ACCOUNT, desiredFolder: "Ziel", observedFolder: "Sweep4", lastSetBy: "us",
     });
     await db.insert(messageInstances).values([
       { accountId: ACCOUNT, mailboxId: mb, messageId: mover, folder: "Sweep4", uidvalidity: 41n, uid: 3, isPrimary: true },
@@ -388,7 +388,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("a KNOWN-stale epoch is rejected even as the last candidate — tier 2 admits only missing cursors", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders)
-      .values({ mailboxId: mb, folder: "Sweep5", uidvalidity: 51n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Sweep5", uidvalidity: 51n, uidnext: 1n, highestmodseq: 1n });
     const stale = randomUUID();
     await db.insert(messages).values({
       id: stale, accountId: ACCOUNT, mailboxId: mb, bodyHash: "h-s", dedupKey: `d-${stale}`,
@@ -414,14 +414,14 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("an in-flight move with no survivor DEFERS — locator kept, primaries gone: the exact adoption evidence", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders)
-      .values({ mailboxId: mb, folder: "Sweep6", uidvalidity: 61n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Sweep6", uidvalidity: 61n, uidnext: 1n, highestmodseq: 1n });
     const flight = randomUUID();
     await db.insert(messages).values({
       id: flight, accountId: ACCOUNT, mailboxId: mb, bodyHash: "h-f", dedupKey: `d-${flight}`,
       nativeLocator: { folder: "Sweep6", ref: "61:7" },
     });
     await db.insert(folderState).values({
-      messageId: flight, desiredFolder: "Elsewhere", observedFolder: "Sweep6", lastSetBy: "us",
+      messageId: flight, accountId: ACCOUNT, desiredFolder: "Elsewhere", observedFolder: "Sweep6", lastSetBy: "us",
     });
     await db.insert(messageInstances).values([
       { accountId: ACCOUNT, mailboxId: mb, messageId: flight, folder: "Sweep6", uidvalidity: 61n, uid: 7, isPrimary: true },
@@ -444,14 +444,14 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("the deferral retires KNOWN-STALE residue too — a dead-epoch row must not block the terminal checks for ever", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders)
-      .values({ mailboxId: mb, folder: "Sweep7", uidvalidity: 71n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId: mb, accountId: ACCOUNT, folder: "Sweep7", uidvalidity: 71n, uidnext: 1n, highestmodseq: 1n });
     const parked = randomUUID();
     await db.insert(messages).values({
       id: parked, accountId: ACCOUNT, mailboxId: mb, bodyHash: "h-p", dedupKey: `d-${parked}`,
       nativeLocator: { folder: "Sweep7", ref: "71:6" },
     });
     await db.insert(folderState).values({
-      messageId: parked, desiredFolder: "Elsewhere", observedFolder: "Sweep7", lastSetBy: "us",
+      messageId: parked, accountId: ACCOUNT, desiredFolder: "Elsewhere", observedFolder: "Sweep7", lastSetBy: "us",
     });
     await db.insert(messageInstances).values([
       { accountId: ACCOUNT, mailboxId: mb, messageId: parked, folder: "Sweep7", uidvalidity: 71n, uid: 6, isPrimary: true },
@@ -477,10 +477,10 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("…but a stale SENT row is KEPT — the watermark scan never re-teaches old Sent copies", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders).values([
-      { mailboxId: mb, folder: "Sweep8", uidvalidity: 81n, uidnext: 1n, highestmodseq: 1n },
+      { mailboxId: mb, accountId: ACCOUNT, folder: "Sweep8", uidvalidity: 81n, uidnext: 1n, highestmodseq: 1n },
       // The resolved Sent folder, whose cursor names a NEWER epoch than the instance below —
       // the exact "stale" shape, and the one place staleness is the last evidence there is.
-      { mailboxId: mb, folder: "INBOX/Sent Messages", uidvalidity: 9n, uidnext: 1n, highestmodseq: 1n },
+      { mailboxId: mb, accountId: ACCOUNT, folder: "INBOX/Sent Messages", uidvalidity: 9n, uidnext: 1n, highestmodseq: 1n },
     ]);
     const sentKept = randomUUID();
     await db.insert(messages).values({
@@ -488,7 +488,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
       nativeLocator: { folder: "Sweep8", ref: "81:3" },
     });
     await db.insert(folderState).values({
-      messageId: sentKept, desiredFolder: "Elsewhere", observedFolder: "Sweep8", lastSetBy: "us",
+      messageId: sentKept, accountId: ACCOUNT, desiredFolder: "Elsewhere", observedFolder: "Sweep8", lastSetBy: "us",
     });
     await db.insert(messageInstances).values([
       { accountId: ACCOUNT, mailboxId: mb, messageId: sentKept, folder: "Sweep8", uidvalidity: 81n, uid: 3, isPrimary: true },
@@ -508,9 +508,9 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
   it("…and the RESOLVED Sent path is preserved even under a custom name no belt could know", async () => {
     const repo = makeDrizzleRepo(db as never);
     await db.insert(mailboxFolders).values([
-      { mailboxId: mb, folder: "Sweep9", uidvalidity: 91n, uidnext: 1n, highestmodseq: 1n },
+      { mailboxId: mb, accountId: ACCOUNT, folder: "Sweep9", uidvalidity: 91n, uidnext: 1n, highestmodseq: 1n },
       // A \\Sent that resolved to a custom path — supported, and invisible to any spelling.
-      { mailboxId: mb, folder: "Archive/Outgoing", uidvalidity: 9n, uidnext: 1n, highestmodseq: 1n },
+      { mailboxId: mb, accountId: ACCOUNT, folder: "Archive/Outgoing", uidvalidity: 9n, uidnext: 1n, highestmodseq: 1n },
     ]);
     const custom = randomUUID();
     await db.insert(messages).values({
@@ -518,7 +518,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
       nativeLocator: { folder: "Sweep9", ref: "91:5" },
     });
     await db.insert(folderState).values({
-      messageId: custom, desiredFolder: "Elsewhere", observedFolder: "Sweep9", lastSetBy: "us",
+      messageId: custom, accountId: ACCOUNT, desiredFolder: "Elsewhere", observedFolder: "Sweep9", lastSetBy: "us",
     });
     await db.insert(messageInstances).values([
       { accountId: ACCOUNT, mailboxId: mb, messageId: custom, folder: "Sweep9", uidvalidity: 91n, uid: 5, isPrimary: true },
@@ -550,7 +550,7 @@ describe.skipIf(!PG_UP)("mail 0074 — the rename swap on real Postgres", () => 
       .where(eq(mailboxes.id, mb));
     const folder = async (path: string): Promise<string> => {
       const [r] = await db.insert(mailboxFolders)
-        .values({ mailboxId: mb, folder: path, uidvalidity: 13n, uidnext: 1n, highestmodseq: 1n })
+        .values({ mailboxId: mb, accountId: ACCOUNT, folder: path, uidvalidity: 13n, uidnext: 1n, highestmodseq: 1n })
         .returning();
       return r!.id;
     };

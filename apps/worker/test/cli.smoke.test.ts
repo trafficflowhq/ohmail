@@ -109,7 +109,7 @@ describe("the DEPLOYABLE CLI entry point", () => {
       .values({ accountId: randomUUID(), provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
     const enc = await KEK.encrypt(randomUUID());           // the fake adapter never dials with it
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
 
@@ -203,7 +203,7 @@ describe("the DEPLOYABLE CLI entry point", () => {
     await db.insert(contacts).values({ accountId, address: "anna@x.example" });
     const enc = await KEK.encrypt(cfg.auth.pass);
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: cfg.host, port: cfg.port, secure: false, user: cfg.auth.user },
     });
 

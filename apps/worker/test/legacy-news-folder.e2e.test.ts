@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
@@ -92,7 +93,7 @@ async function rig() {
       if (loc?.folder === NEWS_FOLDER) await db.update(messages).set({ nativeLocator: { ...loc, folder: LEGACY_NEWS_FOLDER } }).where(eq(messages.id, m.id));
       if (filed) {
         const row = { desiredFolder: LEGACY_NEWS_FOLDER, observedFolder: LEGACY_NEWS_FOLDER, lastSetBy: "us", reconcileStatus: "reconciled" } as const;
-        await db.insert(folderState).values({ messageId: m.id, ...row })
+        await db.insert(folderState).values({ messageId: m.id, accountId: accountOfMessage(m.id), ...row })
           .onConflictDoUpdate({ target: folderState.messageId, set: row });
       }
     }
@@ -271,7 +272,7 @@ describe("a deleted folder under a waiting filing, end to end", { timeout: 90_00
     const org = await settled(r);
     // No verb files into a folder of the person's; an intent naming one (an import's) is written as stored.
     const row = { desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" } as const;
-    await r.w.db.insert(folderState).values({ messageId: await idOf(r, "rename tail p1"), ...row })
+    await r.w.db.insert(folderState).values({ messageId: await idOf(r, "rename tail p1"), accountId: accountOfMessage(await idOf(r, "rename tail p1")), ...row })
       .onConflictDoUpdate({ target: folderState.messageId, set: row });
     await r.drain(org, "organizer");
 

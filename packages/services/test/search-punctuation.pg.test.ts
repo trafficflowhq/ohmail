@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
@@ -80,9 +81,14 @@ async function seed(o: { key: string; mailboxId: string; subject: string; body: 
     date: o.date ?? SENT, unread: false, hasAttachments: false,
     nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.body });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.body });
+  // As every writer of a body does: the letter's search document with it.
+  await upsertMessageSearch(db as never, m!.id, {
+    accountId: A, subject: o.subject, from: { name: null, address: "registry@dnb.example" }, to: [], cc: [],
+    attachmentNames: [], bodyText: o.body, source: "text",
+  });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   ids[o.key] = m!.id;
 }
@@ -141,8 +147,8 @@ describe("archive search over punctuation (real Postgres)", () => {
       select count(*)::int as n
       from messages m left join message_bodies b on b.message_id = m.id
       where m.account_id = ${A} and m.id = ${ids.verbatim}
-        and (m.subject_tsv @@ websearch_to_tsquery('english', 'pha/Bet')
-             or b.body_tsv @@ websearch_to_tsquery('english', 'pha/Bet'))`)) as unknown as Array<{ n: number }>;
+        and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'pha/Bet')
+             or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'pha/Bet'))`)) as unknown as Array<{ n: number }>;
     expect(n).toBe(0);
 
     const r = await svc.search(ctx(), { q: "pha/Bet" });
@@ -195,8 +201,8 @@ describe("archive search over punctuation (real Postgres)", () => {
      * verbatim-only one), which holds regardless of what `ts_rank` returns or of any bound on it.
      */
     const rows = (await db.execute<{ loud: number; lex: number }>(sql`
-      select ts_rank(m.subject_tsv, websearch_to_tsquery('english','D-U-N-S')) as loud,
-             (select ts_rank(x.subject_tsv, websearch_to_tsquery('english','D-U-N-S'))
+      select ts_rank(to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')), websearch_to_tsquery('english','D-U-N-S')) as loud,
+             (select ts_rank(to_tsvector('english', coalesce(x.subject, '') || ' ' || coalesce(x.from_address, '')), websearch_to_tsquery('english','D-U-N-S'))
                 from messages x where x.id = ${ids.duns}) as lex
         from messages m where m.id = ${ids.loud}`)) as unknown as Array<{ loud: number; lex: number }>;
     // The premise, measured in the same run rather than remembered from a probe.

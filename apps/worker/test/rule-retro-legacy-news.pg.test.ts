@@ -55,7 +55,7 @@ describe.skipIf(!AVAILABLE)("rule-retro over mail in the legacy News folder", ()
       subject, fromAddress: SENDER, nativeLocator: { folder, ref: "1:1" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

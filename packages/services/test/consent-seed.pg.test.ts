@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -62,7 +63,7 @@ async function sent(o: {
     snippet: "",
   }).returning({ id: messages.id });
   await db.insert(messageBodies).values({
-    messageId: m!.id,
+    messageId: m!.id, accountId: accountOfMessage(m!.id),
     headers: {
       ...(o.to ? { to: [o.to] } : {}),
       ...(o.cc ? { cc: [o.cc] } : {}),
@@ -71,7 +72,7 @@ async function sent(o: {
   });
   // Sent mail is organised in place — it keeps the folder it arrived in.
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "Sent Messages", observedFolder: "Sent Messages",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "Sent Messages", observedFolder: "Sent Messages",
     lastSetBy: "external", reconcileStatus: "reconciled",
   });
   return m!.id;
@@ -271,7 +272,7 @@ describe.skipIf(!AVAILABLE)("the sent-mail seed writes consent and moves nothing
       nativeLocator: { folder: "Sent Messages", uid: 1 }, snippet: "",
     }).returning({ id: messages.id });
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: { to: ["pia@atelier.example"] },
+      messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: { to: ["pia@atelier.example"] },
     });
 
     const raceCtx: ServiceContext = { ...ctx, accountId: raceAccount };

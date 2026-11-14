@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -64,7 +65,7 @@ async function install(role: "reader" | "organizer", address = ADDRESS) {
     subject: "s", fromAddress: SENDER, unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return { db, accountId, mailboxId: mb!.id, messageId: msg!.id };

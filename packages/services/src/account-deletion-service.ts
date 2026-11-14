@@ -9,7 +9,6 @@ import {
   attachments,
   auditLog,
   awayReplies,
-  awayResponderSent,
   awayResponders,
   awaySenderState,
   changeLog,
@@ -33,6 +32,7 @@ import {
   messageBodies, messageSearch,
   messageFailures,
   messageInstances,
+  messageInvitations,
   messageStates,
   messages,
   notifyRules,
@@ -41,6 +41,7 @@ import {
   outboundSentCopies,
   outboundSends,
   pairingTokens,
+  passProgress,
   refreshTokens,
   routingDecisions,
   ruleRemovals,
@@ -74,6 +75,7 @@ import {
   connectAttempts,
   creditRefundObligations,
   authThrottle,
+  accountCounters,
   probeRowsOfAccount,
   credentials,
   invites,
@@ -325,6 +327,9 @@ export async function deleteAccount(
     await drop("attachments", tx.delete(attachments).where(eq(attachments.accountId, accountId)));
     await drop("tracker_events", tx.delete(trackerEvents).where(eq(trackerEvents.accountId, accountId)));
     await drop("message_states", tx.delete(messageStates).where(eq(messageStates.accountId, accountId)));
+    // The invitations' identities (mail 0204). They would go with their letters; named, so the
+    // receipt counts them and the sweep does not rest on a cascade.
+    await drop("message_invitations", tx.delete(messageInvitations).where(eq(messageInvitations.accountId, accountId)));
     // BEFORE `routing_decisions`, since mail 0118 gave `routing_decision_id` a real key.
     await drop("approvals", tx.delete(approvals).where(eq(approvals.accountId, accountId)));
     // `routing_decisions` is also where a BOUGHT SCREENER SUGGESTION lives — same table, told
@@ -365,17 +370,12 @@ export async function deleteAccount(
     // BEFORE `messages`, since mail 0118 — the composite account key on `message_id` is a real
     // reference now, where this table carried a bare id nothing checked. The reasons below are
     // unchanged; only the position is newly load-bearing.
-    // BEFORE the responder itself, and both go. `away_responder_sent.sender` is a correspondent's
-    // email address — somebody else's personal data, held because we sent them mail — so it is not
-    // optional here. The catalog sweep in `account-deletion.test.ts` enumerates every table with an
-    // `account_id` column and fails on any surviving row, which is what makes this a red test rather
-    // than a quiet retention if a future table is added and forgotten.
-    await drop("away_responder_sent", tx.delete(awayResponderSent).where(eq(awayResponderSent.accountId, accountId)));
-    // The 0087 pair, and they are here for `away_responder_sent`'s reason stated one line up
-    // rather than for tidiness: `away_replies.sender` and `away_sender_state.sender` are
-    // CORRESPONDENTS' email addresses — somebody else's personal data, held because we sent them
-    // mail — and `away_replies` additionally records that a named person wrote to this account and
-    // when. That is exactly the class the catalog sweep in `account-deletion.test.ts` enumerates,
+    // BEFORE the responder itself. The 0087 pair is not here for tidiness: `away_replies.sender`
+    // and `away_sender_state.sender` are CORRESPONDENTS' email addresses — somebody else's personal
+    // data, held because we sent them mail — and `away_replies` additionally records that a named
+    // person wrote to this account and when. That is exactly the class the catalog sweep in
+    // `account-deletion.test.ts` enumerates (every table with an `account_id` column, failing on any
+    // surviving row),
     // so both go, and both were red in that sweep until they did.
     await drop("away_replies", tx.delete(awayReplies).where(eq(awayReplies.accountId, accountId)));
     await drop("messages", tx.delete(messages).where(eq(messages.accountId, accountId)));
@@ -425,6 +425,12 @@ export async function deleteAccount(
     // only thing that removes it.
     await drop("mailbox_profile_mirror", tx.delete(mailboxProfileMirror).where(eq(mailboxProfileMirror.accountId, accountId)));
     await drop("mailboxes", tx.delete(mailboxes).where(eq(mailboxes.accountId, accountId)));
+    // Where the account's one-time passes stood (mail 0203): its mailboxes' rows and its own.
+    // AFTER `mailboxes` and `account_settings`, on purpose: the table has no key into either, and
+    // a pass writes its row holding its mailbox's row or the settings row. This transaction has
+    // waited for that write by the time it gets here, and a write that comes later finds no
+    // mailbox and an erased account (`pass-progress.ts`).
+    await drop("pass_progress", tx.delete(passProgress).where(eq(passProgress.accountId, accountId)));
 
     // ── 5. Automation, knowledge, preferences ───────────────────────────────────
     await drop("workflow_runs", tx.delete(workflowRuns).where(eq(workflowRuns.accountId, accountId)));
@@ -600,6 +606,8 @@ export async function deleteAccount(
       ...prefixes.map((pattern) => like(authThrottle.key, pattern)),
       probeRowsOfAccount(accountId),
     )));
+    // The counters that name one of this account's rows carry its id since cloud 0101.
+    await drop("account_counters", tx.delete(accountCounters).where(eq(accountCounters.accountId, accountId)));
     // ── 7b. THE SIGNUP FUNNEL — pseudonymised, not deleted ─────────────────────
     // `invites.email` and `waitlist.email` are the only thing in either row that names a person,
     // and neither table is in the account's foreign-key graph — deliberately, so an erasure never

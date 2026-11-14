@@ -331,7 +331,7 @@ describe.skipIf(!AVAILABLE)("mailbox lifecycle writes are fenced", () => {
         .then(() => null, (e: unknown) => e);
       expect(err, `${JSON.stringify(bad)} must be refused`).toBeInstanceOf(ClosedSetViolation);
       expect((err as ClosedSetViolation).code).toBe("closed_set_violation");
-      expect((err as ClosedSetViolation).set.constraint).toBe("mailboxes_sync_blocked_reason_closed");
+      expect((err as ClosedSetViolation).set.constraint).toBe("mailboxes_sync_blocked_reason_shape");
       expect((await rowOf(id)).syncBlockedReason, `${JSON.stringify(bad)} reached the row`).toBeNull();
     }
   }, 30_000);
@@ -392,23 +392,30 @@ describe.skipIf(!AVAILABLE)("mailbox lifecycle writes are fenced", () => {
     const constraint = await markMailboxSyncBlocked(db, id, "nope" as never, { fence: A })
       .then(() => "", (err: unknown) =>
         err instanceof ClosedSetViolation ? err.set.constraint : "");
-    expect(constraint).toBe("mailboxes_sync_blocked_reason_closed");
+    expect(constraint).toBe("mailboxes_sync_blocked_reason_shape");
   });
 
-  it("the server CHECK still refuses a value that bypasses the door — 23514, on a real catalog", async () => {
-    // The door refuses first for every caller of `markMailboxSyncBlocked`, but the widenable set's
-    // CHECK stays on the SERVER (only the device store drops it), so a write that reaches the table
-    // another way — a `curl`, a future call site, a migration — still meets 23514 with the
-    // constraint named. Bypassing the door here with raw SQL keeps the constraint a guarded
-    // invariant and not a dead one the door hides, and it is a question PGlite cannot answer: did
-    // the migration's DDL actually take against the real catalog.
+  it("the server CHECK still refuses what is no reason word, for a write that bypasses the door — 23514, on a real catalog", async () => {
+    // The door refuses every non-member for every caller of `markMailboxSyncBlocked`. Since mail
+    // 0202 the SERVER's CHECK holds the SHAPE (one lower-case word), not the members: a write that
+    // reaches the table another way — a `curl`, a future call site, a migration — cannot store a
+    // line a mail server chose, and meets 23514 with the constraint named. Bypassing the door
+    // here with raw SQL keeps the constraint a guarded invariant and not a dead one the door
+    // hides, and it is a question PGlite cannot answer: did the migration's DDL actually take
+    // against the real catalog.
+    for (const line of ["Mailbox is full: over quota", "postmaster@provider.test", "LEASE_UNREADABLE", ""]) {
+      const id = await seed("connected");
+      const err = await sql`update mailboxes set sync_blocked_reason = ${line} where id = ${id}`
+        .then(() => null, (e: unknown) => e as { code?: unknown; constraint_name?: unknown; constraint?: unknown });
+      expect(String(err?.code ?? "unknown"), `${JSON.stringify(line)} must be refused by the catalog`).toBe("23514");
+      expect(String(err?.constraint_name ?? err?.constraint ?? "")).toBe("mailboxes_sync_blocked_reason_shape");
+      expect((await rowOf(id)).syncBlockedReason, "the refused write still landed").toBeNull();
+    }
+    // A word of the right shape that is no member is the door's to refuse, and the catalog takes
+    // it: that is what lets a new member arrive without altering this table.
     const id = await seed("connected");
-    const err = await sql`update mailboxes set sync_blocked_reason = ${"no_organizer"} where id = ${id}`
-      .then(() => null, (e: unknown) => e as { code?: unknown; constraint_name?: unknown; constraint?: unknown });
-    expect(String(err?.code ?? "unknown"),
-      "a foreign sync_blocked_reason must be refused by the catalog").toBe("23514");
-    expect(String(err?.constraint_name ?? err?.constraint ?? "")).toBe("mailboxes_sync_blocked_reason_closed");
-    expect((await rowOf(id)).syncBlockedReason, "the refused write still landed").toBeNull();
+    await sql`update mailboxes set sync_blocked_reason = ${"a_reason_of_next_year"} where id = ${id}`;
+    expect((await rowOf(id)).syncBlockedReason).toBe("a_reason_of_next_year");
   });
 
   it("the three status writers each CLEAR the pair, enumerated from the exported set", async () => {

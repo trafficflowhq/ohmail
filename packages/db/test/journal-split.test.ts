@@ -218,6 +218,18 @@ const MAIL_TABLES = [
   // runs this pass over its own store, so neither could live in the private half.
   "unsubscribe_examined",
   "unsubscribe_drain_state",
+  // Where each one-time pass stands (mail 0203) — MAIL, with the passes: every install that
+  // organizes a mailbox runs them over its own store and has to remember that they ran. It holds
+  // the marks fourteen columns of `mailboxes` and `account_settings` held, both MAIL tables.
+  "pass_progress",
+  // The identity of an invitation a letter carried (mail 0204) — MAIL: a child of `messages`,
+  // written by the ingest every install runs over its own store.
+  "message_invitations",
+  // The calendar's ten tables (mail 0205) — MAIL, by where they are made and by who holds them:
+  // the mail journal creates them, and a desktop's engine, which runs that journal alone, keeps a
+  // calendar. Their keys run inside the family and to `accounts`; none names a private table.
+  "cal_connections", "cal_credentials", "cal_calendars", "cal_events", "cal_attendees",
+  "cal_alarms", "cal_writes", "cal_links", "cal_suggestions", "cal_settings",
 ] as const;
 
 const CLOUD_TABLES = [
@@ -303,6 +315,16 @@ const CLOUD_TABLES = [
   // Cloud 0057 — the storage estimate's snapshot, the card's dismissal and mail switch, the storage
   // mails sent. CLOUD: only the hosted worker and API meter storage, estimate it and mail about it.
   "mailbox_storage_stats", "account_storage_prefs", "storage_mail_sent",
+  // THE COUNTERS THAT NAME A ROW (cloud 0101). CLOUD for `auth_throttle`'s reason, whose rows they
+  // were: every one counts a hosted service's sign-in, mail connection or probe.
+  "account_counters",
+  // AN ACCOUNT CLOSED BY STAFF (cloud 0104). CLOUD for `account_suspensions`' reason: closing an
+  // account is an act of the hosted service's staff, and a local install has none.
+  "account_closures",
+  // A CALENDAR'S NOTICE CHANNELS (cloud 0105). CLOUD: a provider notifies a hosted service at an
+  // address it can reach; a desktop reads a calendar itself and is told nothing. It hangs off
+  // `cal_connections`, which is MAIL, the direction the closure rule allows.
+  "cal_push_channels",
   // the funnel
   "waitlist", "invites",
   // always-on push — named in §7 as part of the moat
@@ -3318,6 +3340,13 @@ const POST_SPLIT_TAGS: ReadonlySet<string> = new Set(Object.keys(POST_SPLIT_STAT
 const DROPPED_INDEX_OWNER: Record<string, string> = {
   users_email_idx: "users",
   mailboxes_active_address_uq: "mailboxes",
+  // Mail 0200: the old search's indexes and two that nothing reads any more.
+  message_bodies_body_tsv_idx: "message_bodies",
+  messages_subject_tsv_idx: "messages",
+  messages_subject_trgm_idx: "messages",
+  messages_from_address_trgm_idx: "messages",
+  messages_account_arrival_order_idx: "messages",
+  folder_state_screener_held_floor_idx: "folder_state",
 };
 
 const stripComments = (s: string): string => s.replace(/^\s*--[^\n]*$/gm, "");
@@ -4378,10 +4407,16 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 108 → 109 for `rule_removals` (mail 0178) — the rules a person removed, MAIL.
     // 109 → 110 for `scheduled_send_files` (mail 0179) — a scheduled letter's kept files, MAIL.
     // 110 → 113 for `mailbox_storage_stats`, `account_storage_prefs` and `storage_mail_sent` (cloud 0057), CLOUD.
-    expect(SIDE.size).toBe(113);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
+    // 113 → 114 for `pass_progress` (mail 0203) — where each one-time pass stands, MAIL.
+    // 114 → 115 for `message_invitations` (mail 0204) — an invitation's identity, MAIL.
+    // 115 → 125 for the calendar's ten tables (mail 0205), MAIL.
+    // 125 → 126 for `account_counters` (cloud 0101) — the counters that name a row, CLOUD.
+    // 126 → 127 for `account_closures` (cloud 0104) — an account closed by staff, CLOUD.
+    // 127 → 128 for `cal_push_channels` (cloud 0105) — a calendar's notice channels, CLOUD.
+    expect(SIDE.size).toBe(128);   // 70 → 71 for `pairing_tokens` (mail 0059); 0060 MOVED a table
     // 44 → 45 and 27 → 26 for `refresh_tokens` (mail 0060) — the first MOVE in the partition's
     // history rather than an addition, so the total stayed 71 while both halves changed together.
-    expect(MAIL_TABLES).toHaveLength(60);   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
+    expect(MAIL_TABLES).toHaveLength(72);   // 62 → 72: the calendar's ten (mail 0205)   // 61 → 62: message_invitations (mail 0204)   // 60 → 61: pass_progress (mail 0203)   // 59 → 60: scheduled_send_files (mail 0179)   // 58 → 59: rule_removals (mail 0178)   // 57 → 58: outbound_sent_copies (mail 0170)   // 56 → 57: list_addresses (mail 0150)   // 55 → 56: message_search (mail 0125)   // 54 → 55: junk_rescues (mail 0117)   // 52 → 54: unsubscribe_examined + unsubscribe_drain_state (mail 0116)   // 51 → 52: mailbox_profile_mirror (mail 0094)   // 50 → 51: outbound_send_fingerprints (mail 0093)   // 49 → 50: organizer_requests (mail 0088)   // 47 → 49: away_replies + away_sender_state (mail 0087)   // 46 → 47: folder_ops (mail 0074)
     // 30 → 33: credit_usage_daily + credit_usage_totals + credit_rollup_runs (cloud 0028)
     // 33 → 36: billing_invoices + platform_costs + ai_usage_daily (cloud 0029)
     // 36 → 38: alert_pass_runs + platform_signals (cloud 0030)
@@ -4397,7 +4432,7 @@ describe("the closure rule holds over both journals as they stand right now", ()
     // 48 → 49: connect_attempts (cloud 0054)
     // 49 → 50: account_storage_holds (cloud 0055)
     // 50 → 53: mailbox_storage_stats + account_storage_prefs + storage_mail_sent (cloud 0057)
-    expect(CLOUD_TABLES).toHaveLength(53);   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
+    expect(CLOUD_TABLES).toHaveLength(56);   // 55 → 56: cal_push_channels (cloud 0105)   // 54 → 55: account_closures (cloud 0104)   // 53 → 54: account_counters (cloud 0101)   // 29 → 30: mailbox_oauth_device_ceremonies (cloud 0027)
   });
 
   it("NO mail statement names a private object — so mail-first is sound, not assumed", () => {
@@ -4432,6 +4467,13 @@ describe("the closure rule holds over both journals as they stand right now", ()
     "0000_auth_ceremony#15",   // guarded FK session_id → sessions.id (duplicate_object caught)
     "0000_auth_ceremony#22",   // CREATE INDEX IF NOT EXISTS refresh_tokens_family_idx
     "0000_auth_ceremony#23",   // CREATE INDEX IF NOT EXISTS refresh_tokens_session_idx
+    // Cloud 0100 takes back what #14 and #15 add again on a store made from empty: the two
+    // single-column keys mail 0118's composite pair superseded. `DROP CONSTRAINT IF EXISTS`, so a
+    // store that never held them drops nothing, and the mail schema is whole alone either way (a
+    // store with the mail journal only never had them). It cannot stand in the mail journal: on a
+    // store made from empty the whole mail journal runs before cloud 0000 re-adds the pair, and a
+    // store made from empty would then differ from a migrated one in exactly these two keys.
+    "0100_account_on_sign_in_tables#46",
   ]);
 
   it("NO cloud statement performs DDL on a shared object — the mail schema must be whole alone", () => {

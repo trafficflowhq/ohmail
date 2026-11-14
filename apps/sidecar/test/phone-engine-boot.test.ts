@@ -1084,7 +1084,7 @@ describe.runIf(ON_DEVICE_STORE)("the engine, composed for a phone", () => {
     const plantUnder = async (file: string, address: string, what: "folder" | "draft"): Promise<void> => {
       const planting = nodeExecutor(recorder(), file);
       await planting.run(what === "folder"
-        ? "insert into mailbox_folders (mailbox_id, folder) select id, 'INBOX' from mailboxes where address = ?"
+        ? "insert into mailbox_folders (mailbox_id, account_id, folder) select id, account_id, 'INBOX' from mailboxes where address = ?"
         : "insert into drafts (account_id, mailbox_id) select account_id, id from mailboxes where address = ?", [address]);
       await planting.close();
     };
@@ -1571,7 +1571,7 @@ describe.runIf(ON_DEVICE_STORE)("search on a phone", () => {
           "insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator) values (?, ?, ?, 'h', ?, ?, 'a@mail.example', ?, ?)",
           [id, live.accountId, mailbox, `fx:${id}`, subject, Date.now() - n * 60_000, JSON.stringify({ folder: "INBOX", ref: `1:${n}` })],
         );
-        await exec.run("insert into message_bodies (message_id, text) values (?, ?)", [id, `body ${n}`]);
+        await exec.run("insert into message_bodies (message_id, account_id, text) select id, account_id, ? from messages where id = ?", [`body ${n}`, id]);
       }
       const res = await live.handle(new Request("http://sidecar/search?q=zzkingfisher", {
         headers: { authorization: `Bearer ${live.sessionToken}` },

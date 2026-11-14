@@ -595,7 +595,20 @@ const ALLOWLIST: Record<string, string> = {
   // after the sweep never reaches this write" is true of a run that STARTS after it and says
   // nothing about the run already past that read — which is the one that stamps. The pass pages
   // through an account over minutes; an erasure landing inside that window met an UPSERT into a
-  // table the sweep empties. It is fenced now, and pinned below.
+  // table the sweep empties. It is fenced now. Its stamp is a row of `pass_progress` since mail
+  // 0203, written through that table's one door inside the pass's own fenced transaction; the pin
+  // is `gate-release-erasure-fence.pg.test.ts`, which lands the sweep inside the window.
+  //
+  // THE ONE DOOR TO `pass_progress` (mail 0203). Every pass's marks are written by this one
+  // statement, and no call of the account fence is in its file, which is all this census reads.
+  // What the statement does itself: it writes a mailbox's mark only from the mailbox's own row,
+  // read FOR SHARE and not erased, so a removal waits for it and then deletes the row; it writes
+  // an account's mark only while the account is not erased; and both sweeps delete the table
+  // after the rows a pass holds while it writes. `pass-progress.test.ts` and
+  // `pass-progress-move.pg.test.ts` hold each half. A pass whose stamp trails its work takes the
+  // account fence at the head of its own transaction, as the gate release does.
+  "packages/db/src/pass-progress.ts insert passProgress":
+    "the door's own statement asks for its subject: a mailbox's row FOR SHARE and not erased, an account not erased",
   "apps/worker/src/gap-catchup.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/ohbox-tidy.ts insert auditLog": "a background pass, no session",
   "apps/worker/src/redacted-restore.ts insert auditLog": "a background pass, no session",
@@ -1113,7 +1126,6 @@ describe("the erasure fence census", () => {
       // allow-list entry somebody could re-add without noticing what it admits.
       "packages/services/src/away-responder-pass.ts insert awayReplies",
       "packages/services/src/away-responder-pass.ts insert awaySenderState",
-      "apps/worker/src/gate-release.ts insert accountSettings",
       // The profile marker now rings the settings doorbell in the same transaction, so it is
       // fenced with it: a late marker must not append a change row to an erased account's log.
       "apps/worker/src/profile.ts insert auditLog",

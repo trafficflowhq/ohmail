@@ -9,9 +9,9 @@
  * placement arguments: `test/journal-split.test.ts`.
  */
 
-import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, numeric, real, unique, uniqueIndex, index, primaryKey, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, numeric, real, unique, uniqueIndex, index, primaryKey, check, foreignKey } from "drizzle-orm/pg-core";
 import { sql, desc } from "drizzle-orm";
-import { accounts, sessions, users } from "./schema-mail.js";
+import { accounts, calConnections, sessions, users } from "./schema-mail.js";
 
 export const credentials = pgTable("credentials", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -19,7 +19,9 @@ export const credentials = pgTable("credentials", {
   passwordHash: text("password_hash").notNull(),  // scrypt
   algo: text("algo").notNull().default("scrypt"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ uqUser: unique().on(t.userId) }));
+  /** The user's account (cloud 0100), under a key onto `users (id, account_id)`. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id").notNull(),
+}, (t) => ({ uqUser: unique("credentials_account_user_unique").on(t.accountId, t.userId) }));
 
 export const webauthnCredentials = pgTable("webauthn_credentials", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -33,9 +35,11 @@ export const webauthnCredentials = pgTable("webauthn_credentials", {
   backedUp: boolean("backed_up").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  /** The user's account (cloud 0100), under a key onto `users (id, account_id)`. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id").notNull(),
 }, (t) => ({
   uqCred: unique().on(t.credentialId),
-  ixUser: index("webauthn_credentials_user_idx").on(t.userId),
+  ixUser: index("webauthn_credentials_account_user_idx").on(t.accountId, t.userId),
 }));
 
 // Short-lived, SINGLE-USE reg/assert challenges, bound to a user (registration)
@@ -53,6 +57,8 @@ export const webauthnChallenges = pgTable("webauthn_challenges", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   consumedAt: timestamp("consumed_at", { withTimezone: true }),   // single-use marker
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  /** The user's account (cloud 0100): known exactly when the user is, which a CHECK holds. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id"),
 }, (t) => ({
   // cloud 0034 — the key the retention prune walks (`expires_at < cutoff ORDER BY expires_at`).
   ixExpires: index("webauthn_challenges_expires_idx").on(t.expiresAt),
@@ -62,8 +68,9 @@ export const webauthnChallenges = pgTable("webauthn_challenges", {
   // rather than sorting however many ceremonies one caller chose to open.
   ixOpenLogin: index("webauthn_challenges_open_login_idx").on(t.loginTokenId, t.type, t.createdAt)
     .where(sql`"consumed_at" is null`),
-  ixOpenUser: index("webauthn_challenges_open_user_idx").on(t.userId, t.type, t.createdAt)
-    .where(sql`"consumed_at" is null`),
+  ixOpenUser: index("webauthn_challenges_open_user_idx").on(t.accountId, t.userId, t.type, t.createdAt)
+    .where(sql`"consumed_at" is null and "user_id" is not null`),
+  ckAccount: check("webauthn_challenges_account_iff_user", sql`(${t.userId} is null) = (${t.accountId} is null)`),
 }));
 
 export const totpSecrets = pgTable("totp_secrets", {
@@ -81,7 +88,9 @@ export const totpSecrets = pgTable("totp_secrets", {
   pendingStartedAt: timestamp("pending_started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ uqUser: unique().on(t.userId) }));
+  /** The user's account (cloud 0100), under a key onto `users (id, account_id)`. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id").notNull(),
+}, (t) => ({ uqUser: unique("totp_secrets_account_user_unique").on(t.accountId, t.userId) }));
 
 export const recoveryCodes = pgTable("recovery_codes", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -90,7 +99,9 @@ export const recoveryCodes = pgTable("recovery_codes", {
   usedAt: timestamp("used_at", { withTimezone: true }),   // null = unused
   batchId: uuid("batch_id").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ixUser: index("recovery_codes_user_idx").on(t.userId) }));
+  /** The user's account (cloud 0100), under a key onto `users (id, account_id)`. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id").notNull(),
+}, (t) => ({ ixUser: index("recovery_codes_account_user_idx").on(t.accountId, t.userId) }));
 
 
 
@@ -131,8 +142,13 @@ export const loginTokens = pgTable("login_tokens", {
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
   attempts: integer("attempts").notNull().default(0),
+  /** The user's account (cloud 0100): known exactly when the user is, which a CHECK holds. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id"),
 }, (t) => ({
-  ixToken: index("login_tokens_token_idx").on(t.tokenHash),
+  // Unique since cloud 0103: a secret's look-up key answers for one row.
+  uqToken: uniqueIndex("login_tokens_token_hash_uq").on(t.tokenHash),
+  ixAccount: index("login_tokens_account_idx").on(t.accountId).where(sql`"account_id" is not null`),
+  ckAccount: check("login_tokens_account_iff_user", sql`(${t.userId} is null) = (${t.accountId} is null)`),
   ckUnbound: check("login_tokens_unbound_is_approval",
     sql`${t.userId} is not null or ${t.purpose} = 'desktop_approval'`),
 }));
@@ -155,7 +171,13 @@ export const oauthAuthCodes = pgTable("oauth_auth_codes", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),   // short TTL
   consumedAt: timestamp("consumed_at", { withTimezone: true }),   // single-use
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
-}, (t) => ({ ixCode: index("oauth_auth_codes_code_idx").on(t.codeHash) }));
+  /** The user's account (cloud 0100), under a key onto `users (id, account_id)`. LAST: `ADD COLUMN` appends. */
+  accountId: uuid("account_id").notNull(),
+}, (t) => ({
+  // Unique since cloud 0103, for `login_tokens.token_hash`'s reason.
+  uqCode: uniqueIndex("oauth_auth_codes_code_hash_uq").on(t.codeHash),
+  ixAccount: index("oauth_auth_codes_account_idx").on(t.accountId),
+}));
 
 export const authEvents = pgTable("auth_events", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -187,6 +209,22 @@ export const authThrottle = pgTable("auth_throttle", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({ uqKey: unique().on(t.key) }));
 
+/**
+ * THE COUNTERS THAT NAME A ROW (cloud 0101): `auth_throttle`'s four columns under `(account_id,
+ * key)`. A key that names a user, a mailbox or an account lives here, under that row's account, so
+ * the counter is isolated and erased like every other row of the account; a keyed hash, a fixed
+ * word or a number stays in `auth_throttle` and names nobody. Which table a key belongs to is the
+ * family's (`counter-keys.ts`), asked through `counterHome` (`account-counters.ts`).
+ */
+export const accountCounters = pgTable("account_counters", {
+  accountId: uuid("account_id").notNull().references(() => accounts.id),
+  key: text("key").notNull(),
+  failures: integer("failures").notNull().default(0),
+  lockedUntil: timestamp("locked_until", { withTimezone: true }),
+  windowStartedAt: timestamp("window_started_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({ pk: primaryKey({ columns: [t.accountId, t.key], name: "account_counters_pk" }) }));
+
 // `push_subscriptions` — shaped for Web Push and APNs from day one. `transport` selects which
 // identity column is live (endpoint for webpush AND unifiedpush, device_token for apns); the
 // coalesced UNIQUE is hand-written in the migration SQL (an expression index the DSL cannot
@@ -200,7 +238,8 @@ export const authThrottle = pgTable("auth_throttle", {
 
 export const pushSubscriptions = pgTable("push_subscriptions", {
   id: uuid("id").defaultRandom().primaryKey(),
-  accountId: uuid("account_id").notNull(),
+  // The key onto `accounts` is cloud 0103's; the column stood without one since 0001.
+  accountId: uuid("account_id").notNull().references(() => accounts.id),
   transport: text("transport").notNull(),               // 'webpush' | 'apns' | 'unifiedpush'
   endpoint: text("endpoint"),                            // webpush, unifiedpush
   p256dh: text("p256dh"),                                // webpush
@@ -354,7 +393,17 @@ export const alertState = pgTable("alert_state", {
    */
   title: text("title"),
   count: integer("count"),
-}, (t) => ({ ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt) }));
+  /**
+   * The account a per-subject alert is about (cloud 0102): the one its key names, or a named
+   * device's or session's. A pointer for an erasure and a prune to find the row by; no key, and
+   * not called `account_id`, because the table is the operations' own and belongs to no account.
+   * NULL for an alert about the service, and for a row whose subject is gone.
+   */
+  subjectAccountId: uuid("subject_account_id"),
+}, (t) => ({
+  ixLastSeen: index("alert_state_last_seen_idx").on(t.lastSeenAt),
+  ixSubject: index("alert_state_subject_idx").on(t.subjectAccountId).where(sql`${t.subjectAccountId} is not null`),
+}));
 
 /**
  * One row per ALERT DRIVER (cloud 0030) — the pulse of the thing that takes everyone else's
@@ -443,7 +492,10 @@ export const alertDrills = pgTable("alert_drills", {
  * to a deployment.
  */
 export const platformSignals = pgTable("platform_signals", {
-  /** CHECK-constrained to the platforms this deployment can poll. */
+  /**
+   * The platform whose traffic the row counts. Held to a shape since cloud 0103, and no longer to
+   * one host's name: which platforms a deployment can poll is the reader's (`SignalProvider`).
+   */
   provider: text("provider").notNull(),
   /** The platform's own project name (`ohmail-api`) — an identifier this repository chooses. */
   project: text("project").notNull(),
@@ -473,6 +525,7 @@ export const platformSignals = pgTable("platform_signals", {
 }, (t) => ({
   pk: primaryKey({ columns: [t.provider, t.project, t.windowStart], name: "platform_signals_pk" }),
   ixWindow: index("platform_signals_window_idx").on(t.windowStart),
+  ckProvider: check("platform_signals_provider_shape", sql`${t.provider} ~ '^[a-z][a-z0-9_-]{0,31}$'`),
 }));
 
 /**
@@ -502,7 +555,6 @@ export const apiFaults = pgTable("api_faults", {
    */
   arm: text("arm").notNull(),
 }, (t) => ({
-  ixAt: index("api_faults_at_idx").on(t.at),
   ixAtRoute: index("api_faults_at_route_idx").on(t.at, t.route),
   ckStatus: check("api_faults_status_check", sql`${t.status} >= 500 and ${t.status} <= 599`),
   ckLen: check("api_faults_len_check",
@@ -700,6 +752,8 @@ export const mailboxOauthCeremonies = pgTable("mailbox_oauth_ceremonies", {
   accountId: uuid("account_id").notNull().references(() => accounts.id),
   /** Today only `"microsoft"`. Stored so a second provider needs no column. */
   provider: text("provider").notNull(),
+  /** What the ceremony connects (cloud 0105): `mailbox` for every flow there is; a calendar's sign-in says its own word. */
+  purpose: text("purpose").notNull().default("mailbox"),
   /** The KEK envelope of the PKCE `code_verifier`. */
   codeVerifierEnc: text("code_verifier_enc").notNull(),
   /** NOT NULL beside the ciphertext: `decrypt(ct, keyVersion)` cannot be called without it. */
@@ -739,6 +793,8 @@ export const mailboxOauthDeviceCeremonies = pgTable("mailbox_oauth_device_ceremo
   accountId: uuid("account_id").notNull().references(() => accounts.id),
   /** Today only `"microsoft"`. Stored so a second provider needs no column. */
   provider: text("provider").notNull(),
+  /** What the ceremony connects (cloud 0105), as on the redirect ceremony. */
+  purpose: text("purpose").notNull().default("mailbox"),
   /** The KEK envelope of the `device_code`. SECRET — never rendered, never logged. */
   deviceCodeEnc: text("device_code_enc").notNull(),
   /** NOT NULL beside the ciphertext: `decrypt(ct, keyVersion)` cannot be called without it. */
@@ -1101,13 +1157,56 @@ export const storageMailSent = pgTable("storage_mail_sent", {
   ckCap: check("storage_mail_sent_cap_positive", sql`${t.capBytes} > 0`),
 }));
 
+/**
+ * AN ACCOUNT CLOSED BY STAFF (cloud 0104). A row stands while the account is closed: its sign-in is
+ * refused and every session and device was signed out; nothing is deleted, and reopening removes
+ * the row. A Cloud table and not a column on `accounts`, which every desktop and phone holds and
+ * which no staff can close there. `closedByStaffId` is a pointer with no key, as the staff audit's
+ * are; `requestId` joins the row to the request that closed it. Nothing writes it yet.
+ */
+export const accountClosures = pgTable("account_closures", {
+  accountId: uuid("account_id").primaryKey().references(() => accounts.id),
+  closedAt: timestamp("closed_at", { withTimezone: true }).defaultNow().notNull(),
+  closedByStaffId: uuid("closed_by_staff_id"),
+  requestId: text("request_id").notNull(),
+});
+
+/**
+ * A CHANNEL A CALENDAR'S PROVIDER NOTIFIES ON (cloud 0105). The service opens it; a notice then
+ * names it before any account is known, so the row is found by `(provider, channel_id)`, which is
+ * unique. The word a notice must carry is kept as a hash. The row carries its account and hangs
+ * off its connection under the connection's `(id, account_id)`. Servers only: a desktop reads a
+ * calendar itself. Polling stays the floor; a channel only shortens the wait. Nothing writes it yet.
+ */
+export const calPushChannels = pgTable("cal_push_channels", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accountId: uuid("account_id").notNull(),
+  connectionId: uuid("connection_id").notNull(),
+  calendarId: uuid("calendar_id"),
+  provider: text("provider").notNull(),
+  channelId: text("channel_id").notNull(),
+  tokenHash: text("token_hash").notNull(),
+  resourceId: text("resource_id"),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+}, (t) => ({
+  fkConnection: foreignKey({
+    name: "cal_push_channels_connection_id_account_fk",
+    columns: [t.connectionId, t.accountId], foreignColumns: [calConnections.id, calConnections.accountId],
+  }),
+  uqChannel: uniqueIndex("cal_push_channels_channel_uq").on(t.provider, t.channelId),
+  ixAccount: index("cal_push_channels_account_idx").on(t.accountId, t.connectionId),
+  ixExpires: index("cal_push_channels_expires_idx").on(t.expiresAt),
+}));
+
 export const cloudSchema = {
   credentials, webauthnCredentials, webauthnChallenges, totpSecrets, recoveryCodes, loginTokens,
-  oauthAuthCodes, authEvents, authThrottle, pushSubscriptions,
+  oauthAuthCodes, authEvents, authThrottle, accountCounters, pushSubscriptions,
   workerHeartbeats, alertState, alertPassRuns, alertDriverGaps, alertDrills, platformSignals, apiFaults,
   waitlist, staffUsers, staffSessions, staffAuditLog, staffRoleGrants, staffAuditEvents,
   mailboxOauthCeremonies, mailboxOauthDeviceCeremonies,
   oauthProviderConfig, attachmentStaging, invites,
   creditRefundObligations, screenerSuggestOwed, accountLifecycleNotices, erasedBearers, connectAttempts,
   accountStorageHolds, mailboxStorageStats, accountStoragePrefs, storageMailSent,
+  accountClosures, calPushChannels,
 };

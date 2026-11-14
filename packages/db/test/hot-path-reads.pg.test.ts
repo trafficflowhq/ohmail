@@ -11,7 +11,8 @@ import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
  * Two rows feed it. The missing-indexes row named four reads on tables that only grow and was
  * worked in three separate landings, so "is it closed?" had to be re-derived from the code every
  * time somebody asked; a backend review named two newest-first `messages` pages. (A database
- * review named a third read, the Screener auto-apply's held page, retired with that pass.)
+ * review named a third read, the Screener auto-apply's held page, retired with that pass.) The
+ * 2.0 schema's list named one more, whose index mail 0200 changed.
  * This file is the answer, executable: one row per read, naming the read, its source, the row
  * that named it and the index that serves it, asserted by asking the PLANNER on a grown table —
  * not by looking the index up in `pg_indexes`, which passes for an index the planner refuses and
@@ -63,10 +64,10 @@ interface HotRead {
   /** Where it lives — the thing a person greps for when this case goes red. */
   source: string;
   /** The row that named this read. Two rows feed this file; see the header. */
-  named: "missing indexes" | "newest-first pages";
+  named: "missing indexes" | "newest-first pages" | "the 2.0 schema";
   /** The index that must serve it, and where that index comes from. */
   index: string;
-  from: "the hot-path prebuild" | "the cloud journal";
+  from: "the hot-path prebuild" | "the cloud journal" | "the mail journal";
   /** Rows in, subject seeded; returns the exact query to plan. */
   seed: (tx: postgres.TransactionSql) => Promise<string>;
   /** What the plan must NOT contain once the index is there. */
@@ -94,8 +95,8 @@ async function grownMailbox(tx: postgres.TransactionSql, label: string): Promise
             case when g % 33 = 0 then now() else null end
        from generate_series(1, ${GROWN}) g`, [id, mb!.id as string, label]);
   await tx.unsafe(
-    `insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-     select id, case when (('x' || substr(md5(id::text), 1, 8))::bit(32)::int % 2) = 0
+    `insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+     select id, account_id, case when (('x' || substr(md5(id::text), 1, 8))::bit(32)::int % 2) = 0
                      then 'INBOX' else 'ohmail/News' end, 'INBOX', 'us'
        from messages where account_id = $1::uuid`, [id]);
   await tx`analyze messages`;
@@ -144,7 +145,7 @@ const READS: readonly HotRead[] = [
          select $1::uuid, $2::uuid, 'h', 'k:' || g, 'a@x.example', now() - (g || ' minutes')::interval
            from generate_series(1, ${GROWN}) g`, [acct!.id as string, mb!.id as string]);
       await tx.unsafe(
-        `insert into message_bodies (message_id, text) select id, repeat('x', 200) from messages
+        `insert into message_bodies (message_id, account_id, text) select id, account_id, repeat('x', 200) from messages
           where account_id = $1::uuid`, [acct!.id as string]);
       await tx`analyze messages`;
       await tx`analyze message_bodies`;
@@ -177,10 +178,45 @@ const READS: readonly HotRead[] = [
     },
   },
   {
-    read: "the message list page, as an API from before mail 0139 still spells it",
-    // The live builder walks the arrival index since mail 0139, pinned from the builder itself by
-    // `packages/services/test/message-order-arrival.pg.test.ts`; this index stays for one release.
-    source: "the pre-0139 MSG_ORDER (list, pageOf) — kept until DROP-MSG-ORDER-INDEX-NEXT-RELEASE",
+    read: "the mailboxes' letter counts",
+    // Mail 0200 took the read flag out of this index: a flag that flips with every letter read
+    // made every index entry of the letter move. The count never read the flag; it reads one
+    // account's letters grouped by mailbox, and this is the index kept for that.
+    source: "packages/services/src/mailbox-service.ts messageCounts",
+    named: "the 2.0 schema",
+    index: "messages_account_mailbox_idx",
+    from: "the mail journal",
+    // What the index removes: the account's letters read off an index kept for another read, or
+    // off the table. Other accounts' letters stand beside it, so the account bound is worth an index.
+    gone: /Seq Scan on messages|Scan (?:on|using) messages_(?!account_mailbox_idx)\w+/,
+    seed: async (tx) => {
+      const acct = await grownMailbox(tx, "counts");
+      // Nine times as many letters of another account: the account bound is a tenth of the table.
+      const [other] = await tx`insert into accounts default values returning id`;
+      const [mb] = await tx`insert into mailboxes (account_id, provider, address)
+        values (${other!.id as string}, 'imap', ${`counts-other-${other!.id as string}@tf.example`}) returning id`;
+      await tx.unsafe(
+        `insert into messages (account_id, mailbox_id, body_hash, dedup_key, from_address, date)
+         select $1::uuid, $2::uuid, 'h', 'counts-other:' || g, 'a@x.example', now() - (g || ' minutes')::interval
+           from generate_series(1, ${9 * GROWN}) g`, [other!.id as string, mb!.id as string]);
+      // Eight other indexes lead with the account, and the planner may bound the count by any of
+      // them: which it picks turns on their sizes that day. They are set aside for this plan
+      // (inside the transaction), so the case reads what THIS index gives the count, and its
+      // control what is left without it.
+      const peers = await tx<{ n: string }[]>`select indexname::text as n from pg_indexes
+        where schemaname = 'public' and tablename = 'messages' and indexname <> 'messages_account_mailbox_idx'
+          and indexdef like '%USING btree (account_id%'`;
+      for (const p of peers) await tx.unsafe(`drop index public."${p.n}"`);
+      await tx`analyze messages`;
+      return `select "mailbox_id", count(*)::int as n from messages
+               where "account_id" = '${acct}'::uuid and "deleted_at" is null group by "mailbox_id"`;
+    },
+  },
+  {
+    read: "the message list page by header date, the order search's History walk reads",
+    // The list's own builder walks the arrival index since mail 0139, pinned from the builder
+    // itself by `packages/services/test/message-order-arrival.pg.test.ts`; search still walks this one.
+    source: "the header-date order (search-service.ts, the History keyset; the pre-0139 list)",
     named: "newest-first pages",
     index: "messages_account_msg_order_idx",
     from: "the hot-path prebuild",
@@ -197,8 +233,8 @@ const READS: readonly HotRead[] = [
     },
   },
   {
-    read: "the sync-snapshot message walk, as an API from before mail 0139 still spells it",
-    source: "the pre-0139 snapshot orderBy — kept until DROP-MSG-ORDER-INDEX-NEXT-RELEASE",
+    read: "a walk of one account's living letters, newest header date first",
+    source: "the header-date order without a folder (search-service.ts, the History walk)",
     named: "newest-first pages",
     index: "messages_account_msg_order_idx",
     from: "the hot-path prebuild",
@@ -235,6 +271,38 @@ const READS: readonly HotRead[] = [
       return `select * from webauthn_challenges
                where "type" = 'authentication' and "consumed_at" is null
                  and "login_token_id" = '${lt}'::uuid
+               order by "created_at" desc limit 1`;
+    },
+  },
+  {
+    // The user arm, as the service asks it since cloud 0100: the index leads with the account, so
+    // the read names both. A read by the user alone has no leading column to seek on.
+    read: "the passkey-ceremony consume read, by the signed-in user",
+    source: "packages/services/src/auth/auth-service.ts consumeChallenge",
+    named: "the 2.0 schema",
+    index: "webauthn_challenges_open_user_idx",
+    from: "the cloud journal",
+    gone: /Seq Scan on webauthn_challenges/,
+    seed: async (tx) => {
+      // 200 users of 200 accounts hold the open ceremonies; the read is one more user's.
+      await tx.unsafe(
+        `with a as (insert into accounts select from generate_series(1, 201) returning id),
+              u as (insert into users (account_id, email)
+                    select id, 'hot-' || id || '@tf.example' from a returning id, account_id, email)
+         insert into webauthn_challenges
+           (user_id, account_id, challenge, type, rp_id, origin, expires_at, consumed_at, created_at)
+         select u.id, u.account_id, 'ch-' || g, 'authentication', 'ohmail.app', 'https://app.ohmail.app',
+                now() + interval '5 minutes',
+                case when g % 3 = 0 then now() else null end,
+                now() - (g || ' milliseconds')::interval
+           from u cross join generate_series(1, ${GROWN / 200}) g`);
+      const [mine] = await tx`select user_id, account_id from webauthn_challenges
+        where user_id is not null and consumed_at is null order by created_at limit 1`;
+      await tx`analyze webauthn_challenges`;
+      return `select * from webauthn_challenges
+               where "type" = 'authentication' and "consumed_at" is null
+                 and "user_id" = '${mine!.user_id as string}'::uuid
+                 and "account_id" = '${mine!.account_id as string}'::uuid
                order by "created_at" desc limit 1`;
     },
   },
@@ -298,7 +366,8 @@ describe.skipIf(!PG_UP)("every hot read a row has named still has its index", ()
     const by = (n: HotRead["named"]) => READS.filter((r) => r.named === n).length;
     expect(by("missing indexes")).toBe(4);
     expect(by("newest-first pages")).toBe(2);
-    expect(READS).toHaveLength(6);
+    expect(by("the 2.0 schema")).toBe(2);
+    expect(READS).toHaveLength(8);
     for (const r of READS) {
       if (r.from === "the hot-path prebuild") { expect(specOf(r.index).name).toBe(r.index); continue; }
       const rows = await client`select indexname from pg_indexes

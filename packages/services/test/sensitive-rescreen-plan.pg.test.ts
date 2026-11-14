@@ -9,7 +9,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accountSyncState, accounts, auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, rules } from "@trafficflow/db";
+import { accountSyncState, accounts, auditLog, changeLog, contacts, folderState, mailboxes, messageBodies, messages, passProgress, rules } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runSensitiveRescreen } from "../src/sensitive-rescreen.js";
 import type { Db } from "../src/context.js";
@@ -89,10 +89,10 @@ describe.skipIf(!AVAILABLE)("the plan runs the real pass and rolls it back", () 
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: o.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: o.headers ?? {},
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -131,12 +131,22 @@ describe.skipIf(!AVAILABLE)("the plan runs the real pass and rolls it back", () 
         from (select to_jsonb(m.*) from mailboxes m where m.id = ${w.mailboxId}::uuid) s(t)`),
       one("messages", sql`select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as d
         from (select to_jsonb(m.*) from messages m where m.mailbox_id = ${w.mailboxId}::uuid) s(t)`),
+      // Where the pass stands: its position, its walk's start and its done mark.
+      one("pass_progress", sql`select md5(coalesce(string_agg(t::text, '|' order by t::text), '')) as d
+        from (select to_jsonb(p.*) from pass_progress p where p.account_id = ${w.accountId}::uuid) s(t)`),
       // Named separately AND digested above, because the gap-free `seq` is load-bearing for
       // `/sync` and "the counter did not move" deserves its own assertion rather than being
       // one hash among five.
       one("account_sync_state", sql`select coalesce(max(next_seq)::text, '∅') as d
         from account_sync_state where account_id = ${w.accountId}::uuid`),
     ]));
+  }
+
+  /** Where the pass stands for the mailbox; no row reads as every mark empty. */
+  async function marksOf(mailboxId: string): Promise<{ at: Date | null; cursor: string | null }> {
+    const [r] = await db.select({ at: passProgress.doneAt, cursor: passProgress.cursor }).from(passProgress)
+      .where(and(eq(passProgress.job, "sensitive_rescreen"), eq(passProgress.subjectId, mailboxId))).limit(1);
+    return r ?? { at: null, cursor: null };
   }
 
   /** Four movers, two stayers — so neither count can be right by accident. */
@@ -204,8 +214,7 @@ describe.skipIf(!AVAILABLE)("the plan runs the real pass and rolls it back", () 
 
     // THE MARKER IS NOT STAMPED AND NOT ATTEMPTED. A plan that marked the mailbox corrected
     // would mean the apply never runs and the misrouted mail stays for ever.
-    const [mb] = await db.select({ at: mailboxes.sensitiveRescreenAt })
-      .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)).limit(1);
+    const mb = await marksOf(w.mailboxId);
     expect(mb!.at).toBeNull();
 
     // `allocateSeq` ran four times inside rolled-back transactions and left NO gap. A
@@ -262,10 +271,9 @@ describe.skipIf(!AVAILABLE)("the plan runs the real pass and rolls it back", () 
     expect(plan).toMatchObject({
       ran: true, examined: 2, rescreened: 2, kept: 0, truncated: false, resumedFrom: ids[3],
     });
-    // …and the mailbox row, cursor included, is byte-for-byte what it was.
+    // …and the mailbox row and the stored position are byte-for-byte what they were.
     expect(await digest(w)).toEqual(before);
-    const [mb] = await db.select({ cursor: mailboxes.sensitiveRescreenCursor })
-      .from(mailboxes).where(eq(mailboxes.id, w.mailboxId)).limit(1);
+    const mb = await marksOf(w.mailboxId);
     expect(mb!.cursor).toBe(ids[3]);
   });
 
@@ -312,9 +320,7 @@ describe.skipIf(!AVAILABLE)("the plan runs the real pass and rolls it back", () 
     // EVERY REPORTED FIELD, not just the reason: a plan that got the reason right and the counts
     // wrong is still a plan the operator cannot authorise on, which is this file's whole subject.
     expect(apply).toEqual(plan);
-    const [mb] = await db.select({
-      at: mailboxes.sensitiveRescreenAt, cursor: mailboxes.sensitiveRescreenCursor,
-    }).from(mailboxes).where(eq(mailboxes.id, w.mailboxId)).limit(1);
+    const mb = await marksOf(w.mailboxId);
     expect(mb!.at, "a disturbed apply stamped the marker").toBeNull();
     expect(mb!.cursor, "a disturbed apply kept its position").toBeNull();
   });

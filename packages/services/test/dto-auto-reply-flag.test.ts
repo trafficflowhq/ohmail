@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { awayReplies, messageBodies, messages } from "@trafficflow/db";
@@ -28,7 +29,7 @@ const OWN = "mila@lichtgrat.example";
 async function withHeaders(
   db: Awaited<ReturnType<typeof makeCtx>>["db"], id: string, headers: Record<string, unknown>,
 ) {
-  await db.insert(messageBodies).values({ messageId: id, text: "", headers });
+  await db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers });
 }
 
 /** Give a seeded row a bare (bracket-free) Message-ID, as ingest writes it. */

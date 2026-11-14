@@ -2,6 +2,7 @@
  * window is deployment-wide. One post-push run ran it beside 96 co-tenants on one lane database: they
  * seeded the window, the anti-vacuity guard refused by name, and each of the three passed when run
  * alone on a fresh one. The post-push driver reads this marker and runs the file by itself. */
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -153,12 +154,12 @@ async function seedWindow(
     });
     await db.insert(messages).values(batch);
     await db.insert(folderState).values(batch.map((m, k) => ({
-      messageId: m.id, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
+      messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false, updatedAt: at(from + k),
     })));
     const bodies = batch.flatMap((m, k) => {
       const h = withHeaders(from + k);
-      return h === null ? [] : [{ messageId: m.id, text: "", headers: h }];
+      return h === null ? [] : [{ messageId: m.id, accountId: accountOfMessage(m.id), text: "", headers: h }];
     });
     if (bodies.length > 0) await db.insert(messageBodies).values(bodies);
     ids.push(...batch.map((m) => m.id));

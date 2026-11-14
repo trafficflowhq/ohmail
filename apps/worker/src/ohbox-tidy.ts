@@ -2,7 +2,8 @@ import { and, asc, eq, gt, inArray, isNotNull, isNull, or, sql, type SQL } from 
 import {
   accountSettings, approvals, auditLog, drafts, folderState, mailboxes,
   messageBodies, messageStates, messages, OwnAddressesPerPass, recordChange, weAnsweredThisSenderWhere,
-  type Tx, auditAction,} from "@trafficflow/db";
+  type Tx, auditAction, accountPass, passMark, passProgress, updatePassProgress, writePassProgress,
+} from "@trafficflow/db";
 import {
   authVerdictFromHeaders, evaluateRules, resolveOhboxPolicy, silentLogger,
   type Destination, type KnownSenders, type Logger, type OhboxPolicy, type Rule,
@@ -57,7 +58,7 @@ export interface OhboxTidyDeps {
   /** Test seam. Default {@link OHBOX_TIDY_MAX_PAGES}. */
   maxPages?: number;
   /**
-   * Re-run an account whose `ohbox_tidy_done_at` is already stamped — EVIDENCE, not a repair.
+   * Re-run an account whose tidy is already marked done — EVIDENCE, not a repair.
    *
    * The pass is idempotent WITHOUT the marker (a message it moved is desired into Reads/Receipts and
    * drops out of the candidate query; a message the user dragged back carries the move-to-INBOX
@@ -86,7 +87,7 @@ export interface OhboxTidyDeps {
   /**
    * ASSUME this posture instead of reading it from `account_settings`, and ONLY legal under
    * {@link dryRun}. It is what lets a plan answer "how much WOULD move if this account were
-   * `people_only`" WITHOUT flipping the posture — flipping it stamps `ohbox_tidy_requested_at` and
+   * `people_only`" WITHOUT flipping the posture — flipping it arms the tidy (its request mark in `pass_progress`) and
    * starts the LIVE worker on the backlog, which is the opposite of a preview. The constructor
    * throws if it is set without `dryRun`, so the dangerous combination is unrepresentable; the live
    * worker path never sets it and reads the posture from the locked row.
@@ -120,7 +121,7 @@ export interface OhboxTidyResult {
   sensitivityExcluded: number;
   /** True ⇒ the per-cycle write budget ran out; the rest resumes next cycle from the cursor. */
   capped: boolean;
-  /** True ⇒ the whole backlog drained and `ohbox_tidy_done_at` was stamped (never under dryRun). */
+  /** True ⇒ the whole backlog drained and the tidy was marked done (never under dryRun). */
   completed: boolean;
   /** True ⇒ the pass hit {@link OHBOX_TIDY_MAX_PAGES}; the marker is NOT written. */
   truncated: boolean;
@@ -267,15 +268,17 @@ export async function ohboxTidyPass(
 
   // ── THE OWED PROBE, AND THE STARTING CURSOR ────────────────────────────────────────────────
   //
-  // One PK read of `account_settings`. `ohbox_tidy_requested_at` set past `ohbox_tidy_done_at` (or
-  // with it NULL) IS the definition of owed work — there is no queue. Under a dry-run plan with an
+  // One PK read of `account_settings`, with the pass's marks beside it (`pass_progress`, mail
+  // 0203). `requested_at` set past `done_at` (or with it NULL) IS the definition of owed work —
+  // there is no queue. Under a dry-run plan with an
   // assumed posture the owed gate is SKIPPED (the plan answers "what would move", regardless of
   // whether this account has asked), but the real posture read still runs for the non-plan path.
+  const pass = accountPass("ohbox_tidy", accountId);
   const [settings] = await db.select({
     policy: accountSettings.ohboxPolicy,
-    requestedAt: accountSettings.ohboxTidyRequestedAt,
-    doneAt: accountSettings.ohboxTidyDoneAt,
-    cursor: accountSettings.ohboxTidyCursor,
+    requestedAt: passMark("ohbox_tidy", "requestedAt", accountSettings.accountId),
+    doneAt: passMark("ohbox_tidy", "doneAt", accountSettings.accountId),
+    cursor: passMark("ohbox_tidy", "cursor", accountSettings.accountId),
   }).from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
 
   const policy: OhboxPolicy = deps.assumePolicy ?? resolveOhboxPolicy(settings?.policy ?? null);
@@ -323,8 +326,8 @@ export async function ohboxTidyPass(
         // pass STARTS; the authoritative, serialized read is here.
         const [live] = await tx.select({
           policy: accountSettings.ohboxPolicy,
-          requestedAt: accountSettings.ohboxTidyRequestedAt,
-          doneAt: accountSettings.ohboxTidyDoneAt,
+          requestedAt: passMark("ohbox_tidy", "requestedAt", accountSettings.accountId),
+          doneAt: passMark("ohbox_tidy", "doneAt", accountSettings.accountId),
         }).from(accountSettings)
           .where(eq(accountSettings.accountId, accountId)).limit(1).for("update");
 
@@ -439,9 +442,7 @@ export async function ohboxTidyPass(
         // page's work nor replay it. Under a dry run this UPDATE is rolled back with everything else,
         // which is exactly right: `afterId` is JS state and carries the plan forward without it.
         if (lastId !== null) {
-          await tx.update(accountSettings)
-            .set({ ohboxTidyCursor: lastId, updatedAt: now() })
-            .where(eq(accountSettings.accountId, accountId));
+          await writePassProgress(tx as unknown as Tx, pass, { cursor: lastId }, { now: now() });
         }
 
         const pageResult: PageResult = {
@@ -484,7 +485,7 @@ export async function ohboxTidyPass(
       accountId, examined: result.examined, moved: result.moved, kept: result.kept, maxPages,
       dryRun: deps.dryRun === true,
       reason: "the Ohbox backlog exceeded one pass's page bound — the marker is NOT written, so the " +
-        "next cycle resumes from `ohbox_tidy_cursor`",
+        "next cycle resumes from the pass's cursor",
     });
     return result;
   }
@@ -497,15 +498,13 @@ export async function ohboxTidyPass(
   // to mark done an account a "tidy now" re-armed WHILE this run was draining: that account's
   // `requested_at` has moved past this `now()`, so it stays owed and the next cycle re-runs.
   if (drained && !deps.assumePolicy && !deps.dryRun) {
-    await db.update(accountSettings).set({ ohboxTidyDoneAt: now(), updatedAt: now() })
-      .where(and(
-        eq(accountSettings.accountId, accountId),
-        isNotNull(accountSettings.ohboxTidyRequestedAt),
-        or(
-          isNull(accountSettings.ohboxTidyDoneAt),
-          sql`${accountSettings.ohboxTidyDoneAt} < ${accountSettings.ohboxTidyRequestedAt}`,
-        ),
-      ));
+    await updatePassProgress(db as unknown as Tx, pass, { doneAt: now() }, {
+      when: and(
+        isNotNull(passProgress.requestedAt),
+        or(isNull(passProgress.doneAt), sql`${passProgress.doneAt} < ${passProgress.requestedAt}`),
+      ),
+      now: now(),
+    });
     result.completed = true;
   }
 

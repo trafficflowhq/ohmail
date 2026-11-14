@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -50,16 +51,16 @@ describe("the maintenance section runs the sign-in retention pass", () => {
     const [acct] = await db.insert(accounts).values({ name: "r" }).returning();
     const [user] = await db.insert(users).values({ accountId: acct!.id, email: `r+${randomUUID()}@trafficflow.test` }).returning();
     const [old] = await db.insert(loginTokens).values({
-      userId: user!.id, tokenHash: randomUUID(), expiresAt: new Date(Date.now() - 40 * 86_400_000),
+      userId: user!.id, accountId: accountOfUser(user!.id), tokenHash: randomUUID(), expiresAt: new Date(Date.now() - 40 * 86_400_000),
     }).returning();
     const [fresh] = await db.insert(loginTokens).values({
-      userId: user!.id, tokenHash: randomUUID(), expiresAt: new Date(Date.now() - 86_400_000),
+      userId: user!.id, accountId: accountOfUser(user!.id), tokenHash: randomUUID(), expiresAt: new Date(Date.now() - 86_400_000),
     }).returning();
     const [mb] = await db.insert(mailboxes)
       .values({ accountId: acct!.id, provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
 

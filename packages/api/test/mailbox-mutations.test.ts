@@ -286,7 +286,7 @@ describe("the waiting filings of a mailbox — read, Try again now, Leave them w
       accountId: s.accountId, mailboxId: id, dedupKey: "mid:<waits@example.test>", bodyHash: "waits",
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Receipts", observedFolder: "ohmail/Reads", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Receipts", observedFolder: "ohmail/Reads", lastSetBy: "us",
       updatedAt: new Date(FIXED_NOW.getTime() - 3_600_000), attempts: 1, lastErrorClass: "refused",
     });
     return { db, deps, s, id, messageId: m!.id };

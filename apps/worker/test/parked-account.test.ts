@@ -121,7 +121,7 @@ async function seedAccount(
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   await db.insert(pushSubscriptions).values({
@@ -205,7 +205,7 @@ async function storedLetter(db: Db, at: { accountId: string; mailboxId: string }
     snippet: ALL.snippet, deletedAt: gone ? new Date() : null, nativeLocator: { folder: "INBOX", ref: "1:7" },
   }).returning();
   const messageId = m!.id;
-  await db.insert(messageBodies).values({ messageId, text: gone ? "" : ALL.snippet, html: null, headers: WHOLE, withheldReason: gone ? "expunged" : null });
+  await db.insert(messageBodies).values({ messageId, accountId, text: gone ? "" : ALL.snippet, html: null, headers: WHOLE, withheldReason: gone ? "expunged" : null });
   if (!gone) await db.insert(messageInstances).values({ accountId, messageId, mailboxId, folder: "INBOX", uid: 7, uidvalidity: 1n, isPrimary: true });
   await reindexMessageSearch(db as unknown as Tx, accountId, messageId);
   await db.insert(routingDecisions).values({
@@ -751,7 +751,7 @@ describe("the catch-up a reopening pass records before it spends it", () => {
     }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     fleet.seedClaim(mb!.id, formatClaim({

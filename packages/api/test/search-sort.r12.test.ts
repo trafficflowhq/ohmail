@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { SEARCH_SORTS } from "@trafficflow/services/mail";
-import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, seedSearchDocuments, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -35,6 +35,7 @@ describe("GET /search?sort=", () => {
     const old = await mk("heron one", new Date("2026-07-01T09:00:00Z"), "zoe@late.example");
     const mid = await mk("heron two", new Date("2026-07-10T09:00:00Z"), "anna@early.example");
     const recent = await mk("heron three", new Date("2026-07-20T09:00:00Z"), "mike@mid.example");
+    await seedSearchDocuments(db, s.accountId);
     return { deps, token: s.token, old, mid, recent };
   };
 

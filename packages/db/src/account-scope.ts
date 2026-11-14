@@ -1,10 +1,12 @@
 /**
  * WHICH TABLES HAVE NO ACCOUNT OF THEIR OWN, AND WHOSE THEY BORROW.
  *
- * A column that is not there cannot disagree with the parent, and no account-scoped read reaches
- * such a row except through the parent it hangs from. What each owes instead is a single-column
- * key, so the parent is not merely assumed. `account-scope-is-declared.test.ts` derives both lists
- * from the schemas and refuses a table in neither.
+ * Since mail 0201 and cloud 0100 none borrows: the six mail tables and the seven sign-in tables
+ * that named a parent and no account carry their own, under a key onto the parent's
+ * `(id, account_id)`. The list stays, empty, because it is what the census asks: a table with no
+ * account column that hangs off another table is either here, with the single-column key it owes
+ * instead, or in {@link NO_ACCOUNT_SCOPE} with the reason it belongs to no account.
+ * `account-scope-is-declared.test.ts` derives both from the schemas and refuses a table in neither.
  */
 
 /** A table whose account scope is its parent's, named with the reference that carries it. */
@@ -16,21 +18,17 @@ export interface ParentScopedTable {
   readonly parent: string;
 }
 
-/** The thirteen. Each carries a single-column key to a parent that has an `account_id`. */
-export const SCOPED_THROUGH_A_PARENT: readonly ParentScopedTable[] = [
-  { table: "mailbox_credentials", via: "mailbox_id", parent: "mailboxes" },
-  { table: "mailbox_folders", via: "mailbox_id", parent: "mailboxes" },
-  { table: "folder_state", via: "message_id", parent: "messages" },
-  { table: "flag_state", via: "message_id", parent: "messages" },
-  { table: "message_bodies", via: "message_id", parent: "messages" },
-  { table: "pairing_tokens", via: "created_by_user_id", parent: "users" },
-  { table: "credentials", via: "user_id", parent: "users" },
-  { table: "webauthn_credentials", via: "user_id", parent: "users" },
-  { table: "webauthn_challenges", via: "user_id", parent: "users" },
-  { table: "totp_secrets", via: "user_id", parent: "users" },
-  { table: "recovery_codes", via: "user_id", parent: "users" },
-  { table: "login_tokens", via: "user_id", parent: "users" },
-  { table: "oauth_auth_codes", via: "user_id", parent: "users" },
+/** No table borrows its parent's account any more. A new one that does is a ruling, not a default. */
+export const SCOPED_THROUGH_A_PARENT: readonly ParentScopedTable[] = [];
+
+/**
+ * The five tables whose account every insert names since mail 0201: NOT NULL on a server, nullable
+ * on a device (`schema-mail-sqlite.ts`), where the test store refuses an insert without it.
+ * `pairing_tokens` carries the column too and is not here: the first setup token has no creator,
+ * and so no account.
+ */
+export const ACCOUNT_NAMED_BY_EVERY_INSERT = [
+  "message_bodies", "folder_state", "flag_state", "mailbox_credentials", "mailbox_folders",
 ] as const;
 
 /** A table with no account scope at all, and the reason it has none. */

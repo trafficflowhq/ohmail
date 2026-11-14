@@ -99,7 +99,7 @@ describe("a rule's 'apply to existing mail' reaches the mailbox on a standalone 
       folder: "INBOX", uidvalidity: 1n, uid, isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

@@ -4,7 +4,8 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { brandDialect } from "../src/dialect/index.js";
-import { runMigrations, readJournalOf, MAIL_JOURNAL } from "../src/admin.js";
+// The 1.0 road and nothing after it: the entry and its prebuild are that road's.
+import { migrateToOldHeads, readJournalOf, MAIL_JOURNAL } from "../src/admin.js";
 import { ensureConcurrentIndexes } from "../src/concurrent-index.js";
 import { ensureWithheldProvenanceIndex, RECIPIENT_KEYS_PREBUILD_SPEC } from "../src/search-setup.js";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
@@ -31,7 +32,7 @@ describe.skipIf(!PG_UP)("mail 0154's prebuild on a database at 0153", () => {
     await admin.unsafe(`create database "${name}"`);
     created.push(name);
     const url = urlFor(name);
-    await runMigrations(url);
+    await migrateToOldHeads(url);
     const client = postgres(url, { max: 1, onnotice: () => {} });
     const db = brandDialect(drizzle(client), "pg");
     await db.execute(sql`drop index if exists public.messages_recipient_keys_idx`);
@@ -61,7 +62,7 @@ describe.skipIf(!PG_UP)("mail 0154's prebuild on a database at 0153", () => {
       await ensureWithheldProvenanceIndex(db, { log: (m) => logs.push(m) });
       expect(logs).toContain("messages_recipient_keys_idx: building concurrently on messages");
       expect(await state(db)).toEqual([{ valid: true }]);
-      await runMigrations(url);
+      await migrateToOldHeads(url);
       expect(await state(db)).toEqual([{ valid: true }]);
       const applied = (await db.execute(sql`select count(*)::int as n from drizzle_mail.__drizzle_migrations
         where created_at = ${ENTRY!.when}`)) as unknown as Array<{ n: number }>;

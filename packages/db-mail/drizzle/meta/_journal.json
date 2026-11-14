@@ -1275,6 +1275,48 @@
       "when": 1791602600086,
       "tag": "0185_sync_blocked_reason_mailbox_full",
       "breakpoints": true
+    },
+    {
+      "idx": 182,
+      "version": "7",
+      "when": 1794689084522,
+      "tag": "0200_search_one_generation",
+      "breakpoints": true
+    },
+    {
+      "idx": 183,
+      "version": "7",
+      "when": 1794689084523,
+      "tag": "0201_account_on_borrowers",
+      "breakpoints": true
+    },
+    {
+      "idx": 184,
+      "version": "7",
+      "when": 1794689084524,
+      "tag": "0202_retired",
+      "breakpoints": true
+    },
+    {
+      "idx": 185,
+      "version": "7",
+      "when": 1794689084525,
+      "tag": "0203_pass_progress",
+      "breakpoints": true
+    },
+    {
+      "idx": 186,
+      "version": "7",
+      "when": 1794689084526,
+      "tag": "0204_message_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 187,
+      "version": "7",
+      "when": 1794689084527,
+      "tag": "0205_calendar",
+      "breakpoints": true
     }
   ]
 }

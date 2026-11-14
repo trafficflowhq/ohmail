@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments, bracketSpan } from "../../../scripts/lib/source-scan.mjs";
+import { UNWRITTEN_TABLES } from "./_unwritten-tables.js";
 
 /* @reads: packages/db/src/schema-mail.ts packages/db/src/schema-cloud.ts packages/core/src/adapters/drizzle-repo.ts packages/core/src/stored-values.ts packages/core/src/threading.ts packages/core/src/message-search.ts packages/services/src/unsubscribe-service.ts packages/core/src/adapters/imap-bounds.ts */
 
@@ -14,6 +16,11 @@ import { withoutComments, bracketSpan } from "../../../scripts/lib/source-scan.m
  * one names the line in code that bounds it where it is stored, read with comments stripped. A
  * value the account's own SERVER names (a folder path) is bounded where it enters, in UTF-8 bytes:
  * a character bound admits three bytes per character, which is past the btree.
+ *
+ * A table NOTHING WRITES YET has nothing to bound: its sender-written columns are classed
+ * `unwritten`, and the census holds that word to the tree. The first statement anywhere in the
+ * product that inserts into the table turns it red, and its author classes the column with the
+ * line that bounds it.
  */
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 const read = (p: string) => readFileSync(join(REPO, p), "utf8");
@@ -124,13 +131,47 @@ export function boundsInBytes(src: string, fn: string): boolean {
   return /\b(?:utf8ByteLength|Buffer\.byteLength)\([^;]*\)\s*>\s*[A-Z_]+_MAX_BYTES\b/.test(body);
 }
 
-/** Every indexed text column, by name. `inbound` is a sender-written value; the rest say why not. */
-const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { not: string }> = {
+/**
+ * The tables some product source inserts into, by SQL name: `.insert(<export>)` resolved through the
+ * schema's own declarations, and `insert into <table>` in a statement written by hand.
+ */
+export function writtenTables(sources: ReadonlyMap<string, string>, schemaSrcs: string[]): Set<string> {
+  const sqlName = new Map<string, string>();
+  for (const src of schemaSrcs) {
+    for (const m of withoutComments(src).matchAll(/export const (\w+) = pgTable\(\s*"([a-z_0-9]+)"/g)) sqlName.set(m[1]!, m[2]!);
+  }
+  const tables = new Set(sqlName.values());
+  const out = new Set<string>();
+  for (const raw of sources.values()) {
+    const code = withoutComments(raw);
+    for (const m of code.matchAll(/\.insert\(\s*(\w+)\s*\)/g)) {
+      const t = sqlName.get(m[1]!);
+      if (t !== undefined) out.add(t);
+    }
+    for (const m of code.matchAll(/\binsert\s+into\s+(?:"?public"?\.)?"?([a-z_0-9]+)"?/gi)) {
+      if (tables.has(m[1]!)) out.add(m[1]!);
+    }
+  }
+  return out;
+}
+
+/** Every product source file, as git tracks them: the `src` folder of each app and package. */
+function productSources(): Map<string, string> {
+  const listed = execFileSync("git", ["ls-files", "apps", "packages"], { cwd: REPO, encoding: "utf8", maxBuffer: 64e6 });
+  const out = new Map<string, string>();
+  for (const f of listed.split("\n")) if (/^(apps|packages)\/[^/]+\/src\/.*\.tsx?$/.test(f)) out.set(f, read(f));
+  return out;
+}
+
+/**
+ * Every indexed text column, by name. `inbound` is a sender-written value; `unwritten` is one of a
+ * table no product source inserts into yet, with who bounds it when one does; the rest say why not.
+ */
+const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { not: string } | { unwritten: string }> = {
   "messages.from_address": { inbound: "address" },
   "contacts.address": { inbound: "contactAddress" },     // learned from From and recipients
   "list_addresses.address": { inbound: "listAddress" },   // a List-Post mailto (mail 0150), its primary key
   "away_replies.sender": { inbound: "address" },          // the stored from_address
-  "away_responder_sent.sender": { inbound: "address" },
   "away_sender_state.sender": { inbound: "address" },
   "graduations.pattern_key": { inbound: "address" },      // `sender:<from.address>→<folder>`
   "messages.message_id_header": { inbound: "messageId" },
@@ -157,6 +198,7 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "idempotency_keys.key": { not: "an API caller's request key" },
   "outbound_sends.idempotency_key": { not: "an API caller's request key" },
   "auth_throttle.key": { not: "a throttle key the product derives" },
+  "account_counters.key": { not: "a counter key the product derives, of a registered family and shape (the door refuses any other)" },
   "credit_refund_obligations.attempt": { not: "an id the product mints" },
   "attachment_staging.object_path": { not: "an object path the product mints" },
   "outbound_send_fingerprints.fingerprint": { not: "a fixed-length hash" },
@@ -186,6 +228,27 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   "staff_role_grants.role": { not: "a closed set of roles" },
   "graduations.action": { not: "a closed set of actions" },
   "unsubscribe_drain_state.pass": { not: "a pass name the product writes" },
+  "pass_progress.job": { not: "a pass name the product writes, from the door's closed list" },
+  // mail 0204. An invitation's UID and the instance it names are the sender's own text, read out
+  // of the letter's calendar part.
+  "message_invitations.uid": { unwritten: "the ingest that stores an invitation's identity bounds its UID in bytes" },
+  "message_invitations.recurrence_id": { unwritten: "the same door bounds the instance's id in bytes" },
+  // mail 0205, the calendar's tables (`_unwritten-tables.ts`). A provider's ids, an event's UID and
+  // an attendee's address are another party's text; each is bounded in bytes where the calendar's
+  // store writes it. A credential's kind and a write's idempotency key are the product's own.
+  "cal_calendars.provider_id": { unwritten: "a provider's id of a calendar, bounded where the calendar's sync stores it" },
+  "cal_events.provider_id": { unwritten: "a provider's id of an event, bounded where the calendar's sync stores it" },
+  "cal_events.uid": { unwritten: "an event's UID as its organizer wrote it, bounded where the calendar's sync stores it" },
+  "cal_events.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
+  "cal_attendees.address": { unwritten: "an attendee's address, bounded as a stored address is" },
+  "cal_links.uid": { unwritten: "the UID a letter named, bounded where the link is written" },
+  "cal_links.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
+  "cal_credentials.kind": { unwritten: "a closed set of kinds the product writes; classed `not` by its writer" },
+  "cal_writes.idempotency_key": { unwritten: "a key the client mints, bounded where the write is accepted" },
+  // cloud 0105, a calendar's notice channels. The channel's id is minted by the service or handed
+  // back by the provider; either way it is bounded where the channel is opened.
+  "cal_push_channels.provider": { unwritten: "a provider name the product writes; classed `not` by its writer" },
+  "cal_push_channels.channel_id": { unwritten: "a channel's id, bounded where the channel is opened" },
   "alert_pass_runs.driver": { not: "a driver name the product writes" },
   "alert_driver_gaps.driver": { not: "a driver name the product writes" },
   "alert_drills.kind": { not: "an alert kind the product writes, held to a shape by a CHECK" },
@@ -221,6 +284,38 @@ describe("every btree on a text column is named, and a sender-written one is bou
   it("names every indexed text column, and names no column that is not indexed", () => {
     expect([...found].filter((k) => !(k in CLASSES)).sort(), "an indexed text column nobody classed").toEqual([]);
     expect(Object.keys(CLASSES).filter((k) => !found.has(k)).sort(), "a class for a column no btree keys on").toEqual([]);
+  });
+
+  it("a column classed unwritten is of a table nothing inserts into yet", () => {
+    const written = writtenTables(productSources(), SCHEMAS.map(read));
+    expect(written.size, "the walk found no writer at all").toBeGreaterThan(40);
+    expect(written.has("messages") && written.has("message_bodies"), "the walk missed the ingest").toBe(true);
+    const owed = Object.entries(CLASSES).filter(([, c]) => "unwritten" in c).map(([k]) => k);
+    expect(
+      owed.filter((k) => written.has(k.split(".")[0]!)).sort(),
+      "a table gained its first writer: class these columns `inbound` or `server`, with the line that bounds each",
+    ).toEqual([]);
+  });
+
+  it("a table listed as unwritten has no writer: the list other censuses lean on is true of the tree", () => {
+    const written = writtenTables(productSources(), SCHEMAS.map(read));
+    expect(
+      Object.keys(UNWRITTEN_TABLES).filter((t) => written.has(t)).sort(),
+      "a table gained its first writer: take it off `_unwritten-tables.ts`, and give it its sweeps, its seeds and its bounds",
+    ).toEqual([]);
+    // Each name is a table the schema declares, under the export the list says.
+    const declared = new Map<string, string>();
+    for (const src of SCHEMAS.map(read)) {
+      for (const m of withoutComments(src).matchAll(/export const (\w+) = pgTable\(\s*"([a-z_0-9]+)"/g)) declared.set(m[2]!, m[1]!);
+    }
+    expect(Object.entries(UNWRITTEN_TABLES).filter(([t, u]) => declared.get(t) !== u.name).map(([t]) => t)).toEqual([]);
+  });
+
+  it("CONTROL: a first writer of an unwritten table is found, by the builder and by hand-written SQL", () => {
+    const schema = [`export const evil = pgTable("evil_inbound", { line: text("header_line") });`];
+    expect([...writtenTables(new Map([["a.ts", "await tx.insert(evil).values({ line });"]]), schema)]).toEqual(["evil_inbound"]);
+    expect([...writtenTables(new Map([["a.ts", "await db.execute(sql`insert into evil_inbound (header_line) values (${x})`);"]]), schema)]).toEqual(["evil_inbound"]);
+    expect([...writtenTables(new Map([["a.ts", "// await tx.insert(evil).values({ line });\nawait tx.delete(evil);"]]), schema)]).toEqual([]);
   });
 
   it("finds each sender-written value's bound in code", () => {

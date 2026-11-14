@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import { folderState, mailboxes, messageBodies, messageInstances, messages } from "@trafficflow/db";
 import { MessageService, SearchService, SyncService, ServiceError, type ServiceContext } from "../src/index.js";
-import { changesFor, makeCtx, movedHere, otherAccount, seedMessage } from "./helpers.js";
+import { changesFor, makeCtx, movedHere, otherAccount, seedMessage, seedSearchDocuments } from "./helpers.js";
 
 /**
  * DELETE — the third user-commanded write of the 2026-08-22 amendment (imap-types.ts).
@@ -145,8 +145,9 @@ describe("MessageService.delete — to the provider's Trash, out of the living v
     await db.update(mailboxes).set({ trashFolder: TRASH }).where(eq(mailboxes.id, mailboxId));
     const keep = await seedMessage(db, accountId, mailboxId, { folder: "INBOX", subject: "kingfisher keep" });
     const gone = await seedMessage(db, accountId, mailboxId, { folder: "INBOX", subject: "kingfisher gone" });
-    await db.insert(messageBodies).values({ messageId: keep, text: "kingfisher" });
-    await db.insert(messageBodies).values({ messageId: gone, text: "kingfisher" });
+    await db.insert(messageBodies).values({ messageId: keep, accountId, text: "kingfisher" });
+    await db.insert(messageBodies).values({ messageId: gone, accountId, text: "kingfisher" });
+    await seedSearchDocuments(db, accountId);
     const before = await new SearchService().search(ctx, { q: "kingfisher" });
     expect(before.items.map((m) => m.id).sort()).toEqual([keep, gone].sort());
 

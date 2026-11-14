@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
@@ -34,7 +35,7 @@ async function mailbox(db: Db, accountId: string, folders: Array<[string, number
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `mb-${randomUUID().slice(0, 8)}@example.com`,
   }).returning({ id: mailboxes.id });
-  for (const [folder, n] of folders) await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder, serverExists: n });
+  for (const [folder, n] of folders) await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder, serverExists: n });
   return mb!.id;
 }
 
@@ -50,7 +51,7 @@ async function letter(
       subject: "s", fromAddress: "a@example.com", snippet: "", ...(o.deleted ? { deletedAt: START } : {}),
     }).returning({ id: messages.id });
     await tx.insert(messageBodies).values({
-      messageId: m!.id, text: o.text ?? "", html: o.html ?? null, withheldReason: o.withheld ?? null,
+      messageId: m!.id, accountId: accountOfMessage(m!.id), text: o.text ?? "", html: o.html ?? null, withheldReason: o.withheld ?? null,
     });
     for (let i = 0; i < (o.places ?? 1); i++) {
       await tx.insert(messageInstances).values({

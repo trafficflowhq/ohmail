@@ -154,9 +154,9 @@ async function world(n: number, seed: Seed = {}) {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `t-${accountId.slice(0, 8)}@example.test` }).returning();
   const mailboxId = mb!.id;
   await db.insert(mailboxFolders).values([
-    { mailboxId, folder: "ohmail/News", uidvalidity: 4n, uidnext: 107n, highestmodseq: 1n },
-    { mailboxId, folder: "ohmail/Reads", uidvalidity: 1n, uidnext: 7n, highestmodseq: 1n },
-    { mailboxId, folder: "ohmail/Receipts", uidvalidity: 3n, uidnext: 1n, highestmodseq: 1n },
+    { mailboxId, accountId, folder: "ohmail/News", uidvalidity: 4n, uidnext: 107n, highestmodseq: 1n },
+    { mailboxId, accountId, folder: "ohmail/Reads", uidvalidity: 1n, uidnext: 7n, highestmodseq: 1n },
+    { mailboxId, accountId, folder: "ohmail/Receipts", uidvalidity: 3n, uidnext: 1n, highestmodseq: 1n },
   ]);
   const ids: string[] = [];
   for (let i = 1; i <= n; i++) {
@@ -171,7 +171,7 @@ async function world(n: number, seed: Seed = {}) {
       await db.insert(messageInstances).values({ accountId, mailboxId, messageId: m!.id, folder: "ohmail/News", uidvalidity: 4n, uid: 100 + i, isPrimary: false });
     }
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: seed.desired ?? "ohmail/Receipts", observedFolder: seed.observed ?? "ohmail/Reads",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: seed.desired ?? "ohmail/Receipts", observedFolder: seed.observed ?? "ohmail/Reads",
       lastSetBy: "us", reconcileStatus: "pending", conflict: true, attempts: seed.attempts ?? 1,
       lastErrorClass: seed.errorClass === undefined ? "refused" : seed.errorClass, nextAttemptAt: null,
     });

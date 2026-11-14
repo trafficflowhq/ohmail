@@ -27,7 +27,7 @@ async function reader() {
     accountId, provider: "imap", address: "fresh@example.test", organizerRole: "reader", organizeConsentedAt: null,
   }).returning();
   await tx.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   const svc = makeMailboxService({ allowance: async () => { /* permitted */ } });
   const ctxAt = (now: Date): ServiceContext => ({

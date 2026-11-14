@@ -8,6 +8,7 @@ import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations } from "@trafficflow/db/admin";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { SearchService, ServiceError } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl } from "@trafficflow/db/testing";
@@ -109,10 +110,12 @@ async function seedMsg(o: {
     ...(o.cc !== undefined ? { ccAddresses: o.cc } : {}),
     nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
-  await db!.insert(messageBodies).values({ messageId: m!.id, text: o.subject });
+  await db!.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.subject });
   await db!.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
+  // As every writer of a body does: the letter's search document with it.
+  await reindexMessageSearch(db as never, o.accountId, m!.id);
   ids[o.key] = m!.id;
 }
 

@@ -44,9 +44,9 @@ export const screeningRoutes: Route[] = [
     cost: "work",
     replay: "state",
     handler: async (req, deps) => {
-      const body = await readBody<{
-        ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown;
-      }>(req);
+      // (`screenerAutoApply`, which a client one release older still sends, is read by nothing: the
+      // pass it switched was retired and its column went with mail 0202.)
+      const body = await readBody<{ ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown }>(req);
       // Only the axes the caller ACTUALLY sent are forwarded: a body that names just `ohboxBar` must
       // not reset `ohboxPolicy` to its default. Presence is `in`, never a truthiness or `!==
       // undefined` test — the whole point is that an explicit `null` (revert to default) is a real,
@@ -54,11 +54,9 @@ export const screeningRoutes: Route[] = [
       const update: ScreeningPreferenceUpdate = {};
       if ("ohboxPolicy" in body) update.ohboxPolicy = body.ohboxPolicy as ScreeningPreferenceUpdate["ohboxPolicy"];
       if ("ohboxBar" in body) update.ohboxBar = body.ohboxBar as ScreeningPreferenceUpdate["ohboxBar"];
-      // Auto-apply is a boolean opt-in, and the SERVICE does the type check (a non-boolean is a 400
-      // there), so this forwards the raw value rather than coercing — the same no-guessing rule the
-      // other two axes follow on this consent surface.
-      if ("screenerAutoApply" in body) update.screenerAutoApply = body.screenerAutoApply as ScreeningPreferenceUpdate["screenerAutoApply"];
-      // Filing a held impersonation to Spam: a boolean, checked by the service like the opt-in above.
+      // Filing a held impersonation to Spam: a boolean, and the SERVICE does the type check (a
+      // non-boolean is a 400 there), so this forwards the raw value rather than coercing — the same
+      // no-guessing rule the other two axes follow on this consent surface.
       if ("impersonationFiling" in body) {
         update.impersonationFiling = body.impersonationFiling as ScreeningPreferenceUpdate["impersonationFiling"];
       }

@@ -147,7 +147,7 @@ async function promoted(state: Placement, opts: Copies = {}) {
     { accountId, mailboxId, messageId, folder: opts.copyIn ?? "ohmail/News", uidvalidity: 9n, uid: 3, isPrimary: false },
   ]);
   await db.insert(folderState).values({
-    messageId, desiredFolder: state.desired, observedFolder: state.observed, lastSetBy: state.lastSetBy,
+    messageId, accountId, desiredFolder: state.desired, observedFolder: state.observed, lastSetBy: state.lastSetBy,
     reconcileStatus: state.desired === state.observed ? "reconciled" : "pending", conflict: true,
   });
   const placement = async () => {
@@ -269,7 +269,7 @@ describe("a letter whose every copy vanishes in one pass", () => {
         { accountId, mailboxId, messageId: m!.id, folder: "Newsletters", uidvalidity: 9n, uid: 10 + uid, isPrimary: false },
       ]);
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/News", observedFolder: "ohmail/News",
         lastSetBy: role === "reader" ? "peer" : "us", reconcileStatus: "reconciled", conflict: false,
       });
       deletes.push({ type: "delete", locator: { folder: "ohmail/News", ref: `${EPOCH}:${uid}` } });

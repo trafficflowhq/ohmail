@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
@@ -49,9 +50,9 @@ async function seed(
     ...(opts.threadId ? { threadId: opts.threadId } : {}),
     nativeLocator: { folder: INBOX, ref: `1:${i}` },
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: opts.headers ?? {} });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: opts.headers ?? {} });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external",
     reconcileStatus: "reconciled", conflict: false, ...(opts.decided ? { decidedAt: arrived } : {}),
   });
   return m!.id;
@@ -134,9 +135,9 @@ async function bulk(
       };
     })).returning({ id: messages.id, subject: messages.subject });
     for (const m of made) ids[Number(m.subject.slice(tag.length + 1))] = m.id;
-    await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "", html: null, headers })));
+    await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, accountId: accountOfMessage(m.id), text: "", html: null, headers })));
     await w.db.insert(folderState).values(made.map((m) => ({
-      messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
+      messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
       reconcileStatus: "reconciled" as const, conflict: false,
     })));
   }
@@ -319,7 +320,7 @@ describe("the hand-back's rulings", () => {
     // The gate's own evidence: a Sent folder, the copy's instance in it, written after the mailbox was connected.
     await w.db.update(mailboxes).set({ createdAt: new Date(NOW.getTime() - 30 * DAY), sentFolder: "Sent" })
       .where(eq(mailboxes.id, w.mailboxId));
-    await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, folder: "Sent" });
+    await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), folder: "Sent" });
     const [th] = await w.db.insert(threads).values({ accountId: w.accountId, subject: "plan", rootMessageIdHeader: "own-1@rig.test" }).returning();
     const sentAt = new Date(NOW.getTime() - 2 * DAY);
     const [sent] = await w.db.insert(messages).values({
@@ -328,12 +329,12 @@ describe("the hand-back's rulings", () => {
       messageIdHeader: "own-1@rig.test", toAddresses: [{ name: null, address: "team@lists.rig.test" }],
       nativeLocator: { folder: "Sent", ref: "1:1" },
     }).returning();
-    await w.db.insert(messageBodies).values({ messageId: sent!.id, text: "", html: null, headers: {} });
+    await w.db.insert(messageBodies).values({ messageId: sent!.id, accountId: accountOfMessage(sent!.id), text: "", html: null, headers: {} });
     await w.db.insert(messageInstances).values({
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: sent!.id, folder: "Sent", uidvalidity: 1n, uid: 1, isPrimary: true,
     });
     await w.db.insert(folderState).values({
-      messageId: sent!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
+      messageId: sent!.id, accountId: accountOfMessage(sent!.id), desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
     });
     const cites = { "in-reply-to": ["<own-1@rig.test>"], references: ["<own-1@rig.test>"] };
     const reply = await seed(w, "x@rig.test", 1, { headers: cites, threadId: th!.id });
@@ -360,9 +361,9 @@ describe("the hand-back's rulings", () => {
         unread: true, nativeLocator: { folder: INBOX, ref: `9:${r.k}` },
       }))).returning({ id: messages.id, subject: messages.subject });
       for (const m of made) ids[Number(m.subject.slice("Bulk ".length))] = m.id;
-      await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "", html: null, headers: {} })));
+      await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, accountId: accountOfMessage(m.id), text: "", html: null, headers: {} })));
       await w.db.insert(folderState).values(made.map((m) => ({
-        messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
+        messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
         reconcileStatus: "reconciled" as const, conflict: false,
       })));
     }
@@ -444,9 +445,9 @@ describe("the hand-back's rulings", () => {
         unread: false, nativeLocator: { folder: INBOX, ref: `8:${at + j}` },
       }))).returning({ id: messages.id });
       undated.push(...made.map((m) => m.id));
-      await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "", html: null, headers: {} })));
+      await w.db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, accountId: accountOfMessage(m.id), text: "", html: null, headers: {} })));
       await w.db.insert(folderState).values(made.map((m) => ({
-        messageId: m.id, desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
+        messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: INBOX, observedFolder: INBOX, lastSetBy: "external" as const,
         reconcileStatus: "reconciled" as const, conflict: false,
       })));
     }

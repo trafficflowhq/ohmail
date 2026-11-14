@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -47,7 +48,7 @@ async function setup() {
 /** A cursor row as the worker's discovery writes it — the inventory the feature reads. */
 async function addFolder(db: Db, mailboxId: string, folder: string): Promise<string> {
   const [row] = await db.insert(mailboxFolders)
-    .values({ mailboxId, folder, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+    .values({ mailboxId, accountId: accountOfMailbox(mailboxId), folder, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
     .returning();
   return row.id;
 }
@@ -233,7 +234,7 @@ describe("the folder page — the reach past a windowed mirror (GET /messages?vi
       fromAddress: "s@example.com", date,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "external",
+      messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: folder, observedFolder: folder, lastSetBy: "external",
     });
     return m.id;
   }

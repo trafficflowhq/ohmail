@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { accountSettings, folderState, mailboxes, messageBodies, messages, unsubscribeRecords } from "@trafficflow/db";
@@ -75,7 +76,7 @@ async function seedCandidate(
   const from = opts.from ?? `news-${randomUUID()}@sender.example`;
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder: "ohmail/Screened" });
   await personScreenedOut(db, accountId, from);
-  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
+  await db.insert(messageBodies).values({ messageId, accountId: accountOfMessage(messageId), text: "", headers: { ...CONFIRMED, ...headers } });
   if (opts.screenedAt) {
     await db.update(folderState).set({ updatedAt: opts.screenedAt })
       .where(eq(folderState.messageId, messageId));
@@ -104,7 +105,7 @@ async function seedIneligible(
     }
     const made = await db.insert(messages).values(rows).returning({ id: messages.id });
     await db.insert(folderState).values(made.map((m) => ({
-      messageId: m.id, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
+      messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false, updatedAt: at,
     })));
     await personScreenedOut(db, accountId, "noroute.example", { kind: "domain" });

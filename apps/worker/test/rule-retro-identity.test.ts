@@ -32,7 +32,7 @@ async function world(o: { personContact?: string; provenance?: "manual" | "promo
       nativeLocator: { folder: GATE, ref: "1:1" },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };

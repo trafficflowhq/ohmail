@@ -27,7 +27,7 @@ async function corpus(): Promise<{ ctx: ServiceContext; tagged: string; recent: 
       subject: `m ${i}`, fromAddress: "sender@example.test", date: new Date(NOW.getTime() - ageDays * DAY),
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+    await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
     return m!.id;
   };
   const recent = [await add(1, 1), await add(2, 2)];

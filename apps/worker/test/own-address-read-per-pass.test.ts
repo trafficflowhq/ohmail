@@ -5,6 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, folderState, mailboxes, messageBodies, messages, organizerRequests,
   readOwnAddresses, ruleCreatePayload, rules, type Tx,
+  accountPass, requestPass,
 } from "@trafficflow/db";
 import {
   deriveRequestKey, type MetaRecordsList, type RequestReaderIo, type RequestOrganizerIo, type RawMetaMessage,
@@ -68,7 +69,7 @@ async function inbox(db: Db, accountId: string, mailboxId: string, from: string)
     subject: "hello", fromAddress: from, nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
 }
@@ -169,11 +170,10 @@ describe("the ohbox tidy answers the own set from its one mailbox read", () => {
     const db = await makeTestDb();
     const text = await oneSetText(db);
     const a = await account(db, "me@tidy.invalid");
-    await db.insert(accountSettings).values({
-      accountId: a.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date("2026-10-07T11:00:00Z"),
-    });
+    await db.insert(accountSettings).values({ accountId: a.accountId, ohboxPolicy: "people_only" });
+    await requestPass(db, accountPass("ohbox_tidy", a.accountId), new Date("2026-10-07T11:00:00Z"));
     const id = await inbox(db, a.accountId, a.mailboxIds[0]!, "list@stranger.invalid");
-    await db.insert(messageBodies).values({ messageId: id, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.invalid/u>"] } });
+    await db.insert(messageBodies).values({ messageId: id, accountId: a.accountId, text: "", html: null, headers: { "list-unsubscribe": ["<https://x.invalid/u>"] } });
     await db.insert(rules).values({
       accountId: a.accountId, kind: "sender", match: "list@stranger.invalid", destination: "INBOX", priority: 0,
       provenance: "seeded-from-sent", enabled: true,

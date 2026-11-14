@@ -42,7 +42,7 @@ async function world() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: me, status: "connected", organizerRole: "organizer", createdAt: CONNECT,
   }).returning();
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   let uid = 0;
   const sentTo = async (to: string, source: "person" | "inferred" = "person") => {
     uid += 1;
@@ -55,9 +55,9 @@ async function world() {
       accountId, mailboxId: mb!.id, messageId: s!.id, folder: "Sent", uidvalidity: 7n, uid, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await db.insert(messageBodies).values({ messageId: s!.id, text: "hi", headers: {} });
+    await db.insert(messageBodies).values({ messageId: s!.id, accountId: s!.accountId, text: "hi", headers: {} });
     await db.insert(contacts).values({ accountId, address: to, source });
   };
   await sentTo(LIST);
@@ -72,9 +72,9 @@ async function world() {
       snippet: "", fromAddress: from, fromName: "PostFinance", senderCheck: "impersonation", senderCheckBrand: "PostFinance",
       date: NOW, unread: true, createdAt: NOW, nativeLocator: { folder: GATE, ref: `1:${randomUUID().slice(0, 6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE, destination: "INBOX",
@@ -90,9 +90,9 @@ async function world() {
       snippet: "", fromAddress: from, fromName: "The Lists", senderCheck: "none", date: at, unread: true, createdAt: at,
       nativeLocator: { folder: GATE, ref: `1:${randomUUID().slice(0, 6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(routingDecisions).values({
       accountId, messageId: m!.id, inputProvenance: SCREENER_SUGGESTION_PROVENANCE, destination: "INBOX",
@@ -197,9 +197,9 @@ async function pressWorld(contactSource: "person" | "inferred" | null, list = LI
       fromAddress: list, fromName: name, authVerdict: auth, senderCheck: brand === null ? "none" : "impersonation",
       senderCheckBrand: brand, date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: placedBy, reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: placedBy, reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };
@@ -284,7 +284,7 @@ async function listWithItsRule() {
     nativeLocator: { folder: "ohmail/News", ref: "1:900" },
   }).returning();
   await w.db.insert(folderState).values({
-    messageId: post!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: post!.id, accountId: post!.accountId, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const unsubscribed: string[][] = [];
   const svc = new ScreenerService({ unsubscribe: { onScreenOut: async (_ctx, ids) => { unsubscribed.push(ids); return { considered: ids.length }; } } });
@@ -459,7 +459,7 @@ async function admittedBy(door: Door) {
     nativeLocator: { folder: "ohmail/News", ref: "1:900" },
   }).returning();
   await w.db.insert(folderState).values({
-    messageId: post!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: post!.id, accountId: post!.accountId, desiredFolder: "ohmail/News", observedFolder: "ohmail/News", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const unsubscribed: string[][] = [];
   const svc = new ScreenerService({ unsubscribe: { onScreenOut: async (_ctx, ids) => { unsubscribed.push(ids); return { considered: ids.length }; } } });

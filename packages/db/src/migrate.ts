@@ -1,11 +1,17 @@
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
+import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "drizzle-orm/migrator";
 import { onNotice } from "./notices.js";
 import { pgTlsOptions } from "./pg-tls.js";
 import postgres, { type Sql } from "postgres";
-import { adoptBaseline, adoptReissuedOriginals } from "./baseline.js";
+import { adoptBaseline, adoptReissuedOriginals, type JournalSpec } from "./baseline.js";
 import { assertNoActiveAddressDuplicates } from "./mailbox-dedup.js";
 import { JOURNALS } from "./journal-specs.js";
+import { OLD_HEADS, type ServerJournal } from "./journal-heads.js";
+import {
+  TransitionRefused, describeEvent, runTransition, transitionState,
+  type SealedOpener, type TransitionInput, type TransitionLog,
+} from "./transition/index.js";
 
 /**
  * The journal SPECS — folders and pinned migrations tables — are pure data in `journal-specs.ts`,
@@ -173,7 +179,8 @@ export class PartialMigrationError extends Error {
     super(
       `the ${journal} migration pass FAILED after ${applied.join(" then ")} committed. The ` +
         `database is in a known, recoverable state: re-run 'pnpm db:setup:prod' — every pass is ` +
-        `idempotent and the completed ones will apply nothing. Until the ${journal} pass ` +
+        `idempotent and the completed ones will apply nothing` +
+        `${applied[0] === "transition" ? " (the 2.0 transition too: the head is no longer 1.0.11's)" : ""}. Until the ${journal} pass ` +
         `completes, GET /health answers 503 schema_incomplete for this deployment, which is ` +
         `correct. Cause: ${cause instanceof Error ? cause.message : String(cause)}`,
     );
@@ -182,21 +189,19 @@ export class PartialMigrationError extends Error {
   }
 }
 
+/** The handle a pass runs on: the guarded session's drizzle. */
+type MigrationDb = ReturnType<typeof drizzle>;
+
 /**
- * Replay BOTH journals against `url`: adopt → mail → cloud, under one session advisory lock, on
- * one {@link openMigrationSession}. A LIBRARY function — production reaches it only through
- * `setupProdDatabase`; no caller can run half of it. `adopt` runs before each pass — without it
- * the mail pass would REPLAY 21 migrations over a database built by the single journal.
- * Deliberately NO CLI here: the old one accepted a POOLER URL, skipped `ensureSearchExtensions`
- * and verified nothing. The one entry point, `pnpm db:setup:prod`, pins the endpoint, migrates,
- * installs extensions and PROVES the properties. An unsafe shortcut beside the safe path will be
- * taken eventually; the fix is to not ship it.
+ * Take the migration's advisory lock on one {@link openMigrationSession}, run `body` under it,
+ * release, end the session. Every road into a journal goes through here, so none of them can run
+ * beside another or outlive its lock.
  */
-export async function runMigrations(
+async function underMigrationLock(
   url: string,
-  opts: { log?: (msg: string) => void } = {},
+  log: (msg: string) => void,
+  body: (db: MigrationDb, session: MigrationSession) => Promise<void>,
 ): Promise<void> {
-  const log = opts.log ?? (() => {});
   const session = await openMigrationSession(url, { log });
   const sql = session.sql;
   // postgres.js takes bigint params at runtime; its published types omit bigint, so the cast
@@ -242,37 +247,7 @@ export async function runMigrations(
     // abortable by the acquisition timeout.
     await sql`set lock_timeout = 0`;
     try {
-      const db = drizzle(sql);
-
-      // Before any journal statement: refuse a database whose data 0021 would destroy. Mail 0021
-      // opens with a dedup prelude that keeps the OLDEST duplicate and deletes the others'
-      // credentials — "oldest" is not evidence of health, and the failure is silent. This is the
-      // only place the rule can be corrected: 0021 is applied and unmodifiable, and an appended
-      // entry runs AFTER it on the one population that matters, so only something before the
-      // migrator can stop the deletion — the check REFUSES rather than repairs
-      // (`mailbox-dedup.ts` carries the full argument and the operator's tool). The cost where it
-      // does not apply: one catalog query on an indexed database, two on a virgin one — read from
-      // the CATALOG, not `__drizzle_migrations`, so a database whose index was dropped by hand is
-      // still checked.
-      await assertNoActiveAddressDuplicates(db);
-
-      const done: string[] = [];
-      for (const spec of JOURNALS) {
-        try {
-          await adoptBaseline(db, spec, log);
-          await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
-          // AFTER the pass: a journal entry that exists twice (an original plus its reissue)
-          // owes the original's bookkeeping row wherever only the reissue could run — the
-          // skipped-window population, whose watermark had already passed the original. See
-          // `REISSUED_ORIGINALS` in baseline.ts for the one case and the whole argument.
-          await adoptReissuedOriginals(db, spec, log);
-        } catch (err) {
-          const cause = session.lost() ?? err;
-          if (done.length > 0) throw new PartialMigrationError(spec.name, done, cause);
-          throw cause;
-        }
-        done.push(spec.name);
-      }
+      await body(drizzle(sql), session);
     } finally {
       // A lost session has no lock to release, and asking would throw over the error on its way up.
       if (session.lost() === null) {
@@ -288,4 +263,176 @@ export async function runMigrations(
   } finally {
     await session.end();
   }
+}
+
+/**
+ * drizzle's migrator, reachable with a list of entries of our choosing: `migrate` is
+ * `dialect.migrate(readMigrationFiles(config), session, config)`, and the pair it reads off the
+ * handle is marked `@internal` in the published types rather than absent.
+ */
+interface EntrywiseMigrator {
+  dialect?: { migrate?: (migrations: MigrationMeta[], session: unknown, config: MigrationConfig) => Promise<void> };
+  session?: unknown;
+}
+
+/**
+ * `spec`'s journal up to 1.0.11's head and no further, by drizzle's own migrator over the journal's
+ * own files: the entries stamped at or below the head, with their real hashes, in one transaction
+ * as a 1.0 release applies them. The 2.0 window is not this pass's to run. Without the pair there
+ * is no way to stop at the head, and the whole-journal call would run the window too: refused.
+ */
+async function migrateToOldHead(db: MigrationDb, spec: JournalSpec): Promise<void> {
+  const head = OLD_HEADS[spec.name as ServerJournal].when;
+  const config: MigrationConfig = { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema };
+  const entrywise = db as unknown as EntrywiseMigrator;
+  if (typeof entrywise.dialect?.migrate !== "function") {
+    throw new TransitionRefused([{ what: `the ${spec.name} journal cannot be walked to 1.0.11's head and no further by this migrator`, n: 1 }]);
+  }
+  const old = readMigrationFiles(config).filter((m) => m.folderMillis <= head);
+  await entrywise.dialect.migrate.call(entrywise.dialect, old, entrywise.session, config);
+}
+
+/**
+ * One pass per journal of `specs`, in order: adopt, migrate, the reissue's bookkeeping. `done`
+ * collects what committed, so a failure after the first pass is a {@link PartialMigrationError}.
+ */
+async function passOver(
+  db: MigrationDb,
+  session: MigrationSession,
+  specs: readonly JournalSpec[],
+  done: string[],
+  log: (msg: string) => void,
+  road: "the whole journal" | "the 1.0 road" = "the whole journal",
+): Promise<void> {
+  for (const spec of specs) {
+    try {
+      await adoptBaseline(db, spec, log);
+      if (road === "the 1.0 road") await migrateToOldHead(db, spec);
+      else await migrate(db, { migrationsFolder: spec.dir, migrationsSchema: spec.migrationsSchema });
+      // AFTER the pass: a journal entry that exists twice (an original plus its reissue)
+      // owes the original's bookkeeping row wherever only the reissue could run — the
+      // skipped-window population, whose watermark had already passed the original. See
+      // `REISSUED_ORIGINALS` in baseline.ts for the one case and the whole argument.
+      await adoptReissuedOriginals(db, spec, log);
+    } catch (err) {
+      const cause = session.lost() ?? err;
+      if (done.length > 0) throw new PartialMigrationError(spec.name, done, cause);
+      throw cause;
+    }
+    done.push(spec.name);
+  }
+}
+
+/**
+ * Replay BOTH journals against `url`: adopt → mail → cloud, under one session advisory lock, on
+ * one {@link openMigrationSession}. A LIBRARY function — production reaches it only through
+ * `setupProdDatabase`; no caller can run half of it. `adopt` runs before each pass — without it
+ * the mail pass would REPLAY 21 migrations over a database built by the single journal.
+ * Deliberately NO CLI here: the old one accepted a POOLER URL, skipped `ensureSearchExtensions`
+ * and verified nothing. The one entry point, `pnpm db:setup:prod`, pins the endpoint, migrates,
+ * installs extensions and PROVES the properties. An unsafe shortcut beside the safe path will be
+ * taken eventually; the fix is to not ship it.
+ */
+export async function runMigrations(
+  url: string,
+  opts: MigrateOptions = {},
+): Promise<void> {
+  const log = opts.log ?? (() => {});
+  await underMigrationLock(url, log, async (db, session) => {
+    // Before any journal statement: refuse a database whose data 0021 would destroy. Mail 0021
+    // opens with a dedup prelude that keeps the OLDEST duplicate and deletes the others'
+    // credentials — "oldest" is not evidence of health, and the failure is silent. This is the
+    // only place the rule can be corrected: 0021 is applied and unmodifiable, and an appended
+    // entry runs AFTER it on the one population that matters, so only something before the
+    // migrator can stop the deletion — the check REFUSES rather than repairs
+    // (`mailbox-dedup.ts` carries the full argument and the operator's tool). The cost where it
+    // does not apply: one catalog query on an indexed database, two on a virgin one — read from
+    // the CATALOG, not `__drizzle_migrations`, so a database whose index was dropped by hand is
+    // still checked.
+    await assertNoActiveAddressDuplicates(db);
+
+    // WHERE THE STORE STANDS decides the road, before any journal statement. A new store walks
+    // both journals whole, as it always did, and a store past the 2.0 window carries on. A store
+    // on the 1.0 road walks to 1.0.11's heads first, as two passes, exactly as 1.0 migrates; at
+    // those heads the 2.0 window is not the ordinary migrator's to apply (it would commit the mail
+    // journal's six entries and then the Cloud's, and a failure between leaves a store neither
+    // release starts on): the transition applies it, in one transaction, or nothing.
+    let state = await transitionState(db, { cloud: true });
+    if (state === "below-old-head") {
+      await passOver(db, session, JOURNALS, [], log, "the 1.0 road");
+      state = await transitionState(db, { cloud: true });
+      if (state === "below-old-head") state = { refused: "the store is still below 1.0.11's heads after walking the 1.0 road" };
+    }
+    if (typeof state === "object") throw new TransitionRefused([{ what: state.refused, n: 1 }]);
+    const done: string[] = [];
+    if (state === "at-old-head") {
+      // No kind, no run: which store this is is its runner's word, never read off the store.
+      if (!opts.transition) throw new TransitionNeedsRunner();
+      const said: TransitionLog = opts.transition.log ?? ((e) => log(describeEvent(e)));
+      try {
+        await runTransition({
+          kind: opts.transition.kind, db, openSealed: opts.transition.openSealed, log: said,
+          ...(opts.transition.afterEntries ? { afterEntries: opts.transition.afterEntries } : {}),
+        });
+      } catch (err) {
+        // Nothing of it committed, so this is never a partial migration; a lost session says so itself.
+        throw session.lost() ?? err;
+      }
+      done.push("transition");
+    }
+    await passOver(db, session, JOURNALS, done, log);
+  });
+}
+
+/** What {@link runMigrations} takes. */
+export interface MigrateOptions {
+  log?: (msg: string) => void;
+  /**
+   * What a store at 1.0.11's heads needs to become a 2.0 store: which kind of store it is, and an
+   * opener for its sealed values. Read only in that one state; absent there, the run refuses.
+   */
+  transition?: {
+    readonly kind: "cloud" | "server";
+    readonly openSealed: SealedOpener;
+    /** Each event of the transition; by default its line goes to `log`. */
+    readonly log?: TransitionLog;
+    /** A rehearsal's own step inside the transaction, after the entries and before the checks. */
+    readonly afterEntries?: TransitionInput["afterEntries"];
+  };
+}
+
+/**
+ * The store stands at 1.0.11's heads and nobody said what it is. The 2.0 transition treats a
+ * self-hosted server and the Cloud differently (a table that is not the product's is its owner's
+ * on one and a fault on the other) and opens every sealed value, so it takes both from its runner
+ * and guesses neither. Nothing was changed.
+ */
+export class TransitionNeedsRunner extends Error {
+  readonly code = "transition_needs_runner";
+  constructor() {
+    super(
+      "this database is at 1.0.11's schema and the move to 2.0 was not told what kind of store " +
+        "it is. Nothing was changed. A self-hosted server names itself at start; the setup " +
+        "command takes '--store cloud' or '--store server' and needs the key ring to open the " +
+        "store's sealed values.",
+    );
+    this.name = "TransitionNeedsRunner";
+  }
+}
+
+/**
+ * THE 1.0 ROAD AND NOTHING AFTER IT: both journals as they stood at `OLD_HEADS`, on a store that
+ * is empty or somewhere on that road. It is how a store in 1.0.11's shape is made (the
+ * transition's tests, the nightly rehearsal) and never how a deployment is migrated: it leaves
+ * the store where 2.0 has not begun.
+ */
+export async function migrateToOldHeads(
+  url: string,
+  opts: { log?: (msg: string) => void } = {},
+): Promise<void> {
+  const log = opts.log ?? (() => {});
+  await underMigrationLock(url, log, async (db, session) => {
+    await assertNoActiveAddressDuplicates(db);
+    await passOver(db, session, JOURNALS, [], log, "the 1.0 road");
+  });
 }

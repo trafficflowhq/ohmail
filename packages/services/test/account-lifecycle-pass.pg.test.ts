@@ -6,7 +6,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
-import { accounts, users, mailboxes } from "@trafficflow/db";
+import { accounts, users, mailboxes, closedSetValue, ClosedSetViolation } from "@trafficflow/db";
 import {
   accountLifecycleNotices, schema, makeEntitlementsClient, ACCESS_TTL_MS,
 } from "@trafficflow/db/cloud";
@@ -23,8 +23,9 @@ import type { AccountLifecyclePassDeps, AccountLifecyclePassResult } from "../sr
  * the erasure's own idempotency by `accounts.erased_at`. Everything is scoped to accounts this
  * file creates — the database is shared with every other pg file in the workspace.
  *
- * The mail 0124 CHECK rides along at the end: the widened member admitted, a foreign one refused
- * — on the REAL constraint, which `closed-set-parity` can only read as text.
+ * Mail 0124's member rides along at the end: `account_closed` admitted, and what is no reason
+ * word refused on the REAL constraint (a shape since mail 0202), which `closed-set-parity` can
+ * only read as text; a word of the right shape that is no member is the write door's to refuse.
  */
 
 const PG_UP = await realPgAvailable();
@@ -409,17 +410,22 @@ describe.skipIf(!PG_UP)("the nightly lifecycle pass on real Postgres", () => {
       .rejects.toMatchObject({ code: "23514" });
   });
 
-  it("mail 0124: the widened sync-block CHECK admits account_closed and refuses a stranger", async () => {
+  it("mail 0124 and 0202: account_closed is admitted; the store refuses what is no reason word, the write door a stranger", async () => {
     const { accountId } = await seedAccount();
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `chk-${randomUUID().slice(0, 8)}@wall.test`,
       syncBlockedReason: "account_closed",
     }).returning();
     expect(mb!.syncBlockedReason).toBe("account_closed");
+    // Since mail 0202 the server's CHECK holds the column to a shape (one lower-case word), so a
+    // line that is no reason word is refused by the catalog, on the real constraint.
     await expect(db.insert(mailboxes).values({
       accountId, provider: "imap", address: `chk2-${randomUUID().slice(0, 8)}@wall.test`,
-      syncBlockedReason: "account_parked" as never,
+      syncBlockedReason: "Account parked" as never,
     })).rejects.toMatchObject({ code: "23514" });
+    // A word of the right shape that is no member is the write door's to refuse, on every store.
+    expect(() => closedSetValue("mailboxes_sync_blocked_reason_shape", "account_parked")).toThrow(ClosedSetViolation);
+    expect(closedSetValue("mailboxes_sync_blocked_reason_shape", "account_closed")).toBe("account_closed");
   });
 });
 

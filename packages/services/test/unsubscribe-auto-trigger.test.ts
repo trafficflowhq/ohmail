@@ -83,7 +83,7 @@ async function seed(
   const from = opts.from ?? "news@sender.example";
   const folder = opts.desired ?? "ohmail/Screened";
   const messageId = await seedMessage(db, accountId, mailboxId, { from, folder });
-  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
+  await db.insert(messageBodies).values({ messageId, accountId, text: "", headers: { ...CONFIRMED, ...headers } });
   // A person screened the sender out — the only licence the automatic arm acts on (UD-R4-03).
   if (folder === "ohmail/Screened" || folder === "ohmail/Quarantine") {
     await personScreenedOut(db, accountId, from, { destination: folder });

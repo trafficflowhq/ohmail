@@ -54,9 +54,9 @@ const corpus = async (
       date: new Date(NOW.getTime() - i * 60_000),
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "the heron stood in the shallows" });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "the heron stood in the shallows" });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   }

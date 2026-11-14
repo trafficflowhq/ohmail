@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -80,7 +81,7 @@ async function twoWorlds(): Promise<{ reader: TestDb; organizer: TestDb; mailbox
     subject: "s", fromAddress: SENDER, unread: true,
   }).returning({ id: messages.id });
   await organizer.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return { reader, organizer, mailboxId, messageId: msg!.id };

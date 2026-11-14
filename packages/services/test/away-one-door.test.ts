@@ -50,9 +50,9 @@ async function arrive(w: World, subject: string, minutesAgo = 1): Promise<string
     bodyHash: randomUUID(), dedupKey: randomUUID(), subject,
     fromAddress: THEM, date: at, createdAt: at,
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m!.id;
 }
@@ -227,8 +227,8 @@ async function goneLetter(w: World, from: string, folder: string, subject: strin
     bodyHash: randomUUID(), dedupKey: randomUUID(), subject, fromAddress: from, date: at, createdAt: at,
     nativeLocator: { folder, ref: `1:${++goneUid}` },
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "gone", headers: { to: ["me@away.test"], ...headers } });
-  await w.db.insert(folderState).values({ messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us" });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "gone", headers: { to: ["me@away.test"], ...headers } });
+  await w.db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us" });
   return m!.id;
 }
 

@@ -4,6 +4,7 @@ import {
   messageStates, messages, recordChange, recordRuleDelta, rules as rulesTbl,
   AccountErasedError, readAccountErasedAt,
   CUTLINE_ALLOW_DESTINATIONS, heldUnconfirmedOnlySql, personSkipSql, ruleNamesSenderSql, type LedgerTx, type Tx,
+  accountPass, readPassProgress, writePassProgress,
 } from "@trafficflow/db";
 import { silentLogger, type Destination, type Logger } from "@trafficflow/core";
 import { SCREENING_AUTH_VERDICTS } from "@trafficflow/core/mail";
@@ -19,7 +20,7 @@ import { writeSenderChecks } from "./sender-check-backfill.js";
    licence (`rules.release_held_at` = `retro_requested_at`, `isReleaseRun`'s shape) and `rule-retro`
    does the filing through `evaluateRules`, with its own bounds. For a sender who is only a
    `contacts` row there is no rule to arm, so those rows are desired into the Ohbox here, under the
-   same bounds. Once per account, stamped in `account_settings.gate_release_done_at`. */
+   same bounds. Once per account, stamped done in `pass_progress` (job `gate_release`). */
 
 /**
  * Rules armed, and contact-only rows released, per account per cycle.
@@ -46,7 +47,7 @@ export interface GateReleaseDeps {
   /** Test seam. Default {@link GATE_RELEASE_BATCH}. */
   batch?: number;
   /**
-   * Sweep an account whose `gate_release_done_at` is already stamped — EVIDENCE, not a repair.
+   * Sweep an account whose release is already marked done — EVIDENCE, not a repair.
    *
    * The pass is idempotent WITHOUT the marker (an armed rule is in flight and drops out of the
    * selection; a released row is desired into the Ohbox and is no longer at the gate), and this
@@ -62,7 +63,7 @@ export interface GateReleaseResult {
   rulesArmed: number;
   /** Gate rows desired into the Ohbox for senders who are only `contacts` rows. */
   contactRowsReleased: number;
-  /** True ⇒ both halves came back short and `gate_release_done_at` was stamped. */
+  /** True ⇒ both halves came back short and the release was marked done. */
   completed: boolean;
 }
 
@@ -140,11 +141,9 @@ export async function gateReleasePass(
   if (!live) return out;
 
   if (!deps.force) {
-    const [settings] = await db.select({ at: accountSettings.gateReleaseDoneAt })
-      .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
-    // An ABSENT row and a NULL both mean "never swept", which is every account that predates this
-    // column. There is no arm that turns a missing value into "done".
-    if (settings?.at != null) return out;
+    // An ABSENT row and a NULL both mean "never swept", which is every account that predates the
+    // pass. There is no arm that turns a missing value into "done".
+    if ((await readPassProgress(db as unknown as Tx, accountPass("gate_release", accountId))).doneAt !== null) return out;
   }
   out.ran = true;
 
@@ -229,7 +228,7 @@ export async function gateReleasePass(
       // leaves it. `reconcile_status` is DERIVED here for `upsertFolderState`'s reason: a row can
       // never claim a convergence it does not have.
       await tx.insert(folderState).values({
-        messageId: r.messageId, desiredFolder: OHBOX, observedFolder: r.observedFolder,
+        messageId: r.messageId, accountId, desiredFolder: OHBOX, observedFolder: r.observedFolder,
         lastSetBy: "us",
         reconcileStatus: OHBOX === r.observedFolder ? "reconciled" : "pending",
         conflict: false,
@@ -262,10 +261,10 @@ export async function gateReleasePass(
   // Short by what was SELECTED: a page whose rows were partly claims held back is still a full page.
   if (page.armed < batch && page.selected < batch) {
     /* ── THE ERASURE FENCE, AND THE REASON THIS UPSERT NEEDS ONE ─────────────────────────────
-     * An UPSERT, so it CREATES: an account that never confirmed a seed has no settings row, and
-     * `account_settings` is a table the Art. 17 sweep empties. This pass reads its subject pages
-     * earlier and stamps here — minutes later on a large account — so an erasure landing in
-     * between leaves the stamp recreating the one row the sweep deleted. The fence reads
+     * An UPSERT, so it CREATES: the pass's row in `pass_progress` does not exist before its first
+     * mark, and `pass_progress` is a table the Art. 17 sweep empties. This pass reads its subject
+     * pages earlier and stamps here — minutes later on a large account — so an erasure landing in
+     * between leaves the stamp writing a row for an account the sweep already emptied. The fence reads
      * `accounts.erased_at FOR SHARE` as the first statement of its own transaction, against
      * `deleteAccount`'s first statement. Refusing is the RIGHT ending: an erased account has no
      * gate left to release, so there is nothing to resume and nothing to retry.
@@ -274,12 +273,7 @@ export async function gateReleasePass(
       await (db as unknown as Tx).transaction(async (tx) => {
         const erasedAt = await readAccountErasedAt(tx, dialect(tx as unknown as Tx), accountId);
         if (erasedAt != null) throw new AccountErasedError(accountId);
-        await tx.insert(accountSettings)
-          .values({ accountId, gateReleaseDoneAt: now })
-          .onConflictDoUpdate({
-            target: accountSettings.accountId,
-            set: { gateReleaseDoneAt: now, updatedAt: now },
-          });
+        await writePassProgress(tx as unknown as Tx, accountPass("gate_release", accountId), { doneAt: now }, { now });
       });
       out.completed = true;
     } catch (err) {

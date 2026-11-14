@@ -58,7 +58,6 @@ const PREFERENCE = JSON.stringify({
   ohboxPolicy: "people_only",
   ohboxBar: "Only people who write to me by hand.",
   defaultBar: "Keep my Ohbox for real people writing to me.",
-  screenerAutoApply: false,
 });
 
 /** Encode an answer exactly as the shell's `engine_request` does — length, metadata, bytes. */

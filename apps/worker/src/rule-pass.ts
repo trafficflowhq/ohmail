@@ -1,4 +1,4 @@
-import { folderState, type Tx } from "@trafficflow/db";
+import { accountOfMessage, folderState, type Tx } from "@trafficflow/db";
 import type { NormalizedMessage } from "@trafficflow/core/mail";
 
 /**
@@ -68,7 +68,7 @@ export async function upsertDesired(
 ): Promise<void> {
   const reconcileStatus = destination === row.observedFolder ? "reconciled" : "pending";
   await t.insert(folderState).values({
-    messageId: row.messageId, desiredFolder: destination, observedFolder: row.observedFolder,
+    messageId: row.messageId, accountId: accountOfMessage(row.messageId), desiredFolder: destination, observedFolder: row.observedFolder,
     lastSetBy: "us", reconcileStatus, conflict: false,
   }).onConflictDoUpdate({
     target: folderState.messageId,

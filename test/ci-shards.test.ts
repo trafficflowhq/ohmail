@@ -12,6 +12,7 @@ import {
   type ShardMap, type SqliteShardMap,
 } from "./support/ci-shards.mjs";
 import { publicRel } from "./support/public-root.mjs";
+import { laneRoleHostVerdict } from "../scripts/lane-db.mjs";
 
 const yaml = createRequire(import.meta.url)("js-yaml") as { load(text: string): unknown };
 
@@ -42,7 +43,7 @@ function imageDrops(dockerignore: string, dirs: Set<string> = TRACKED_DIRS): str
 
 type Step = { name?: string; run?: string; uses?: string; env?: Record<string, unknown> };
 type Job = { name?: string; permissions?: unknown; env?: Record<string, unknown>; steps: Step[]; services?: Record<string, { image: string; env?: Record<string, string>; ports?: string[]; options?: string }> };
-type Workflow = { on: Record<string, unknown>; permissions?: unknown; jobs: Record<string, Job> };
+type Workflow = { on: Record<string, unknown>; permissions?: unknown; env?: Record<string, unknown>; jobs: Record<string, Job> };
 
 /** Every refusal the workflow earns, read from its text against the compose file's and the web image's dockerignore. */
 function workflowProblems(text: string, compose: string, imageDrop: string[] = imageDrops(dockerignoreText)): string[] {
@@ -107,7 +108,8 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
   const hostPort = (p: string) => p.split(":").slice(-2).join(":");
   for (const [id, job] of Object.entries(wf.jobs)) {
     for (const [name, svc] of Object.entries(job.services ?? {})) {
-      const twin = services[name === "postgres" ? "db" : name];
+      /* `postgres` is compose's `db`; `postgres-N`, a second server on another major, is its `db-N`. */
+      const twin = services[name === "postgres" ? "db" : name.replace(/^postgres-(\d+)$/, "db-$1")];
       if (!twin) { problems.push(`SERVICE ${id}.${name} has no twin in docker-compose.yml`); continue; }
       if (svc.image !== twin.image) problems.push(`IMAGE ${id}.${name} is ${svc.image}, docker-compose.yml runs ${twin.image}`);
       const want = (twin.ports ?? []).map((p) => hostPort(p.replace(/\s+#.*$/, ""))).sort();
@@ -116,6 +118,20 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
         if (svc.env?.[k] !== v) problems.push(`ENV ${id}.${name} ${k} differs from docker-compose.yml`);
       }
       if (twin.shm_size && !(svc.options ?? "").includes(`--shm-size=${twin.shm_size}`)) problems.push(`SHM ${id}.${name} lacks --shm-size=${twin.shm_size}`);
+    }
+  }
+  /* scripts/lane-db.sh makes its database on the box's port and on no other, unless the port is named to it:
+     a job that starts its Postgres elsewhere names that port where the step reads it, by the script's own verdict. */
+  for (const [id, job] of Object.entries(wf.jobs)) {
+    const lane = job.steps.find((st) => (st.run ?? "").includes("scripts/lane-db.sh"));
+    if (!lane) continue;
+    const env = Object.fromEntries(Object.entries({ ...wf.env, ...job.env, ...lane.env }).map(([k, v]) => [k, String(v)]));
+    for (const [name, svc] of Object.entries(job.services ?? {})) {
+      if (name !== "postgres" && !/^postgres-\d+$/.test(name)) continue;
+      for (const published of svc.ports ?? []) {
+        const verdict = laneRoleHostVerdict(`postgres://localhost:${published.split(":").slice(-2)[0]}/x`, env);
+        if (!verdict.ok) problems.push(`LANE_PORT ${id}.${name}: ${verdict.say}`);
+      }
     }
   }
   /* RustFS and Dovecot start by `docker run` (a service cannot be given a command or a checkout file). */
@@ -147,6 +163,34 @@ describe("the suite workflow", () => {
     const loose = text.replace('      TF_REQUIRE_PG: "1"\n', "").replace("image: ghcr.io/trafficflowhq/mirror-postgres:", "image: ghcr.io/x/postgres:");
     expect(workflowProblems(loose, composeText).filter((p) => !absent(p)).map((p) => p.split(" ").slice(0, 2).join(" ")))
       .toEqual(["REQUIRE_PG search-budget", "IMAGE search-budget.postgres"]);
+  });
+
+  it("the transition's nightly on Postgres 17 runs after the budget, on compose's second server", () => {
+    const text = readFileSync(join(ROOT, publicRel("github/workflows/search-budget.yml", ROOT)), "utf8");
+    const wf = yaml.load(text) as Workflow & { jobs: Record<string, { needs?: string | string[] }> };
+    expect([wf.jobs["transition-nightly-pg17"]!.needs].flat()).toEqual(["search-budget"]);
+    // The two files it runs are the ones ci.yml's nightly runs alone on the test stack's server.
+    const run = wf.jobs["transition-nightly-pg17"]!.steps.map((st) => st.run ?? "").find((r) => /\bvitest run\b/.test(r))!;
+    expect(run).toContain("packages/db/test/transition.pg.test.ts packages/db/test/transition-fresh-equals-moved.pg.test.ts");
+    expect(Object.keys(wf.jobs["transition-nightly-pg17"]!.services ?? {})).toEqual(["postgres-17"]);
+    // The budget is judged once, on the first job's quiet runner: the leg after it does not ask for it again.
+    const judges = Object.entries(wf.jobs).filter(([, j]) => "OHMAIL_BUDGET_MUST_JUDGE" in (j.env ?? {})).map(([id]) => id);
+    expect(judges).toEqual(["search-budget"]);
+    // A second server is held to its own twin: an image `db-17` does not run is refused by name, and so is a port.
+    const absent = (p: string) => /^(IMAGE_TREE (webapp-build|proxy-e2e)|BUILD (suite|alone|sqlite)|TYPECHECK|DESKTOP|(IMAGE|PORTS) (rustfs|dovecot)|DOVECOT_CONF) /.test(p);
+    const other = text.replace(/image: postgres:17\.6@sha256:[0-9a-f]{64}/, "image: postgres:17");
+    expect(other).not.toBe(text);
+    expect(workflowProblems(other, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^IMAGE transition-nightly-pg17\.postgres-17 is postgres:17,/)]);
+    const port = text.replace('ports: ["5434:5432"]', 'ports: ["5433:5432"]');
+    expect(workflowProblems(port, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^PORTS transition-nightly-pg17\.postgres-17 /)]);
+    const stranger = text.replace("      postgres-17:\n", "      postgres-18:\n");
+    expect(workflowProblems(stranger, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^SERVICE transition-nightly-pg17\.postgres-18 has no twin/)]);
+    // The database step runs scripts/lane-db.sh, which refuses any port but the box's unless the job names it.
+    const unnamed = text.replace('      OHMAIL_LANE_DB_THROWAWAY_PORT: "5434"\n', "");
+    expect(unnamed).not.toBe(text);
+    expect(workflowProblems(unnamed, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^LANE_PORT transition-nightly-pg17\.postgres-17: REFUSED: port 5434 /)]);
+    const another = text.replace('      OHMAIL_LANE_DB_THROWAWAY_PORT: "5434"\n', '      OHMAIL_LANE_DB_THROWAWAY_PORT: "5435"\n');
+    expect(workflowProblems(another, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^LANE_PORT transition-nightly-pg17\.postgres-17: /)]);
   });
 
   it("refuses a vitest job without TF_REQUIRE_PG, a lane database made after the run, and the shared box", () => {

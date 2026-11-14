@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, sql } from "drizzle-orm";
@@ -85,10 +86,10 @@ async function person(): Promise<Person> {
   const [a] = await db().insert(accounts).values({ name: `pw-race-${tag}` }).returning();
   const email = `pw-race-${tag}@x.example`;
   const [u] = await db().insert(users).values({ accountId: a!.id, email }).returning();
-  await db().insert(credentials).values({ userId: u!.id, passwordHash: await deps.passwordHasher.hash(OLD), algo: "scrypt" });
+  await db().insert(credentials).values({ userId: u!.id, accountId: accountOfUser(u!.id), passwordHash: await deps.passwordHasher.hash(OLD), algo: "scrypt" });
   // An activated factor, so a right password answers with a first step and not a session.
   const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(generateToken());
-  await db().insert(totpSecrets).values({ userId: u!.id, secretEnc: ciphertext, keyVersion, activated: true });
+  await db().insert(totpSecrets).values({ userId: u!.id, accountId: accountOfUser(u!.id), secretEnc: ciphertext, keyVersion, activated: true });
   const session = async (): Promise<string> => {
     const now = Date.now();
     const [s] = await db().insert(sessions).values({

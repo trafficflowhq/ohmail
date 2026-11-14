@@ -42,7 +42,7 @@ describe.skipIf(!AVAILABLE)("the auto-act pass on real Postgres: a store that ra
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `actpg-${accountId.slice(0, 8)}@example.test`,
     }).returning();
-    await db.insert(accountSettings).values({ accountId, screenerAutoApplyAt: null, screeningScope: "all_time" });
+    await db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
     // Confirmed by the provider (`pass`): a deny on any other letter writes no rule to fault.
     let uid = 0;
     const held = async (from: string): Promise<string> => {
@@ -53,7 +53,7 @@ describe.skipIf(!AVAILABLE)("the auto-act pass on real Postgres: a store that ra
         nativeLocator: { folder: SCREENER, ref: `1:${uid}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       // Its copy in the Screener, as the ingest records one.

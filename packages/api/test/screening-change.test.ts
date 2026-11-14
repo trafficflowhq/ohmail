@@ -80,7 +80,7 @@ describe("a reader's Screening change", () => {
     await w.db.transaction((tx) => markRequestsApplied(tx, [first], FIXED_NOW));
 
     w.clock.advance(60_000);
-    await patch(w, token, { screenerAutoApply: true });
+    await patch(w, token, { impersonationFiling: false });
     const second = await newestRequestId(w, accountId);
     expect(second).not.toBe(first);
     await w.db.transaction((tx) => markRequestsSent(tx, [second], FIXED_NOW));
@@ -90,7 +90,7 @@ describe("a reader's Screening change", () => {
     expect(now.change, "the refusal reached no surface").toEqual({
       state: "refused", holder: "work-laptop", refusal: "unreadable",
     });
-    expect(now.screenerAutoApply).toBe(false);
+    expect(now.impersonationFiling, "the refused value is not shown").toBe(true);
     expect(now.ohboxPolicy, "the earlier applied change is still shown").toBe("people_only");
   });
 

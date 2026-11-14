@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { and, eq, sql } from "drizzle-orm";
@@ -2273,6 +2274,11 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
     log,
     ...(config.onPhase ? { onPhase: config.onPhase } : {}),
     ...(config.onStoreFatal ? { onFatal: config.onStoreFatal } : {}),
+    // A store 1.0 made is moved to 2.0 at this open, and every value it sealed is opened under this
+    // install's own key ring before the move commits. No ring: nothing opens, and such a store stays.
+    transition: {
+      openSealed: Object.keys(config.keks ?? {}).length > 0 ? new StaticKeyProvider(config.keks!) : refusingKeyProvider(),
+    },
   });
   // Everything after the store: identity, the key ring, the AI assembly, the route table. Named
   // so the narration a window renders never just stops at the last database phase.
@@ -3853,6 +3859,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             await fenceErasedMailbox(tx as unknown as Tx, dialect(db), mb.id);
             await tx.insert(mailboxCredentials).values({
               mailboxId: mb.id,
+              accountId: accountOfMailbox(mb.id),
               transport: "imap",
               secretEnc: sealed.ciphertext,
               keyVersion: sealed.keyVersion,
@@ -9571,6 +9578,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
               await fenceErasedMailbox(tx as unknown as Tx, dialect(db), seedRow.id);
               await tx.insert(mailboxCredentials).values({
                 mailboxId: seedRow.id,
+                accountId: accountOfMailbox(seedRow.id),
                 transport: "smtp",
                 // The SAME ciphertext under the SAME key version. See the note above.
                 secretEnc: imapRow.secretEnc,

@@ -414,7 +414,7 @@ describe("the organizer's tick answers a handed-over press", () => {
           accountId: mb.accountId, mailboxId: mb.mailboxId, bodyHash: `scr-${tag}`, dedupKey: `scr:${tag}`, subject: "hello",
           fromAddress: sender, nativeLocator: { folder: SCREENER_FOLDER, ref: "1:9" },
         }).returning();
-        await db.insert(folderState).values({ messageId: m!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER, lastSetBy: "us" });
+        await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER, lastSetBy: "us" });
         await db.insert(accountSyncState).values({ accountId: mb.accountId }).onConflictDoNothing();
         const held = await hold(makeDb(named(HOLD)), async (tx) => {
           await tx.insert(contacts).values({ accountId: mb.accountId, address: sender, source: "person" });

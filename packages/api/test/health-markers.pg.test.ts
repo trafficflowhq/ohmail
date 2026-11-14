@@ -72,17 +72,8 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
     expect(missing.kind === "probed" && missing.schemaOk).toBe(false);
   });
 
-  it("a database where mail 0160 never ran (only the prebuild did) is short its trigger function", async () => {
+  it("a database without mail 0160's and 0161's indexes is two short", async () => {
     const healthy = found(await hosted(owned.db));
-    const prebuiltOnly = await rolledBack(async (db) => {
-      // Mail 0181's folder trigger runs the same function, so it goes first; a trigger is no marker.
-      await db.execute(sql.raw(`drop trigger "folder_state_pending_account_tg" on "folder_state"`));
-      await db.execute(sql.raw(`drop trigger "folder_state_outstanding_account_tg" on "folder_state"`));
-      await db.execute(sql.raw(`drop function "folder_state_outstanding_account"()`));
-      return hosted(db);
-    });
-    expect(found(prebuiltOnly)).toBe(healthy - 1);
-    expect(prebuiltOnly.kind === "probed" && prebuiltOnly.schemaOk).toBe(false);
     const noIndexes = await rolledBack(async (db) => {
       await db.execute(sql.raw(`drop index "folder_state_outstanding_idx"`));
       await db.execute(sql.raw(`drop index "mailboxes_account_idx"`));
@@ -91,15 +82,8 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
     expect(found(noIndexes)).toBe(healthy - 2);
   });
 
-  it("a database where mail 0181 never ran (only the prebuild did) is short its trigger function", async () => {
+  it("a database whose reconcile queues are not keyed by the account is two short", async () => {
     const healthy = found(await hosted(owned.db));
-    const prebuiltOnly = await rolledBack(async (db) => {
-      await db.execute(sql.raw(`drop trigger "flag_state_pending_account_tg" on "flag_state"`));
-      await db.execute(sql.raw(`drop function "flag_state_pending_account"()`));
-      return hosted(db);
-    });
-    expect(found(prebuiltOnly)).toBe(healthy - 1);
-    expect(prebuiltOnly.kind === "probed" && prebuiltOnly.schemaOk).toBe(false);
     // Both queue indexes in their first, unkeyed shape: two short.
     const unkeyed = await rolledBack(async (db) => {
       for (const t of ["folder_state", "flag_state"]) {
@@ -109,6 +93,19 @@ describe.skipIf(!PG_UP)("the /health marker census on real Postgres", () => {
       return hosted(db);
     });
     expect(found(unkeyed)).toBe(healthy - 2);
+    expect(unkeyed.kind === "probed" && unkeyed.schemaOk).toBe(false);
+  });
+
+  it("a database where mail 0201 never ran is short the account on the tables that borrowed it, and its two keys", async () => {
+    const healthy = found(await hosted(owned.db));
+    const before = await rolledBack(async (db) => {
+      await db.execute(sql.raw(`alter table "message_bodies" drop constraint "message_bodies_message_id_account_fk"`));
+      await db.execute(sql.raw(`alter table "folder_state" drop constraint "folder_state_message_id_account_fk"`));
+      await db.execute(sql.raw(`alter table "pairing_tokens" drop column "account_id"`));
+      return hosted(db);
+    });
+    expect(found(before)).toBe(healthy - 3);
+    expect(before.kind === "probed" && before.schemaOk).toBe(false);
   });
 
   it("a database without mail 0163's fresh-intent function is one short", async () => {

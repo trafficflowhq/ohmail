@@ -420,9 +420,9 @@ describe("after a takeover, the install that stood down shows the new organizer'
         fromAddress: from, fromName: from, date, arrivedAt: date, unread: false, createdAt: date,
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${i + 1}` },
       }).returning();
-      await s.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await s.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
       await s.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false,
       });
     }

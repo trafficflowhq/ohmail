@@ -104,7 +104,7 @@ async function newWorld(n: number): Promise<World> {
       nativeLocator: { folder: "ohmail/Screened", ref: `1:${i}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "",
+      messageId: m!.id, accountId: m!.accountId, text: "",
       headers: {
         // A DIFFERENT list per message, so nothing here is deduped by the record table's unique
         // index — every message is independently actionable and the only thing that can stop a
@@ -116,7 +116,7 @@ async function newWorld(n: number): Promise<World> {
       },
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     messageIds.push(m!.id);

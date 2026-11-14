@@ -25,7 +25,7 @@ async function fourMailboxes() {
     if (host !== null) {
       const enc = await KP.encrypt("password-password");
       await db.insert(mailboxCredentials).values({
-        mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
         meta: { host, port: 993, secure: true, user: address },
       });
     }

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { mailboxes, messages, folderState, messageBodies } from "@trafficflow/db";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { SEARCH_PARTS, SEARCH_SORTS, type ServiceContext } from "@trafficflow/services/mail";
 import { matchReadRoute } from "../src/cloud-read.js";
 
@@ -55,9 +56,11 @@ describe("the Cloud-mode read surface honours ?sort=", () => {
         dedupKey: dedup, subject, fromAddress: from, date: new Date(date),
         nativeLocator: { folder: "INBOX", ref: `1:${Math.floor(Math.random() * 1e6)}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: "the heron stood in the shallows" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "the heron stood in the shallows" });
+      // As the mirror does: the letter's search document with the letter.
+      await reindexMessageSearch(db as never, ACCOUNT, m!.id);
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;

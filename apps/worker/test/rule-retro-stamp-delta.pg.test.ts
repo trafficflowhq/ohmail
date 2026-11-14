@@ -45,7 +45,7 @@ describe.skipIf(!AVAILABLE)("the rule pass's finished stamp and its delta", () =
       subject: "Invoice ready", fromAddress: SENDER, nativeLocator: { folder: "ohmail/News", ref: "1:1" },
     }).returning();
     await dbA.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/News", observedFolder: "ohmail/News",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/News", observedFolder: "ohmail/News",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     const [r] = await dbA.insert(rules).values({

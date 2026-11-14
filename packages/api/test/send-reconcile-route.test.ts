@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, SEND_RECONCILE_CRON_PATH, SENT_COPIES_CRON_PATH, type ApiDeps } from "@trafficflow/api";
 import { localRoutes } from "@trafficflow/api/local";
-import { drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
+import { accountOfMailbox, drafts, mailboxCredentials, mailboxes, outboundSends, outboundSentCopies } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP, type SendAdapter } from "@trafficflow/core";
 import { ImapAdapter, type ImapConfig } from "@trafficflow/core/adapters/imap";
 import { runOwedSentCopyPass, SEND_COPY_OWED_STAGED_NOT_DUE, SEND_RECONCILE_NET_TIMEOUTS } from "@trafficflow/services";
@@ -112,7 +112,7 @@ describe("the abandonment seam reaches production, not just the spies", () => {
     const dialled = async (path: string, mailboxId: string): Promise<unknown[]> => {
       const enc = await deps.keyProvider.encrypt(randomUUID());
       await db.insert(mailboxCredentials).values({
-        mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
         meta: { host: "imap.rec.test", port: 993, secure: true, user: "u@rec.test" },
       });
       built.length = 0;

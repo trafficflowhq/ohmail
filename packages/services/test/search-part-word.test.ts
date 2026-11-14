@@ -3,7 +3,7 @@ import { messageBodies } from "@trafficflow/db";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { partWordsOf } from "@trafficflow/db/dialect";
 import { SearchService } from "../src/index.js";
-import { makeCtx, seedMessage } from "./helpers.js";
+import { FOUND_WITHOUT_DOCUMENT, makeCtx, seedMessage, seedSearchDocuments } from "./helpers.js";
 
 /**
  * A PART OF A WORD FINDS WHAT THE WHOLE WORD FINDS, over the fields the whole word reads (subject,
@@ -23,7 +23,7 @@ async function corpus(built: boolean) {
       subject, from: `sender${daysAgo}@site.example`, snippet: body.slice(0, 200), folder: "INBOX",
       date: new Date(Date.parse("2026-07-20T09:00:00Z") - daysAgo * 86_400_000),
     });
-    await db.insert(messageBodies).values({ messageId: id, text: body });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
     ids[key] = id;
   };
   await put("subject", "Elevation survey for the north wall", "See the drawings.", 1);
@@ -44,10 +44,10 @@ async function found(ctx: Awaited<ReturnType<typeof corpus>>["ctx"], q: string):
 
 const prefixes = (w: string): string[] => Array.from({ length: w.length - 4 }, (_, i) => w.slice(0, 4 + i));
 
-describe.each([
+describe.each(([
   ["with the search documents built", true],
-  ["before the documents are built (the rows' own columns)", false],
-])("a part of a word finds what the whole word finds — %s", (_label, built) => {
+  ["before the documents are built (the device's own tables)", false],
+] as const).filter(([, built]) => built || FOUND_WITHOUT_DOCUMENT))("a part of a word finds what the whole word finds — %s", (_label, built) => {
   it("(1) `elevat` finds the message whose body alone holds the word, beside the subject hit", async () => {
     const { ctx, ids } = await corpus(built);
     // The positive control: the whole word reaches the body at the base too.
@@ -113,7 +113,7 @@ describe("the query's own punctuation never refuses and never becomes a search o
     const ids: Record<string, string> = {};
     const put = async (key: string, subject: string, body: string) => {
       const id = await seedMessage(db, accountId, mailboxId, { subject, from: "desk@site.example", snippet: body, folder: "INBOX" });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       ids[key] = id;
     };
     await put("obrien", "Letter from O'Brien", "Regards.");
@@ -122,6 +122,7 @@ describe("the query's own punctuation never refuses and never becomes a search o
     await put("colon", "Minutes: budget", "Attached.");
     await put("axa", "axa claim", "Filed.");
     await put("axalta", "Axalta coating", "Quote.");
+    await seedSearchDocuments(db, accountId);
     return { ctx, ids };
   }
   const SHAPES = [

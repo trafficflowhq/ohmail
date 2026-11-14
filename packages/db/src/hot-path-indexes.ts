@@ -1,7 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
-  ARRIVAL_ORDER_INDEX_DDL, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC,
-  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
+  ARRIVAL_ORDER_INDEX_DDL, MAILBOXES_ACCOUNT_PREBUILD_SPEC, RECIPIENT_KEYS_PREBUILD_SPEC,
   SENDER_DATE_PREBUILD_SPEC,
 } from "./search-setup.js";
 import {
@@ -64,16 +63,14 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       on public.messages using btree ("account_id",(coalesce("date","created_at")),"id")`,
   },
   {
-    // THE HEADER-DATE ORDER — `date desc nulls last, id desc` within one account, the order every
-    // page walked until mail 0139 moved them to the arrival key (the spec below). KEPT this release
-    // for an older API instance still serving it; dropped next release (DROP-MSG-ORDER-INDEX-NEXT-RELEASE).
-    // `nulls last` is spelled here because it is NOT free: an index declared `date desc` is NULLS
-    // FIRST, and the planner then reads rows FROM it and sorts them anyway — measured, plan kept
-    // the Sort. PARTIAL on `deleted_at is null`, which both readers carry verbatim: tombstones
-    // accumulate for ever (the expunge reaper only stamps) while the living set is what every
-    // page walks. Unconditional, unlike the spec below, because `messages` is the one table a
-    // deployment grows past any ceiling in its first sync — the deferral protects a table that
-    // might stay small, and this is not one.
+    // THE HEADER-DATE ORDER — `date desc nulls last, id desc` within one account. Every list page
+    // walked it until mail 0139 moved them to the arrival key (the spec below); search's History
+    // walk still does (`search-service.ts`, the History keyset). `nulls last` is spelled here
+    // because it is NOT free: an index declared `date desc` is NULLS FIRST, and the planner then
+    // reads rows FROM it and sorts them anyway — measured, plan kept the Sort. PARTIAL on
+    // `deleted_at is null`, which its readers carry verbatim: tombstones accumulate for ever (the
+    // expunge reaper only stamps) while the living set is what every page walks. Unconditional:
+    // `messages` is the one table a deployment grows past any ceiling in its first sync.
     name: "messages_account_msg_order_idx",
     table: "messages",
     ddl: sql`create index concurrently if not exists "messages_account_msg_order_idx"
@@ -81,24 +78,22 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
       where "deleted_at" is null`,
   },
   {
-    // Its reader, the Screener auto-apply pass, is retired (2026-11-02); a later migration drops it.
-    // THE SCREENER AUTO-APPLY HELD PAGE (`screener-auto.ts` `heldPageSql`): the held rows whose
-    // floor is unjudged (`screener_floor_version is null`), by `message_id` from the cursor, and the
-    // full walk's stale-version read (`< N or > N`). The version is a KEY, so both are one range.
-    // PARTIAL on the page's literals; `folder_state` is a growth table, hence here and not in a
-    // journal. Replaces `folder_state_screener_held_idx` (dropped by the next release's migration).
-    name: "folder_state_screener_held_floor_idx",
+    // THE ROWS HELD AT THE SCREENER BY US, by letter: what a Screener decision, the correspondent
+    // retro pass and the tidy read for one account. PARTIAL on those literals, so it holds only the
+    // held rows; `folder_state` is a growth table, hence here and not in a journal. Its floor-keyed
+    // twin (`folder_state_screener_held_floor_idx`) served the retired auto-apply pass; mail 0200
+    // drops it and 0201 the column it was keyed on.
+    name: "folder_state_screener_held_idx",
     table: "folder_state",
-    requiresColumn: "screener_floor_version",
-    ddl: sql`create index concurrently if not exists "folder_state_screener_held_floor_idx"
-      on public.folder_state using btree ("screener_floor_version","message_id")
+    ddl: sql`create index concurrently if not exists "folder_state_screener_held_idx"
+      on public.folder_state using btree ("message_id")
       where "desired_folder" = 'ohmail/Screener' and "last_set_by" = 'us'`,
   },
   {
     // THE READING ORDER since mail 0171 — `key desc, id desc` over `Dialect.arrivalKey`, which is
-    // `msgOrder` in message-service.ts, the snapshot walk and History. PARTIAL like the one above;
-    // unconditional for the same reason. The DDL is shared with the pre-migration build. Replaces
-    // `messages_account_arrival_order_idx` (a later migration drops it).
+    // `msgOrder` in message-service.ts, the snapshot walk and History. PARTIAL like the header-date
+    // order above; unconditional for the same reason. The DDL is shared with the pre-migration
+    // build. Mail 0200 dropped `messages_account_arrival_order_idx`, which it replaced.
     name: "messages_account_arrival_key_idx",
     table: "messages",
     ddl: ARRIVAL_ORDER_INDEX_DDL,
@@ -109,13 +104,10 @@ export const HOT_PATH_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
   RECIPIENT_KEYS_PREBUILD_SPEC,
   // THE SCREENER CUTLINE PROBE (mail 0157): a held sender's mail dated by the cutline's own key.
   SENDER_DATE_PREBUILD_SPEC,
-  // THE MAILBOX POLL (mail 0160, 0161): the outstanding filings by account, column prelude and all,
-  // and the list read's mailboxes by account.
-  FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC,
+  // THE MAILBOX LIST READ (mail 0161): the caller's mailboxes by account. The mailbox poll's
+  // outstanding filings and the two reconcile queues (mail 0160, 0181) are not here any more: mail
+  // 0201 builds all three itself, on `account_id`.
   MAILBOXES_ACCOUNT_PREBUILD_SPEC,
-  // THE RECONCILE POLLS (mail 0181): each queue's pending rows, in its order.
-  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC,
-  FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
   {
     // THE IDENTITY BACKFILL'S NEVER-CHECKED ROWS (mail 0148), by account then id. Every row is NULL
     // when the column lands, so the build is a pass over all of `messages`: here, CONCURRENTLY,

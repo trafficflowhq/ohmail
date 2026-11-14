@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { inArray, sql } from "drizzle-orm";
-import { accounts, accountSettings, mailboxes, mailboxCredentials, messageBodies, messages } from "@trafficflow/db";
+import { accounts, accountSettings, mailboxes, mailboxCredentials, messageBodies, messages, accountPass, readPassProgress, writePassProgress } from "@trafficflow/db";
 import { makeDb } from "@trafficflow/db/cloud";
 import { SEARCH_DOCUMENT_SHAPE_AT, StaticKeyProvider, createLogger } from "@trafficflow/core";
 import { startWorker } from "../src/index.js";
@@ -69,7 +69,7 @@ async function seedAccount(db: Db, status: "active" | "disabled"): Promise<{ acc
   }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   const ids: string[] = [];
@@ -78,7 +78,7 @@ async function seedAccount(db: Db, status: "active" | "disabled"): Promise<{ acc
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `sib:${randomUUID()}`, subject: `Stored ${i}`,
       fromAddress: `s${i}@club.example`, nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `stored words ${i}`, html: null });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `stored words ${i}`, html: null });
     ids.push(m!.id);
   }
   return { accountId, ids };
@@ -98,8 +98,7 @@ const documented = async (db: Db, ids: readonly string[]): Promise<number> => {
   return Number(rows[0]?.n ?? 0);
 };
 const marked = async (db: Db, accountId: string): Promise<boolean> =>
-  (await db.select({ at: accountSettings.searchIndexBuiltAt }).from(accountSettings)
-    .where(inArray(accountSettings.accountId, [accountId])))[0]?.at != null;
+  (await readPassProgress(db, accountPass("search_index_backfill", accountId))).doneAt != null;
 
 describe("the search backfill reaches every account that owes it", () => {
   beforeAll(async () => { DB = await prepareIsolatedDb("trafficflow_worker_search_backfill_tail"); }, 120_000);
@@ -120,7 +119,7 @@ describe("the search backfill reaches every account that owes it", () => {
     const parked = await seedAccount(db, "active");
     plane.parked.add(parked.accountId);
     const built = await seedAccount(db, "disabled");
-    await db.insert(accountSettings).values({ accountId: built.accountId, searchIndexBuiltAt: SEARCH_DOCUMENT_SHAPE_AT });
+    await writePassProgress(db, accountPass("search_index_backfill", built.accountId), { doneAt: SEARCH_DOCUMENT_SHAPE_AT });
 
     const fleet = new FakeAdapterFleet();
     const cfg: WorkerConfig = {

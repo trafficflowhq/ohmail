@@ -101,7 +101,7 @@ async function world(o: { pictured?: boolean } = {}) {
     // The send reads the inline part through the real fetch door; the IMAP socket is the only double.
     const sealed = await (deps as ApiDeps).keyProvider.encrypt(randomUUID());
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+      mailboxId, accountId: s.accountId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
       meta: { host: "imap.forward-picture.example", port: 993, secure: true, user: "me@forward-picture.example" },
     });
     vi.spyOn(ImapAdapter.prototype, "fetchPart").mockResolvedValue({ contentType: "image/png", filename: "crane.png", body: new Uint8Array([137, 80, 78, 71]) });

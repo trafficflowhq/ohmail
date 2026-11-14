@@ -86,7 +86,7 @@ describe.skipIf(!AVAILABLE)("own mail and the gate, on real Postgres", () => {
         nativeLocator: { folder: GATE, ref: `1:${i}` },
       }).returning();
       await owned.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: GATE, observedFolder: GATE,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE,
         lastSetBy, reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;

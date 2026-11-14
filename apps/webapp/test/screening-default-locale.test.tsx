@@ -70,7 +70,6 @@ interface Wire {
   ohboxPolicy: "people_only" | "people_and_replied" | null;
   ohboxBar: string | null;
   defaultBar: string;
-  screenerAutoApply: boolean;
 }
 
 let stored: Wire;
@@ -150,7 +149,6 @@ beforeEach(() => {
   patchBodies = [];
   stored = {
     ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: SERVER_DEFAULT,
-    screenerAutoApply: false,
   };
   installFetch();
 });

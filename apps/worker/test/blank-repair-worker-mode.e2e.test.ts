@@ -38,7 +38,7 @@ async function seed(db: Db): Promise<{ mailboxId: string; blankId: string }> {
   const mailboxId = row!.id;
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId, accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   // The fleet's epoch is "1", the one its targeted re-read answers under.
@@ -128,7 +128,7 @@ describe("the worker's loop labels its cycles with the build its configuration n
     const mailboxId = row!.id;
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId, accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     // Two write-offs with no clock, under the fleet's epoch: one this build made, one an older build made.

@@ -165,7 +165,7 @@ async function arrive(w: World, opts: {
   }).returning();
   if (!opts.noBody) {
     await w.db.insert(messageBodies).values({
-      messageId: m!.id, text: "hello", headers: opts.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "hello", headers: opts.headers ?? {},
     });
   }
   if (opts.folder !== null) {
@@ -178,7 +178,7 @@ async function arrive(w: World, opts: {
     // NOT NULL. `observed_folder` = `desired_folder` is the settled shape — a row mid-reconcile
     // would be a different fixture, and the pass does not read it either way.
     await w.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
     });
   }
   return m!.id;
@@ -569,7 +569,7 @@ describe("a message whose body has not arrived is not a candidate yet", () => {
     const id = await arrive(w, { noBody: true });
     await run(w, fakeAdapter());
 
-    await w.db.insert(messageBodies).values({ messageId: id, text: "hello", headers: {} });
+    await w.db.insert(messageBodies).values({ messageId: id, accountId: w.accountId, text: "hello", headers: {} });
     const good = fakeAdapter();
     await run(w, good, new Date(NOW.getTime() + 60_000));
 

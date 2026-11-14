@@ -72,7 +72,7 @@ describe.skipIf(!AVAILABLE)("the inline-cid backfill", () => {
     }).returning();
     if (!body.none) {
       await db.insert(messageBodies).values({
-        messageId: m!.id, text: "", html: body.html ?? null, withheldReason: body.withheld ?? null,
+        messageId: m!.id, accountId: m!.accountId, text: "", html: body.html ?? null, withheldReason: body.withheld ?? null,
       });
     }
     const partIds: string[] = [];

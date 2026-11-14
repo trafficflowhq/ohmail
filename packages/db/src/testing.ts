@@ -12,6 +12,7 @@ import { JOURNALS, runMigrations } from "./migrate.js";
 import { schema } from "./schema.js";
 import { assertDistinct, brandDialect, deliverLocalNotifyAtCommit } from "./dialect/index.js";
 import { migrateSqlite } from "./sqlite-migrate.js";
+import { ACCOUNT_NAMED_BY_EVERY_INSERT } from "./account-scope.js";
 import { probedService, serviceAddressOf, serviceUp } from "./test-services.js";
 import { isProtocolOpener } from "./pg-socket.js";
 import {
@@ -91,6 +92,16 @@ async function makeSqliteTestDb(): Promise<PgliteDatabase<typeof schema>> {
     run: (statement) => serial(() => { raw.exec(statement); }),
     all: <T,>(statement: string) => serial(() => raw.prepare(statement).all() as T[]),
   });
+
+  // A WRITER THAT DOES NOT NAME THE ACCOUNT IS LOUD HERE TOO. On a server the column is NOT NULL
+  // (mail 0201). On a device it is nullable, because a NOT NULL there is a rebuild of the table, so
+  // a writer that forgot it would store a row no account-scoped read finds, and say nothing. This
+  // TEST store refuses such an insert as a server does, which holds every writer a test drives on
+  // it to the rule. A device's own store carries no such trigger.
+  for (const table of ACCOUNT_NAMED_BY_EVERY_INSERT) {
+    raw.exec(`CREATE TRIGGER "${table}_account_named" BEFORE INSERT ON "${table}" WHEN NEW."account_id" IS NULL
+      BEGIN SELECT RAISE(ABORT, '${table}.account_id is not named by this insert'); END`);
+  }
 
   const db = drizzleSqliteProxy(async (query, params, method) => {
     return serial(() => {

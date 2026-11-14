@@ -70,7 +70,7 @@ describe.skipIf(!PG_UP)("the in-app move feeds the route that filed it", () => {
       date: new Date("2026-09-01T00:00:00.000Z"),
     });
     await db.insert(folderState).values({
-      messageId: id, desiredFolder: desired, observedFolder: observed, lastSetBy: "us",
+      messageId: id, accountId: ACCOUNT, desiredFolder: desired, observedFolder: observed, lastSetBy: "us",
     });
     return id;
   }

@@ -28,7 +28,7 @@ async function world(match: string): Promise<{ db: Tx; accountId: string; messag
     subject: "hello", fromAddress: "anna@x.test", nativeLocator: { folder: "INBOX", ref: "1:1" },
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   await db.insert(rules).values({

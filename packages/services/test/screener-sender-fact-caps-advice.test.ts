@@ -36,9 +36,9 @@ async function world(opts: { olderMarked: boolean }) {
       senderCheck, senderCheckBrand: senderCheck === "impersonation" ? "PostFinance" : null,
       date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${randomUUID().slice(0, 6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };
@@ -93,9 +93,9 @@ describe("a pressed purchase stores the fact that capped its suggestion", () => 
         subject, snippet: "Thanks for shopping with us.", fromAddress: from, authVerdict: "pass", senderCheck: "none",
         date: NOW, unread: true, createdAt: NOW, nativeLocator: { folder: GATE, ref: `1:${randomUUID().slice(0, 6)}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
     };

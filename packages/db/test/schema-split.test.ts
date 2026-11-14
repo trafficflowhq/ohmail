@@ -38,10 +38,11 @@ function declaredTables(file: string): Set<string> {
 /** The tables a journal CREATES. The migration is the fact; the TypeScript is the model of it. */
 function createdTables(dir: string): Set<string> {
   const out = new Set<string>();
-  for (const f of readdirSync(dir).filter((n) => n.endsWith(".sql"))) {
-    for (const m of read(join(dir, f)).matchAll(/CREATE TABLE (?:IF NOT EXISTS )?"([a-z_]+)"/gi)) {
-      out.add(m[1]!);
-    }
+  // In journal order, so a table a later entry drops is gone (mail 0202 drops one).
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".sql")).sort()) {
+    const text = read(join(dir, f));
+    for (const m of text.matchAll(/CREATE TABLE (?:IF NOT EXISTS )?"([a-z_]+)"/gi)) out.add(m[1]!);
+    for (const m of text.matchAll(/^DROP TABLE (?:IF EXISTS )?"([a-z_]+)"/gim)) out.delete(m[1]!);
   }
   return out;
 }
@@ -139,7 +140,12 @@ describe("the schema split matches the journal split", () => {
     // 57 → 58 for mail 0170's `outbound_sent_copies` — a delivered send's owed Sent copy, MAIL.
     // 58 → 59 for mail 0178's `rule_removals` — the rules a person removed, account-scoped mail data.
     // 59 → 60 for mail 0179's `scheduled_send_files` — a scheduled letter's kept files, MAIL.
-    expect(declaredTables("schema-mail.ts").size).toBe(60);
+    // 60 → 59 for mail 0202, which dropped `away_responder_sent` (mail 0051's record; `away_replies`
+    // and `away_sender_state` replaced it with mail 0087).
+    // 59 → 60 for mail 0203's `pass_progress` — where each one-time pass stands, MAIL.
+    // 60 → 61 for mail 0204's `message_invitations` — an invitation's identity, MAIL.
+    // 61 → 71 for mail 0205's ten calendar tables, MAIL.
+    expect(declaredTables("schema-mail.ts").size).toBe(71);
     // 25 since cloud 0009 put `mailbox_oauth_ceremonies` and `oauth_provider_config` on the
     // private half — the OAuth ceremony store and the one Entra registration this deployment
     // signs with. Both are Cloud-only by construction: the ceremony is a ninety-second row in
@@ -216,7 +222,10 @@ describe("the schema split matches the journal split", () => {
     // 32 → 33: `connect_attempts` (cloud 0054) — how connecting a mailbox ended, as above.
     // 33 → 34: `account_storage_holds` (cloud 0055) — a lower storage limit's hold, as above.
     // 34 → 37: `mailbox_storage_stats`, `account_storage_prefs`, `storage_mail_sent` (cloud 0057), as above.
-    expect(declaredTables("schema-cloud.ts").size).toBe(37);
+    // 37 → 38: `account_counters` (cloud 0101) — the counters that name a row, as above.
+    // 38 → 39: `account_closures` (cloud 0104) — an account closed by staff, as above.
+    // 39 → 40: `cal_push_channels` (cloud 0105) — a calendar's notice channels, as above.
+    expect(declaredTables("schema-cloud.ts").size).toBe(40);
   });
 
   /**

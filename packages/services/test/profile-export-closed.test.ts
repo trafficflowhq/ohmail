@@ -42,7 +42,7 @@ async function machine(): Promise<Machine> {
     accountId, provider: "imap", address: `${accountId.slice(0, 8)}@trafficflow.test`,
   }).returning();
   // Reachable: the card's question offers nothing for a mailbox this install holds no credential for.
-  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
   return { db, ctx: { db, accountId, now: () => NOW } as unknown as ServiceContext, accountId, mailboxId: mb!.id };
 }
 

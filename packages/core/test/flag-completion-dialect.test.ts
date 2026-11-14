@@ -32,7 +32,7 @@ async function seeded(desiredSeen: boolean, observedSeen: boolean) {
     nativeLocator: { folder: "INBOX", ref: "1:10" }, unread: !desiredSeen,
   });
   await db.insert(flagState).values({
-    messageId: MESSAGE, desiredSeen, observedSeen,
+    messageId: MESSAGE, accountId: ACCOUNT, desiredSeen, observedSeen,
     lastSetBy: "us", reconcileStatus: "pending", conflict: false,
   });
   const row = async () => (await db.select().from(flagState).where(eq(flagState.messageId, MESSAGE)))[0]!;

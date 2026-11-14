@@ -40,9 +40,9 @@ async function world(opts: { instance?: boolean } = {}) {
       accountId, mailboxId, messageId: id, folder: "INBOX", uidvalidity: 7n, uid: 11, isPrimary: true,
     });
   }
-  await db.insert(messageBodies).values({ messageId: id, text: "the letter" });
+  await db.insert(messageBodies).values({ messageId: id, accountId, text: "the letter" });
   await db.insert(folderState).values({
-    messageId: id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
+    messageId: id, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
     reconcileStatus: "reconciled", conflict: false,
   });
   const repo = makeDrizzleRepo(db as never);

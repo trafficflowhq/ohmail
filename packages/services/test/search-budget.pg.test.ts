@@ -5,46 +5,58 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql, type SQL } from "drizzle-orm";
 import { brandDialect, pgDialect } from "@trafficflow/db/dialect";
-import { mailboxes } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureHotPathIndexes, ensureWordIndex } from "@trafficflow/db/admin";
-import { pgTestUrl } from "@trafficflow/db/testing";
-import { searchIndexProgress } from "@trafficflow/core/mail";
+import {
+  NOTHING_OPENS, ensureHotPathIndexes, ensureSearchExtensions, ensureWordIndex, migrateToOldHeads, retireOldSearch, runMigrations,
+} from "@trafficflow/db/admin";
+import { pgTestUrl, throwawayDb } from "@trafficflow/db/testing";
+import { searchIndexBackfillPass, searchIndexProgress } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { CALIBRATED_REF_MS, LOADED_CEILING, QUIET_RATIO, clockOf, isQuiet, judgedClockOf, judgedVerdicts, mustJudge, outcomeOf, scaleOf, verdicts, windowOf, type Round, type Verdict, type Window } from "./_budget-clock.js";
 import {
   D, D_SALT, MATRIX_DELETED, MATRIX_REST, NOISE, NOISE_SALT, autovacuum, coldReads, draw, idOf, isExplain, isSession, matrixCells, matrixOldest,
-  matrixFolderBounds, matrixOver, matrixWalk, matrixWhole, matrixWork, planNodes, plantMatrix, recording, seedDocumented, vocabWord, type MatrixBounds,
-  type MatrixFilters, type PlanNode,
+  matrixFolderBounds, matrixOver, matrixWalk, matrixWhole, matrixWork, planNodes, plantMatrix, recording, seedDocumented, vocabWord, type BudgetHandle,
+  type MatrixBounds, type MatrixFilters, type PlanNode,
 } from "./_search-budget-fixture.js";
 
 /**
  * SEARCH IS MILLISECONDS: the first page of a search answers inside 100 ms of server time at p95
  * on a large mailbox, and every statement it issues reads an index — no sequential scan
- * of `messages` or `message_bodies`. Two large mailboxes: `A` before its backfill (the pre-0125
- * columns, four words and two parts of words: `w100` starts `w1000`–`w1009`, `myax` `myAXA`) and `D` in
- * production's shape (documents built, the marker written), which runs the query harness by
- * class beside a documented neighbour. Real Postgres with pg_trgm and the reading-order index,
- * parallel workers off (this server cannot grow a parallel query's shared memory). Alone: it seeds
- * a large corpus of messages.
+ * of `messages` or `message_bodies`. Two large mailboxes on one store, the store a server holds
+ * after its move to 2.0 while an account's letters are still found by the old search alone
+ * ({@link plantStore}). `D` in production's shape (documents built, the marker written), which
+ * runs the query harness by class beside a documented neighbour. And `A` (four words and two parts
+ * of words: `w100` starts `w1000`–`w1009`, `myax` `myAXA`), whose letters stood at 1.0.11 with no
+ * search document, read on BOTH generations a search can meet: before its backfill through the
+ * pre-0125 columns, which mail 0200 leaves on such a store, and, last in the file, after it through
+ * its documents alone, once the store's own pass has built them and the setup has retired the old
+ * search ({@link backfillA}). Real Postgres with pg_trgm and the reading-order index, parallel
+ * workers off (this server cannot grow a parallel query's shared memory). Alone: it seeds a large
+ * corpus of messages.
  */
-const PG_URL = pgTestUrl(import.meta.url);
-/** The file's connection, closed while a cold copy of its database is made and opened again ({@link reconnect}). */
-let client = postgres(PG_URL, { max: 1 });
-let base = brandDialect(drizzle(client, { schema }), "pg");
+// Refused at collection where this checkout has no database of its own: the store is made on the server it names.
+pgTestUrl(import.meta.url);
+/** The file's store, and its connection, closed while a cold copy of it is made and opened again ({@link connect}). */
+const store = throwawayDb("search_budget");
+let client: ReturnType<typeof postgres> | undefined;
+let base: BudgetHandle;
 const BUDGET_MS = 100;
 const N = 74_000;
-/** A's mailbox, before its backfill; `D` and its neighbour are the fixture's ({@link seedDocumented}). */
+/** A's mailbox; `D` and its neighbour are the fixture's ({@link seedDocumented}). */
 const A = "5eed0000-0000-4000-8000-00000000000a";
 const A_SALT = "budget-a";
 
 /** Every statement the service sends, as `search-budget-fixture`'s recorder sees it. */
 const seen: SQL[] = [];
-let db = recording(base, seen);
-/** A new connection after a cold copy, with the session setting `beforeAll` gave the first. */
-async function reconnect(): Promise<void> {
-  client = postgres(PG_URL, { max: 1 });
+let db: BudgetHandle;
+/**
+ * A new connection to the store, and a handle no search has asked yet, as an API's is at its start:
+ * the service reads once a handle what the store carries.
+ */
+async function connect(): Promise<void> {
+  await client?.end({ timeout: 5 });
+  client = postgres(store.url, { max: 1, onnotice: () => { /* quiet */ } });
   base = brandDialect(drizzle(client, { schema }), "pg");
   db = recording(base, seen);
   await base.execute(sql`set max_parallel_workers_per_gather = 0`);
@@ -64,9 +76,16 @@ const OWN = "Me@A.example";
 const RARE = "rare@contact.example";
 const MID = "mid@contact.example";
 
-async function seed(acct: string, n: number): Promise<void> {
-  const [mb] = await base.insert(mailboxes).values({ accountId: acct, provider: "imap", address: `${acct.slice(0, 8)}@tf.example` }).returning();
-  await base.execute(sql`
+/**
+ * A's account, mailbox and letters into the store at 1.0.11's heads, in 1.0's columns (a body and a
+ * folder state name their account only since mail 0201), in plain SQL: the schema objects of this
+ * tree describe 2.0.
+ */
+async function seed(h: BudgetHandle, acct: string, n: number): Promise<void> {
+  await h.execute(sql`insert into accounts (id, name) values (${acct}::uuid, 'search-budget-a')`);
+  const [mb] = (await h.execute(sql`insert into mailboxes (account_id, provider, address)
+    values (${acct}::uuid, 'imap', ${`${acct.slice(0, 8)}@tf.example`}) returning id`)) as unknown as Array<{ id: string }>;
+  await h.execute(sql`
     insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, unread, has_attachments, native_locator, to_addresses, cc_addresses)
     select ${idOf(acct, sql`g`)}, ${acct}::uuid, ${mb!.id}::uuid, 'h', 'budget:' || ${acct} || ':' || g,
       case when g % 200 = 0 then 'myAXA Portal ' || (g % 97)
@@ -78,26 +97,107 @@ async function seed(acct: string, n: number): Promise<void> {
         || case when g % 3083 = 7 then jsonb_build_array(jsonb_build_object('name', null, 'address', ${RARE}::text)) else '[]'::jsonb end,
       case when g % 50 = 3 then jsonb_build_array(jsonb_build_object('name', 'Mid', 'address', ${MID}::text)) else '[]'::jsonb end
     from generate_series(1, ${n}) g`);
-  await base.execute(sql`
+  await h.execute(sql`
     insert into message_bodies (message_id, text)
     select m.id, ${aWords(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
     from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
-  await base.execute(sql`
+  await h.execute(sql`
     insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
     select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
 }
 
-/** Every row the seeds wrote, by the fixed account ids. */
-async function removeSeeded(): Promise<void> {
-  for (const acct of [A, D, NOISE]) {
-    await base.execute(sql`delete from message_search where account_id = ${acct}::uuid`);
-    await base.execute(sql`delete from attachments where account_id = ${acct}::uuid`);
-    await base.execute(sql`delete from account_settings where account_id = ${acct}::uuid`);
-    await base.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${acct}::uuid)`);
-    await base.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${acct}::uuid)`);
-    await base.execute(sql`delete from messages where account_id = ${acct}::uuid`);
-    await base.execute(sql`delete from mailboxes where account_id = ${acct}::uuid`);
+/**
+ * Settled as production's are: a vacuumed `messages` lets the History index answer without the
+ * heap (fresh rows have no visibility map). The bodies are only analyzed: the page never scans
+ * them, and their vacuum is a minute of disk here.
+ * MESSAGE_SEARCH'S STATISTICS ARE THE WHOLE TABLE, so the harness's plans are the same every
+ * run. ANALYZE reads a random sample of 300 x the target rows; at the default 100 that is
+ * 30,000 of message_search's rows, and on the same mailbox the same common query's page read
+ * 32,069 shared buffers in one run and 11,986 in another, a different plan from a different
+ * sample. At 1000 the sample is every row: over four runs of the pinned mailbox, each on a
+ * database made from empty, every query read the same buffers to within ten, and the heaviest
+ * kept its heavy plan (32,069), so the worst case is what is held. ONLY this table: whole-table
+ * statistics on `messages` as well moved the pages read through the pre-0125 columns onto slower
+ * plans (w1 p50 19 to 28 ms here, w3000 at 8 ms a statement to 102-107 ms on CI's slowest
+ * runners), which measures a planner state production does not have rather than the search.
+ */
+async function settle(): Promise<void> {
+  for (const t of ["messages", "message_search", "folder_state"]) {
+    await base.execute(t === "message_search" ? sql`set default_statistics_target = 1000` : sql`reset default_statistics_target`);
+    await base.execute(sql.raw(`vacuum (parallel 0, analyze) ${t}`));
   }
+  await base.execute(sql`reset default_statistics_target`);
+  await base.execute(sql`analyze message_bodies`);
+}
+
+/**
+ * THE STORE, as a server reaches 2.0 with an account whose letters only the old search finds.
+ * Walked along the 1.0 road to 1.0.11's heads. There: the two trigram indexes 1.0.11's setup built
+ * for the old columns' substring and typo reads (2.0's setup builds them no more; where the old
+ * search stands they stand, built by that setup), then A's letters, each body's vector stored by
+ * 1.0's own trigger, no letter with a search document, the account never stamped built. Then moved
+ * by the transition: mail 0200 counts N letters found by the old search alone and keeps it whole,
+ * and the setup's step keeps it while they are owed. `D` and its neighbour arrive after the move,
+ * documented, as 2.0 writes a letter.
+ *
+ * ONE STORE, AND `D` BESIDE A'S LETTERS BEFORE THEIR BACKFILL: the bounds on D's pages below are
+ * the base's readings in that company. A neighbour's documents are blocks a cold page of D reads
+ * (with A's 74,000 beside it, 3,614 where 3,600 is held), and without the neighbour's letters a
+ * keyed read of half of D's folder rows counts as a pass over the folder table, which `matrixWork`
+ * tells by half the table's rows, every account's. An account of that size with no document stands
+ * only where the old search still does, so every case of D runs before {@link backfillA}.
+ */
+async function plantStore(): Promise<void> {
+  await store.create(async (url) => {
+    await migrateToOldHeads(url);
+    const plant = postgres(url, { max: 1, onnotice: () => { /* quiet */ } });
+    try {
+      const at1011 = brandDialect(drizzle(plant, { schema }), "pg");
+      // The seed's statements write tens of thousands of rows each; the box's 55 s statement ceiling is for tests.
+      await at1011.execute(sql`set statement_timeout = '600s'`);
+      // The planted rows lie where the plant wrote them: no vacuum of the server's frees space under them.
+      await autovacuum(at1011, false);
+      await at1011.execute(sql`create extension if not exists pg_trgm`);
+      await at1011.execute(sql`create index "messages_subject_trgm_idx" on public.messages using gin ("subject" gin_trgm_ops)`);
+      await at1011.execute(sql`create index "messages_from_address_trgm_idx" on public.messages using gin ("from_address" gin_trgm_ops)`);
+      await seed(at1011, A, N);
+    } finally {
+      await plant.end({ timeout: 5 });
+    }
+    // A store at 1.0.11's heads is moved by the transition; this one holds nothing sealed.
+    await runMigrations(url, { transition: { kind: "server", openSealed: NOTHING_OPENS } });
+  });
+  await connect();
+  await base.execute(sql`set statement_timeout = '600s'`);
+  // Mail 0201 wrote every body and folder row of A a second time; the first goes, as a server's own vacuum takes it after the move.
+  for (const t of ["message_bodies", "folder_state"]) await base.execute(sql.raw(`vacuum (parallel 0) ${t}`));
+  await ensureSearchExtensions(base, { concurrently: false });
+  await ensureHotPathIndexes(base, { concurrently: false });
+  expect(await retireOldSearch(base, { concurrently: false }), "the old search stands, and every letter of A is found by it alone")
+    .toEqual({ columns: "standing", trigger: "cleared", gin: "kept", owedAccounts: 1, owedLetters: N });
+  await seedDocumented(base, D, N, D_SALT);
+  await seedDocumented(base, NOISE, 20_000, NOISE_SALT);
+  await plantMatrix(base, D, N);
+  // Built over the seeded documents, as setup builds it over a live store.
+  await ensureWordIndex(base, { concurrently: false });
+  await settle();
+  await autovacuum(base, true);
+  await base.execute(sql`reset statement_timeout`);
+}
+
+/**
+ * A'S BACKFILL, AND THE OLD SEARCH'S RETIREMENT AFTER IT, by the product's own two steps: the
+ * store's pass builds every letter's document and stamps the account built; the setup's step then
+ * finds no letter owed and runs mail 0200's statements. Settled again, and a handle opened after
+ * the step, as an API started after the setup: it reads that the columns are gone.
+ */
+async function backfillA(): Promise<void> {
+  await base.execute(sql`set statement_timeout = '600s'`);
+  expect((await searchIndexBackfillPass({ db: base as never, accountId: A, batch: 2_000, rounds: 1_000 })).marked).toBe(true);
+  expect(await retireOldSearch(base, { concurrently: false }))
+    .toEqual({ columns: "gone", trigger: "absent", gin: "dropped", owedAccounts: 0, owedLetters: 0 });
+  await settle();
+  await connect();
 }
 
 function ctx(accountId: string = A): ServiceContext {
@@ -293,42 +393,7 @@ function judge(v: Verdict, what: string): void {
 
 describe("the first page of a search is milliseconds (real Postgres, a large mailbox)", () => {
   beforeAll(async () => {
-    await runMigrations(PG_URL);
-    await ensureSearchExtensions(base, { concurrently: false });
-    await ensureHotPathIndexes(base, { concurrently: false });
-    await base.execute(sql`set max_parallel_workers_per_gather = 0`);
-    // The seed's statements write tens of thousands of rows each; the box's 55 s statement ceiling is for tests.
-    await base.execute(sql`set statement_timeout = '600s'`);
-    // Fixed account ids: a run that died before its afterAll left these rows, so they go first.
-    await removeSeeded();
-    // The planted documents lie where the plant wrote them: no vacuum of the server's frees space under it.
-    await autovacuum(base, false);
-    await seed(A, N);
-    await seedDocumented(base, D, N, D_SALT);
-    await seedDocumented(base, NOISE, 20_000, NOISE_SALT);
-    await plantMatrix(base, D, N);
-    // Built over the seeded documents, as setup builds it over a live store.
-    await ensureWordIndex(base, { concurrently: false });
-    // Settled as production's are: a vacuumed `messages` lets the History index answer without the
-    // heap (fresh rows have no visibility map). The bodies are only analyzed: the page never scans
-    // them, and their vacuum is a minute of disk here.
-    // MESSAGE_SEARCH'S STATISTICS ARE THE WHOLE TABLE, so the harness's plans are the same every
-    // run. ANALYZE reads a random sample of 300 x the target rows; at the default 100 that is
-    // 30,000 of message_search's ~94,000, and on the same mailbox the same common query's page read
-    // 32,069 shared buffers in one run and 11,986 in another, a different plan from a different
-    // sample. At 1000 the sample is every row: over four runs of the pinned mailbox, each on a
-    // database made from empty, every query read the same buffers to within ten, and the heaviest
-    // kept its heavy plan (32,069), so the worst case is what is held. ONLY this table: whole-table
-    // statistics on `messages` as well moved A's own pages onto slower plans (w1 p50 19 to 28 ms
-    // here, w3000 at 8 ms a statement to 102-107 ms on CI's slowest runners), which measures a
-    // planner state production does not have rather than the search.
-    for (const t of ["messages", "message_search", "folder_state"]) {
-      await base.execute(t === "message_search" ? sql`set default_statistics_target = 1000` : sql`reset default_statistics_target`);
-      await base.execute(sql.raw(`vacuum (parallel 0, analyze) ${t}`));
-    }
-    await base.execute(sql`reset default_statistics_target`);
-    await base.execute(sql`analyze message_bodies`);
-    await autovacuum(base, true);
+    await plantStore();
     for (const h of HARNESS) {
       if (h.of !== undefined) {
         let q = h.of;
@@ -342,7 +407,6 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       for (const [m, k] of c.of.matchAll(/\{(\d+)\}/g)) q = q.replace(m, await vocabWord(Number(k), base));
       c.q = q;
     }
-    await base.execute(sql`reset statement_timeout`);
     for (let i = 0; i < 5; i++) {
       const xs: number[] = [];
       for (let j = 0; j < 20; j++) xs.push(await refSample());
@@ -351,98 +415,131 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   }, 900_000);
 
   afterAll(async () => {
-    await base.execute(sql`set statement_timeout = '600s'`);
-    await autovacuum(base, true);
-    await removeSeeded();
-    await client.end({ timeout: 5 });
+    await client?.end({ timeout: 5 });
+    await store.drop();
   }, 900_000);
 
-  for (const q of ["w1", "w40", "w3000", "axa", "w100", "myax"]) {
-    it(`"${q}": the first page inside ${BUDGET_MS} ms at p95, and no statement scans a table`, async () => {
-      const svc = new SearchService();
-      await svc.search(ctx(), { q, parts: "page" });
-      const best = await bestOfRounds(q, async (tick) => {
-        const ms: number[] = [];
-        for (let i = 0; i < 20; i++) {
-          ms.push((await svc.search(ctx(), { q, parts: "page" })).ms);
-          await tick();
-        }
-        ms.sort((a, b) => a - b);
-        return { p50: ms[10]!, p95: ms[18]! };
-      });
-      console.log(`search-budget ${q}: total ${(await svc.search(ctx(), { q, parts: "page" })).total}`);
-      judge(best.p95!, `${q} page`);
+  /**
+   * A'S CASES, on the generation the store holds A on when they run: its four words and two parts
+   * of words, two words together, the round trip, and its totals. `before` leads the names and the
+   * printed figures of the run before the backfill.
+   */
+  const WORDS = ["w1", "w40", "w3000", "axa", "w100", "myax"];
+  const aCases = (before: string): void => {
+    for (const q of WORDS) {
+      it(`${before}"${q}": the first page inside ${BUDGET_MS} ms at p95, and no statement scans a table`, async () => {
+        const svc = new SearchService();
+        await svc.search(ctx(), { q, parts: "page" });
+        const best = await bestOfRounds(`${before}${q}`, async (tick) => {
+          const ms: number[] = [];
+          for (let i = 0; i < 20; i++) {
+            ms.push((await svc.search(ctx(), { q, parts: "page" })).ms);
+            await tick();
+          }
+          ms.sort((a, b) => a - b);
+          return { p50: ms[10]!, p95: ms[18]! };
+        });
+        console.log(`search-budget ${before}${q}: total ${(await svc.search(ctx(), { q, parts: "page" })).total}`);
+        judge(best.p95!, `${before}${q} page`);
 
-      seen.length = 0;
-      const r = await svc.search(ctx(), { q, parts: "page" });
-      expect(r.tier).toBe("exact");
-      expect(r.items.length).toBeGreaterThan(0);
-      expect(r.facets).toBeNull();
-      const session = seen.filter(isSession);
-      const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
-      expect(reads.length, "the page's statements were not recorded").toBeGreaterThan(0);
-      for (const st of reads) expect(await seqScans(st, session)).toEqual([]);
-    }, 600_000);
-  }
-
-  // Two words on A before its backfill: the older columns are read per part, each off its own GIN.
-  it(`before the backfill, two words answer page and count inside ${BUDGET_MS} ms at p95 and scan no table`, async () => {
-    const svc = new SearchService();
-    const QS = ["w3000 w1", "w2000 w2500"];
-    for (const q of QS) await svc.search(ctx(), { q, parts: "page" });
-    const best = await bestOfRounds("before two words", async (tick) => {
-      const figures: Record<string, number> = {};
-      for (const q of QS) {
-        const page: number[] = [];
-        const count: number[] = [];
-        for (let i = 0; i < 20; i++) {
-          page.push((await svc.search(ctx(), { q, parts: "page" })).ms);
-          count.push((await svc.search(ctx(), { q, parts: "estimate" })).ms);
-          await tick();
-        }
-        figures[`${q} page`] = p95Of(page);
-        figures[`${q} count`] = p95Of(count);
-      }
-      return figures;
-    });
-    for (const [k, v] of Object.entries(best)) judge(v, k);
-    for (const q of QS) {
-      seen.length = 0;
-      await svc.search(ctx(), { q, parts: "page" });
-      const session = seen.filter(isSession);
-      for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) expect(await seqScans(st, session), q).toEqual([]);
+        seen.length = 0;
+        const r = await svc.search(ctx(), { q, parts: "page" });
+        expect(r.tier).toBe("exact");
+        expect(r.items.length).toBeGreaterThan(0);
+        expect(r.facets).toBeNull();
+        const session = seen.filter(isSession);
+        const reads = seen.filter((st) => !isSession(st) && !isExplain(st));
+        expect(reads.length, "the page's statements were not recorded").toBeGreaterThan(0);
+        for (const st of reads) expect(await seqScans(st, session)).toEqual([]);
+      }, 600_000);
     }
-  }, 600_000);
 
-  it(`with an 8 ms round trip a statement, the first page still answers inside ${BUDGET_MS} ms at p95`, async () => {
-    const svc = new SearchService();
-    const count = { n: 0 };
-    // Production's client over the same database: the pooler's `prepare: false`, four connections.
-    const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
-    const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
-    const at = { ...ctx(), db: far as never };
-    const QS = ["w1", "w40", "w3000", "axa", "w100", "myax"];
-    for (const q of QS) await svc.search(at, { q, parts: "page" });
-    // The fewest statements any read of a query paid: the round trip every one of them waited.
-    const fewest: Record<string, number> = {};
-    const best = await bestOfRounds("far", async (tick) => {
-      const p95: Record<string, number> = {};
-      for (const q of QS) {
-        const ms: number[] = [];
-        for (let i = 0; i < 20; i++) {
-          count.n = 0;
-          ms.push((await svc.search(at, { q, parts: "page" })).ms);
-          fewest[q] = Math.min(fewest[q] ?? Infinity, count.n);
-          await tick();
+    /** Asked once before it is timed, and found: a search that found nothing would be inside any budget. */
+    const found = async (svc: SearchService, at: ServiceContext, q: string): Promise<void> => {
+      const r = await svc.search(at, { q, parts: "page" });
+      expect({ q, tier: r.tier, found: r.items.length > 0 }).toEqual({ q, tier: "exact", found: true });
+    };
+
+    // Before the backfill the older columns are read per part, each off its own GIN.
+    it(`${before}two words answer page and count inside ${BUDGET_MS} ms at p95 and scan no table`, async () => {
+      const svc = new SearchService();
+      const QS = ["w3000 w1", "w2000 w2500"];
+      for (const q of QS) await found(svc, ctx(), q);
+      const best = await bestOfRounds(`${before}two words`, async (tick) => {
+        const figures: Record<string, number> = {};
+        for (const q of QS) {
+          const page: number[] = [];
+          const count: number[] = [];
+          for (let i = 0; i < 20; i++) {
+            page.push((await svc.search(ctx(), { q, parts: "page" })).ms);
+            count.push((await svc.search(ctx(), { q, parts: "estimate" })).ms);
+            await tick();
+          }
+          figures[`${q} page`] = p95Of(page);
+          figures[`${q} count`] = p95Of(count);
         }
-        p95[q] = p95Of(ms);
+        return figures;
+      });
+      for (const [k, v] of Object.entries(best)) judge(v, `${before}${k}`);
+      for (const q of QS) {
+        seen.length = 0;
+        await svc.search(ctx(), { q, parts: "page" });
+        const session = seen.filter(isSession);
+        for (const st of seen.filter((x) => !isSession(x) && !isExplain(x))) expect(await seqScans(st, session), q).toEqual([]);
       }
-      return p95;
-    }, (q) => RTT_MS * fewest[q]!);
-    console.log(`search-budget far: ${count.n} statements a page`);
-    await pooled.end({ timeout: 5 });
-    for (const q of QS) judge(best[q]!, `far ${q}`);
-  }, 600_000);
+    }, 600_000);
+
+    it(`${before}with an 8 ms round trip a statement, the first page still answers inside ${BUDGET_MS} ms at p95`, async () => {
+      const svc = new SearchService();
+      const count = { n: 0 };
+      // Production's client over the same database: the pooler's `prepare: false`, four connections.
+      const pooled = postgres(store.url, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
+      const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
+      const at = { ...ctx(), db: far as never };
+      for (const q of WORDS) await found(svc, at, q);
+      // The fewest statements any read of a query paid: the round trip every one of them waited.
+      const fewest: Record<string, number> = {};
+      const best = await bestOfRounds(`${before}far`, async (tick) => {
+        const p95: Record<string, number> = {};
+        for (const q of WORDS) {
+          const ms: number[] = [];
+          for (let i = 0; i < 20; i++) {
+            count.n = 0;
+            ms.push((await svc.search(at, { q, parts: "page" })).ms);
+            fewest[q] = Math.min(fewest[q] ?? Infinity, count.n);
+            await tick();
+          }
+          p95[q] = p95Of(ms);
+        }
+        return p95;
+      }, (q) => RTT_MS * fewest[q]!);
+      console.log(`search-budget ${before}far: ${count.n} statements a page`);
+      await pooled.end({ timeout: 5 });
+      for (const q of WORDS) judge(best[q]!, `${before}far ${q}`);
+    }, 600_000);
+
+    it(`${before}a broad page says its total is a lower bound, the summary says at least its cap, a rare word's is exact`, async () => {
+      const svc = new SearchService();
+      const page = await svc.search(ctx(), { q: "w1", parts: "page" });
+      expect(page.totalExact).toBe(false);
+      expect(page.total).toBeGreaterThanOrEqual(page.items.length);
+      // No count is read from planner statistics, which cover every account's mail.
+      expect("totalEstimate" in page).toBe(false);
+      const summary = await svc.search(ctx(), { q: "w1", parts: "summary" });
+      expect(summary.items).toEqual([]);
+      expect({ total: summary.total, exact: summary.totalExact }).toEqual({ total: 2_000, exact: false });
+      expect(summary.facets, "past the cap the estimate's facets stand").toBeNull();
+      const rare = await svc.search(ctx(D), { q: "osprey", parts: "summary" });
+      expect({ total: rare.total, exact: rare.totalExact }).toEqual({ total: 4, exact: true });
+      // A's own rare word is in 925 of its letters, whichever columns find them.
+      const own = await svc.search(ctx(), { q: "w3000", parts: "summary" });
+      expect({ total: own.total, exact: own.totalExact }).toEqual({ total: 925, exact: true });
+    }, 300_000);
+  };
+
+  describe("before A's backfill, through the pre-0125 columns", () => {
+    aCases("before the backfill, ");
+  });
 
   // Each query is read as the median of five passes (a load spike on this host moves one pass, a
   // slow shape all five); a class's p95 is over its queries' medians, and the five passes are one
@@ -451,7 +548,7 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   it(`the query harness in production's shape: every class's page and count inside ${BUDGET_MS} ms at p95, 8 ms a statement`, async () => {
     const svc = new SearchService();
     const count = { n: 0 };
-    const pooled = postgres(PG_URL, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
+    const pooled = postgres(store.url, { max: 4, prepare: false, connection: { max_parallel_workers_per_gather: 0 } });
     const far = latent(brandDialect(drizzle(pooled, { schema }), "pg") as object, RTT_MS, count);
     const at = { ...ctx(D), db: far as never };
     for (const h of HARNESS) await svc.search(at, { q: h.q!, parts: "page" });
@@ -772,17 +869,17 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     const pages: Array<{ label: string; page: SQL; session: SQL[] }> = [];
     for (const c of MATRIX.filter((x) => MATRIX_COLD[x.label] !== undefined)) pages.push({ label: c.label, ...(await pageOf(c.q, c.filters)) });
     // Nothing may be connected to the database while it is copied.
-    await client.end({ timeout: 5 });
+    await client!.end({ timeout: 5 });
     const read: string[] = [];
     const over: string[] = [];
     try {
       for (const p of pages) {
-        const blocks = await coldReads(PG_URL, p.page, p.session);
+        const blocks = await coldReads(store.url, p.page, p.session);
         read.push(`${p.label} ${blocks}`);
         if (blocks > MATRIX_COLD[p.label]!) over.push(`${p.label} ${blocks} of ${MATRIX_COLD[p.label]}`);
       }
     } finally {
-      await reconnect();
+      await connect();
     }
     console.log(`search-budget matrix cold (blocks read from outside the cache): ${read.join(", ")}`);
     expect(over).toEqual([]);
@@ -863,21 +960,6 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     }
   }, 300_000);
 
-  it("a broad page says its total is a lower bound, the summary says at least its cap, a rare word's is exact", async () => {
-    const svc = new SearchService();
-    const page = await svc.search(ctx(), { q: "w1", parts: "page" });
-    expect(page.totalExact).toBe(false);
-    expect(page.total).toBeGreaterThanOrEqual(page.items.length);
-    // No count is read from planner statistics, which cover every account's mail.
-    expect("totalEstimate" in page).toBe(false);
-    const summary = await svc.search(ctx(), { q: "w1", parts: "summary" });
-    expect(summary.items).toEqual([]);
-    expect({ total: summary.total, exact: summary.totalExact }).toEqual({ total: 2_000, exact: false });
-    expect(summary.facets, "past the cap the estimate's facets stand").toBeNull();
-    const rare = await svc.search(ctx(D), { q: "osprey", parts: "summary" });
-    expect({ total: rare.total, exact: rare.totalExact }).toEqual({ total: 4, exact: true });
-  }, 300_000);
-
   /**
    * THE READS THAT GREW WITH THE MATCHES: the summary, newest first (a query with no excluded word)
    * and the address view each read at most 30,000 shared buffers a statement (hit or read, from the
@@ -915,4 +997,10 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     expect(dates).toHaveLength(50);
     expect([...dates].sort((x, y) => y - x)).toEqual(dates);
   }, 600_000);
+
+  // Last: every case above reads D beside A's letters before their backfill (`plantStore` says why).
+  describe("after A's backfill, through its documents alone", () => {
+    beforeAll(backfillA, 900_000);
+    aCases("");
+  });
 });

@@ -79,7 +79,7 @@ async function seed(
   }).returning();
   const imapSecret = await d.deps.keyProvider.encrypt("incoming-relay-password");
   await d.db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap",
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap",
     secretEnc: imapSecret.ciphertext, keyVersion: imapSecret.keyVersion,
     // A consent is only ever stored on the no-TLS rung the probe proved, so it rides `secure: false`.
     meta: { host: over.imapHost ?? IMAP_NAME, ...(over.imapConsent ? { port: 143, secure: false, insecureConsent: true } : { port: 993, secure: true }), user: USER },
@@ -87,7 +87,7 @@ async function seed(
   if (over.smtpHost !== null) {
     const enc = await d.deps.keyProvider.encrypt("outgoing-relay-password");
     await d.db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp",
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp",
       secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: over.smtpHost ?? SMTP_NAME, port: 587, secure: false, user: USER, ...(over.smtpConsent ? { insecureConsent: true } : {}) },
     });

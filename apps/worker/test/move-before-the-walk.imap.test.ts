@@ -233,7 +233,7 @@ describe.skipIf(!up)(`a filing whose source and destination are one folder on th
       dedupKey: "mid:only@x", subject: "only copy", fromAddress: "anna@x.example", nativeLocator: locator,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: shape.desired, observedFolder: shape.observed,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: shape.desired, observedFolder: shape.observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
     await reconcileMailbox({

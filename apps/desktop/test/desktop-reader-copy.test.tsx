@@ -162,7 +162,6 @@ const PREFERENCE = JSON.stringify({
   ohboxPolicy: "people_only",
   ohboxBar: "Only people who write to me by hand.",
   defaultBar: "Keep my Ohbox for real people writing to me.",
-  screenerAutoApply: false,
 });
 
 type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<unknown>;

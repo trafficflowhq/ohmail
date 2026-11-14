@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { and, eq, is, isNotNull, isNull, lt, lte, sql, Column, type SQL } from "drizzle-orm";
 import { type PgColumn, type PgTable } from "drizzle-orm/pg-core";
 import type { Tx, LedgerTx } from "./change-log.js";
-import { mailboxCredentials, scheduledSendFiles } from "./schema-mail.js";
+import { calCredentials, mailboxCredentials, scheduledSendFiles } from "./schema-mail.js";
 import {
   totpSecrets, staffUsers, mailboxOauthCeremonies, mailboxOauthDeviceCeremonies, oauthProviderConfig,
 } from "./schema-cloud.js";
@@ -76,6 +76,17 @@ export const WRAPPED_SECRET_SITES: readonly WrappedSecretSite[] = [
     ciphertext: "secretEnc", keyVersion: "keyVersion",
     key: ["mailboxId", "transport"], keyIsSecret: false,
   },
+  // A calendar connection's sealed secret (mail 0205): an app password or a refresh token,
+  // wrapped as a mailbox's is. Nothing writes the table yet; it is registered with its column.
+  // THE SERVER'S SCHEMA ALONE DECLARES IT: a device's own store has no calendar, so the device's
+  // twin of `schema-mail.ts` exports no such table, and a build that resolves that twin has no such
+  // site. Every server and every desktop engine holds the table and counts it.
+  ...(calCredentials === undefined ? [] : [{
+    site: "cal_credentials.secret_enc",
+    table: calCredentials,
+    ciphertext: "secretEnc", keyVersion: "keyVersion",
+    key: ["accountId", "connectionId", "kind"], keyIsSecret: false,
+  }]),
   {
     site: "totp_secrets.secret_enc",
     table: totpSecrets,

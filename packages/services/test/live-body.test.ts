@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -42,7 +43,7 @@ async function world(withheld: string | null = "storage_cap", db?: Db): Promise<
     accountId, mailboxId: mb!.id, messageIdHeader: `<${header}>`, bodyHash: header, dedupKey: header,
     subject: "Kitchen plans, final version", fromAddress: "tom@example.net", snippet: "Hi Sam",
   }).returning({ id: messages.id });
-  await d.insert(messageBodies).values({ messageId: m!.id, text: withheld ? "" : "kept text", html: null, withheldReason: withheld });
+  await d.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: withheld ? "" : "kept text", html: null, withheldReason: withheld });
   await d.insert(messageInstances).values([
     { accountId, mailboxId: mb!.id, messageId: m!.id, folder: "Archive", uidvalidity: 7n, uid: 41, isPrimary: false },
     { accountId, mailboxId: mb!.id, messageId: m!.id, folder: "INBOX", uidvalidity: 7n, uid: 9, isPrimary: true },

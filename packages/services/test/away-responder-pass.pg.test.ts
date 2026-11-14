@@ -146,11 +146,11 @@ async function arrive(s: Seeded, from: string, subject: string): Promise<string>
     bodyHash: randomUUID(), dedupKey: randomUUID(),
     subject, fromAddress: from, date: at, createdAt: at,
   }).returning();
-  await dbA.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+  await dbA.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
   await dbA.insert(folderState).values({
     /* INBOX — the Ohbox pile's real folder. "ohmail/Ohbox" is a string no product source
        writes, so this row was a placement the router cannot produce (mail 0096). */
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m!.id;
 }

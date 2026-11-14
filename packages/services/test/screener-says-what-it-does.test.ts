@@ -33,9 +33,9 @@ async function world() {
       snippet: "", fromAddress: o.from, senderCheck: "none", authVerdict: o.auth ?? null, date: at, unread: true,
       createdAt: at, nativeLocator: { folder: o.folder, ref: "1:1" },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false, decidedAt: o.decidedAt ?? null,
     });
     return m!.id as string;

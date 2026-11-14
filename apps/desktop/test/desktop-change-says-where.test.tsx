@@ -51,7 +51,7 @@ type Invoke = (command: string, payload?: Record<string, unknown>) => Promise<un
 const shellHost = globalThis as unknown as { __TAURI_INTERNALS__?: { invoke: Invoke } };
 
 type Change = { state: "asked" | "applied" | "refused"; holder: string | null; refusal: "unreadable" | "other" | null };
-const STORED = { ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Keep it for people.", screenerAutoApply: false };
+const STORED = { ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: "Keep it for people." };
 let answer: { change?: Change; applied?: Record<string, unknown> };
 
 function engine(): void {

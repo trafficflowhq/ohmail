@@ -63,7 +63,7 @@ async function world(): Promise<World> {
     accountId, provider: "imap", address: `${accountId.slice(0, 8)}@trafficflow.test`,
   }).returning();
   // A mailbox this install can reach: the card's question offers nothing for one it cannot.
-  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
   const ctx = { db, accountId, now: () => NOW } as unknown as ServiceContext;
   return { db, ctx, accountId, mailboxId: mb!.id };
 }
@@ -1405,7 +1405,7 @@ describe("the screen-outs an import writes reach the mail this organizer held at
       nativeLocator: { folder: at, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await w.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: at, observedFolder: at,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: at, observedFolder: at,
       lastSetBy: o.setBy ?? "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

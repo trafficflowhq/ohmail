@@ -75,7 +75,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
       date: new Date("2026-01-01T00:00:00.000Z"),
     });
     await db.insert(folderState).values({
-      messageId: id, desiredFolder: folder, observedFolder: folder, lastSetBy: "external",
+      messageId: id, accountId: ACCOUNT, desiredFolder: folder, observedFolder: folder, lastSetBy: "external",
     });
     if (opts.watched) {
       await db.insert(messageInstances).values({
@@ -150,7 +150,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
     mbNoTrash = box2!.id;
     // One LIVE user folder, and deliberately no row for "Gone" — the fallback's own case.
     await db.insert(mailboxFolders).values({
-      mailboxId: mb, folder: "Projects", uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n,
+      mailboxId: mb, accountId: ACCOUNT, folder: "Projects", uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n,
     });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
@@ -354,7 +354,7 @@ describe.skipIf(!PG_UP)("mail 0099 — Trash on real Postgres", () => {
 
     // Put it back for the cases that follow.
     await db.insert(mailboxFolders).values({
-      mailboxId: mb, folder: "Projects", uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n,
+      mailboxId: mb, accountId: ACCOUNT, folder: "Projects", uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n,
     });
   });
 
