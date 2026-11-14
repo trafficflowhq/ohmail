@@ -1,16 +1,14 @@
 /**
- * THE NATIVE SIDE'S END OF THE BRIDGE: what React Native does with a message the page posted. The
- * native module has already joined its pieces and checked its origin and frame; this re-checks both
- * (`admit.ts`), drops another web view's epoch, reads the message through the one guard, and hands
- * it to a closed table of handlers, one per kind. An unknown kind or a field of the wrong type runs
- * nothing. Each request is answered once; an epoch that ended takes its requests with it.
+ * THE NATIVE SIDE'S END OF THE SCOPED PAGE'S BRIDGE: what React Native does with a message that page posted. The
+ * message is admitted, held to its epoch and read through the one guard by the end both pages' bridges share
+ * (`bridge-end.ts`); this file is the scoped page's closed table of handlers, one per kind. An unknown kind or a
+ * field of the wrong type runs nothing. Each request is answered once; an epoch that ended takes its requests with it.
  */
-import { admitBridgeMessage } from "./admit";
+import { BridgeEnd, type Ran } from "./bridge-end";
 import {
-  ASK_DEADLINE_MS, readRequest, type Kind, type NoteWhat, type Refused, type Request, type Requests, type ShellAct,
+  readRequest, type Kind, type NoteWhat, type Refused, type Request, type Requests, type ShellAct,
   type ShellApp, type ShellConfig, type ShellEvent, type SwitchPlace,
 } from "./bridge-kinds";
-import { framesOf } from "./framing";
 import type { HttpDoor } from "./http-door";
 import type { PageMessage } from "./shell-port";
 
@@ -52,10 +50,7 @@ type Answer<K extends Kind> = Requests[K]["answer"] | { readonly refused: Refuse
 type Handler<K extends Kind> = (req: Request<K>, signal: AbortSignal) => Promise<Answer<K>> | Answer<K>;
 
 export class BridgeHost {
-  private epoch = "";
-  private readonly working = new Map<number, AbortController>();
-  private readonly asked = new Map<number, (value: { took: boolean } | { unsent: number } | null) => void>();
-  private nextAsk = 1;
+  private readonly end: BridgeEnd<Request, ShellEvent>;
   private readonly handlers: { readonly [K in Kind]: Handler<K> };
 
   constructor(private readonly deps: BridgeHostDeps) {
@@ -65,15 +60,10 @@ export class BridgeHost {
       ready: (r) => (this.deps.ready(r.place), {}),
       place: (r) => (this.deps.place(r.fragment), {}),
       http: (r, signal) => this.deps.http.request(r, signal),
-      cancel: (r) => (this.working.get(r.of)?.abort(), {}),
+      cancel: (r) => (this.end.cancel(r.of), {}),
       act: (r) => this.deps.act(r),
       linkAskOpen: async (r) => ({ opened: await this.deps.openHeld(r.token) }),
-      answer: (r) => {
-        const settle = this.asked.get(r.askId);
-        this.asked.delete(r.askId);
-        settle?.(r.what === "back" ? { took: r.took } : { unsent: r.unsent });
-        return {};
-      },
+      answer: (r) => (this.end.settle(r.askId, r.what === "back" ? { took: r.took } : { unsent: r.unsent }), {}),
       // The keeper's kinds are answered by the native module itself and never reach this thread.
       keep: native,
       kept: native,
@@ -86,81 +76,43 @@ export class BridgeHost {
       "switch.open": (r) => this.deps.switch?.open(r.to) ?? NOT_READY,
       "switch.store": () => this.deps.switch?.store() ?? NOT_READY,
     };
+    this.end = new BridgeEnd<Request, ShellEvent>({
+      post: (epoch, text) => this.deps.post(epoch, text),
+      read: (raw) => readRequest(raw, this.deps.app ?? null),
+      run: async (req, signal): Promise<Ran> => {
+        const answer: object = await (this.handlers[req.kind] as Handler<Kind>)(req, signal);
+        return "refused" in answer ? (answer as { readonly refused: Refused }) : { answer };
+      },
+      // The scoped page's answers cross flat, beside the envelope's own fields.
+      wrap: (answer) => answer,
+      count: (what) => this.deps.count?.(what),
+    });
   }
 
   /** A new web view instance. Every request of the one before it is aborted, every ask let go. */
   begin(epoch: string): void {
-    for (const c of this.working.values()) c.abort();
-    this.working.clear();
-    for (const settle of this.asked.values()) settle(null);
-    this.asked.clear();
-    this.epoch = epoch;
+    this.end.begin(epoch);
   }
 
   receive(message: PageMessage): void {
-    const count = this.deps.count ?? (() => {});
-    if (!admitBridgeMessage(message)) return count("notAdmitted");
-    if (message.epoch !== this.epoch || this.epoch === "") return count("foreignEpoch");
-    let raw: unknown;
-    try {
-      raw = JSON.parse(message.data);
-    } catch {
-      return count("malformed");
-    }
-    const req = readRequest(raw, this.deps.app ?? null);
-    const id = typeof (raw as { id?: unknown })?.id === "number" ? (raw as { id: number }).id : -1;
-    if ("refused" in req) {
-      count(req.refused);
-      if (id >= 0) this.answer(id, { refused: req.refused });
-      return;
-    }
-    const control = new AbortController();
-    this.working.set(req.id, control);
-    const at = this.epoch;
-    const run = this.handlers[req.kind] as Handler<Kind>;
-    Promise.resolve()
-      .then(() => run(req, control.signal))
-      .catch(() => ({ refused: control.signal.aborted ? "cancelled" : "unreachable" }) as const)
-      .then((answer) => {
-        this.working.delete(req.id);
-        if (at !== this.epoch) return;
-        this.answer(req.id, control.signal.aborted && req.kind !== "cancel" ? { refused: "cancelled" } : answer);
-      });
+    this.end.receive(message);
   }
 
   /** An event to the page that is open now. */
   send(event: ShellEvent): void {
-    if (this.epoch === "") return;
-    this.postWhole(0, { ...event, epoch: this.epoch });
+    this.end.send(event);
   }
 
   /**
-   * Asks the page, which answers within {@link ASK_DEADLINE_MS} or not at all: back is then not
+   * Asks the page, which answers within the bridge's deadline or not at all: back is then not
    * taken, and the unsent count is unknown (null), which a caller reads as "may hold unsent words".
    */
   ask<W extends "back" | "unsent">(what: W): Promise<W extends "back" ? boolean : number | null> {
     type Out = W extends "back" ? boolean : number | null;
-    return new Promise((resolve) => {
-      if (this.epoch === "") return resolve((what === "back" ? false : null) as Out);
-      const askId = this.nextAsk++;
-      const timer = setTimeout(() => settle(null), ASK_DEADLINE_MS);
-      const settle = (value: { took: boolean } | { unsent: number } | null) => {
-        clearTimeout(timer);
-        this.asked.delete(askId);
-        if (what === "back") resolve((value !== null && "took" in value && value.took) as Out);
-        else resolve((value !== null && "unsent" in value ? value.unsent : null) as Out);
-      };
-      this.asked.set(askId, settle);
-      this.send({ type: "ask", askId, what });
+    return this.end.ask(what).then((value) => {
+      const said = (value ?? {}) as { took?: unknown; unsent?: unknown };
+      if (what === "back") return (said.took === true) as Out;
+      return (typeof said.unsent === "number" ? said.unsent : null) as Out;
     });
-  }
-
-  private answer(id: number, answer: object): void {
-    const body = "refused" in answer ? { ok: false, refused: (answer as { refused: Refused }).refused } : { ...answer, ok: true };
-    this.postWhole(id, { ...body, id, epoch: this.epoch });
-  }
-
-  private postWhole(id: number, message: object): void {
-    for (const frame of framesOf(JSON.stringify(message), id, this.epoch)) this.deps.post(this.epoch, frame);
   }
 }

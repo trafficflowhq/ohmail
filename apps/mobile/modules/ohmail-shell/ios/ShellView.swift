@@ -8,8 +8,10 @@ import WebKit
  * every load that is not the shell's scheme (no view is made if it does not compile); only the
  * main frame of the shell's origin may post, answered as data through the reply handler; the main
  * frame stays on the start page and a pressed link is held under a token while the page asks; the
- * keeper's kinds are answered here. Each web view instance has an epoch. Written, not compiled
- * here: no line of this has run on an iPhone.
+ * keeper's kinds are answered here. Each web view instance has an epoch. A view shows one scope's
+ * page, or, asked to be the door's and given no scope, the second start page (`door.html`); asked to
+ * be the door's and handed a scope, it shows neither and says so. Written, not compiled here: no
+ * line of this has run on an iPhone.
  */
 final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
   let onMessage = EventDispatcher()
@@ -22,6 +24,9 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
   private var web: WKWebView?
   private var epoch = ""
   private var scope: String?
+  private var doorPage = false
+  /** The start page the web view was made at: the one place its main frame may stand. */
+  private var startPage = shellStart
   private var held: (token: String, epoch: String, url: URL, at: Date)?
   private var ends: [Date] = []
   private var pieces: [Int: String] = [:]
@@ -34,18 +39,44 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
   func setScope(_ next: String?) {
     guard next != scope else { return }
     scope = next
+    asked()
+  }
+
+  /** Whether this view is the door's. A change is a new page. */
+  func setDoor(_ next: Bool) {
+    guard next != doorPage else { return }
+    doorPage = next
+    asked()
+  }
+
+  /**
+   * The page this view shows, by what it was asked to be: the door's page with no scope, one scope's page with a
+   * scope of the keeper's shape, and none otherwise. The door's with a scope is none: a page with no scope must
+   * never stand over a live one's keeper.
+   */
+  private var page: URL? {
+    if doorPage { return scope == nil ? shellDoor : nil }
+    if let s = scope, Keeper.isScope(s) { return shellStart }
+    return nil
+  }
+
+  private func asked() {
     destroyWeb()
-    if let s = next, Keeper.isScope(s) { build() }
+    if doorPage, scope != nil { onRefused(["why": "door"]); return }
+    if page != nil { build() }
   }
 
   /** A new web view at the start page, a new epoch: the page starts over from its keeper. */
   func rebuild() {
     destroyWeb()
-    if let s = scope, Keeper.isScope(s) { build() }
+    if page != nil { build() }
   }
 
   private func build() {
-    guard door.csp != nil else { onRefused(["why": "noShell"]); return }
+    guard let at = page else { return }
+    // A build whose page carries no door has none to show.
+    guard door.csp != nil, door.lists(String(at.path.dropFirst())) else { onRefused(["why": "noShell"]); return }
+    let live = scope
     let rules = """
     [{"trigger":{"url-filter":".*"},"action":{"type":"block"}},
      {"trigger":{"url-filter":"^\(shellScheme)://\(shellHost)/"},"action":{"type":"ignore-previous-rules"}}]
@@ -54,12 +85,14 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
       DispatchQueue.main.async {
         guard let self = self else { return }
         guard let list = list, error == nil else { self.onRefused(["why": "rules"]); return }
-        self.make(list)
+        // A scope or a page that changed while the rules compiled builds its own.
+        guard self.scope == live, self.page == at, self.web == nil else { return }
+        self.make(list, at)
       }
     }
   }
 
-  private func make(_ rules: WKContentRuleList) {
+  private func make(_ rules: WKContentRuleList, _ at: URL) {
     let config = WKWebViewConfiguration()
     config.setURLSchemeHandler(door, forURLScheme: shellScheme)
     config.userContentController.add(rules)
@@ -84,8 +117,9 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
     pieces = [:]
     addSubview(w)
     web = w
+    startPage = at
     onEpoch(["epoch": epoch])
-    var parts = URLComponents(url: shellStart, resolvingAgainstBaseURL: false)!
+    var parts = URLComponents(url: at, resolvingAgainstBaseURL: false)!
     parts.queryItems = [URLQueryItem(name: "epoch", value: epoch)]
     w.load(URLRequest(url: parts.url!))
   }
@@ -193,7 +227,7 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
   func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
     guard let url = action.request.url else { return decisionHandler(.cancel) }
     let mainFrame = action.targetFrame?.isMainFrame ?? true
-    if mainFrame, url.scheme == shellScheme, url.host == shellHost, url.path == "/index.html", action.navigationType == .other {
+    if mainFrame, url.scheme == shellScheme, url.host == shellHost, url.path == startPage.path, action.navigationType == .other {
       return decisionHandler(.allow)
     }
     if !mainFrame, url.absoluteString == "about:srcdoc" { return decisionHandler(.allow) }
@@ -232,7 +266,7 @@ final class ShellView: ExpoView, WKNavigationDelegate, WKUIDelegate, WKScriptMes
     let now = Date()
     ends = ends.filter { now.timeIntervalSince($0) <= 60 } + [now]
     if ends.count > 3 { onRefused(["why": "ended", "epoch": ended]); return }
-    if scope != nil { build() }
+    if page != nil { build() }
   }
 
   private static var debuggable: Bool {

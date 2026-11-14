@@ -34,6 +34,7 @@ import type { FoldReading, NoticePermission, SafeInsets, ShellConfig } from "./b
 import { HttpDoor } from "./http-door";
 import { KEPT_FAMILIES } from "./kept-families";
 import { scopeOf } from "./scope";
+import { Sentence } from "./Sentence";
 import { shellNative, shellView } from "./shell-native";
 import type { ShellRefusal, ShellViewHandle } from "./shell-port";
 import { handoffMinter, type ShellSession } from "../net/pairing";
@@ -263,10 +264,6 @@ export function ShellScreen({ session }: { session: ShellSession }) {
       {drawn ? null : <View style={styles.over}><Txt variant="body">{Copy.shellOpening}</Txt></View>}
     </View>
   );
-}
-
-function Sentence({ words }: { words: string }) {
-  return <View style={styles.over}><Txt variant="body">{words}</Txt></View>;
 }
 
 /** The edges the page pads itself by: the route pads the top (the status bar) natively. */

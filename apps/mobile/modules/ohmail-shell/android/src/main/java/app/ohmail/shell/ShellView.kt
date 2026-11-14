@@ -58,6 +58,11 @@ import java.security.SecureRandom
  * Each web view instance has an epoch, minted here. A message of another epoch is dropped, and an
  * epoch's requests die with it. The keeper's kinds are answered on this side and never reach
  * React Native's thread, which on a phone that organizes its own mailbox is the mail engine's.
+ *
+ * THE DOOR'S PAGE. A view shows one scope's page, or, asked to be the door's and given no scope, the
+ * second start page (`door.html`): the ways in and the list of servers, which stand while no mailbox
+ * is open. It is held by the same five layers; the keeper answers it `notReady`, since no scope is
+ * live. A view asked to be the door's AND handed a scope shows neither page and says so.
  */
 @SuppressLint("ViewConstructor")
 class ShellView(context: Context, appContext: AppContext) : ExpoView(context, appContext) {
@@ -77,6 +82,9 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
   private var epoch = ""
   private var proxy: JavaScriptReplyProxy? = null
   private var scope: String? = null
+  private var doorPage = false
+  /** The start page the web view was made at: the one place its main frame may stand. */
+  private var startPath = START_PATH
   private var held: Held? = null
   private val ends = ArrayDeque<Long>()
   private val pieces = HashMap<Long, StringBuilder>()
@@ -102,8 +110,7 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
   /** A new web view at the start page, a new epoch: the page starts over from its keeper. */
   fun rebuild() {
     destroyWeb()
-    val live = scope
-    if (live != null && Keeper.SCOPE.matches(live)) build()
+    if (pagePath() != null) build()
   }
 
   // ── what React Native sets ────────────────────────────────────────────────────────────────────────
@@ -112,8 +119,37 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
   fun setScope(next: String?) {
     if (next == scope) return
     scope = next
+    asked()
+  }
+
+  /** Whether this view is the door's. A change is a new page. */
+  fun setDoor(next: Boolean) {
+    if (next == doorPage) return
+    doorPage = next
+    asked()
+  }
+
+  /**
+   * The page this view shows, by what it was asked to be: the door's page with no scope, one scope's page with a
+   * scope of the keeper's shape, and none otherwise. The door's with a scope is none: a page with no scope must
+   * never stand over a live one's keeper.
+   */
+  private fun pagePath(): String? {
+    val live = scope
+    return when {
+      doorPage -> if (live == null) DOOR_PATH else null
+      live != null && Keeper.SCOPE.matches(live) -> START_PATH
+      else -> null
+    }
+  }
+
+  private fun asked() {
     destroyWeb()
-    if (next != null && Keeper.SCOPE.matches(next)) build()
+    if (doorPage && scope != null) {
+      onRefused(mapOf("why" to "door"))
+      return
+    }
+    if (pagePath() != null) build()
   }
 
   // ── the web view ──────────────────────────────────────────────────────────────────────────────────
@@ -124,19 +160,21 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
       onRefused(mapOf("why" to "webview") + reading.toMap())
       return
     }
-    if (door.csp == null) {
+    val path = pagePath() ?: return
+    // A build whose page carries no door has none to show.
+    if (door.csp == null || !door.lists(path.removePrefix(SHELL_PREFIX))) {
       onRefused(mapOf("why" to "noShell"))
       return
     }
-    // The network goes nowhere before the first page loads (`ShellRuntime.sealNetwork`); a scope that changed meanwhile builds its own.
-    val asked = scope
+    // The network goes nowhere before the first page loads (`ShellRuntime.sealNetwork`); a scope or a page that changed meanwhile builds its own.
+    val live = scope
     ShellRuntime.sealNetwork {
-      if (scope == asked && web == null && asked != null && Keeper.SCOPE.matches(asked)) make()
+      if (scope == live && pagePath() == path && web == null) make(path)
     }
   }
 
   @SuppressLint("SetJavaScriptEnabled")
-  private fun make() {
+  private fun make(path: String) {
     WebView.setWebContentsDebuggingEnabled(debuggable)
     val w = WebView(context)
     w.settings.apply {
@@ -172,8 +210,9 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
     }
     addView(w, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
     web = w
+    startPath = path
     onEpoch(mapOf("epoch" to epoch))
-    w.loadUrl("$APP_ORIGIN$START_PATH?epoch=$epoch")
+    w.loadUrl("$APP_ORIGIN$path?epoch=$epoch")
   }
 
   private fun sealServiceWorkers() {
@@ -213,7 +252,7 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
       onRefused(mapOf("why" to "ended", "epoch" to ended))
       return
     }
-    if (scope != null) build()
+    if (pagePath() != null) build()
   }
 
   // ── the bridge ────────────────────────────────────────────────────────────────────────────────────
@@ -424,11 +463,11 @@ class ShellView(context: Context, appContext: AppContext) : ExpoView(context, ap
 
     override fun doUpdateVisitedHistory(view: WebView, url: String?, isReload: Boolean) {
       val u = url?.let { Uri.parse(it) }
-      if (u == null || u.scheme != "https" || u.host != APP_HOST || u.path != START_PATH) {
+      if (u == null || u.scheme != "https" || u.host != APP_HOST || u.path != startPath) {
         ShellRuntime.count("offOrigin")
         main.post {
           destroyWeb()
-          if (scope != null) build()
+          if (pagePath() != null) build()
         }
       }
     }

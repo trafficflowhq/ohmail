@@ -9,6 +9,7 @@ import { parseMailto, type NoticePermission } from "./engine-package";
 import type * as Wire from "../../src/shell/bridge-kinds";
 import type { ShellConfig } from "../../src/shell/bridge-kinds";
 import type { Bridge } from "./bridge";
+import { backHandlers, cell } from "./cells";
 
 /*
  * The bridge carries each fact in its own shape (the app's program cannot type the contract's door); here, where the
@@ -20,22 +21,6 @@ export type BridgeShapesAreTheContracts = Holds<[
   Same<Wire.FoldReading, FoldReading>, Same<Wire.SafeInsets, SafeInsets>, Same<Wire.KeyboardReading, KeyboardReading>,
   Same<Wire.LinkedDraft, LinkedDraft>, Same<Wire.NoticePermission, NoticePermission>,
 ]>;
-
-function cell<T>(initial: T): Signal<T> & { set(next: T): void } {
-  let value = initial;
-  const listeners = new Set<() => void>();
-  return {
-    read: () => value,
-    subscribe(changed) {
-      listeners.add(changed);
-      return () => listeners.delete(changed);
-    },
-    set(next) {
-      value = next;
-      for (const l of listeners) l();
-    },
-  };
-}
 
 /** The sync loop's "online" source, from native's network facts: each listener is told when the phone comes back online. */
 export function onlineEvents(online: Signal<boolean>) {
@@ -72,7 +57,7 @@ export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent
   const insets = cell(facts.insets);
   const keyboard = cell(facts.keyboard);
   const online = cell(facts.online);
-  const backs: (() => boolean)[] = [];
+  const back = backHandlers();
   const wakes = new Set<(why: "foreground" | "push") => void>();
   const drafts: LinkedDraft[] = [];
   const arrivals = new Set<() => void>();
@@ -95,7 +80,7 @@ export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent
       }
       case "ask": {
         const answer = e.what === "back"
-          ? { askId: e.askId, what: "back" as const, took: [...backs].reverse().some((handle) => handle()) }
+          ? { askId: e.askId, what: "back" as const, took: back.took() }
           : { askId: e.askId, what: "unsent" as const, unsent: unsent() };
         void bridge.request("answer", answer).catch(() => {});
         return;
@@ -109,15 +94,7 @@ export function phoneSignals(bridge: Bridge, facts: ShellConfig["facts"], unsent
     insets,
     keyboard,
     online,
-    back: {
-      subscribe(handle) {
-        backs.push(handle);
-        return () => {
-          const at = backs.lastIndexOf(handle);
-          if (at >= 0) backs.splice(at, 1);
-        };
-      },
-    },
+    back: { subscribe: back.subscribe },
     wake: {
       subscribe(woke) {
         wakes.add(woke);

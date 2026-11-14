@@ -143,6 +143,8 @@ class ShellModule : Module() {
 
       Prop("scope") { view: ShellView, scope: String? -> view.setScope(scope) }
 
+      Prop("door") { view: ShellView, door: Boolean? -> view.setDoor(door == true) }
+
       AsyncFunction("post") { view: ShellView, epoch: String, json: String -> view.post(epoch, json) }
 
       AsyncFunction("openHeld") { view: ShellView, token: String -> view.openHeld(token) }.runOnQueue(expo.modules.kotlin.functions.Queues.MAIN)
