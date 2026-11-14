@@ -105,7 +105,7 @@ describe.skipIf(!AVAILABLE)("reconcile resumes after the host refuses, and conve
       });
       // What a Screener decision leaves behind: filed by us, not yet applied on the server.
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/News", observedFolder: "INBOX",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/News", observedFolder: "INBOX",
         reconcileStatus: "pending", lastSetBy: "us",
       });
     }

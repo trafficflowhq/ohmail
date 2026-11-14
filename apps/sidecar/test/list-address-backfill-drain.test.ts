@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -8,6 +9,7 @@ import type {
 import type { LeaseIo, RawClaimMessage } from "@trafficflow/core/adapters/organizer-lease";
 import {
   accountSettings, folderState, listAddresses, mailboxFolders, messageBodies, messageInstances, messages, messageSearch,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { grantOrganizeConsent } from "./_consent.js";
@@ -102,14 +104,14 @@ describe("a standalone drain reads the list addresses before its retro", () => {
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: o.folder, uidvalidity: 9n, uid: uid++, isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await sidecar.db.insert(messageBodies).values({ messageId: m!.id, text: "x", headers: o.headers ?? {} });
+    await sidecar.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "x", headers: o.headers ?? {} });
     return m!.id;
   }
 
   async function seedTheUpdate(sc: Sidecar): Promise<string> {
-    await sc.db.insert(mailboxFolders).values({ mailboxId: sc.world.mailboxId, folder: "Sent", uidvalidity: 9n, uidnext: 100n })
+    await sc.db.insert(mailboxFolders).values({ mailboxId: sc.world.mailboxId, accountId: accountOfMailbox(sc.world.mailboxId), folder: "Sent", uidvalidity: 9n, uidnext: 100n })
       .onConflictDoNothing();
     await stored(sc, { folder: "Sent", from: "owner@trafficflow.test", to: LIST });
     await stored(sc, { folder: "INBOX", from: "member@elsewhere.test", headers: { "list-post": [`<mailto:${LIST}>`] } });
@@ -117,8 +119,7 @@ describe("a standalone drain reads the list addresses before its retro", () => {
   }
 
   const listed = async (s: Sidecar) => (await s.db.select({ a: listAddresses.address }).from(listAddresses)).map((r) => r.a);
-  const stamp = async (s: Sidecar) => (await s.db.select({ at: accountSettings.listAddressesScannedAt }).from(accountSettings)
-    .where(eq(accountSettings.accountId, s.world.accountId)))[0]?.at ?? null;
+  const stamp = async (s: Sidecar) => (await readPassProgress(s.db, accountPass("list_address_backfill", s.world.accountId))).doneAt;
   const desiredOf = async (s: Sidecar, id: string): Promise<string> =>
     (await s.db.select({ d: folderState.desiredFolder }).from(folderState).where(eq(folderState.messageId, id)))[0]!.d;
 
@@ -176,7 +177,7 @@ describe("a standalone drain tidies the letters that left the server before thei
           });
         }
         await sidecar.db.insert(messageBodies).values({
-          messageId: m!.id, text: "", headers: WHOLE, withheldReason: gone ? "expunged" : "storage_cap",
+          messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", headers: WHOLE, withheldReason: gone ? "expunged" : "storage_cap",
         });
         await reindexMessageSearch(sidecar.db as never, w.accountId, m!.id);
         return m!.id;

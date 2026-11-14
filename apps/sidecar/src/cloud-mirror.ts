@@ -18,7 +18,7 @@ import {
   trackerEvents, unsubscribeExamined, unsubscribeRecords,
 } from "@trafficflow/db/mail";
 import { BODIES_IDS_MAX } from "@trafficflow/services/mail";
-import { StoreStatementFaultError } from "@trafficflow/core/mail";
+import { StoreStatementFaultError, searchInputsFromStore, upsertMessageSearchRows } from "@trafficflow/core/mail";
 // THE SHARED DRAIN POLICY — the ONE definition of "is this mirror behind", of the three
 // freshness states, and of the dense-page limit, held with `packages/client-engine`
 // (INSTANT-ARCH §6.7, stage 7's first adopted responsibility). Dependency-free core source —
@@ -1785,7 +1785,7 @@ async function applyUpsert(
          is what the unknown mailbox already gets. */
       if (await readMailboxErasedAt(tx, dia, f.mailboxId) !== null) return false;
       await tx.insert(mailboxFolders).values({
-        id: ch.id, mailboxId: f.mailboxId, folder: f.name, updatedAt: now,
+        id: ch.id, mailboxId: f.mailboxId, accountId: world.accountId, folder: f.name, updatedAt: now,
       }).onConflictDoUpdate({
         target: mailboxFolders.id,
         set: { mailboxId: f.mailboxId, folder: f.name, updatedAt: now },
@@ -1894,6 +1894,7 @@ async function applyUpsert(
       // `folder_state.desired_folder` is what `message-service.ts` projects as the message's folder.
       await tx.insert(folderState).values({
         messageId: m.id,
+        accountId: world.accountId,
         desiredFolder: m.folder,
         observedFolder: m.folder,
         lastSetBy: "external",
@@ -2253,6 +2254,23 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
  * `gen`, when present, is the bootstrap generation this page belongs to: every upsert marks the row
  * it touched so the trailing sweep can tell survivors from phantoms.
  */
+/**
+ * THE SEARCH DOCUMENTS OF THE LETTERS A PAGE STORED, in the page's own transaction. A Postgres
+ * store finds a letter by its document alone (mail 0200 took the columns that read a letter
+ * without one), and no pass builds documents on a mirror, so the mirror writes each letter's with
+ * the letter and again with its body. The device's own tables cover every row: nothing is written
+ * there. Chunked for the reason the detached batch is.
+ */
+async function writeSearchDocuments(
+  tx: Tx, world: LocalWorld, messageIds: readonly string[], hold: () => Promise<void>,
+): Promise<void> {
+  if (messageIds.length === 0 || dialect(tx).name !== "pg") return;
+  for (let i = 0; i < messageIds.length; i += DETACHED_BATCH_MAX) {
+    await hold();
+    await upsertMessageSearchRows(tx, await searchInputsFromStore(tx, world.accountId, messageIds.slice(i, i + DETACHED_BATCH_MAX)));
+  }
+}
+
 async function applyPage(
   db: LocalDb,
   world: LocalWorld,
@@ -2402,6 +2420,7 @@ async function applyPage(
         inArray(messageBodies.withheldReason, [...REFILLABLE_WITHHELD]),
       ));
     }
+    await writeSearchDocuments(tx, world, touchedMessages, hold);
     // A page that moved the folder inventory also settles the local flag it is read behind —
     // same transaction, so the local /sync can never see rows the flag disowns or vice versa.
     if (changes.some((c) => c.type === "folder")) {
@@ -3807,6 +3826,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   /** Upsert one page of bodies. Not a `/sync` entity, so no change-log row. */
   const storeBodies = async (items: readonly MessageBodyBatchItem[]): Promise<number> => {
     let written = 0;
+    const stored: string[] = [];
     await cfg.db.transaction(async (tx) => {
       const hold = loopHold();
       for (const item of items) {
@@ -3827,10 +3847,13 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
           // changes. The mirror's own counter is untouched — this store copies the hosted one.
           withheldReason: mirroredWithheld(item.withheld),
         };
-        await tx.insert(messageBodies).values({ messageId: item.messageId, ...row })
+        await tx.insert(messageBodies).values({ messageId: item.messageId, accountId: cfg.world.accountId, ...row })
           .onConflictDoUpdate({ target: messageBodies.messageId, set: row });
+        stored.push(item.messageId);
         written++;
       }
+      // The body's words join each letter's search document.
+      await writeSearchDocuments(tx as unknown as Tx, cfg.world, stored, hold);
       await loopTurn();
     });
     await loopTurn();

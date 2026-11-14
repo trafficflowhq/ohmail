@@ -43,7 +43,7 @@ const mb = await h.db.execute(
   "insert into mailboxes (account_id, provider, address) values ('" + acct + "', 'imap', 'me@ohmail.test') returning id");
 const mailboxId = String(Object.values((mb.rows ?? mb)[0])[0]);
 const fd = await h.db.execute(
-  "insert into mailbox_folders (mailbox_id, folder, uidnext) values ('" + mailboxId + "', 'INBOX', 1) returning id");
+  "insert into mailbox_folders (mailbox_id, account_id, folder, uidnext) select id, account_id, 'INBOX', 1 from mailboxes where id = '" + mailboxId + "' returning id");
 const folderId = String(Object.values((fd.rows ?? fd)[0])[0]);
 // The fixture is made durable BEFORE anything else: what is behind this fold must survive the kill.
 await h.checkpoint();

@@ -69,7 +69,7 @@ async function seedFiling(
     bodyHash: `bc7-hash-${n}`,
   }).returning();
   await db.insert(folderState).values({
-    messageId: m!.id,
+    messageId: m!.id, accountId: m!.accountId,
     desiredFolder: fs.desired,
     observedFolder: fs.observed,
     reconcileStatus: fs.status,

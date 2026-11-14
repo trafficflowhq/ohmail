@@ -23,7 +23,7 @@ async function seed(d: Awaited<ReturnType<typeof makeDeps>>): Promise<string> {
   for (const transport of ["imap", "smtp"] as const) {
     const enc = await d.deps.keyProvider.encrypt(`${transport}-pass`);
     await d.db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: `${transport}.keeper.example`, port: transport === "imap" ? 993 : 587, secure: transport === "imap", user: USER },
     });
   }

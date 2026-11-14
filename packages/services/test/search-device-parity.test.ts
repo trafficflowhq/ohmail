@@ -109,7 +109,7 @@ describe("the device answers what the server answers", () => {
         subject, from: `s${i}@site.example`, snippet: body, folder: "INBOX",
         date: new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000),
       });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       keyOf.set(id, key);
       index.add(engineMessage(id, subject, body, i));
     }
@@ -173,7 +173,7 @@ describe("a cut closest-words answer says at least, never about", () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
     for (let i = 0; i < 12; i++) {
       const id = await seedMessage(db, accountId, mailboxId, { subject: `Voucher ${i}`, snippet: "Use it.", folder: "INBOX" });
-      await db.insert(messageBodies).values({ messageId: id, text: "Use it." });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: "Use it." });
     }
     expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
     const svc = new SearchService();
@@ -224,7 +224,7 @@ async function lettersStore(
   for (const [i, [key, name, from, subject, body]] of base.entries()) {
     const date = new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000);
     const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body ?? "", folder: "INBOX", date });
-    if (body !== null) await db.insert(messageBodies).values({ messageId: id, text: body });
+    if (body !== null) await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
     keyOf.set(id, key);
     index.add({ ...engineMessage(id, subject, body ?? "", i), from: { name, address: from } });
   }
@@ -232,7 +232,7 @@ async function lettersStore(
     const [name, from, subject, body] = newer!.letter(j);
     const date = new Date(Date.parse("2026-07-21T09:00:00Z") + j * 60_000);
     const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
-    await db.insert(messageBodies).values({ messageId: id, text: body });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
     keyOf.set(id, `f${j}`);
   }
   const fill = async () => expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
@@ -293,14 +293,15 @@ describe("every word anywhere in the letter, on every store", () => {
     expect(plain.filter(([q, keys]) => !store.mirror(q).every((k) => keys.includes(k))).map(([q]) => ({ q, mirror: store.mirror(q) }))).toEqual([]);
   });
 
-  it("before the backfill a letter is read per part (the older columns); its document joins the parts", async () => {
+  it("before its document a letter is found on the device alone; its document joins the parts", async () => {
     const before = await lettersStore(false);
     const svc = new SearchService();
-    // The device's FTS tables cover every row, so it has no before.
-    const apart = (keys: string[]): string[] => (before.device ? keys : []);
+    // The device's FTS tables cover every row, so it has no before. A server's store reads a
+    // letter by its document and by nothing else: the columns it read before went with mail 0200.
+    const found = (keys: string[]): string[] => (before.device ? keys : []);
     const table: typeof ACROSS = [
-      ["aquarium food", apart(["k3"])], ["harbo lanternf", apart(["k1", "k5"])], ["lanternfish survey", before.device ? ["k1", "k5"] : ["k5"]],
-      ['"lanternfish survey"', ["k5"]], ["thank lanternfish", ["k3"]],
+      ["aquarium food", found(["k3"])], ["harbo lanternf", found(["k1", "k5"])], ["lanternfish survey", found(["k1", "k5"])],
+      ['"lanternfish survey"', found(["k5"])], ["thank lanternfish", found(["k3"])],
     ];
     const exact: Array<{ q: string; keys: string[] }> = [];
     for (const [q] of table) { const r = await before.read(svc, q); exact.push({ q, keys: r.tier === "exact" ? r.keys : [] }); }
@@ -421,7 +422,7 @@ describe("the subject's last word beside a body word", () => {
     for (const [i, [key, name, from, subject, body]] of SUBJECT_LAST.entries()) {
       const date = new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000);
       const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       keyOf.set(id, key);
       index.add({ ...engineMessage(id, subject, body, i), from: { name, address: from } });
     }
@@ -492,7 +493,7 @@ describe("each part of a file name beside another word", () => {
       const date = new Date(Date.parse("2026-07-20T09:00:00Z") - days * 86_400_000);
       const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
       await db.update(messages).set({ toAddresses: [{ name: "Mila Hartmann", address: "mila@lichtgrat.example" }] }).where(eq(messages.id, id));
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
       keyOf.set(id, key);
     }
@@ -522,7 +523,7 @@ describe("each part of a file name beside another word", () => {
     for (const [i, [key, name, from, subject, body, file]] of FILES.entries()) {
       const date = new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000);
       const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: body, folder: "INBOX", date });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
       keyOf.set(id, key);
     }
@@ -576,7 +577,7 @@ describe("each part of a file name beside another word", () => {
     const id = await seedMessage(db, accountId, mailboxId, { subject: "Papers", from: "iv@post.example", fromName: "Ines Varga", snippet: "See attached.", folder: "INBOX" });
     const to = Array.from({ length: 60 }, (_, i) => ({ name: `Recipient Number ${i}`, address: `recipient.number.${i}@distribution.example` }));
     await db.update(messages).set({ toAddresses: to }).where(eq(messages.id, id));
-    await db.insert(messageBodies).values({ messageId: id, text: "See attached." });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: "See attached." });
     await db.insert(attachments).values({ accountId, messageId: id, filename: "harbour-ledger-7731.pdf", contentType: "application/pdf" });
     expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
     const got = [];
@@ -691,7 +692,7 @@ describe("each part of a file name beside another word", () => {
       const date = new Date(Date.parse("2026-07-20T09:00:00Z") - days * 86_400_000);
       const id = await seedMessage(db, accountId, mailboxId, { subject, from, fromName: name, snippet: "See attached.", folder: "INBOX", date });
       await db.update(messages).set({ toAddresses: [{ name: "Mila Hartmann", address: "mila@lichtgrat.example" }] }).where(eq(messages.id, id));
-      await db.insert(messageBodies).values({ messageId: id, text: "See attached." });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: "See attached." });
       await db.insert(attachments).values({ accountId, messageId: id, filename: file, contentType: "application/pdf" });
       keyOf.set(id, key);
     };
@@ -716,7 +717,7 @@ describe("each part of a file name beside another word", () => {
     const NOW = new Date("2026-07-28T12:00:00Z");
     const [gone] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "gone@tf.example" }).returning();
     const id = await seedMessage(db, accountId, gone!.id, { subject: "Papers", from: "iv@post.example", fromName: "Ines Varga", snippet: "See attached.", folder: "INBOX" });
-    await db.insert(messageBodies).values({ messageId: id, text: "See attached." });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: "See attached." });
     await db.insert(attachments).values({ accountId, messageId: id, filename: "harbour-ledger-7731.pdf", contentType: "application/pdf" });
     expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
     const found = async (q: string) => (await new SearchService().search(ctx, { q, limit: 50 })).items.map((m) => m.id);
@@ -733,7 +734,7 @@ describe("each part of a file name beside another word", () => {
       expect(Number(left[0]?.[0])).toBe(0);
     }
     const later = await seedMessage(db, accountId, mailboxId, { subject: "Lunch", from: "kai@site.example", snippet: "Noon?", folder: "INBOX" });
-    await db.insert(messageBodies).values({ messageId: later, text: "Noon?" });
+    await db.insert(messageBodies).values({ messageId: later, accountId, text: "Noon?" });
     await reindexMessageSearch(db as never, accountId, later);
     expect(await found("lunch")).toEqual([later]);
     expect(await found("ines ledger")).toEqual([]);
@@ -903,7 +904,9 @@ describe("a minus word only leaves letters out", () => {
     expect(got).toEqual(want);
   }, 120_000);
 
-  it("the same before the backfill (the older columns)", async () => {
+  // The device has no before: its tables cover every row. A server's store finds a letter by its
+  // document alone, so there the law is asked of a store whose documents are built (the case above).
+  it.runIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")("the same before the backfill, on the device", async () => {
     const { got, want } = await law(await lettersStore(false, undefined, MINUS));
     expect(got).toEqual(want);
   }, 120_000);
@@ -972,7 +975,7 @@ describe("past the summary's cap, a minus word nobody holds leaves the count alo
         };
       });
       const ids = await db.insert(messages).values(rows).returning({ id: messages.id });
-      await db.insert(messageBodies).values(ids.map(({ id }) => ({ messageId: id, text: "The notes follow." })));
+      await db.insert(messageBodies).values(ids.map(({ id }) => ({ messageId: id, accountId, text: "The notes follow." })));
     }
     let marked = false;
     for (let r = 0; r < 10 && !marked; r++) marked = (await searchIndexBackfillPass({ db: db as never, accountId })).marked;

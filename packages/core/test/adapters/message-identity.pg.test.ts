@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { and, eq, sql } from "drizzle-orm";
@@ -115,7 +116,7 @@ describe.skipIf(!AVAILABLE)("message identity against real Postgres", () => {
       isPrimary: true,
     });
     await owned.db.insert(folderState).values({
-      messageId: row!.id, desiredFolder: locator.folder, observedFolder: locator.folder,
+      messageId: row!.id, accountId: accountOfMessage(row!.id), desiredFolder: locator.folder, observedFolder: locator.folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return row!.id;

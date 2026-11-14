@@ -70,10 +70,11 @@ describe("a table without an account column has said whose it borrows", () => {
     expect(declared).toEqual(derived);
   });
 
-  it("keeps the two lists disjoint and the scoped one at thirteen", () => {
+  it("keeps the two lists disjoint, and no table borrows its parent's account", () => {
     // The number is asserted because the list is what the census measures: a member quietly
-    // dropped would take its table out of the question rather than answer it.
-    expect(SCOPED_THROUGH_A_PARENT).toHaveLength(13);
+    // added would answer "whose is this row" with a join again. The seven sign-in tables that
+    // stood here carry their own account since cloud 0100, the six mail tables since mail 0201.
+    expect(SCOPED_THROUGH_A_PARENT).toHaveLength(0);
     expect(SCOPED_THROUGH_A_PARENT.filter(
       (s) => NO_ACCOUNT_SCOPE.some((u) => u.table === s.table))).toEqual([]);
   });

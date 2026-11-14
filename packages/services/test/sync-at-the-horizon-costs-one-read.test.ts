@@ -69,7 +69,7 @@ describe("the delta reader at its own horizon", () => {
       subject: "s", fromAddress: "f@x.example",
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
     await db.transaction((tx) => recordChange(tx as never, {
       accountId, entityType: "message", entityId: m!.id, op: "create",
@@ -105,7 +105,7 @@ describe("the delta reader at its own horizon", () => {
         subject: `s${i}`, fromAddress: "f@x.example",
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
       });
       await db.transaction((tx) => recordChange(tx as never, {
         accountId, entityType: "message", entityId: m!.id, op: "create",

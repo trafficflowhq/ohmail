@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { and, count, eq, isNull, ne, or } from "drizzle-orm";
 import type { makeTestDb } from "@trafficflow/db/testing";
 import {
@@ -49,7 +50,7 @@ export async function filing(db: Db, accountId: string, mailboxId: string, row: 
   }).returning();
   if (row === null) return;
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: row.desired ?? "ohmail/News", observedFolder: row.observed ?? "INBOX",
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: row.desired ?? "ohmail/News", observedFolder: row.observed ?? "INBOX",
     reconcileStatus: row.status ?? "pending", lastSetBy: row.by ?? "us", updatedAt: row.updatedAt,
     attempts: row.attempts ?? 0, nextAttemptAt: row.nextAttemptAt ?? null, lastErrorClass: row.lastErrorClass ?? null,
   });
@@ -63,14 +64,14 @@ export async function failure(db: Db, accountId: string, mailboxId: string, uid:
 }
 
 export async function cred(db: Db, mailboxId: string, transport: "imap" | "smtp", meta: unknown): Promise<void> {
-  await db.insert(mailboxCredentials).values({ mailboxId, transport, secretEnc: "sealed", keyVersion: 1, meta });
+  await db.insert(mailboxCredentials).values({ mailboxId, accountId: accountOfMailbox(mailboxId), transport, secretEnc: "sealed", keyVersion: 1, meta });
 }
 
 export async function folder(db: Db, mailboxId: string, f: {
   folder: string; updatedAt: Date; highestmodseq?: bigint; serverExists?: number; budgetStopUid?: bigint;
 }): Promise<void> {
   await db.insert(mailboxFolders).values({
-    mailboxId, folder: f.folder, updatedAt: f.updatedAt, highestmodseq: f.highestmodseq ?? null,
+    mailboxId, accountId: accountOfMailbox(mailboxId), folder: f.folder, updatedAt: f.updatedAt, highestmodseq: f.highestmodseq ?? null,
     serverExists: f.serverExists ?? null, budgetStopUid: f.budgetStopUid ?? null,
     budgetStopUidvalidity: f.budgetStopUid === undefined ? null : 9n,
   });
@@ -206,11 +207,11 @@ export async function goldenAnswer(db: Db): Promise<string> {
 
 export const GOLDEN = "./__snapshots__/mailbox-facts-batched.golden.json";
 
-/** Outstanding filings whose `outstanding_account_id` is not their message's account: always 0. */
+/** Outstanding filings whose account is not their message's account: always 0. */
 export async function outstandingDrift(db: Db): Promise<number> {
   const [r] = await db.select({ n: count() }).from(folderState)
     .innerJoin(messages, eq(messages.id, folderState.messageId))
     .where(and(ourOutstandingFiling(), or(
-      isNull(folderState.outstandingAccountId), ne(folderState.outstandingAccountId, messages.accountId))));
+      isNull(folderState.accountId), ne(folderState.accountId, messages.accountId))));
   return Number(r!.n);
 }

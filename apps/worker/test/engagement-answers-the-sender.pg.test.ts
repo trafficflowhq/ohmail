@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import {
   accountSettings, accounts, contacts, folderState,
   mailboxes, messageBodies, messages, rules, threads,
+  accountPass, requestPass,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
@@ -80,12 +81,9 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
   /** The tidy owed, and SENDER a contact: it moves a contact's bulk and keeps a stranger's. */
   async function armTidy(w: World): Promise<void> {
     await db.insert(contacts).values({ accountId: w.accountId, address: SENDER }).onConflictDoNothing();
-    await db.insert(accountSettings).values({
-      accountId: w.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(),
-    }).onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(), ohboxTidyCursor: null },
-    });
+    await db.insert(accountSettings).values({ accountId: w.accountId, ohboxPolicy: "people_only" })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { ohboxPolicy: "people_only" } });
+    await requestPass(db as unknown as Tx, accountPass("ohbox_tidy", w.accountId), new Date());
   }
 
   async function newThread(w: World): Promise<string> {
@@ -104,9 +102,9 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
       nativeLocator: { folder, ref: `1:${Math.floor(Math.random() * 1e6)}` },
       unread: false,
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "roundup", headers: BULK_HEADERS });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "roundup", headers: BULK_HEADERS });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -139,7 +137,7 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
     }).returning();
     if (!opts.noBody) {
       await db.insert(messageBodies).values({
-        messageId: m!.id, text: "reply",
+        messageId: m!.id, accountId: m!.accountId, text: "reply",
         headers: {
           "auto-submitted": ["no"],
           ...(opts.references ? { references: [`<${opts.references}>`] } : {}),
@@ -148,7 +146,7 @@ describe("engagement is answering THIS sender, not sitting on their thread", () 
       });
     }
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "Sent", observedFolder: "Sent",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

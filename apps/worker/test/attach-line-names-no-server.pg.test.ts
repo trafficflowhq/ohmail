@@ -35,7 +35,7 @@ async function seed(db: Db, accountId: string, host: string): Promise<string> {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: "u@attach.example" }).returning();
   const enc = await KP.encrypt("fixture");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host, port: 993, secure: true, user: "u@attach.example" },
   });
   return mb!.id;

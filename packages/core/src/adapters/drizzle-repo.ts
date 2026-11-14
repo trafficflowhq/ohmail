@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, exists, getTableColumns, inArray, isNotNull, isNull, lte, notInArray, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
-import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import type { AnyPgColumn, PgInsertValue } from "drizzle-orm/pg-core";
+import { accountOfMessage, accountOfMailbox, mailboxPass, markPassDone, passMark, readPassProgress } from "@trafficflow/db";
 import { accounts, accountSettings, accountStorage, changeLog, fenceErasedMailbox, MailboxErasedError, messages, messageInstances, messageFailures, folderOps, junkRescues, folderState, flagState, mailboxes, mailboxCredentials, mailboxFolders, threads, rules as rulesTbl, contacts as contactsTbl, auditLog, messageBodies, messageSearch, attachments as attachmentsTbl, routingDecisions, trackerEvents, approvals, recordRouteOverride, routeIsLearned, demoteRoute, routeOverrideActionId, senderPatternFromAddress, awayReplies, awaySenderState, recordChange as recordChangeTx, recordChanges as recordChangesTx, type MailboxMustBeLive, bodyBytesOf, reserveBodyBytes, reserveBodyBytesEvicting, releaseBodyBytes, recordWithheldForSpace, recomputeAccountStorage, type AccountRecount, type ChangeInput, type LedgerTx, type Tx, type EntityType, auditAction, ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS, dueNow as sharedDueNow, folderQueueOf, flagQueueOf, type FilingRefusalClass, type SearchSource, readOwnAddresses, releaseOwnMailAtGate, ruleNamesSenderSql, upgradeContactsToPerson, listAddresses as listAddressesTbl, LIST_ADDRESS_CHUNK, LIST_ADDRESSES_PER_ACCOUNT_MAX, listBrandsOf, readListAddresses, senderHasPersonConsentSql, reduceGoneHeaders, restoreLetterHeaders, sameHeaderBlock } from "@trafficflow/db";
 import type {
   RepoPort, RoutingPort, ExternalOverrideInput, ExternalOverrideOutcome,
@@ -1293,9 +1294,9 @@ export function messageRowOf(input: InsertMessageInput): typeof messages.$inferI
 }
 
 /** The `folder_state` row {@link DrizzleRepo.upsertFolderState} inserts for a message with none. */
-export function folderStateRowOf(messageId: string, s: FolderStateRow): typeof folderState.$inferInsert {
+export function folderStateRowOf(messageId: string, s: FolderStateRow): PgInsertValue<typeof folderState> {
   return {
-    messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+    messageId, accountId: accountOfMessage(messageId), desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
     lastSetBy: s.lastSetBy, reconcileStatus: reconcileStatusFor(s), conflict: false,
     ...(s.decidedAt !== undefined ? { decidedAt: s.decidedAt } : {}),
   };
@@ -2325,6 +2326,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       : await reserveBodyBytesEvicting(this.db, this.d, storage.accountId, bytes, storage.capBytes);
     const bodyInsert = this.db.insert(messageBodies).values({
       messageId,
+      accountId: storage.accountId,
       text: reserved ? body.text : "",
       html: reserved ? body.html : null,
       withheldReason: husk ?? (reserved ? null : ("storage_cap" as const)),
@@ -2502,7 +2504,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     // LOWER bound of when they made it (never the observation's now): an aged ohmail press made
     // before it is refused, one made between the bound and the move is admitted. NULL stamps none.
     const [row] = await this.db.insert(folderState).values({
-      messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+      messageId, accountId: accountOfMessage(messageId), desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
       lastSetBy: s.lastSetBy, reconcileStatus, conflict: false, decidedAt,
     }).onConflictDoUpdate({
       target: folderState.messageId,
@@ -2572,7 +2574,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   async upsertFlagState(messageId: string, s: FlagStateRow): Promise<void> {
     const reconcileStatus = flagStatusFor(s);
     await this.db.insert(flagState).values({
-      messageId, desiredSeen: s.desiredSeen, observedSeen: s.observedSeen,
+      messageId, accountId: accountOfMessage(messageId), desiredSeen: s.desiredSeen, observedSeen: s.observedSeen,
       lastSetBy: s.lastSetBy, reconcileStatus, conflict: false,
     }).onConflictDoUpdate({
       target: flagState.messageId,
@@ -2595,7 +2597,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
    */
   async setFolderConflict(messageId: string, s: FolderStateRow): Promise<void> {
     await this.db.insert(folderState).values({
-      messageId, desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
+      messageId, accountId: accountOfMessage(messageId), desiredFolder: s.desiredFolder, observedFolder: s.observedFolder,
       lastSetBy: s.lastSetBy, reconcileStatus: reconcileStatusFor(s), conflict: true,
     }).onConflictDoUpdate({
       target: folderState.messageId,
@@ -3207,7 +3209,12 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async getMailbox(mailboxId: string) {
-    const rows = await this.db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
+    // The kickstart's mark rides the one read (`pass_progress` since mail 0203): no row is NULL.
+    const rows = await this.db.select({
+      id: mailboxes.id, accountId: mailboxes.accountId, address: mailboxes.address,
+      foldersDisabledAt: mailboxes.foldersDisabledAt, lastSyncAt: mailboxes.lastSyncAt,
+      kickstartAt: passMark("kickstart", "doneAt", mailboxes.accountId, mailboxes.id),
+    }).from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
     return rows[0]
       ? {
         id: rows[0].id, accountId: rows[0].accountId, address: rows[0].address,
@@ -3218,9 +3225,10 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   /**
-   * Stamp `mailboxes.kickstart_at` — the one-shot kickstart marker (mail 0025).
+   * Stamp the kickstart done for this mailbox — the one-shot marker (mail 0025; a row of
+   * `pass_progress` since mail 0203).
    *
-   * `WHERE kickstart_at IS NULL` and `.returning()`, so the answer is the DATABASE's and not a
+   * Claimed once by the database (`markPassDone`), so the answer is the DATABASE's and not a
    * read-then-write this process performed: two workers mid-leader-handover both finishing the
    * pass produce exactly one `true`. Deliberately NOT fenced on the leader epoch the way
    * `markMailboxFailed` is — this is not a lifecycle claim that a stale leader could get wrong,
@@ -3237,10 +3245,11 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
   }
 
   async markKickstarted(mailboxId: string, at: Date): Promise<boolean> {
-    const rows = await this.db.update(mailboxes).set({ kickstartAt: at })
-      .where(and(eq(mailboxes.id, mailboxId), sql`${mailboxes.kickstartAt} is null`))
-      .returning({ id: mailboxes.id });
-    return rows.length > 0;
+    // The mark is keyed by the mailbox's account; a mailbox that is gone has nothing to mark.
+    const [mb] = await this.db.select({ accountId: mailboxes.accountId }).from(mailboxes)
+      .where(eq(mailboxes.id, mailboxId)).limit(1);
+    if (!mb) return false;
+    return markPassDone(this.db as unknown as Tx, mailboxPass("kickstart", mb.accountId, mailboxId), at);
   }
 
   /** Known correspondents, deduped and lowercased. Returns the count of genuinely NEW rows. */
@@ -3363,7 +3372,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), inArray(mailboxFolders.folder, names))))
       .map((r) => r.folder));
     await this.db.insert(mailboxFolders).values(entries.map(({ folder, cursor }) => ({
-      mailboxId, folder,
+      mailboxId, accountId: accountOfMailbox(mailboxId), folder,
       uidvalidity: BigInt(cursor.uidValidity), uidnext: BigInt(cursor.uidNext), highestmodseq: BigInt(cursor.highestModseq),
       serverExists: cursor.serverExists ?? null,
     }))).onConflictDoUpdate({
@@ -3423,7 +3432,7 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
     const [had] = await this.db.select({ id: mailboxFolders.id }).from(mailboxFolders)
       .where(and(eq(mailboxFolders.mailboxId, mailboxId), eq(mailboxFolders.folder, stop.folder))).limit(1);
     await this.db.insert(mailboxFolders).values({
-      mailboxId, folder: stop.folder,
+      mailboxId, accountId: accountOfMailbox(mailboxId), folder: stop.folder,
       budgetStopUid: BigInt(stop.uid), budgetStopUidvalidity: BigInt(stop.uidValidity),
     }).onConflictDoUpdate({
       target: [mailboxFolders.mailboxId, mailboxFolders.folder],
@@ -3865,15 +3874,13 @@ export class DrizzleRepo implements WorkerRepo, RoutingPort {
 
   /** See {@link WorkerRepo.isLegacyNewsClean}. */
   async isLegacyNewsClean(accountId: string, mailboxId: string): Promise<boolean> {
-    const [row] = await this.db.select({ at: mailboxes.legacyNewsCleanAt }).from(mailboxes)
-      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId))).limit(1);
-    return row?.at != null;
+    return (await readPassProgress(this.db as unknown as Tx, mailboxPass("news_repair", accountId, mailboxId))).doneAt !== null;
   }
 
   /** See {@link WorkerRepo.markLegacyNewsClean}: the first mark stands. */
   async markLegacyNewsClean(accountId: string, mailboxId: string): Promise<void> {
-    await this.db.update(mailboxes).set({ legacyNewsCleanAt: new Date() })
-      .where(and(eq(mailboxes.id, mailboxId), eq(mailboxes.accountId, accountId), isNull(mailboxes.legacyNewsCleanAt)));
+    // The door writes a mailbox's mark only for a mailbox this account holds.
+    await markPassDone(this.db as unknown as Tx, mailboxPass("news_repair", accountId, mailboxId), new Date());
   }
 
   /**

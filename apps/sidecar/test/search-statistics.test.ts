@@ -75,8 +75,8 @@ describe("the search table's planner statistics", () => {
     await o.db.execute(sql`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, to_addresses, cc_addresses, native_locator)
       select ${accountId}, ${mailboxId}, 'h', 'st:bare:' || g, 'bare ' || g, 'a@mail.example', now(), '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb
       from generate_series(1, 200) g`);
-    await o.db.execute(sql`insert into message_bodies (message_id, text) select id, 'body' from messages where dedup_key like 'st:bare:%'`);
-    await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by) select id, 'INBOX', 'INBOX', 'us' from messages where dedup_key like 'st:bare:%'`);
+    await o.db.execute(sql`insert into message_bodies (message_id, account_id, text) select id, account_id, 'body' from messages where dedup_key like 'st:bare:%'`);
+    await o.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by) select id, account_id, 'INBOX', 'INBOX', 'us' from messages where dedup_key like 'st:bare:%'`);
     expect(await o.analyzeSearchIfStale(), "the search table did not move, the others did").toBe(true);
     expect(await reltuples(o, "messages")).toBe(320);
     expect(await reltuples(o, "message_bodies")).toBe(200);

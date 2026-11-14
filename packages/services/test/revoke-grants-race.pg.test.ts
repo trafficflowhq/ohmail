@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import { createHash, randomUUID } from "node:crypto";
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
@@ -182,7 +183,7 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     const auth = makeAuthService(makeTestAuthDeps());
     // A first step of the user's, held: the sign-out parks in its first void, its user row taken.
     const [step] = await db().insert(loginTokens).values({
-      userId: p.userId, tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
+      userId: p.userId, accountId: accountOfUser(p.userId), tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
       expiresAt: new Date(Date.now() + 5 * 60_000),
     }).returning();
     const tag = randomUUID().slice(0, 8);
@@ -209,7 +210,7 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     const auth = makeAuthService(makeTestAuthDeps());
     // A first step of the user's, held: the revoke parks in its first void, its user row taken.
     const [step] = await db().insert(loginTokens).values({
-      userId: p.userId, tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
+      userId: p.userId, accountId: accountOfUser(p.userId), tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
       expiresAt: new Date(Date.now() + 5 * 60_000),
     }).returning();
     const tag = randomUUID().slice(0, 8);
@@ -238,7 +239,7 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     const auth = makeAuthService(makeTestAuthDeps());
     // A first step of the user's, held: the revoke's first void waits on it with the pairing arm done.
     const [step] = await db().insert(loginTokens).values({
-      userId: p.userId, tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
+      userId: p.userId, accountId: accountOfUser(p.userId), tokenHash: hashToken(generateToken()), methods: [], purpose: "login",
       expiresAt: new Date(Date.now() + 5 * 60_000),
     }).returning();
     const tag = randomUUID().slice(0, 8);
@@ -251,7 +252,7 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     // Written past the mint door, which would wait at the user row: only the second void can take it.
     const raw = generateToken();
     await db().insert(pairingTokens).values({
-      createdByUserId: p.userId, grant: "device-pair", tokenHash: hashToken(raw), label: "rg-race by hand",
+      createdByUserId: p.userId, accountId: accountOfUser(p.userId), grant: "device-pair", tokenHash: hashToken(raw), label: "rg-race by hand",
       expiresAt: new Date(Date.now() + 5 * 60_000),
     });
     parked.release();
@@ -274,8 +275,8 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     // A mint's own shape, by hand: its session held FOR SHARE and its code written, not yet committed.
     const parked = await holding(hold, [
       sql`select id from sessions where id = ${p.other} for share`,
-      sql`insert into login_tokens (user_id, token_hash, methods, purpose, expires_at)
-        values (${p.userId}, ${hashToken(code)}, '[]'::jsonb, ${DESKTOP_LINK_PURPOSE}, ${new Date(Date.now() + 120_000).toISOString()}::timestamptz)`,
+      sql`insert into login_tokens (user_id, account_id, token_hash, methods, purpose, expires_at)
+        values (${p.userId}, (select account_id from users where id = ${p.userId}), ${hashToken(code)}, '[]'::jsonb, ${DESKTOP_LINK_PURPOSE}, ${new Date(Date.now() + 120_000).toISOString()}::timestamptz)`,
     ]);
     const revoke = settle(auth.logout(ctxOn(revoker.db, p, p.caller), { allDevices: true }));
     expect(lockOf(await blockedOn(C, H, 10_000)), "the sign-out waits at its session claim").toBe("sessions FOR UPDATE");
@@ -302,7 +303,7 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
     // A spent link of the user's, held: the mint's supersede deletes it, so the mint parks there,
     // past its user lock. The revoke's voids skip a spent row and never wait on it.
     const [spent] = await db().insert(loginTokens).values({
-      userId: p.userId, tokenHash: hashToken(generateToken()), methods: [], purpose: DESKTOP_LINK_PURPOSE,
+      userId: p.userId, accountId: accountOfUser(p.userId), tokenHash: hashToken(generateToken()), methods: [], purpose: DESKTOP_LINK_PURPOSE,
       expiresAt: new Date(Date.now() + 120_000), consumedAt: new Date(),
     }).returning();
     const tag = randomUUID().slice(0, 8);
@@ -421,10 +422,10 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
   /** A person who signs in: a password, an activated TOTP, and a passkey when one is asked for. */
   async function signer(withPasskey: boolean): Promise<Signer> {
     const p = await person();
-    await db().insert(credentials).values({ userId: p.userId, passwordHash: await deps.passwordHasher.hash(PW), algo: "scrypt" });
+    await db().insert(credentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), passwordHash: await deps.passwordHasher.hash(PW), algo: "scrypt" });
     const secret = newTotpSecret();
     const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(secret);
-    await db().insert(totpSecrets).values({ userId: p.userId, secretEnc: ciphertext, keyVersion, activated: true });
+    await db().insert(totpSecrets).values({ userId: p.userId, accountId: accountOfUser(p.userId), secretEnc: ciphertext, keyVersion, activated: true });
     if (!withPasskey) return { ...p, secret, passkey: null };
     const auth = makeAuthService(deps);
     const ctx = ctxOn(db(), p, p.caller);
@@ -632,10 +633,10 @@ describe.skipIf(!PG_UP)("a grant minted while a revoke runs, on Postgres", () =>
    */
   async function revocable(): Promise<Revocable> {
     const p = await person();
-    await db().insert(credentials).values({ userId: p.userId, passwordHash: await deps.passwordHasher.hash(PW), algo: "scrypt" });
+    await db().insert(credentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), passwordHash: await deps.passwordHasher.hash(PW), algo: "scrypt" });
     const { ciphertext, keyVersion } = await deps.keyProvider.encrypt(newTotpSecret());
-    await db().insert(totpSecrets).values({ userId: p.userId, secretEnc: ciphertext, keyVersion, activated: true });
-    await db().insert(webauthnCredentials).values({ userId: p.userId, credentialId: `rg-race-${randomUUID()}`, publicKey: "AAAA" });
+    await db().insert(totpSecrets).values({ userId: p.userId, accountId: accountOfUser(p.userId), secretEnc: ciphertext, keyVersion, activated: true });
+    await db().insert(webauthnCredentials).values({ userId: p.userId, accountId: accountOfUser(p.userId), credentialId: `rg-race-${randomUUID()}`, publicKey: "AAAA" });
     const now = Date.now();
     const familyId = randomUUID();
     const [low] = await db().insert(sessions).values({

@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -66,9 +67,9 @@ async function seedSibling(accountId: string, label: string): Promise<{
   }).returning();
   const mailboxId = mb!.id;
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: "enc:yyyy", keyVersion: 1,
+    mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: "enc:yyyy", keyVersion: 1,
   });
-  await db.insert(mailboxFolders).values({ mailboxId, folder: "INBOX" });
+  await db.insert(mailboxFolders).values({ mailboxId, accountId: accountOfMailbox(mailboxId), folder: "INBOX" });
   const [thread] = await db.insert(threads).values({ accountId }).returning();
   const dedup = `mid:${label}:${Math.random().toString(36).slice(2)}`;
   const [msg] = await db.insert(messages).values({
@@ -77,9 +78,9 @@ async function seedSibling(accountId: string, label: string): Promise<{
     fromAddress: "giulia@example.test", date: NOW,
     nativeLocator: { folder: "INBOX", ref: "2:2" }, snippet: "hello",
   }).returning();
-  await db.insert(messageBodies).values({ messageId: msg!.id, text: `${label} body` });
+  await db.insert(messageBodies).values({ messageId: msg!.id, accountId: accountOfMessage(msg!.id), text: `${label} body` });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     reconcileStatus: "reconciled", conflict: false,
   });
   await db.insert(messageInstances).values({
@@ -447,7 +448,7 @@ describe.skipIf(!PG_UP)("per-mailbox erasure — real Postgres, real foreign key
         };
       });
       const made = await db.insert(messages).values(chunk).returning({ id: messages.id });
-      await db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, text: "body" })));
+      await db.insert(messageBodies).values(made.map((m) => ({ messageId: m.id, accountId: accountOfMessage(m.id), text: "body" })));
     }
     // The sibling's message on one of the erased mailbox's threads: that thread must survive.
     const shared = threadIds[5]!;

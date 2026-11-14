@@ -26,7 +26,7 @@ async function seedConsented(db: Db, accountId: string, port: number): Promise<s
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: USER }).returning();
   const enc = await KP.encrypt("imap-fixture");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: HOME_NAME, port, secure: false, user: USER, insecureConsent: true },
   });
   return mb!.id;

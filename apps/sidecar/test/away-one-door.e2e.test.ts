@@ -104,9 +104,9 @@ async function arrival(d: Desk, subject: string): Promise<string> {
     subject, fromAddress: d.them, nativeLocator: { folder: "INBOX", ref: `1:${key.slice(0, 6)}` },
     date: at, createdAt: at,
   }).returning();
-  await d.sidecar.db.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+  await d.sidecar.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
   await d.sidecar.db.insert(folderState).values({
-    messageId: m!.id, observedFolder: "INBOX", desiredFolder: "INBOX",
+    messageId: m!.id, accountId: m!.accountId, observedFolder: "INBOX", desiredFolder: "INBOX",
     lastSetBy: "us", reconcileStatus: "reconciled",
   });
   return m!.id;

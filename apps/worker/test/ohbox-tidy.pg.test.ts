@@ -10,8 +10,9 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
-  accountSettings, accounts, approvals, auditLog, changeLog, contacts, drafts, folderState,
-  mailboxes, messageBodies, messageStates, messages, rules, threads,
+  accountSettings, accounts, approvals, auditLog, changeLog, contacts, drafts, folderState, mailboxes,
+  messageBodies, messageStates, messages, rules, threads, accountPass, readPassProgress, requestPass,
+  writePassProgress,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
@@ -59,13 +60,9 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
   /** Turn `people_only` on and ARM the tidy, the way a policy flip does. */
   async function arm(w: World, o: { policy?: string; requested?: Date | null } = {}): Promise<void> {
     const requested = o.requested === undefined ? new Date() : o.requested;
-    await db.insert(accountSettings).values({
-      accountId: w.accountId, ohboxPolicy: o.policy ?? "people_only",
-      ohboxTidyRequestedAt: requested,
-    }).onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { ohboxPolicy: o.policy ?? "people_only", ohboxTidyRequestedAt: requested, ohboxTidyCursor: null },
-    });
+    await db.insert(accountSettings).values({ accountId: w.accountId, ohboxPolicy: o.policy ?? "people_only" })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { ohboxPolicy: o.policy ?? "people_only" } });
+    await writePassProgress(db as unknown as Tx, accountPass("ohbox_tidy", w.accountId), { requestedAt: requested, cursor: null });
   }
 
   /**
@@ -108,10 +105,10 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
       nativeLocator: { folder: o.observed ?? OHBOX, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: o.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: o.headers ?? {},
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.desired ?? OHBOX, observedFolder: o.observed ?? OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.desired ?? OHBOX, observedFolder: o.observed ?? OHBOX,
       lastSetBy: o.lastSetBy ?? "us", reconcileStatus: "reconciled", conflict: false,
     });
     const wantRule = !o.noRule && !o.stranger;
@@ -179,9 +176,8 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
     return rows.map((r) => ({ id: r.entityId, to: (r.meta as { to?: unknown } | null)?.to }));
   };
   const tidyMarks = async (accountId: string) => {
-    const [r] = await db.select().from(accountSettings)
-      .where(eq(accountSettings.accountId, accountId)).limit(1);
-    return { done: r!.ohboxTidyDoneAt, cursor: r!.ohboxTidyCursor };
+    const r = await readPassProgress(db as unknown as Tx, accountPass("ohbox_tidy", accountId));
+    return { done: r.doneAt, cursor: r.cursor };
   };
 
   // ══════════════════════════════════════════════════════════════════════════════════════════
@@ -447,9 +443,9 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
       accountId: w.accountId, mailboxId: dead!.id, bodyHash: "h", dedupKey: `tidy:${randomUUID()}`,
       subject: "promo", fromAddress: "dead@shop.test", nativeLocator: { folder: OHBOX, ref: "1:1" },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: BULK });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: BULK });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(rules).values({
@@ -538,9 +534,7 @@ describe.skipIf(!AVAILABLE)("SCR-BACKLOG-REROUTE — the Ohbox tidy pass", () =>
     expect(await ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: w.accountId })).toMatchObject({ ran: false });
 
     // …until a fresh request past `done_at` re-arms it (what requestOhboxTidy / a re-flip does).
-    await db.update(accountSettings)
-      .set({ ohboxTidyRequestedAt: new Date(Date.now() + 1000), ohboxTidyCursor: null })
-      .where(eq(accountSettings.accountId, w.accountId));
+    await requestPass(db as unknown as Tx, accountPass("ohbox_tidy", w.accountId), new Date(Date.now() + 1000));
     const again = await ohboxTidyPass(db, { trustedAuthservIdsFor: NONE, accountId: w.accountId });
     // Owed again and RE-EXAMINES: the demoted row is in Reads and drops out, the person is examined
     // and kept, and nothing moves twice.

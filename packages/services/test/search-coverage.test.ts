@@ -24,7 +24,7 @@ async function midImport() {
     const id = await seedMessage(db, accountId, mailboxId, {
       subject: `invoice ${74600 + i}`, folder: "INBOX", date: new Date(Date.parse("2026-07-01T09:00:00Z") + i * 3_600_000),
     });
-    await db.insert(messageBodies).values({ messageId: id, text: `the invoice for order ${74600 + i}` });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: `the invoice for order ${74600 + i}` });
   }
   const r = await searchIndexBackfillPass({ db: db as never, accountId });
   expect(r.marked, "the backfill's marker is written, as on a first sync").toBe(true);

@@ -481,7 +481,7 @@ describe("GET /account/access tells what the mail needs and what the plan keeps"
   ): Promise<string> {
     const id = randomUUID();
     await db.insert(mailboxes).values({ id, accountId, provider: "imap", address: `mb-${id.slice(0, 8)}@example.com` });
-    for (const [folder, n] of o.folders) await db.insert(mailboxFolders).values({ mailboxId: id, folder, serverExists: n });
+    for (const [folder, n] of o.folders) await db.insert(mailboxFolders).values({ mailboxId: id, accountId, folder, serverExists: n });
     if (o.stats) {
       await db.insert(mailboxStorageStats).values({
         accountId, mailboxId: id, ...o.stats, emptied: 0, serverLetters: null, counted: true, imported: false, at: FIXED_NOW,
@@ -520,7 +520,7 @@ describe("GET /account/access tells what the mail needs and what the plan keeps"
       { id: b, usedBytes: 0.7 * GB, letters: 28_000, expectedLetters: 100_000, expectedBytes: 2.5 * GB, importing: true },
     ]));
     // A folder no cycle has counted yet: the estimate says it is not complete.
-    await db.insert(mailboxFolders).values({ mailboxId: a, folder: "Projects", serverExists: null });
+    await db.insert(mailboxFolders).values({ mailboxId: a, accountId: s.accountId, folder: "Projects", serverExists: null });
     const later = await (await H(req("GET", "/account/access", { bearer: s.token }), deps)).json();
     expect(later.storage.estimate.complete).toBe(false);
   });

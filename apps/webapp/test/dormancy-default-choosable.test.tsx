@@ -34,7 +34,7 @@ function scriptAccount(): void {
     }
     // The pane's other section, answered in the shape the route sends rather than the harness's `{}`.
     if (String(input).includes("/account/screening")) {
-      return json({ ohboxPolicy: null, ohboxBar: null, defaultBar: en.settings.screening.defaultBar, screenerAutoApply: false });
+      return json({ ohboxPolicy: null, ohboxBar: null, defaultBar: en.settings.screening.defaultBar });
     }
     return inner(input as RequestInfo, init);
   }) as typeof globalThis.fetch;

@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ImapAdapter, IMAP_READ_DEADLINE_MS } from "@trafficflow/core/adapters/imap";
@@ -36,7 +37,7 @@ async function seed(): Promise<{ deps: ApiDeps; mailboxId: string }> {
     .values({ accountId, provider: "imap", address: "a@example.invalid" })
     .returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: row!.id, accountId: accountOfMailbox(row!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "a@example.invalid" },
   });
   const deps = {

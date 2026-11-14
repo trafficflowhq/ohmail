@@ -50,7 +50,7 @@ async function newWorld(held: number): Promise<{ accountId: string; ids: string[
     const part = rows.slice(i, i + 500);
     await db.insert(messages).values(part);
     await db.insert(folderState).values(part.map((r) => ({
-      messageId: r.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: r.id, accountId: r.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     })));
   }

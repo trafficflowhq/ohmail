@@ -344,7 +344,7 @@ describe("a reader does not resume organizing on its own", () => {
       nativeLocator: { folder: "INBOX", uidvalidity: "1", uid: 7 },
     }).returning();
     await sidecar.db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/News", observedFolder: "INBOX",
+      messageId: msg!.id, accountId: msg!.accountId, desiredFolder: "ohmail/News", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
   }
@@ -487,7 +487,7 @@ describe("a reader does not resume organizing on its own", () => {
       nativeLocator: { folder: "INBOX", uidvalidity: "1", uid: 7 },
     }).returning();
     await sidecar.db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/News", observedFolder: "INBOX",
+      messageId: msg!.id, accountId: msg!.accountId, desiredFolder: "ohmail/News", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
 

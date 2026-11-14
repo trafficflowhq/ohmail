@@ -6,7 +6,7 @@ import { eq } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, accountSettings, mailboxes, type Tx } from "@trafficflow/db";
+import { accounts, accountSettings, mailboxes, passProgress, type Tx } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { deleteAccount, type ServiceContext } from "@trafficflow/services";
 import { gateReleasePass } from "../src/gate-release.js";
@@ -72,8 +72,8 @@ const ctxFor = (accountId: string): ServiceContext => ({
   requestId: `gr-fence-${randomUUID()}`,
 } as ServiceContext);
 
-const settingsRows = async (accountId: string) =>
-  db.select().from(accountSettings).where(eq(accountSettings.accountId, accountId));
+const passRows = async (accountId: string) =>
+  db.select().from(passProgress).where(eq(passProgress.accountId, accountId));
 
 describe.skipIf(!PG_UP)("the gate release's completion stamp and the erasure fence", () => {
   it("ERASED — the sweep lands mid-pass, and the stamp is not written", async () => {
@@ -98,7 +98,7 @@ describe.skipIf(!PG_UP)("the gate release's completion stamp and the erasure fen
     const out = await gateReleasePass(wrapped as unknown as Tx, { accountId }, NOW);
 
     expect(swept, "the pass opened no page transaction — the window did not exist").toBe(true);
-    expect(await settingsRows(accountId), "the completion stamp recreated an erased account's row")
+    expect(await passRows(accountId), "the completion stamp wrote a row for an erased account")
       .toHaveLength(0);
     // `completed` stays false and that is honest: nothing was stamped. No later cycle selects the
     // account either — it is gone.
@@ -113,8 +113,9 @@ describe.skipIf(!PG_UP)("the gate release's completion stamp and the erasure fen
 
     expect(out.ran, "the pass did not run — the fixture organizes nothing").toBe(true);
     expect(out.completed).toBe(true);
-    const rows = await settingsRows(accountId);
+    const rows = await passRows(accountId);
     expect(rows, "the fence refused a live account").toHaveLength(1);
-    expect(rows[0]!.gateReleaseDoneAt).not.toBeNull();
+    expect(rows[0]).toMatchObject({ job: "gate_release", subjectId: accountId });
+    expect(rows[0]!.doneAt).not.toBeNull();
   }, 60_000);
 });

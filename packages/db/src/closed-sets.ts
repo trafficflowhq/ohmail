@@ -11,35 +11,44 @@ import { JUNK_RESCUE_STATUSES, isJunkRescueStatus } from "./junk-rescue-status.j
 import { SEARCH_SOURCES, isSearchSource } from "./search-sources.js";
 import { SCREENER_ACT_REFUSALS, isScreenerActRefusal } from "./screener-act-refusal.js";
 import { SENDER_CHECKS, SENDER_CHECK_BY, isSenderCheck, isSenderCheckBy } from "./sender-check-values.js";
+import { GROWING_LIST_SHAPE } from "./closed-set-shape.js";
 
 /**
  * THE CLOSED SETS THE TWO STORES CARRY, AND WHICH OF THEM MAY BE A CHECK ON A DEVICE.
  *
  * A CHECK is part of the table definition in SQLite: there is no `ALTER … DROP CONSTRAINT`. So a
- * set the server widens by DROP-then-ADD — three of the five below have been widened already —
- * cannot be widened on a device by a migration step at all, only by a full table rebuild
- * (`mailboxes` is fifty columns). The day 0.18 ships the device store, the baseline freezes and
- * that rebuild is the only route left.
+ * set the server widened by DROP-then-ADD — three below were, several times each — cannot be
+ * widened on a device by a migration step at all, only by a full table rebuild (`mailboxes` is
+ * fifty columns).
  *
- * The rule, from that: a WIDENABLE set carries no CHECK on the device store. Its members are
+ * The rule, from that: a set that GROWS carries no member list in any store. Its members are
  * refused at the write door instead — the same validator on both dialects, which is where a value
- * derived from a string was reaching the column unchecked anyway. An IMMUTABLE set keeps its
- * CHECK on both, named here with the reason it cannot grow.
+ * derived from a string was reaching the column unchecked anyway. Since mail 0202 a server holds
+ * such a column to a SHAPE (one lower-case word), which a new member fits, and a device carries
+ * no CHECK for it. An IMMUTABLE set keeps its member list as a CHECK on both, named here with the
+ * reason it cannot grow.
  *
  * `closed-set-parity.test.ts` enumerates this table against the pg journal's own history, the two
  * schema twins and the device baseline, and it is what replaces the `.noop` files' argument.
  */
 
 /**
- * WIDENABLE means MEASURED widenable: the pg journal added this constraint in more than one
- * migration, i.e. dropped it and added it back with another member. IMMUTABLE means it was added
- * once and cannot grow without the product changing — `why` says which invariant closes it.
+ * SHAPE means a list that GROWS: the pg journal dropped its member list and added it back with
+ * another member more than once, until mail 0202 replaced the list by a shape (`closed-set-shape.ts`)
+ * that a new member fits without altering a table. Its members are refused at the write door on
+ * every store; a server holds each value to the shape as well, a device carries no CHECK for it.
+ * IMMUTABLE means the list was added once and cannot grow without the product changing — `why`
+ * says which invariant closes it — and it is a CHECK on both stores.
  */
-export type ClosedSetClass = "widenable" | "immutable";
+export type ClosedSetClass = "shape" | "immutable";
 
 export interface ClosedSet {
   /** The constraint's name on the server, which is the key everything else is read by. */
   readonly constraint: string;
+  /** A `shape` set alone: the member list's constraint the journal widened, until mail 0202 dropped it. */
+  readonly was?: string;
+  /** A `shape` set alone: the regular expression the server's CHECK holds a value to. */
+  readonly shape?: string;
   readonly table: string;
   readonly column: string;
   /** Whether NULL is a value the column may hold — every set here but one admits it. */
@@ -54,26 +63,26 @@ export interface ClosedSet {
 
 export const CLOSED_SETS: readonly ClosedSet[] = [
   {
-    constraint: "mailboxes_disabled_reason_closed",
+    constraint: "mailboxes_disabled_reason_shape", was: "mailboxes_disabled_reason_closed",
     table: "mailboxes", column: "disabled_reason", nullable: true,
     members: MAILBOX_DISABLED_REASONS, isMember: isMailboxDisabledReason,
-    kind: "widenable",
+    kind: "shape", shape: GROWING_LIST_SHAPE,
     why: "tracks ORGANIZER_KINDS as a suffix, so it widens whenever that does — mail 0027 opened "
       + "it and mail 0103 widened it for 'mobile'.",
   },
   {
-    constraint: "mailboxes_sync_blocked_reason_closed",
+    constraint: "mailboxes_sync_blocked_reason_shape", was: "mailboxes_sync_blocked_reason_closed",
     table: "mailboxes", column: "sync_blocked_reason", nullable: true,
     members: MAILBOX_SYNC_BLOCK_REASONS, isMember: isMailboxSyncBlockReason,
-    kind: "widenable",
+    kind: "shape", shape: GROWING_LIST_SHAPE,
     why: "one member per refusal branch in the worker's sync loop, so a new branch widens it — "
       + "mail 0029 opened it and mail 0102 widened it for 'read_limited'.",
   },
   {
-    constraint: "mailboxes_organized_by_kind_closed",
+    constraint: "mailboxes_organized_by_kind_shape", was: "mailboxes_organized_by_kind_closed",
     table: "mailboxes", column: "organized_by_kind", nullable: true,
     members: ORGANIZER_KINDS, isMember: isOrganizerKind,
-    kind: "widenable",
+    kind: "shape", shape: GROWING_LIST_SHAPE,
     why: "one member per kind of install that can organize a mailbox — mail 0083 opened it and "
       + "mail 0103 widened it for 'mobile', the standalone phone.",
   },
@@ -176,11 +185,12 @@ export class ClosedSetViolation extends Error {
 }
 
 /**
- * THE WRITE DOOR, for the columns whose store may not refuse for them.
+ * THE WRITE DOOR, for the columns whose store does not refuse for them.
  *
- * On the server the CHECK answers 23514 for a foreign value; on a device a widenable column has no
- * CHECK, so this is the refusal. Every writer of such a column that does not hand it a value of
- * the column's own literal type passes through here.
+ * An immutable set's CHECK answers 23514 for a foreign value on both stores. A growing set's
+ * members are in no store's CHECK (a server holds the shape alone, a device nothing), so this is
+ * the refusal. Every writer of such a column that does not hand it a value of the column's own
+ * literal type passes through here.
  */
 export function closedSetValue(constraint: string, value: unknown): string | null {
   const set = closedSet(constraint);

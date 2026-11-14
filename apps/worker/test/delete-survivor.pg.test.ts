@@ -96,7 +96,7 @@ describe.skipIf(!AVAILABLE)("delete filing — a promoted survivor keeps the mov
       });
     }
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: TRASH, observedFolder: primary.folder,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: TRASH, observedFolder: primary.folder,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
     const repo = makeDrizzleRepo(db as never) as WorkerRepo & {

@@ -166,7 +166,7 @@ describe("the takeover path's first decision is kept", () => {
         folder: "ohmail/Screener", uidvalidity: 1n, uid, isPrimary: true,
       });
       await sidecar.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "peer", reconcileStatus: "reconciled", conflict: false,
       });
       held.push(m!.id);

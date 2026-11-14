@@ -85,6 +85,9 @@ export default defineConfig({
     ...base.test,
     name: "sqlite",
     include: [
+      "packages/db/test/borrowers-insert-account.test.ts",
+      "packages/db/test/pass-progress.test.ts",
+      "packages/db/test/message-invitations.test.ts",
       "packages/db/test/sqlite-matrix.test.ts",
       "packages/db/test/sqlite-baseline.test.ts",
       "packages/db/test/sqlite-journal-inlined.test.ts",
@@ -536,7 +539,6 @@ export default defineConfig({
       "packages/services/test/mailbox-facts-budget.test.ts",
       "packages/db/test/folder-state-outstanding-account.test.ts",
       // The account mail 0181's triggers keep on every pending row of both reconcile queues.
-      "packages/db/test/reconcile-queue-account.test.ts",
       // Whether a sender can be confirmed at each mailbox: the local engine answers it from this store.
       "packages/services/test/mailbox-provider-confirms.test.ts",
       "packages/services/test/mailbox-inbound-quiet.test.ts",

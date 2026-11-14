@@ -1,7 +1,7 @@
 /**
  * THE OPERATOR RE-SCREEN PATH (mail 0030). The forward fix stopped a sender-chosen subject or
  * body carrying a stranger past the consent gate; this runs the correction over mail already
- * filed: `plan`, then `apply [--mailbox <uuid>]`. A COMMAND, NOT A SCHEDULED PASS: the worker may
+ * filed: `plan`, then `apply [--mailbox <uuid>]`. A COMMAND, NOT A SCHEDULED JOB: the worker may
  * not import `@trafficflow/services`, and one-time work over somebody's mailbox is run
  * deliberately, `plan` read first. IT MOVES NO MAIL: `apply` writes `folder_state.desired_folder`
  * plus a `move` change; the reconcile pass performs the physical move. `DATABASE_URL_SESSION`
@@ -10,7 +10,7 @@
  */
 import { pathToFileURL } from "node:url";
 import { and, eq, sql } from "drizzle-orm";
-import { mailboxes, messages, folderState } from "@trafficflow/db";
+import { mailboxes, messages, folderState, passDone, passMark } from "@trafficflow/db";
 import { makeOwnedDb } from "@trafficflow/db/cloud";
 import { createLogger } from "@trafficflow/core";
 import { mailboxProviderAuthservIds } from "@trafficflow/core/adapters/drizzle-repo";
@@ -62,6 +62,9 @@ function parseArgs(argv: string[]): Args {
 
 interface Target { id: string; address: string; marker: Date | null }
 
+/** The pass this command runs; its marks live in `pass_progress` (mail 0203). */
+const JOB = "sensitive_rescreen" as const;
+
 /**
  * The mailboxes a command will touch — ONE query, shared by `plan` and `apply`.
  *
@@ -72,9 +75,9 @@ interface Target { id: string; address: string; marker: Date | null }
  */
 async function selectTargets(db: Db, args: Args): Promise<Target[]> {
   const filters = args.mailboxId ? [eq(mailboxes.id, args.mailboxId)] : [];
-  if (!args.force && !args.mailboxId) filters.push(sql`${mailboxes.sensitiveRescreenAt} is null`);
+  if (!args.force && !args.mailboxId) filters.push(sql`not ${passDone(JOB, mailboxes.accountId, mailboxes.id)}`);
   return db.select({
-    id: mailboxes.id, address: mailboxes.address, marker: mailboxes.sensitiveRescreenAt,
+    id: mailboxes.id, address: mailboxes.address, marker: passMark(JOB, "doneAt", mailboxes.accountId, mailboxes.id),
   }).from(mailboxes)
     .where(filters.length ? and(...filters) : undefined)
     .orderBy(mailboxes.address);
@@ -121,7 +124,7 @@ async function upperBounds(db: Db): Promise<Map<string, { ohbox: number; sensiti
  * indexed read per mailbox that did not finish.
  */
 async function storedCursor(db: Db, mailboxId: string): Promise<string | null> {
-  const [row] = await db.select({ c: mailboxes.sensitiveRescreenCursor })
+  const [row] = await db.select({ c: passMark(JOB, "cursor", mailboxes.accountId, mailboxes.id) })
     .from(mailboxes).where(eq(mailboxes.id, mailboxId)).limit(1);
   return row?.c ?? null;
 }

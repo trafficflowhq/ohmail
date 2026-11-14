@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImapAdapter, ImapBoundExceeded, type FolderStatusAnswer } from "@trafficflow/core/adapters/imap";
@@ -104,12 +105,12 @@ async function world(folders: Array<{ folder: string; epoch: bigint | null; held
     accountId, provider: "imap", address: `rc-${randomUUID().slice(0, 8)}@example.invalid`,
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   let n = 0;
   for (const f of folders) {
-    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: f.folder, uidvalidity: f.epoch });
+    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder: f.folder, uidvalidity: f.epoch });
     for (let i = 0; i < f.held; i++) {
       const key = `m-${n++}-${randomUUID()}`;
       const [m] = await db.insert(messages).values({
@@ -282,10 +283,10 @@ describe("GET /mailboxes/:id/self-check — the door", () => {
     const other = await seedSession(db, { now: FIXED_NOW });
     const [mb] = await db.insert(mailboxes).values({ accountId: s.accountId, provider: "imap", address: "rc@example.invalid" }).returning();
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+      mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
       meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
     });
-    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "INBOX", uidvalidity: 7n });
+    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), folder: "INBOX", uidvalidity: 7n });
     const d = { ...deps, keyProvider: { decrypt: async () => "not-printed" } } as unknown as ApiDeps;
     const peek = vi.spyOn(ImapAdapter.prototype, "folderStatus").mockResolvedValue(status(0, "7"));
     const H = (r: Request) => app.handle(r, { ...d, session: null, idempotency: null });

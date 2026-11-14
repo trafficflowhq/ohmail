@@ -151,9 +151,9 @@ export async function removedMailboxWorld(second: SecondMailbox): Promise<Remove
     await db.insert(messageInstances).values({
       accountId, mailboxId, messageId: m!.id, folder: l.folder, uidvalidity: 1n, uid, isPrimary: true,
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: l.folder, observedFolder: l.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: l.folder, observedFolder: l.folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     byName.set(l.name, m!.id);
     byId.set(m!.id, l.name);

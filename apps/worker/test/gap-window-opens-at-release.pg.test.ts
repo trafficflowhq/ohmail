@@ -71,7 +71,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
       nativeLocator: { folder: "INBOX", ref: `1:${++uid}` }, arrivedAt,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "peer", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -88,7 +88,7 @@ describe.skipIf(!AVAILABLE)("the gap window a hand-back opens", () => {
       nativeLocator: { folder: observed, ref: `1:${++uid}` }, arrivedAt,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: desired, observedFolder: observed,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: desired, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: desired === observed ? "reconciled" : "pending", conflict: false,
     });
     return m!.id;

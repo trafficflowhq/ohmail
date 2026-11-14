@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { unwrittenBySqlName } from "../../../packages/db/test/_unwritten-tables.js";
 
 /**
  * WHICH TABLES HOLD ONE MAILBOX'S ROWS — derived from the schema, never listed by hand.
@@ -27,6 +28,21 @@ export const KEEP: Readonly<Record<string, string>> = {
   tags:
     "the account's tag names; a message's tag assignment is deleted with the message, the tag "
     + "stays for every other mailbox",
+  // Tables nothing writes yet (`packages/db/test/_unwritten-tables.ts`): no mailbox has a row in
+  // them. That list is held to the tree; a table's first writer takes it off, and it is then in
+  // the domain and owed by the walk.
+  ...unwrittenBySqlName(),
+};
+
+/**
+ * Tables that hold a mailbox's rows under a column not called `mailbox_id` and with no key into
+ * `mailboxes`, each with the column and why. The schema's text cannot show these, so they are
+ * named; a table here is OWED by the removal like any other in the domain.
+ */
+export const KEYED_BY_ANOTHER_NAME: Readonly<Record<string, string>> = {
+  pass_progress:
+    "`subject_id` is the mailbox's id for a mailbox's pass (the account's for an account's); "
+    + "ruled without a key into `mailboxes`, so the two erasures and this walk delete by it",
 };
 
 /** One parsed schema: every table's SQL name, which carry `mailbox_id`, and the FK edges. */
@@ -58,7 +74,7 @@ export function parseSchema(src: string): SchemaGraph {
   lines.forEach((line, i) => {
     const table = owning(i);
     if (!table) return;
-    if (/"mailbox_id"/.test(line)) graph.mailboxKeyed.add(table);
+    if (/"mailbox_id"/.test(line) || Object.hasOwn(KEYED_BY_ANOTHER_NAME, table)) graph.mailboxKeyed.add(table);
     const ref = /references\(\(\)\s*=>\s*(\w+)\./.exec(line);
     if (ref) graph.edges.push([table, sqlOf.get(ref[1]!) ?? ref[1]!]);
   });
@@ -76,8 +92,17 @@ export function sqlEdges(): Array<[string, string]> {
       .split("--> statement-breakpoint")
       .map((s) => s.replace(/^\s*--[^\n]*$/gm, ""));
     for (const s of stmts) {
-      const drop = /ALTER TABLE "([a-z_]+)"\s+DROP CONSTRAINT (?:IF EXISTS )?"([a-z_]+)"/i.exec(s);
-      if (drop) { live.delete(drop[2]!); continue; }
+      // A dropped table takes its keys with it, in both directions.
+      const gone = /^\s*DROP TABLE (?:IF EXISTS )?"([a-z_]+)"/im.exec(s)?.[1];
+      if (gone) {
+        for (const [name, [child, parent]] of live) if (child === gone || parent === gone) live.delete(name);
+        continue;
+      }
+      // Every constraint an ALTER drops, one clause or several.
+      if (/ALTER TABLE "[a-z_]+"\s+DROP CONSTRAINT /i.test(s)) {
+        for (const d of s.matchAll(/DROP CONSTRAINT (?:IF EXISTS )?"([a-z_]+)"/gi)) live.delete(d[1]!);
+        continue;
+      }
       const child = (/ALTER TABLE "([a-z_]+)"/i.exec(s) ?? /CREATE TABLE (?:IF NOT EXISTS )?"([a-z_]+)"/i.exec(s))?.[1];
       if (!child) continue;
       for (const m of s.matchAll(

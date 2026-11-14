@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
-import { accountSettings, type Tx } from "@trafficflow/db";
+import { accountPass, accountSettings, requestPass, type Tx } from "@trafficflow/db";
 import { resolveOhboxPolicy, type OhboxPolicy } from "@trafficflow/core/mail";
 import { bridgeTx, type ServiceContext } from "./context.js";
 import { ServiceError } from "./errors.js";
@@ -59,14 +59,6 @@ export interface ScreeningPreferenceUpdate {
   /** The free-text bar, or `null` to revert to {@link DEFAULT_OHBOX_BAR}. */
   ohboxBar?: string | null;
   /**
-   * SCREENER AUTO-APPLY opt-in. `true` ⇒ stamp `screener_auto_apply_at = now()` (on); `false` ⇒
-   * NULL it (off). A boolean on the wire, a timestamp in the column — the read below collapses the
-   * timestamp back to a boolean, and {@link ScreeningPreference.screenerAutoApply} is what a control
-   * renders. There is no "revert to default" third state: the default IS off, and `false` reaches
-   * it. See {@link ScreeningPreference.screenerAutoApply} for what turning it on does.
-   */
-  screenerAutoApply?: boolean;
-  /**
    * FILING A HELD IMPERSONATION TO SPAM ON ITS OWN (mail 0184). `false` stamps
    * `impersonation_filing_off_at = now()` (off); `true` NULLs it (on, the default).
    */
@@ -87,15 +79,6 @@ export interface ScreeningPreference {
   dormancyDays: number | null;
   /** `account_settings.screening_scope`, raw — anything but `'all_time'` is the window. */
   screeningScope: string | null;
-  /**
-   * Whether SCREENER AUTO-APPLY is on — the resolved boolean, from `screener_auto_apply_at IS NOT
-   * NULL`. An absent row, a NULL column and a failed read all resolve to `false`, so an account
-   * that has never touched this — and one whose settings could not be fetched — auto-applies
-   * nothing. That default is the safe one: on means the worker files obvious strong-bulk senders
-   * out of the Screener (deterministic routing only — no model call, no spend, no auto-purchase of
-   * paid suggestions), and off means the queue is a human's to triage as it has always been.
-   */
-  screenerAutoApply: boolean;
   /**
    * Whether ohmail files a held letter that impersonates a company to Spam on its own — the
    * resolved boolean, from `impersonation_filing_off_at IS NULL`. An absent row and a NULL column
@@ -136,7 +119,6 @@ export async function readScreeningPane(ctx: ServiceContext): Promise<ScreeningP
     ...stored,
     ...(p === null || p === "people_only" || p === "people_and_replied" ? { ohboxPolicy: p } : {}),
     ...(applied.ohboxBar === null || typeof applied.ohboxBar === "string" ? { ohboxBar: applied.ohboxBar } : {}),
-    ...(typeof applied.screenerAutoApply === "boolean" ? { screenerAutoApply: applied.screenerAutoApply } : {}),
     ...(typeof applied.impersonationFiling === "boolean" ? { impersonationFiling: applied.impersonationFiling } : {}),
     ...(change === null ? {} : { change }),
   };
@@ -146,7 +128,6 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
   const [row] = await ctx.db.select({
     ohboxPolicy: accountSettings.ohboxPolicy,
     ohboxBar: accountSettings.ohboxBar,
-    screenerAutoApplyAt: accountSettings.screenerAutoApplyAt,
     impersonationFilingOffAt: accountSettings.impersonationFilingOffAt,
     // The cutline's three stored answers, on the read the Screener page already makes. A second
     // read would let the queue and the count beside it be measured from different fetches.
@@ -160,9 +141,6 @@ export async function getScreeningPreference(ctx: ServiceContext): Promise<Scree
     ohboxPolicy: row?.ohboxPolicy === "people_only" || row?.ohboxPolicy === "people_and_replied"
       ? row.ohboxPolicy : null,
     ohboxBar: row?.ohboxBar ?? null,
-    // `IS NOT NULL`, never the timestamp itself — the flag is a predicate, and an absent row reads
-    // as OFF like every other unset field here.
-    screenerAutoApply: row?.screenerAutoApplyAt != null,
     // On unless turned off: NULL and an absent row are the default.
     impersonationFiling: row?.impersonationFilingOffAt == null,
     // RAW, all three: `resolveCutline` owns every default and every rejection, and a value
@@ -185,6 +163,8 @@ export async function setScreeningPreference(
 ): Promise<ScreeningPreferenceResult> {
   const values: typeof accountSettings.$inferInsert = { accountId: ctx.accountId };
   const set: Partial<typeof accountSettings.$inferInsert> = { updatedAt: ctx.now() };
+  /** The posture moved INTO `people_only`: the backlog tidy is owed, from the top. */
+  let armTidy = false;
 
   if ("ohboxPolicy" in update) {
     const p = update.ohboxPolicy;
@@ -199,21 +179,16 @@ export async function setScreeningPreference(
 
     // ARM THE BACKLOG RE-ROUTE, ONLY on the TRANSITION into `people_only` (mail 0043). The
     // posture only changes NEW mail; mail already misfiled into the Ohbox is moved by the
-    // worker's tidy pass, owed work exactly when `ohbox_tidy_requested_at` is set past
-    // `ohbox_tidy_done_at` — stamping on the flip is what "run once on the policy flip" means.
-    // `ohbox_tidy_cursor` is NULLed in the SAME write: a re-arm leaving the cursor at a previous
-    // run's end would resume there and move nothing. Only on the TRANSITION — a re-save that
-    // keeps `people_only` (editing the bar) must not re-run the backlog, so the prior posture is
-    // read first. Not a race hazard: a double-stamp merely re-arms an idempotent pass that writes
+    // worker's tidy pass, owed work exactly when the pass's `requested_at` is set past its
+    // `done_at` — stamping on the flip is what "run once on the policy flip" means. The cursor is
+    // NULLed in the SAME write (`requestPass`): a re-arm leaving the cursor at a previous run's
+    // end would resume there and move nothing. Only on the TRANSITION — a re-save that keeps
+    // `people_only` (editing the bar) must not re-run the backlog, so the prior posture is read
+    // first. Not a race hazard: a double-stamp merely re-arms an idempotent pass that writes
     // zero. The explicit re-run affordance is `requestOhboxTidy`, which arms unconditionally.
     if (p === "people_only") {
       const prior = await getScreeningPreference(ctx);
-      if (prior.ohboxPolicy !== "people_only") {
-        values.ohboxTidyRequestedAt = ctx.now();
-        values.ohboxTidyCursor = null;
-        set.ohboxTidyRequestedAt = ctx.now();
-        set.ohboxTidyCursor = null;
-      }
+      armTidy = prior.ohboxPolicy !== "people_only";
     }
   }
 
@@ -236,19 +211,6 @@ export async function setScreeningPreference(
     }
     values.ohboxBar = b ?? null;
     set.ohboxBar = b ?? null;
-  }
-
-  if ("screenerAutoApply" in update) {
-    const on = update.screenerAutoApply;
-    if (typeof on !== "boolean") {
-      throw new ServiceError("validation_failed", 400, "screenerAutoApply must be a boolean");
-    }
-    // A boolean in, a timestamp stored: `true` records WHEN the account opted in (the fact worth
-    // keeping, for the reason `auto_suggest_at` keeps it), `false` NULLs it back to OFF. Unlike the
-    // posture flip this arms NOTHING — the pass reads this column live every cycle, so there is no
-    // "requested_at" to stamp; opting in is the whole instruction and opting out is complete.
-    values.screenerAutoApplyAt = on ? ctx.now() : null;
-    set.screenerAutoApplyAt = on ? ctx.now() : null;
   }
 
   if ("impersonationFiling" in update) {
@@ -287,7 +249,6 @@ export async function setScreeningPreference(
     const screening = {
       ...("ohboxPolicy" in update ? { ohboxPolicy: (update.ohboxPolicy ?? null) as string | null } : {}),
       ...("ohboxBar" in update ? { ohboxBar: (update.ohboxBar ?? null) as string | null } : {}),
-      ...("screenerAutoApply" in update ? { screenerAutoApply: update.screenerAutoApply as boolean } : {}),
       ...("impersonationFiling" in update ? { impersonationFiling: update.impersonationFiling as boolean } : {}),
     };
     const travelling = { screeningPreference: screening };
@@ -304,6 +265,8 @@ export async function setScreeningPreference(
 
     await tx.insert(accountSettings).values(values)
       .onConflictDoUpdate({ target: accountSettings.accountId, set });
+    // With the posture, in its transaction: the tidy is owed exactly when the flip is stored.
+    if (armTidy) await requestPass(tx, accountPass("ohbox_tidy", ctx.accountId), ctx.now());
     if (named && profileTravelled(plan)) travel = await fanOutProfileEdit(tx, ctx, plan, travelling);
   });
 
@@ -317,24 +280,21 @@ export async function setScreeningPreference(
 
 /**
  * ARM THE OHBOX BACKLOG RE-ROUTE ON DEMAND — the "tidy now" affordance's service half (mail
- * 0043). Stamps `ohbox_tidy_requested_at = now()` and NULLs `ohbox_tidy_cursor` in one write, so
- * the tidy pass owes a fresh, from-the-top run. Unlike the transition stamp in
+ * 0043). Stamps the tidy pass asked for now and NULLs its cursor in one write, so the pass owes
+ * a fresh, from-the-top run. Unlike the transition stamp in
  * `setScreeningPreference` this is UNCONDITIONAL — what a user presses to re-file the existing
  * Ohbox again. It does NOT change the posture and does NOT demote: with `ohbox_policy` still
  * lenient the pass no-ops, so arming a lenient account moves no mail — this only asks the pass to
- * look. Racing the seed/auto-suggest writers on the same PK is safe: the upsert touches only
- * these two columns plus `updated_at`.
+ * look. The settings row is made where there is none, as before the marks moved to
+ * `pass_progress`: the pass reads the posture off it.
  */
 export async function requestOhboxTidy(ctx: ServiceContext): Promise<void> {
   // Fenced in a transaction for `setScreeningPreference`'s reason: the FOR SHARE interlock
   // lives and dies with the transaction, so the fence and the upsert must share one.
   await asTx(ctx).transaction(async (tx) => {
     await fenceErasedAccount(tx, dialect(ctx.db), ctx.accountId);
-    await tx.insert(accountSettings)
-      .values({ accountId: ctx.accountId, ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null })
-      .onConflictDoUpdate({
-        target: accountSettings.accountId,
-        set: { ohboxTidyRequestedAt: ctx.now(), ohboxTidyCursor: null, updatedAt: ctx.now() },
-      });
+    await tx.insert(accountSettings).values({ accountId: ctx.accountId })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { updatedAt: ctx.now() } });
+    await requestPass(tx, accountPass("ohbox_tidy", ctx.accountId), ctx.now());
   });
 }

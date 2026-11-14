@@ -290,7 +290,7 @@ async function rerouteHeldBag(
   for (let i = 0; i < writable.length; i += DECISION_BATCH_MAX) {
     const batch = writable.slice(i, i + DECISION_BATCH_MAX);
     const hits = await tx.insert(folderState).values(batch.map((m) => ({
-      messageId: m.messageId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
+      messageId: m.messageId, accountId, desiredFolder: appliedFolder, observedFolder: m.observedFolder,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     }))).onConflictDoUpdate({
       target: folderState.messageId,

@@ -9,6 +9,7 @@ import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, contacts, folderState, mailboxes, messageBodies, messages, rules,
   type Tx,
+  accountPass, requestPass,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
@@ -69,10 +70,10 @@ describe.skipIf(!AVAILABLE)("the two rule passes write one folder_state intent",
       nativeLocator: { folder: observed, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: o.headers ?? {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: o.headers ?? {},
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: observed, observedFolder: observed,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: observed, observedFolder: observed,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -93,9 +94,8 @@ describe.skipIf(!AVAILABLE)("the two rule passes write one folder_state intent",
   /** The tidy's world: `people_only`, armed, one contact's bulk letter the pass demotes out of the Ohbox. */
   async function tidyMove(): Promise<string> {
     const w = await newWorld();
-    await db.insert(accountSettings).values({
-      accountId: w.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: NOW,
-    });
+    await db.insert(accountSettings).values({ accountId: w.accountId, ohboxPolicy: "people_only" });
+    await requestPass(db as unknown as Tx, accountPass("ohbox_tidy", w.accountId), NOW);
     await db.insert(contacts).values({ accountId: w.accountId, address: "news@shop.test" });
     const id = await seedMessage(w, {
       from: "news@shop.test",

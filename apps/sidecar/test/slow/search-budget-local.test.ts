@@ -178,12 +178,12 @@ describe(`the desktop store's search is milliseconds (PGlite, ${N} messages)`, (
         case when g % 50 = 3 then jsonb_build_array(jsonb_build_object('name', 'Mid', 'address', ${MID_CONTACT}::text)) else '[]'::jsonb end
       from generate_series(1, ${N}) g`);
     await o.db.execute(sql`
-      insert into message_bodies (message_id, text)
-      select m.id, (select string_agg(${word}, ' ') from generate_series(1, 100 + (hashtext(m.id::text) & 127)) i where m.id is not null)
+      insert into message_bodies (message_id, account_id, text)
+      select m.id, m.account_id, (select string_agg(${word}, ' ') from generate_series(1, 100 + (hashtext(m.id::text) & 127)) i where m.id is not null)
         || case when substring(m.dedup_key from 8)::int % 12 = 0 then ' ' || ${MID} else '' end
       from messages m where m.account_id = ${accountId}::uuid`);
-    await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-      select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
+    await o.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+      select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
     // The server twin's file names, on about two letters in five.
     await o.db.execute(sql`
       insert into attachments (account_id, message_id, filename, content_type)
@@ -206,7 +206,8 @@ describe(`the desktop store's search is milliseconds (PGlite, ${N} messages)`, (
     const gins = rows(await o.db.execute(sql`select x.indexrelid::regclass::text as i from pg_index x
       join pg_class c on c.oid = x.indexrelid join pg_am a on a.oid = c.relam
       where a.amname = 'gin' and x.indrelid::regclass::text in ('messages', 'message_bodies', 'message_search')`));
-    expect(gins.length).toBeGreaterThanOrEqual(7);
+    // The search documents' own six; the old search's indexes left with mail 0200.
+    expect(gins.length).toBeGreaterThanOrEqual(6);
     for (const g of gins) await o.db.execute(sql`select gin_clean_pending_list(${g.i}::regclass)`);
     await o.db.execute(sql.raw(`set gin_pending_list_limit = ${GIN_PENDING_LIST_KB}`));
     expect(rows(await o.db.execute(sql`show gin_pending_list_limit`))[0].gin_pending_list_limit).toBe(`${GIN_PENDING_LIST_KB}kB`);

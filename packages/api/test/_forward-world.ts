@@ -39,7 +39,7 @@ export async function forwardWorld(o: { admission: "device" | "cloud" }) {
   const mailboxId = await seedMailbox(made.db, { accountId: s.accountId });
   const sealed = await made.deps.keyProvider.encrypt(randomUUID());
   await made.db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+    mailboxId, accountId: s.accountId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
     meta: { host: "imap.forward-cap.example", port: 993, secure: true, user: "me@forward-cap.example" },
   });
   const original = await seedMessage(made.db, {

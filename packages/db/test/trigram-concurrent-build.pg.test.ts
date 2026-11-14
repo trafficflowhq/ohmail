@@ -54,7 +54,7 @@ describe.skipIf(!PG_UP)("the trigram indexes are built without holding writes", 
     const session = await opening;
     try {
       const held = writer.begin(async (tx) => {
-        await tx`lock table public.messages in row exclusive mode`;
+        await tx`lock table public.message_search in row exclusive mode`;
         let waitEvent = "";
         const build = ensureSearchExtensions(brandDialect(drizzle(session.sql), "pg"));
         const until = Date.now() + 20_000;

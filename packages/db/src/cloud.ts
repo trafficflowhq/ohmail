@@ -432,6 +432,14 @@ export { recordErasedBearers, erasedBearerAccount, pruneErasedBearers } from "./
 /** The notice rows an erased account still has (cloud 0052), pruned by the worker ten years on. */
 export { pruneErasedNotices, ERASED_NOTICE_KEEP_YEARS } from "./erased-notices.js";
 export { pruneAuthThrottle, AUTH_THROTTLE_RETENTION_MS, KNOWN_CLIENT_RETENTION_MS } from "./auth-throttle-prune.js";
+/** Which of the two counter tables a key lives in (cloud 0101), and the families that decide it. */
+export {
+  COUNTER_KEY_FAMILIES, COUNTER_PREFIXES_THAT_LEFT, familyOf, parentIdOf, carriesAnAddress,
+  type CounterKeyFamily, type CounterKeyClass, type CounterKeyParent,
+} from "./counter-keys.js";
+export {
+  counterHome, counterAccount, namesARow, CounterKeyRefused, type CounterHome, type CounterTable,
+} from "./account-counters.js";
 // The server-side transport: `node:tls` and a raw `pg_stat_ssl` read, so never on the root entry
 // the desktop engine and the phone bundle load (`dialect-census.test.ts`).
 export {

@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -44,10 +45,10 @@ async function inventory(
   db: Awaited<ReturnType<typeof makeTestDb>>, mailboxId: string, n: number,
 ): Promise<string> {
   const [subject] = await db.insert(mailboxFolders)
-    .values({ mailboxId, folder: "Projects", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+    .values({ mailboxId, accountId: accountOfMailbox(mailboxId), folder: "Projects", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
     .returning();
   const rows = Array.from({ length: n }, (_, i) => ({
-    mailboxId, folder: `Projects/p${i}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
+    mailboxId, accountId: accountOfMailbox(mailboxId), folder: `Projects/p${i}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
   }));
   for (let i = 0; i < rows.length; i += 2_000) {
     await db.insert(mailboxFolders).values(rows.slice(i, i + 2_000));

@@ -187,7 +187,7 @@ describe("a forward whose original moved goes out on the first press", () => {
     const mailboxId = await seedMailbox(db, { accountId: s.accountId, address: "me@atelier.example" });
     const sealed = await deps.keyProvider.encrypt("imap-fixture");
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
+      mailboxId, accountId: s.accountId, transport: "imap", secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
       meta: { host: "imap.atelier.example", port: 993, secure: true, user: "me@atelier.example" },
     });
     const orig = await seedMessage(db, {

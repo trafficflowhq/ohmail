@@ -71,8 +71,8 @@ describe.skipIf(!PG_UP)("the arrival order's deep page is one range of its index
         jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g), 'hi', true
       from generate_series(1, ${GROWN}) g`, [ACCOUNT, mb!.id]);
     await client.unsafe(`
-      insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-      select id, 'INBOX', 'INBOX', 'us', 'reconciled', false from messages where account_id = $1::uuid`, [ACCOUNT]);
+      insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+      select id, account_id, 'INBOX', 'INBOX', 'us', 'reconciled', false from messages where account_id = $1::uuid`, [ACCOUNT]);
     await client.unsafe("analyze messages");
     await client.unsafe("analyze folder_state");
   }, 120_000);

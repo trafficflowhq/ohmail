@@ -68,7 +68,7 @@ describe.skipIf(!up)("a row lock across two connections", () => {
       bodyHash: "h", dedupKey: `lock-${ACCOUNT}`, subject: "lock", fromAddress: "s@example.test",
     });
     await db.insert(folderState).values({
-      id: STATE, messageId: MESSAGE,
+      id: STATE, messageId: MESSAGE, accountId: ACCOUNT,
       desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", attempts: 0,
     });
   }, 120_000);

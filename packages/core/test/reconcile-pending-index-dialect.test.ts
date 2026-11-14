@@ -23,7 +23,7 @@ interface PlanNode {
 }
 
 const NEIGHBOUR_WAITING = 200;
-const ACCOUNT_COLUMN = { folder_state: "outstanding_account_id", flag_state: "pending_account_id" } as const;
+const ACCOUNT_COLUMN = { folder_state: "account_id", flag_state: "account_id" } as const;
 
 /**
  * Two accounts. Mine waits on five rows: three filings of ours, one the user made in another client
@@ -47,11 +47,11 @@ async function seeded() {
       const lastSetBy = (i: number) => (name === "mine" && i === 3 ? "external" : "us");
       const agrees = (i: number) => !pending(i) || (name === "mine" && i === 4);
       await db.insert(folderState).values(rows.map((r, i) => ({
-        messageId: r.id, desiredFolder: "INBOX", observedFolder: agrees(i) ? "INBOX" : "ohmail/Screener",
+        messageId: r.id, accountId: r.accountId, desiredFolder: "INBOX", observedFolder: agrees(i) ? "INBOX" : "ohmail/Screener",
         lastSetBy: lastSetBy(i), reconcileStatus: pending(i) ? "pending" : "reconciled",
       })));
       await db.insert(flagState).values(rows.map((r, i) => ({
-        messageId: r.id, desiredSeen: true, observedSeen: agrees(i), lastSetBy: lastSetBy(i),
+        messageId: r.id, accountId: r.accountId, desiredSeen: true, observedSeen: agrees(i), lastSetBy: lastSetBy(i),
         reconcileStatus: pending(i) ? "pending" : "reconciled",
       })));
       if (chunk === 0) ids[name]!.waiting.push(...rows.filter((_r, i) => pending(i)).map((r) => r.id));

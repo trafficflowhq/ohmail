@@ -26,7 +26,7 @@ async function world(served: Buffer) {
   const { id: messageId, mailboxId } = await seedMessage(made.db, { accountId: s.accountId, folder: "INBOX" });
   const enc = await made.deps.keyProvider.encrypt("imap-pass");
   await made.db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId, accountId: s.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "127.0.0.1", port: 1, secure: false, user: "u@gate.example" },
   });
   const [att] = await made.db.insert(attachmentsTbl).values({

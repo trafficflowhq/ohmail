@@ -173,7 +173,7 @@ describe("the workflow runner's file_message — the observation on the row is n
     }).returning();
     // The worker landed this message in `SOURCE`; the message row still names INBOX.
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: READ, observedFolder: SOURCE,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: READ, observedFolder: SOURCE,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     });
 

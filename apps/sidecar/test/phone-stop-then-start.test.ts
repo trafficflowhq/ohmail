@@ -360,10 +360,10 @@ async function organizingPhone(o: {
         /* DISTINCT `updated_at`s, ascending: the walk's cursor is `(updated_at, id)` and a page
            boundary landing inside a run of equal instants is the shape a keyset gets wrong. */
         exec.direct(
-          `insert into folder_state (id, message_id, desired_folder, observed_folder, last_set_by,
+          `insert into folder_state (id, message_id, account_id, desired_folder, observed_folder, last_set_by,
              reconcile_status, updated_at)
-           values (?, ?, 'ohmail/News', 'INBOX', 'us', 'pending', ?)`,
-          [`fs-${i}`, `msg-${i}`, Date.now() + i],
+           values (?, ?, (select account_id from mailboxes where id = ?), 'ohmail/News', 'INBOX', 'us', 'pending', ?)`,
+          [`fs-${i}`, `msg-${i}`, id, Date.now() + i],
         );
       }
     },

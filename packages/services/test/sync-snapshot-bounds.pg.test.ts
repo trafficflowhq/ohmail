@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -71,7 +72,7 @@ describe.skipIf(!PG_UP)("snapshot page bounds (real Postgres)", () => {
       });
       const made = await db.insert(messages).values(rows).returning({ id: messages.id });
       await db.insert(folderState).values(made.map((m) => ({
-        messageId: m.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+        messageId: m.id, accountId: accountOfMessage(m.id), desiredFolder: "INBOX", observedFolder: "INBOX",
         lastSetBy: "us" as const,
       })));
       await db.insert(messageStates).values(made.map((m) => ({

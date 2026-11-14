@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { retentionPrunePass, signInRetentionPass } from "../src/retention-prune.js";
@@ -84,7 +85,7 @@ describe("signInRetentionPass says what a failed run had already deleted", () =>
     const [acct] = await db.insert(accounts).values({ name: "R" }).returning();
     const [user] = await db.insert(users).values({ accountId: acct!.id, email: `r+${randomUUID()}@example.test` }).returning();
     const old = new Date(Date.now() - 40 * 86_400_000);
-    for (let i = 0; i < 2; i++) await db.insert(loginTokens).values({ userId: user!.id, tokenHash: randomUUID(), expiresAt: old });
+    for (let i = 0; i < 2; i++) await db.insert(loginTokens).values({ userId: user!.id, accountId: accountOfUser(user!.id), tokenHash: randomUUID(), expiresAt: old });
     // The deletes run on the real database; the session batch's transaction is refused as a held lock is.
     const refusing = new Proxy(db, {
       get(target, prop) {

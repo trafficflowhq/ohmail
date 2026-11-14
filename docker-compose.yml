@@ -31,6 +31,26 @@ services:
       timeout: 3s
       retries: 30
 
+  # PRODUCTION'S POSTGRES MAJOR, beside the test stack's and never in its place: `db` above stays
+  # what every suite runs on. Started only under `--profile prod-major`, for the two files the
+  # nightly runs on it (.github/workflows/search-budget.yml, its last job). Upstream's image by
+  # digest, as GreenMail's is.
+  db-17:
+    profiles: ["prod-major"]
+    image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+    shm_size: "1g"
+    environment:
+      POSTGRES_USER: tf
+      POSTGRES_PASSWORD: tf
+      POSTGRES_DB: trafficflow_test
+    ports:
+      - "${OHMAIL_DEV_BIND:-127.0.0.1}:5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tf -d trafficflow_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   greenmail:
     image: greenmail/standalone:2.1.3@sha256:d6db42a4fc258fec0948b1ae7b579fd06947cc92087c162ec0597972a6c36850
     environment:

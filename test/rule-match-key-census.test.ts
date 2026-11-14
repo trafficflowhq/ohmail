@@ -63,10 +63,11 @@ const SQL_OTHER_KEY = [
   /\b(?:lower|trim)\s*\(\s*(?:\$\{\s*)?[\w$.]*\bmatch\s*\}?\s*\)/g,
   /\b(?:lower|trim)\s*\(\s*\$\{[^}]*["'`]match["'`][^}]*\}\s*\)/g,
 ];
-// `health-markers.ts` holds the two rules indexes' `/health` needles: what Postgres prints for the
-// builder's key in `pg_indexes.indexdef` (mail 0136, mail 0144), probes of the indexes, never a query.
+// `health-markers.ts` holds the rules index's `/health` needle: what Postgres prints for the
+// builder's key in `pg_indexes.indexdef` (mail 0144), a probe of the index, never a query. (Mail
+// 0136's index repeated it for enabled rules alone and left with mail 0202, and its needle with it.)
 const SQL_KEY_OWNERS: Readonly<Record<string, number>> = {
-  "packages/db/src/rule-match-sql.ts": 1, "packages/api/src/routes/health-markers.ts": 2,
+  "packages/db/src/rule-match-sql.ts": 1, "packages/api/src/routes/health-markers.ts": 1,
 };
 
 /**

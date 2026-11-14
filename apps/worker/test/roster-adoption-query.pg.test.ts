@@ -24,7 +24,7 @@ import { loadEnabledMailboxes } from "../src/mailboxes.js";
  * alert pass died.
  *
  * The row seeded here is the one the adoption fix measured, column for column: `status='connected'`,
- * `last_sync_at` NULL, no `error_code`, not quarantined, `kickstart_at` NULL, billing
+ * `last_sync_at` NULL, no `error_code`, not quarantined, no kickstart mark, billing
  * `trialing` with `mailbox_limit 5`, one shard. Nothing in it explains an omission, which is
  * the gap's own sentence — and after this file that sentence is a proven fact about the query
  * rather than an inference from the row.

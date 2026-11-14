@@ -854,7 +854,7 @@ describe("admin reads never return message content, credentials or payloads", ()
 
     // An envelope-encrypted credential blob, exactly as `POST /mailboxes` writes one.
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: MARKERS.credential, keyVersion: 1,
+      mailboxId, accountId: s.accountId, transport: "imap", secretEnc: MARKERS.credential, keyVersion: 1,
       meta: { host: "imap.example.com", user: MARKERS.from },
     });
 

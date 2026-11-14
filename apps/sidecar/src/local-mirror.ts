@@ -13,9 +13,9 @@
 import { and, asc, eq, exists, inArray, isNotNull, isNull, ne, notExists, or, sql, type SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 import {
-  approvals, attachments, auditLog, awayReplies, awayResponderSent,
-  drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders,
-  mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageStates,
+  approvals, attachments, auditLog, awayReplies,
+  drafts, flagState, folderOps, folderState, junkRescues, mailboxCredentials, mailboxFolders, passProgress,
+  mailboxProfileMirror, messageBodies, messageSearch, messageFailures, messageInstances, messageInvitations, messageStates,
   messageTags, messages, organizerRequests, outboundSendFingerprints, outboundSentCopies, outboundSends,
   orphanedSettingsHashRows, recordChanges, recordMailboxRemoved, routingDecisions, scheduledSendFiles, settingsHashRows,
   threadNotes, threads,
@@ -42,13 +42,13 @@ export const WIPED_TABLES: readonly string[] = [
   "outbound_sends",
   "drafts",
   "message_tags",
-  "away_responder_sent",
   "away_replies",
   "unsubscribe_examined",
   "unsubscribe_records",
   "attachments",
   "tracker_events",
   "message_states",
+  "message_invitations",
   "approvals",
   "routing_decisions",
   "message_bodies",
@@ -59,6 +59,7 @@ export const WIPED_TABLES: readonly string[] = [
   "message_failures",
   "folder_ops",
   "junk_rescues",
+  "pass_progress",
   "mailbox_folders",
   "mailbox_profile_mirror",
   "organizer_requests",
@@ -214,14 +215,13 @@ export async function deleteMailboxRows(
 
   // ── THE MESSAGES' OWN CHILDREN ────────────────────────────────────────────────────────────
   await db.delete(messageTags).where(inArray(messageTags.messageId, ownMessages));
-  /* THE AWAY LEDGER, before the messages it names. Both tables carry a CORRESPONDENT's address,
-     held because this mailbox answered them, so a removed mailbox's ledger leaves with it — the
+  /* THE AWAY LEDGER, before the messages it names. It carries a CORRESPONDENT's address, held
+     because this mailbox answered them, so a removed mailbox's ledger leaves with it — the
      server's erasure does exactly this and in this order (`mailbox-erasure.ts`). A REMOVAL is not
      an expunge: the whole mailbox goes, so there is no correspondent left to un-answer. Without
-     these two the wipe threw on `away_replies_message_id_account_fk` before the receipt was
-     written, and the mailbox could not be removed at all once the responder had replied to
-     anybody. `away_replies` is keyed on the mailbox as well as the message. */
-  await db.delete(awayResponderSent).where(inArray(awayResponderSent.messageId, ownMessages));
+     it the wipe threw on `away_replies_message_id_account_fk` before the receipt was written, and
+     the mailbox could not be removed at all once the responder had replied to anybody.
+     `away_replies` is keyed on the mailbox as well as the message. */
   await db.delete(awayReplies).where(eq(awayReplies.mailboxId, mailboxId));
   // The per-message marks hang off the record by foreign key, so they go first.
   await db.delete(unsubscribeExamined).where(inArray(unsubscribeExamined.messageId, ownMessages));
@@ -229,6 +229,8 @@ export async function deleteMailboxRows(
   await db.delete(attachments).where(inArray(attachments.messageId, ownMessages));
   await db.delete(trackerEvents).where(inArray(trackerEvents.messageId, ownMessages));
   await db.delete(messageStates).where(inArray(messageStates.messageId, ownMessages));
+  /* The invitations' identities (mail 0204): by the mailbox, which the row names itself. */
+  await db.delete(messageInvitations).where(eq(messageInvitations.mailboxId, mailboxId));
   /* `approvals` before `routing_decisions`, the server's order: it references both, and mail 0118
      keys it to the messages too — the Cloud door writes these rows, so without this the same page
      transaction that removes a mailbox throws on `approvals_message_id_account_fk`. */
@@ -248,6 +250,9 @@ export async function deleteMailboxRows(
   /* The queued junk rescues too: they name this mailbox's Junk folder and coordinates in it, and
      they hang off no message row — Junk never enters the mirror. */
   await db.delete(junkRescues).where(eq(junkRescues.mailboxId, mailboxId));
+  /* Where this mailbox's one-time passes stood (mail 0203): the rows whose subject it is. The
+     account's own passes and another mailbox's are other rows. */
+  await db.delete(passProgress).where(eq(passProgress.subjectId, mailboxId));
   await db.delete(mailboxFolders).where(eq(mailboxFolders.mailboxId, mailboxId));
   /* The reader's cached profile and its queued requests carry correspondents' addresses and the
      person's own rules; the credential is already gone on the standalone door (one writer), and

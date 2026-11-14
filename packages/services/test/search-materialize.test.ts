@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { messageBodies } from "@trafficflow/db";
+import { reindexMessageSearch } from "@trafficflow/core/mail";
 import { SearchService } from "../src/index.js";
-import { makeCtx, seedMessage } from "./helpers.js";
+import { makeCtx, seedMessage, seedSearchDocuments } from "./helpers.js";
 
 /**
  * GAP `GET /search` HAS A CALLER NOW, SO ITS PER-HIT COST IS A HOT PATH.
@@ -34,7 +35,8 @@ describe("search materializes its page in one batch, not per hit", () => {
     // One message carries the term in its subject; five more carry it only in their BODY,
     // which is the half the client's local index cannot see and the reason /search exists.
     const only = await seedMessage(db, accountId, mailboxId, { subject: "kingfisher survey" });
-    await db.insert(messageBodies).values({ messageId: only, text: "nothing else here" });
+    await db.insert(messageBodies).values({ messageId: only, accountId, text: "nothing else here" });
+    await seedSearchDocuments(db, accountId);
 
     const countSelects = async (q: string): Promise<{ selects: number; hits: number }> => {
       const spy = vi.spyOn(db, "select");
@@ -51,7 +53,8 @@ describe("search materializes its page in one batch, not per hit", () => {
 
     for (let i = 0; i < 5; i++) {
       const id = await seedMessage(db, accountId, mailboxId, { subject: `note ${i}` });
-      await db.insert(messageBodies).values({ messageId: id, text: `a kingfisher was seen, note ${i}` });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: `a kingfisher was seen, note ${i}` });
+      await reindexMessageSearch(db as never, accountId, id);
     }
 
     const six = await countSelects("kingfisher");
@@ -68,9 +71,10 @@ describe("search materializes its page in one batch, not per hit", () => {
     const svc = new SearchService();
 
     const exact = await seedMessage(db, accountId, mailboxId, { subject: "kingfisher kingfisher kingfisher" });
-    await db.insert(messageBodies).values({ messageId: exact, text: "kingfisher" });
+    await db.insert(messageBodies).values({ messageId: exact, accountId, text: "kingfisher" });
     const weak = await seedMessage(db, accountId, mailboxId, { subject: "a note" });
-    await db.insert(messageBodies).values({ messageId: weak, text: "one passing mention of a kingfisher" });
+    await db.insert(messageBodies).values({ messageId: weak, accountId, text: "one passing mention of a kingfisher" });
+    await seedSearchDocuments(db, accountId);
 
     const res = await svc.search(ctx, { q: "kingfisher" });
     expect(res.items.map((m) => m.id)).toEqual([exact, weak]);

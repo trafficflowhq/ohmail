@@ -1574,7 +1574,9 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
   "mailbox-erasure.ts :: ids": {
     origin: { bounded: "one step's page — at most `ERASE_BATCH` (2 000) message or draft ids, read by a `limit` on the step's own select" },
     // 20 → 21 for `message_search` (mail 0125), deleted with the bodies on the same page; 21 → 22
-    // for the drafts that FORWARD a deleted message, unanchored beside the replies.
+    // for the drafts that FORWARD a deleted message, unanchored beside the replies; 22 → 21 for
+    // `away_responder_sent`, which mail 0202 dropped; 21 → 22 for `message_invitations` (mail
+    // 0204), deleted with the letters of the same page.
     count: 22,
   },
   // The response cache at a mailbox erasure: the account's live keys (a 24-hour window) and the

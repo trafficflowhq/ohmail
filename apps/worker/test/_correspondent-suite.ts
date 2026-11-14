@@ -52,7 +52,7 @@ export function defineCorrespondentSuite(
         accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT,
       }).returning();
       const sent = opts.sent ?? "Sent";
-      await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: sent, uidvalidity: 7n, uidnext: 100n });
+      await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: sent, uidvalidity: 7n, uidnext: 100n });
       await db.insert(accountSettings).values({
         accountId, screeningScope: "all_time",
         ...(opts.seedAt ? { seedConfirmedAt: opts.seedAt } : {}),
@@ -83,11 +83,11 @@ export function defineCorrespondentSuite(
         uidvalidity: 7n, uid: uid++, isPrimary: true,
       });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: w.sent, observedFolder: w.sent, lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: w.sent, observedFolder: w.sent, lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false,
       });
       await db.insert(messageBodies).values({
-        messageId: m!.id, text: "Thursday?",
+        messageId: m!.id, accountId: m!.accountId, text: "Thursday?",
         headers: { ...(o.machine ? { "auto-submitted": ["auto-replied"] } : {}), ...(o.headers ?? {}) },
       });
       return m!.id;
@@ -109,11 +109,11 @@ export function defineCorrespondentSuite(
         uidvalidity: 9n, uid: at, isPrimary: true,
       });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us",
         reconcileStatus: "reconciled", conflict: false,
       });
       await db.insert(messageBodies).values({
-        messageId: m!.id, text: "Thursday works.",
+        messageId: m!.id, accountId: m!.accountId, text: "Thursday works.",
         headers: inReplyTo ? { "in-reply-to": [`<${inReplyTo}>`] } : {},
       });
       return m!.id;
@@ -218,10 +218,10 @@ export function defineCorrespondentSuite(
           nativeLocator: { folder: SCREENER, ref: `9:${uid++}` },
         }).returning();
         await db.insert(folderState).values({
-          messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us",
+          messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us",
           reconcileStatus: "reconciled", conflict: false,
         });
-        await db.insert(messageBodies).values({ messageId: m!.id, text: "Thursday works.", headers });
+        await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "Thursday works.", headers });
       };
       await heldWith("irt@flood.invalid", { "in-reply-to": ["<s-irt@own.invalid>"], references: [flood.join(" ")] });
       await heldWith("root@flood.invalid", { references: [["<s-root@own.invalid>", ...flood].join(" ")] });

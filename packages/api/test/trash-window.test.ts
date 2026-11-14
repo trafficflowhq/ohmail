@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
@@ -71,7 +72,7 @@ async function seed(opts: {
     ...(opts.status !== undefined ? { status: opts.status } : {}),
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   const deps = {
@@ -124,7 +125,7 @@ async function seedOhmailDelete(
     fromAddress: "s@example.invalid", snippet: "", unread: false, deletedAt: NOW,
   }).returning({ id: messages.id });
   await s.db.insert(folderState).values({
-    messageId: row!.id, desiredFolder: TRASH_PATH,
+    messageId: row!.id, accountId: accountOfMessage(row!.id), desiredFolder: TRASH_PATH,
     observedFolder: opts.observed ?? "INBOX", lastSetBy: "us", reconcileStatus: "pending",
   });
   return row!.id;
@@ -156,7 +157,7 @@ describe("the list window", () => {
       fromAddress: "s9@example.invalid", snippet: "", unread: false,
     }).returning({ id: messages.id });
     await s.db.insert(folderState).values({
-      messageId: other!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: other!.id, accountId: accountOfMessage(other!.id), desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "external", reconcileStatus: "reconciled",
     });
 

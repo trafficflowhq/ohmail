@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -248,7 +249,7 @@ describe.skipIf(!AVAILABLE)("the erasure/backfill lock cycle", () => {
         subject: "Real race", fromAddress: "someone@partner.example",
       }).returning({ id: messages.id });
       await db.insert(messageBodies).values({
-        messageId: backlog!.id, headers: { "in-reply-to": [`<${rootMid}>`] },
+        messageId: backlog!.id, accountId: accountOfMessage(backlog!.id), headers: { "in-reply-to": [`<${rootMid}>`] },
       });
 
       const repo = makeDrizzleRepo(db as unknown as Tx);

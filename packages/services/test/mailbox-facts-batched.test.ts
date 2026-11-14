@@ -146,28 +146,28 @@ describe("GET /mailboxes reads every mailbox's facts in a fixed number of statem
     await expect(await goldenAnswer(db)).toMatchFileSnapshot(GOLDEN);
     // A single mailbox's read answers what the list says about it.
     for (const row of list) expect(await svc.get(ctxFor(db, A), row.id)).toEqual(row);
-    // Every outstanding filing the seed wrote carries its message's account (mail 0159).
+    // Every outstanding filing the seed wrote carries its message's account (mail 0201).
     expect(await outstandingDrift(db)).toBe(0);
   });
 
-  it("counts the filings mail 0159's trigger keeps, and only those", async () => {
+  it("counts an account's own outstanding filings, and only those", async () => {
     const db = await makeTestDb();
     const acct = id("90");
     const mb = id("91");
-    await db.insert(accounts).values({ id: acct, name: "mfb-trigger" });
-    await db.insert(mailboxes).values({ id: mb, accountId: acct, provider: "imap", address: "t@example.test" });
+    const other = id("92");
+    const otherMb = id("93");
+    await db.insert(accounts).values([{ id: acct, name: "mfb-own" }, { id: other, name: "mfb-other" }]);
+    await db.insert(mailboxes).values([
+      { id: mb, accountId: acct, provider: "imap", address: "t@example.test" },
+      { id: otherMb, accountId: other, provider: "imap", address: "u@example.test" },
+    ]);
     for (let i = 0; i < 4; i++) await filing(db, acct, mb, { updatedAt: at(-MIN) });
     expect((await svc.list(ctxFor(db, acct)))[0]!.pendingMoves).toBe(4);
-    // Control: with the trigger withheld a new filing carries no account and the strip misses it.
-    if (dialect(db).name === "sqlite") {
-      await db.run(sql`drop trigger folder_state_outstanding_account_insert`);
-      await db.run(sql`drop trigger folder_state_outstanding_account_update`);
-    } else {
-      await db.execute(sql`drop trigger folder_state_outstanding_account_tg on folder_state`);
-    }
-    await filing(db, acct, mb, { updatedAt: at(-MIN) });
-    expect(await outstandingDrift(db)).toBe(1);
+    // Control: a filing of another account's is read by that account's strip alone.
+    await filing(db, other, otherMb, { updatedAt: at(-MIN) });
+    expect(await outstandingDrift(db)).toBe(0);
     expect((await svc.list(ctxFor(db, acct)))[0]!.pendingMoves).toBe(4);
+    expect((await svc.list(ctxFor(db, other)))[0]!.pendingMoves).toBe(1);
   });
 
   it("projects the Sent folder the attach recorded: the column's value, null when NULL", async () => {

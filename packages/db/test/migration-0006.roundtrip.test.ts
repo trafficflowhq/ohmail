@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeTestDb } from "../src/testing.js";
-import { idempotencyKeys } from "@trafficflow/db";
+import { accounts, idempotencyKeys } from "@trafficflow/db";
 import { pushSubscriptions } from "../src/cloud.js";
 import { and, eq } from "drizzle-orm";
 
@@ -26,6 +26,7 @@ describe("migration 0006 round-trip", () => {
 
   it("persists a push_subscriptions row (webpush + apns shapes)", async () => {
     const db = await makeTestDb();
+    await db.insert(accounts).values({ id: acct, name: "wake" });
     const [web] = await db.insert(pushSubscriptions).values({
       accountId: acct, transport: "webpush",
       endpoint: "https://push.example/abc", p256dh: "key", auth: "auth",
@@ -43,6 +44,7 @@ describe("migration 0006 round-trip", () => {
 
   it("enforces the coalesced identity unique index (account_id, transport, COALESCE(endpoint, device_token))", async () => {
     const db = await makeTestDb();
+    await db.insert(accounts).values({ id: acct, name: "wake" });
     await db.insert(pushSubscriptions).values({
       accountId: acct, transport: "webpush", endpoint: "https://push.example/dup",
     });

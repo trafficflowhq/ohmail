@@ -109,7 +109,7 @@ async function newWorld(n: number): Promise<World> {
       nativeLocator: { folder: "ohmail/Screened", ref: `1:${i}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "",
+      messageId: m!.id, accountId: m!.accountId, text: "",
       headers: {
         "list-id": [`Weekly <${LIST_ID}>`],
         "list-unsubscribe": [`<https://sender.example/u?t=${randomUUID()}>`],
@@ -118,7 +118,7 @@ async function newWorld(n: number): Promise<World> {
       },
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     messageIds.push(m!.id);
@@ -199,7 +199,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
       nativeLocator: { folder: "ohmail/Screened", ref: "1:99" },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m2!.id, text: "",
+      messageId: m2!.id, accountId: m2!.accountId, text: "",
       headers: {
         "list-id": ["<offers.elsewhere.example>"],
         "list-unsubscribe": ["<https://elsewhere.example/u?t=x>"],
@@ -208,7 +208,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
       },
     });
     await db.insert(folderState).values({
-      messageId: m2!.id, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
+      messageId: m2!.id, accountId: m2!.accountId, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await personDecided(w.accountId, m2!.fromAddress);
@@ -271,7 +271,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
         nativeLocator: { folder: "ohmail/Screened", ref: `1:${randomUUID().slice(0, 4)}` },
       }).returning();
       await db.insert(messageBodies).values({
-        messageId: m!.id, text: "",
+        messageId: m!.id, accountId: m!.accountId, text: "",
         headers: {
           "list-id": [`Weekly <${listId}>`],
           "list-unsubscribe": [`<${url}>`],
@@ -280,7 +280,7 @@ describe.skipIf(!PG_UP)("auto-unsubscribe — the concurrency PGlite cannot see"
         },
       });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screened", observedFolder: "ohmail/Screened",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await personDecided(w.accountId, m!.fromAddress);

@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { eq, inArray, sql } from "drizzle-orm";
 import {
   accounts, accountSettings, accountSyncState, changeLog, folderState, mailboxes, messageBodies, messages,
-  recordChange, rules, sessions, users,
+  recordChange, rules, sessions, users, accountPass, writePassProgress,
 } from "@trafficflow/db";
 import { closePooledDbs, makePooledDb } from "@trafficflow/db/cloud";
 import { brandDialect } from "@trafficflow/db/dialect";
@@ -93,8 +93,8 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
         nativeLocator: { folder: "INBOX", ref: `1:${i}` },
       }).returning();
       ids.push(m!.id);
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `a heron by the lake, note ${i}` });
-      await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `a heron by the lake, note ${i}` });
+      await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
       await upsertMessageSearch(db as never, m!.id, {
         accountId, subject: `heron sighting ${i}`, from: { name: null, address: `watcher${i}@rt.example` }, to: [], cc: [],
         attachmentNames: [], bodyText: `a heron by the lake, note ${i}`, source: "text",
@@ -102,8 +102,7 @@ describe.skipIf(!PG_UP)("the hot routes pay one round trip a statement (the depl
     }
     const [rule] = await db.insert(rules)
       .values({ accountId, kind: "sender", match: "watcher0@rt.example", destination: "ohmail/News" }).returning();
-    await db.insert(accountSettings).values({ accountId, searchIndexBuiltAt: now })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: now } });
+    await writePassProgress(db, accountPass("search_index_backfill", accountId), { doneAt: now });
     // One change row, so `/sync` has a horizon to be polled at.
     await db.transaction((tx) => recordChange(tx as never, { accountId, entityType: "rule", entityId: rule!.id, op: "create" }));
     const boot = await handleApiRequest(new Request("https://api.ohmail.app/sync?since=0", {

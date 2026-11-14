@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -60,7 +61,7 @@ const mb = await h.db.execute(
   "insert into mailboxes (account_id, provider, address) values ('" + acct + "', 'imap', 'me@ohmail.test') returning id");
 const mailboxId = String(Object.values((mb.rows ?? mb)[0])[0]);
 const fd = await h.db.execute(
-  "insert into mailbox_folders (mailbox_id, folder, uidnext) values ('" + mailboxId + "', 'INBOX', 1) returning id");
+  "insert into mailbox_folders (mailbox_id, account_id, folder, uidnext) select id, account_id, 'INBOX', 1 from mailboxes where id = '" + mailboxId + "' returning id");
 const folderId = String(Object.values((fd.rows ?? fd)[0])[0]);
 // The fixture is made durable BEFORE the ingest, because the checkpoint is the boundary the whole
 // cell is about: what is behind it must survive the kill, what is in front of it need not.
@@ -232,7 +233,7 @@ describe("openLocalDb", () => {
           nativeLocator: { folder: "INBOX", ref: `1:${1000 + written + i}` },
         })),
       ).returning({ id: messages.id });
-      await opened.db.insert(messageBodies).values(ids.map((r) => ({ messageId: r.id, text })));
+      await opened.db.insert(messageBodies).values(ids.map((r) => ({ messageId: r.id, accountId: accountOfMessage(r.id), text })));
     }
     // A read over the whole pile, so the reading covers a query as well as the writes.
     expect(await opened.db.select({ id: messages.id }).from(messages)).toHaveLength(5000);

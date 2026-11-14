@@ -48,7 +48,7 @@ describe("the calendar facts' attachments lookups", () => {
     for (let i = 0; i < 120; i += 1) {
       const id = randomUUID();
       await db.insert(messages).values({ id, accountId, mailboxId, bodyHash: "h", dedupKey: id, subject: "", fromAddress: "a@example.test", date: at, createdAt: at, updatedAt: at });
-      await db.insert(messageBodies).values({ messageId: id, text: "", headers: {} });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: "", headers: {} });
       await db.insert(attachments).values({ accountId, messageId: id, contentType: i % 3 === 0 ? "text/calendar; method=REPLY" : "application/pdf", sizeBytes: 1, createdAt: at });
     }
     const client = (db as unknown as { $client: PGlite }).$client;

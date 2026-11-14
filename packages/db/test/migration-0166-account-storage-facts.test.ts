@@ -35,13 +35,13 @@ describe("mail 0166 on Postgres (PGlite), from 0165", () => {
         const m = randomUUID();
         await run(`insert into messages (id, account_id, mailbox_id, dedup_key, body_hash) values ('${m}', '${a}', '${mb}', 'k${i}', 'h${i}')`);
         await run(i < emptied
-          ? `insert into message_bodies (message_id, text, withheld_reason) values ('${m}', '', 'storage_cap')`
-          : `insert into message_bodies (message_id, text) values ('${m}', repeat('z', 1000))`);
+          ? `insert into message_bodies (message_id, account_id, text, withheld_reason) values ('${m}', '${a}', '', 'storage_cap')`
+          : `insert into message_bodies (message_id, account_id, text) values ('${m}', '${a}', repeat('z', 1000))`);
       }
       // Another reason a letter has no text is not space: it must not be counted.
       const junk = randomUUID();
       await run(`insert into messages (id, account_id, mailbox_id, dedup_key, body_hash) values ('${junk}', '${a}', '${mb}', 'j', 'j')`);
-      await run(`insert into message_bodies (message_id, text, withheld_reason) values ('${junk}', '', 'junk_filed')`);
+      await run(`insert into message_bodies (message_id, account_id, text, withheld_reason) values ('${junk}', '${a}', '', 'junk_filed')`);
       if (counter) await run(`insert into account_storage (account_id, bytes) values ('${a}', ${kept * 1000})`);
       return a;
     };

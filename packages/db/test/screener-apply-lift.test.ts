@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -26,7 +27,7 @@ async function world(domainPriority: number, domainMatch = "kestrel.example") {
     accountId: ACCT, mailboxId: mb!.id, bodyHash: "h", dedupKey: crypto.randomUUID(), subject: "s", fromAddress: ADDR, unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   await db.insert(rules).values({

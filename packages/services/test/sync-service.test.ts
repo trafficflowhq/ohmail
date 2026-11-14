@@ -34,7 +34,7 @@ async function addMessage(
     subject: opts.subject ?? "s", fromAddress: opts.from ?? "f@x.example",
   }).returning();
   await db.insert(folderState).values({
-    messageId: m.id, desiredFolder: opts.folder ?? "INBOX", observedFolder: opts.folder ?? "INBOX", lastSetBy: "us",
+    messageId: m.id, accountId: m.accountId, desiredFolder: opts.folder ?? "INBOX", observedFolder: opts.folder ?? "INBOX", lastSetBy: "us",
   });
   return m.id;
 }

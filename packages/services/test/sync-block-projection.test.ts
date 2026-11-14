@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { accounts, mailboxes, users } from "@trafficflow/db";
-import { sql } from "drizzle-orm";
 import { StaticKeyProvider } from "@trafficflow/core";
 import {
   adminAccountDetail, makeMailboxService, type AdminDb, type ServiceContext,
@@ -25,12 +24,11 @@ import {
  * bookkeeping fails in exactly that dimension) a blocked mailbox rendered as healthy on BOTH
  * surfaces. That is the 52 minutes, restored by deploy order.
  *
- * ── WHY THE CHECK CONSTRAINT IS DROPPED HERE ───────────────────────────────────────────────
- * `0029_mailbox_sync_block.sql:113` admits exactly three members, so the future this test is about
- * — the set widened, the worker writing a fourth — is not reachable while the constraint is in
- * force. Dropping it IS the scenario: a later migration widens it and the API has not been
- * redeployed. The drop is per-database and each `makeTestDb()` is a fresh PGlite, so it leaks
- * nowhere.
+ * ── HOW THE FUTURE MEMBER REACHES THE COLUMN ──
+ * Since mail 0202 the column's CHECK holds the SHAPE of a reason word, not the members, so the
+ * future this test is about — a newer worker writing a member this API has not heard of — is an
+ * ordinary write: the word fits the shape, and only the write door of the build that knows it
+ * admits it.
  *
  * PGlite is adequate and no `*.pg.test.ts` belongs here: nothing below writes concurrently or
  * inside a transaction. This is about which columns one SELECT projects.
@@ -46,10 +44,6 @@ const FUTURE_REASON = "a_future_reason";
 type Db = Awaited<ReturnType<typeof makeTestDb>>;
 
 async function seedBlockedMailbox(db: Db, reason: string): Promise<{ accountId: string; id: string }> {
-  // The CHECK admits three members and this test is about the fourth. See the header.
-  await db.execute(
-    sql`ALTER TABLE mailboxes DROP CONSTRAINT IF EXISTS mailboxes_sync_blocked_reason_closed`,
-  );
   const [a] = await db.insert(accounts).values({ name: "sync block" }).returning();
   // `loadRoster` reads the account holder's login address out of `users`; without one the account still
   // projects, but seeding it keeps the fixture a real account rather than a half-built one.

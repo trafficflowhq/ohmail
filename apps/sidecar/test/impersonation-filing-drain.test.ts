@@ -104,10 +104,10 @@ describe("a standalone drain files a held impersonation to Spam", () => {
       accountId: s.world.accountId, mailboxId: s.world.mailboxId, messageId: m!.id, folder: "ohmail/Screener", uidvalidity: 9n, uid: n, isPrimary: true,
     });
     await s.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await s.db.insert(messageBodies).values({ messageId: m!.id, text: "Aufgrund einer ausstehenden Zahlung", headers: {} });
+    await s.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "Aufgrund einer ausstehenden Zahlung", headers: {} });
     return m!.id;
   }
   const lureOf = (s: Sidecar, at?: Date) => plant(s, { name: "Metanet", from: LURE, ...(at === undefined ? {} : { at }) });

@@ -105,7 +105,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       fromAddress: `held-${tag}@spam.test`, authVerdict: "pass", nativeLocator: { folder: SCREENER, ref: "1:200" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await base.db.insert(messageInstances).values({
@@ -168,7 +168,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         fromAddress: `held${i}-${tag}@spam.test`, authVerdict: "pass", nativeLocator: { folder: SCREENER, ref: `1:${300 + i}` },
       }).returning();
       await base.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await base.db.insert(messageInstances).values({
         accountId, mailboxId: mb!.id, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: 300 + i, isPrimary: true,
@@ -213,7 +213,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         nativeLocator: { folder: SCREENER, ref: `1:${ref}` },
       }).returning();
       await base.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await base.db.insert(messageInstances).values({
@@ -322,7 +322,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
     const [mb] = await base.db.insert(mailboxes).values({
       accountId, provider: "imap", address: me, status: "connected", createdAt: CONNECT,
     }).returning();
-    await base.db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+    await base.db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
     await base.db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
     // The account wrote to a list after it connected; the replier answers that copy. Nothing
     // teaches `contacts` the replier: the release checks and moves their citing message, row by row.
@@ -336,17 +336,17 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       accountId, mailboxId: mb!.id, messageId: s!.id, folder: "Sent", uidvalidity: 7n, uid: 1, isPrimary: true,
     });
     await base.db.insert(folderState).values({
-      messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await base.db.insert(messageBodies).values({ messageId: s!.id, text: "Thursday?", headers: {} });
+    await base.db.insert(messageBodies).values({ messageId: s!.id, accountId: s!.accountId, text: "Thursday?", headers: {} });
     const [h] = await base.db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `held:${tag}`, subject: "Re: the north elevation",
       fromAddress: replier, date: WROTE, nativeLocator: { folder: SCREENER, ref: "9:2" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: h!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: h!.id, accountId: h!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await base.db.insert(messageBodies).values({ messageId: h!.id, text: "Thursday works.", headers: { "in-reply-to": [`<s-${tag}@own.invalid>`] } });
+    await base.db.insert(messageBodies).values({ messageId: h!.id, accountId: h!.accountId, text: "Thursday works.", headers: { "in-reply-to": [`<s-${tag}@own.invalid>`] } });
 
     // The gate holds the held row (and its message) the release locks first.
     const gate = open(`lo-gate-${tag}`);
@@ -467,7 +467,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
         subject: "hello", fromAddress: from, senderCheck, nativeLocator: { folder, ref: `1:${ref}` },
       }).returning();
       await base.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
     };
@@ -712,7 +712,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       fromAddress: sender, nativeLocator: { folder: NEWS, ref: "4:1" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     const gate = open(`lo-pgate-${tag}`);
     let held!: () => void;
@@ -780,7 +780,7 @@ describe.skipIf(!AVAILABLE)("writers under a sender's key keep one lock order", 
       fromAddress: sender, nativeLocator: { folder: NEWS, ref: "4:1" },
     }).returning();
     await base.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: NEWS, observedFolder: NEWS, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     const ctxOn = (name: string): ServiceContext =>
       ({ db: open(name).db, accountId, userId: null, now: () => NOW, requestId: name }) as unknown as ServiceContext;

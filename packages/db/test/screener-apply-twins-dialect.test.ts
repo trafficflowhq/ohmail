@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import {
@@ -42,7 +43,7 @@ describe("the decide retargets the subject's twins, on this store", () => {
       subject: "held", snippet: "", fromAddress: ADDR, unread: true, createdAt: NOW,
     } as never);
     await db.insert(folderState).values({
-      messageId: MESSAGE, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+      messageId: MESSAGE, accountId: accountOfMessage(MESSAGE), desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     } as never);
     for (const [id, over] of [[DENY, {}], [TERM, { subjectContains: "invoice" }]] as const) {

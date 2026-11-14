@@ -63,16 +63,16 @@ async function seed(db: Db): Promise<{
   }).returning();
   const mailboxId = mb!.id;
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
+    mailboxId, accountId, transport: "imap", secretEnc: "enc:xxxx", keyVersion: 1,
   });
-  await db.insert(mailboxFolders).values({ mailboxId, folder: "INBOX" });
+  await db.insert(mailboxFolders).values({ mailboxId, accountId, folder: "INBOX" });
   const [thread] = await db.insert(threads).values({ accountId }).returning();
   const key = `mid:${accountId.slice(0, 8)}`;
   const [msg] = await db.insert(messages).values({
     accountId, mailboxId, threadId: thread!.id, messageIdHeader: key,
     bodyHash: key, dedupKey: key, subject: "one message", fromAddress: "giulia@example.test",
   }).returning();
-  await db.insert(messageBodies).values({ messageId: msg!.id, text: "the body" });
+  await db.insert(messageBodies).values({ messageId: msg!.id, accountId: msg!.accountId, text: "the body" });
   const [draft] = await db.insert(drafts).values({
     accountId, mailboxId, subject: "unsent", body: "unsent",
   }).returning();
@@ -305,7 +305,7 @@ describe("the storage counter across an erase, on either store", () => {
         }).returning();
         await db.transaction(async (tx) => {
           await reserveBodyBytes(tx as unknown as Tx, d, accountId, BODY.length, null);
-          await tx.insert(messageBodies).values({ messageId: m!.id, text: BODY });
+          await tx.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: BODY });
         });
       }
     };

@@ -133,7 +133,6 @@
 --   SELECT subject      FROM messages WHERE false;
 --   SELECT snippet      FROM messages WHERE false;
 --   SELECT from_address FROM messages WHERE false;
---   SELECT subject_tsv  FROM messages WHERE false;
 --   SELECT *            FROM messages WHERE false;
 --   SELECT count(*)     FROM messages;              -- the ROW is the oracle: this
 --   SELECT id           FROM messages WHERE false;  -- names no column and must still be 42501.
@@ -491,8 +490,9 @@ ALTER ROLE ohmail_admin SET search_path = admin, public;
 -- Denied by omission, and still worth naming because a future reader will want to "just add"
 -- one: `subject`, `snippet`, `from_address`, `to_addresses`, `cc_addresses`,
 -- `message_id_header`, `body_hash`, `dedup_key`, `native_locator`, `sensitivity_category` —
--- and **`subject_tsv`**, generated from `subject || ' ' || from_address`, whose lexemes
--- reconstruct both. None of that is the finding any more. `id` is.
+-- and **`subject_tsv`** (on a store that still carries it; mail 0200 drops it), generated from
+-- `subject || ' ' || from_address`, whose lexemes reconstruct both. None of that is the finding
+-- any more. `id` is.
 REVOKE ALL ON public.messages FROM ohmail_admin;
 
 -- ── 5. Identity and plan — accounts, users. ───────────────────────────────────────────────
@@ -516,9 +516,10 @@ GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at
 -- WRITE, so the grant does not have to be the thing that remembers.
 --
 -- `sync_blocked_reason` / `sync_blocked_since` (mail 0029) are granted for the same reason and a
--- sharper one. Same reason: the column is a CLOSED set of three
--- (`MAILBOX_SYNC_BLOCK_REASONS`) behind a CHECK constraint, so unlike `error_detail` it does not
--- even depend on a write-site allowlist — no value a mail server chose can reach it at all.
+-- sharper one. Same reason: the column holds a member of a closed list
+-- (`MAILBOX_SYNC_BLOCK_REASONS`), and since mail 0202 a CHECK holds it to a shape (one
+-- lower-case word, no blank, no capital, no `@`), so unlike `error_detail` it does not depend on
+-- a write-site allowlist alone — no address and no line a mail server chose can stand in it.
 --
 -- The sharper one: this pair is the ONLY thing that can explain a `connected` mailbox with a
 -- growing `sync_lag`, which is exactly what an operator once stared at for half an hour
@@ -538,7 +539,7 @@ GRANT SELECT (id, account_id, email, display_name, email_verified_at, created_at
 REVOKE ALL ON public.mailboxes FROM ohmail_admin;
 GRANT SELECT (
   id, account_id, provider, address, created_at, display_name, status, last_sync_at,
-  auth_kind, error_code, error_detail, failed_at, retry_count, kickstart_at,
+  auth_kind, error_code, error_detail, failed_at, retry_count,
   sync_blocked_reason, sync_blocked_since, sync_progress_at,
   organizer_role, organized_by_kind, organized_since, organizer_state,
   organizer_released_at, organize_consented_at, disabled_reason, retry_after,
@@ -556,6 +557,25 @@ GRANT SELECT (
 -- NEVER `secret_enc` (the envelope-encrypted credential), `key_version`, or `meta`.
 REVOKE ALL ON public.mailbox_credentials FROM ohmail_admin;
 GRANT SELECT (mailbox_id, transport) ON public.mailbox_credentials TO ohmail_admin;
+
+-- `pass_progress` (mail 0203) — where each one-time pass stands: which pass, for which mailbox or
+-- account, and when it was asked for, begun and finished. It replaces `mailboxes.kickstart_at`,
+-- granted on the same terms: ids, a name from a closed list, timestamps.
+--
+-- NEVER `cursor`: the id of the letter a pass stopped at. A letter's id is the row-existence
+-- finding §7 refuses; a resume point is the pass's own business and no operator's.
+REVOKE ALL ON public.pass_progress FROM ohmail_admin;
+GRANT SELECT (account_id, job, subject_id, requested_at, started_at, done_at, updated_at)
+  ON public.pass_progress TO ohmail_admin;
+
+-- `cal_connections` (mail 0205) — a calendar connection: which provider, and how its sync stands.
+-- Ids, a provider and a status from lists the product writes, an error code, a timestamp.
+--
+-- NEVER `label`, `server_url` or `principal` (the person's words and their calendar's address),
+-- never `list_token`, and no column of any other calendar table.
+REVOKE ALL ON public.cal_connections FROM ohmail_admin;
+GRANT SELECT (id, account_id, provider, status, error_code, last_synced_at)
+  ON public.cal_connections TO ohmail_admin;
 
 -- `devices` / `sessions` — THE SYNC-STALENESS ALERTS' INPUTS (mail 0064 + 0070; alerts.ts
 -- rules 8/8b). Reliability data by the isolation rule's own words: ids, kinds and timestamps,
@@ -746,12 +766,14 @@ GRANT SELECT (id, account_id, status, created_at) ON public.outbound_sends TO oh
 -- other two are a count and an internal console path composed from a literal and an id. None is
 -- derived from what any message says, and `listOpenAlerts` names its own columns, so the console
 -- stays exactly as blind as before while gaining the two fields it renders.
+-- `subject_account_id` (cloud 0102) is the seventeenth: the account a per-subject alert is about,
+-- which its `alert_key` already carries. The same three-place decision, for the insert's reason.
 REVOKE ALL ON public.alert_state FROM ohmail_admin;
-GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at)
+GRANT SELECT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at, subject_account_id)
   ON public.alert_state TO ohmail_admin;
-GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at)
+GRANT INSERT (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at, subject_account_id)
   ON public.alert_state TO ohmail_admin;
-GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at)
+GRANT UPDATE (alert_key, kind, severity, opened_at, last_seen_at, notified_at, notify_count, detail, notified_signature, claimed_until, cls, affected_accounts, fix_href, title, "count", resolved_at, subject_account_id)
   ON public.alert_state TO ohmail_admin;
 -- NO `DELETE` ON `alert_state`, DELIBERATELY, AND THE REVOKE ABOVE IS WHAT ENFORCES IT.
 -- Nothing in this bundle deletes from the table: resolution marks, and the tombstone prune that
@@ -887,6 +909,13 @@ GRANT SELECT (account_id, mailbox_id, letters, text_letters, emptied, text_bytes
 REVOKE ALL ON public.account_storage_holds FROM ohmail_admin;
 GRANT SELECT (account_id, seen_bytes, held_bytes, held_until, updated_at)
   ON public.account_storage_holds TO ohmail_admin;
+
+-- `account_closures` (cloud 0104) — an account closed by staff: which account, when, by which staff
+-- id and under which request. The console shows it; an account id, an instant, a staff id and a
+-- request id. SELECT ONLY. Cloud 0104 grants the same stanza where this role exists.
+REVOKE ALL ON public.account_closures FROM ohmail_admin;
+GRANT SELECT (account_id, closed_at, closed_by_staff_id, request_id)
+  ON public.account_closures TO ohmail_admin;
 
 -- ── 11. WHAT IS DELIBERATELY NOT GRANTED, and is enforced by the step-2 blanket revoke ────
 --

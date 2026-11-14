@@ -194,7 +194,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     // The SAME module the desktop engine's composition imports from `@trafficflow/core/mail`,
     // gated there on idle and power; here it runs in the cycle tail.
     triggers: ["cycle-tail"],
-    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.search_index_built_at, or one older than "
+    cadence: "every cycle tail, for this shard's accounts with living mail and no done mark of this pass in pass_progress, or one older than "
       + "SEARCH_DOCUMENT_SHAPE_AT — synced or not, parked or not",
     budget: "SEARCH_INDEX_ACCOUNTS_PER_TAIL accounts × SEARCH_INDEX_ROUNDS_PER_CYCLE rounds × SEARCH_INDEX_BATCH rows, one transaction per round",
     owns: "every living message has its search document in the present shape (an older document of a letter with a file name gets its head again without "
@@ -205,7 +205,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "html_words_backfill",
     module: `${W}/html-words-backfill.ts`, entry: "htmlWordsBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],
-    cadence: "every cycle tail, for this shard's accounts with living mail and no account_settings.html_words_backfill_at; on a device, an idle round on power",
+    cadence: "every cycle tail, for this shard's accounts with living mail and no done mark of this pass in pass_progress; on a device, an idle round on power",
     budget: "HTML_WORDS_ACCOUNTS_PER_TAIL accounts × one page of HTML_WORDS_SCAN_ROWS rows under the tail slice; a device round HTML_WORDS_LOCAL_SCAN_ROWS rows / HTML_WORDS_LOCAL_BUDGET_MS",
     owns: "a stored html-only letter with a blank text has its html's words as its text, preview and search document, as ingest stores them",
     fence: "store-only — no adapter, no lease; each page's writes, cursor and stamp in one fencedAccountWrite; every body UPDATE guarded on the blank text it read",
@@ -281,7 +281,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "gate_release",
     module: `${W}/gate-release.ts`, entry: "gateReleasePass",
     triggers: ["cycle-tail"],
-    cadence: "every cycle tail, per account, until account_settings.gate_release_done_at is stamped",
+    cadence: "every cycle tail, per account, until this pass's done mark is written in pass_progress",
     budget: "GATE_RELEASE_BATCH rules armed and gate rows released per account per cycle",
     owns: "an account that confirmed its seed before 0.19.0 gets the mail stuck at its gate back, once",
     fence: "leader lock; arms rules for rule_retro and writes desired-state only",
@@ -299,7 +299,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     name: "list_address_backfill",
     module: `${W}/list-address-backfill.ts`, entry: "listAddressBackfillPass",
     triggers: ["cycle-tail", "sidecar-drain"],
-    cadence: "every cycle tail, per account, until account_settings.list_addresses_scanned_at is stamped (mail 0150), then one indexed read; on a standalone install once per launch, before the correspondent retro",
+    cadence: "every cycle tail, per account, until this pass's done mark is written in pass_progress, then one indexed read; on a standalone install once per launch, before the correspondent retro",
     budget: "one DISTINCT read of the account's stored List-Post values, then LIST_ADDRESS_CHUNK addresses per write",
     owns: "every address a stored message's List-Post names is a list address, once, so no contact or rule consents a claim under it",
     fence: "leader lock; the account erasure fence per chunk and for the stamp; writes list_addresses and the stamp, never a contact or a move",
@@ -488,7 +488,7 @@ export const WORKER_PASSES: readonly WorkerPass[] = [
     module: `${W}/api-fault-prune.ts`, entry: "apiFaultPrunePass",
     triggers: ["interval"],
     cadence: "on the alert pass's own cadence, immediately after it",
-    budget: "one indexed range scan on api_faults.at (api_faults_at_idx), empty when nothing is due",
+    budget: "one indexed range scan on api_faults.at (api_faults_at_route_idx), empty when nothing is due",
     owns: "api_faults keeps seven days and no more — the table the reliability rules read",
     fence: "leader lock (it rides the alert pass, which holds it)",
   },

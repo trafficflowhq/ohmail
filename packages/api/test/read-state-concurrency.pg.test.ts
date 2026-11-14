@@ -154,7 +154,7 @@ describe.skipIf(!PG_UP)("read-state against real Postgres — two writers, one r
     // has moved, the intent is on record, the server has not been told.
     const id = await seedMessage(accountId, mailboxId, { unread: false });
     await dbA.insert(flagState).values({
-      messageId: id, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
+      messageId: id, accountId, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
     });
 
     // Connection B plays the WORKER: it has just pushed `\Seen` and is writing `observed_seen`.
@@ -212,7 +212,7 @@ describe.skipIf(!PG_UP)("read-state against real Postgres — two writers, one r
     const { token, accountId, mailboxId } = await seed();
     const id = await seedMessage(accountId, mailboxId, { unread: false });
     await dbA.insert(flagState).values({
-      messageId: id, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
+      messageId: id, accountId, desiredSeen: true, observedSeen: false, lastSetBy: "us", reconcileStatus: "pending",
     });
 
     // `messages.unread` is false ⇒ the API guesses observed = true. The STORED observed is false.

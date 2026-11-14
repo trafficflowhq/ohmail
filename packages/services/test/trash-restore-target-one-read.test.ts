@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -45,7 +46,7 @@ async function world() {
   const b = await box(account, "Trash");
   const theirs = await box(stranger, "Trash");
   const folder = (mailboxId: string, name: string) =>
-    db.insert(mailboxFolders).values({ mailboxId, folder: name, uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n });
+    db.insert(mailboxFolders).values({ mailboxId, accountId: accountOfMailbox(mailboxId), folder: name, uidvalidity: 7n, uidnext: 9n, highestmodseq: 3n });
   await folder(a, "Projects");
   await folder(a, "Clients");
   await folder(b, "Archive");
@@ -58,7 +59,7 @@ async function world() {
     }).returning();
     at += 60_000;
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "Trash", observedFolder: "Trash", lastSetBy: "us",
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "Trash", observedFolder: "Trash", lastSetBy: "us",
       trashedFrom: from, updatedAt: new Date(at),
     });
     return m!.id;

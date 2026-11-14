@@ -6,6 +6,7 @@ import { eq, sql } from "drizzle-orm";
 import {
   accountSettings, accounts, autoReplyByUsWhere, awayReplies, contacts, folderState,
   mailboxes, messageBodies, messages, rules, threads,
+  accountPass, requestPass,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
@@ -89,12 +90,9 @@ describe("FIX-016 — the away responder's reply does not pin mail in the Ohbox"
    *  sender is a contact: the tidy moves a contact's bulk and keeps a stranger's. */
   async function armTidy(w: World): Promise<void> {
     await db.insert(contacts).values({ accountId: w.accountId, address: "news@sender.test" }).onConflictDoNothing();
-    await db.insert(accountSettings).values({
-      accountId: w.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(),
-    }).onConflictDoUpdate({
-      target: accountSettings.accountId,
-      set: { ohboxPolicy: "people_only", ohboxTidyRequestedAt: new Date(), ohboxTidyCursor: null },
-    });
+    await db.insert(accountSettings).values({ accountId: w.accountId, ohboxPolicy: "people_only" })
+      .onConflictDoUpdate({ target: accountSettings.accountId, set: { ohboxPolicy: "people_only" } });
+    await requestPass(db as unknown as Tx, accountPass("ohbox_tidy", w.accountId), new Date());
   }
 
   async function newThread(w: World): Promise<string> {
@@ -113,9 +111,9 @@ describe("FIX-016 — the away responder's reply does not pin mail in the Ohbox"
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 1e6)}` },
       unread: false,
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "roundup", headers: BULK_HEADERS });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "roundup", headers: BULK_HEADERS });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -147,11 +145,11 @@ describe("FIX-016 — the away responder's reply does not pin mail in the Ohbox"
       unread: false,
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "away",
+      messageId: m!.id, accountId: m!.accountId, text: "away",
       headers: kind === "machine" ? { "auto-submitted": ["auto-replied"] } : { "auto-submitted": ["no"] },
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "Sent", observedFolder: "Sent",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     if (kind === "machine") {
@@ -310,7 +308,7 @@ describe("FIX-016 — the away responder's reply does not pin mail in the Ohbox"
         id, accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: "h", dedupKey: id,
         subject: "", fromAddress: w.own, date: new Date(),
       });
-      await db.insert(messageBodies).values({ messageId: id, text: "", headers: s.headers });
+      await db.insert(messageBodies).values({ messageId: id, accountId: w.accountId, text: "", headers: s.headers });
       const where = autoReplyByUsWhere(dialect(db), {
         accountId: sql`m.account_id`, id: sql`m.id`,
         fromAddress: sql`m.from_address`, messageIdHeader: sql`m.message_id_header`,

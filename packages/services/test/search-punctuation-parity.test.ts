@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { messageBodies } from "@trafficflow/db";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { SearchService } from "../src/index.js";
-import { makeCtx, seedMessage } from "./helpers.js";
+import { FOUND_WITHOUT_DOCUMENT, makeCtx, seedMessage, seedSearchDocuments } from "./helpers.js";
 
 /**
  * A PUNCTUATED QUERY IS ANSWERED ALIKE ON BOTH STORES: this file runs in the default project
@@ -56,10 +56,10 @@ const SPACED: ReadonlyArray<readonly [q: string, keys: readonly string[], spaced
   ["sign-in OR co-op", ["bodyhyph", "bodysplit", "coop", "signed", "signin"], ["coopspaced"]],
 ];
 
-describe.each([
+describe.each(([
   ["with the search documents built", true],
-  ["before the documents are built (the rows' own columns)", false],
-])("a punctuated query answers what Postgres answers — %s", (_label, built) => {
+  ["before the documents are built (the device's own tables)", false],
+] as const).filter(([, built]) => built || FOUND_WITHOUT_DOCUMENT))("a punctuated query answers what Postgres answers — %s", (_label, built) => {
   let answer: (q: string) => Promise<{ tier: string; keys: string[] }>;
   beforeAll(async () => {
     const { db, ctx, accountId, mailboxId } = await makeCtx();
@@ -69,7 +69,7 @@ describe.each([
         subject, from: `s${i}@site.example`, snippet: body, folder: "INBOX",
         date: new Date(Date.parse("2026-07-20T09:00:00Z") - i * 86_400_000),
       });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       keyOf.set(id, key);
     }
     if (built) expect((await searchIndexBackfillPass({ db: db as never, accountId })).marked).toBe(true);
@@ -111,9 +111,10 @@ describe("a hyphenated query over mail that writes the words apart", () => {
     const ids: string[] = [];
     for (const [i, [subject, body]] of [["Verify", "Your sign in code is 482913."], ["Login", "Use this one time passcode."]].entries()) {
       const id = await seedMessage(db, accountId, mailboxId, { subject, from: `s${i}@site.example`, snippet: body, folder: "INBOX" });
-      await db.insert(messageBodies).values({ messageId: id, text: body });
+      await db.insert(messageBodies).values({ messageId: id, accountId, text: body });
       ids.push(id);
     }
+    await seedSearchDocuments(db, accountId);
     for (const [q, at] of [["sign-in code", 0], ["one-time", 1], ["one-time passcode", 1]] as const) {
       const r = await new SearchService().search(ctx, { q, limit: 50 });
       expect({ q, tier: r.tier, found: r.items.some((m) => m.id === ids[at]) }).toEqual({ q, tier: "exact", found: true });

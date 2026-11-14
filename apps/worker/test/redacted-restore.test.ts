@@ -77,7 +77,7 @@ async function seedRedacted(
     snippet: (opts.storedText ?? STORED_REDACTED).slice(0, 200),
   }).returning();
   await w.db.insert(messageBodies).values({
-    messageId: m!.id, text: opts.storedText ?? STORED_REDACTED, html: null, headers: { ...norm.headers },
+    messageId: m!.id, accountId: m!.accountId, text: opts.storedText ?? STORED_REDACTED, html: null, headers: { ...norm.headers },
   });
   w.server.set(ref, raw);
   return m!.id;

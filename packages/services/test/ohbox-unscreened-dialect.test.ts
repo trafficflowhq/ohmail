@@ -60,10 +60,10 @@ async function seed(
     } : {}),
   }).returning();
   await w.db.insert(messageBodies).values({
-    messageId: m!.id, text: body, html: null, headers: thread?.headers ?? {},
+    messageId: m!.id, accountId: m!.accountId, text: body, html: null, headers: thread?.headers ?? {},
   });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
     lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;
@@ -117,9 +117,9 @@ describe("the undecided-sender walk speaks both dialects", () => {
       unread: false, nativeLocator: { folder: OHBOX, ref: `9:${i}` },
     }));
     const ids = (await w.db.insert(messages).values(rows).returning({ id: messages.id })).map((r) => r.id);
-    await w.db.insert(messageBodies).values(ids.map((messageId) => ({ messageId, text: "", html: null, headers: {} })));
+    await w.db.insert(messageBodies).values(ids.map((messageId) => ({ messageId, accountId: w.accountId, text: "", html: null, headers: {} })));
     await w.db.insert(folderState).values(ids.map((messageId) => ({
-      messageId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "external" as const,
+      messageId, accountId: w.accountId, desiredFolder: OHBOX, observedFolder: OHBOX, lastSetBy: "external" as const,
       reconcileStatus: "reconciled" as const, conflict: false,
     })));
   }
@@ -283,9 +283,9 @@ async function seedIn(
     date: arrivedAt ?? OLD, createdAt: arrivedAt ?? OLD, arrivedAt, unread: true,
     nativeLocator: { folder, ref: `2:${i}` },
   }).returning();
-  await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: BULK });
+  await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: BULK });
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     ...(o.decidedAt ? { decidedAt: o.decidedAt } : {}),
   });

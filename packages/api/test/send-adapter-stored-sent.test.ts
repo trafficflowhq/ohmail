@@ -20,7 +20,7 @@ async function seeded(sentFolder: string | null) {
   }).returning();
   const enc = await d.deps.keyProvider.encrypt("imap-pass");
   await d.db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "imap.stored.example", port: 993, secure: true, user: "u@stored.example" },
   });
   if (sentFolder !== null) {

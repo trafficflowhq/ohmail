@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, ne, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import {
@@ -629,7 +630,7 @@ export async function bootstrapEnvCreds(
     const now = new Date();
     const imapEnc = await keyProvider.encrypt(input.imap.pass);
     await tx.insert(mailboxCredentials).values({
-      mailboxId: input.mailboxId, transport: "imap",
+      mailboxId: input.mailboxId, accountId: accountOfMailbox(input.mailboxId), transport: "imap",
       secretEnc: imapEnc.ciphertext, keyVersion: imapEnc.keyVersion,
       meta: { host: input.imap.host, port: input.imap.port, secure: input.imap.secure, user: input.imap.user },
       updatedAt: now,
@@ -640,7 +641,7 @@ export async function bootstrapEnvCreds(
       const smtpPass = input.smtp.pass ?? input.imap.pass;
       const smtpEnc = await keyProvider.encrypt(smtpPass);
       await tx.insert(mailboxCredentials).values({
-        mailboxId: input.mailboxId, transport: "smtp",
+        mailboxId: input.mailboxId, accountId: accountOfMailbox(input.mailboxId), transport: "smtp",
         secretEnc: smtpEnc.ciphertext, keyVersion: smtpEnc.keyVersion,
         meta: { host: input.smtp.host, port: input.smtp.port, secure: input.smtp.secure, user: input.smtp.user ?? input.imap.user },
         updatedAt: now,
@@ -1395,7 +1396,7 @@ export async function markMailboxSyncBlocked(
   // THE WRITE DOOR for a widenable set (mail 0029 opened it, mail 0102 widened it). The device
   // store carries no CHECK for it, so the membership test is the refusal on both dialects — and
   // the typed parameter is not one: this function is reachable from code the compiler never saw.
-  const member = closedSetValue("mailboxes_sync_blocked_reason_closed", reason);
+  const member = closedSetValue("mailboxes_sync_blocked_reason_shape", reason);
   return applyFenced(db, mailboxId, opts.fence, (w) => w.update(mailboxes).set({
     syncBlockedReason: member,
     syncBlockedSince: sql`coalesce(${mailboxes.syncBlockedSince}, ${now.toISOString()}::timestamptz)`,

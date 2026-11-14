@@ -2590,12 +2590,6 @@ export interface ScreeningPreferenceWire {
   /** The product-default bar, for the textarea placeholder when `ohboxBar` is null. */
   defaultBar: string;
   /**
-   * Whether auto-apply is on. When on, obvious newsletters and receipts are filed out of the
-   * Screener for you using the deterministic rules — no AI, no spend — and every move stays
-   * reversible. Absent/failed reads resolve to `false`, so the default is off.
-   */
-  screenerAutoApply: boolean;
-  /**
    * Whether ohmail files a held letter that impersonates a company to Spam on its own, with no AI;
    * on by default. Absent from an older server, which files none: read as `undefined`.
    */
@@ -2615,7 +2609,6 @@ export const screeningSettings = {
   set: (body: {
     ohboxPolicy?: ScreeningPreferenceWire["ohboxPolicy"];
     ohboxBar?: string | null;
-    screenerAutoApply?: boolean;
     impersonationFiling?: boolean;
   }) => api<ScreeningPreferenceWire>("/account/screening", { method: "PATCH", body }),
 };

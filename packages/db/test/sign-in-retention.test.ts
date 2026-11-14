@@ -1,3 +1,4 @@
+import { accountOfUser } from "../src/parent-account.js";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq, inArray } from "drizzle-orm";
@@ -63,16 +64,16 @@ describe("the sign-in retention pass", () => {
   it("deletes sign-in records 30 days past expiry, an unconfirmed desktop request included, and keeps the rest", async () => {
     const { db, tx, userId } = await seeded();
     const lt = async (purpose: string, expiresAt: Date, user: string | null = userId) =>
-      (await db.insert(loginTokens).values({ userId: user, tokenHash: H(), purpose, expiresAt }).returning())[0]!.id;
+      (await db.insert(loginTokens).values({ userId: user, accountId: user === null ? null : accountOfUser(user), tokenHash: H(), purpose, expiresAt }).returning())[0]!.id;
     const gone = [await lt("login", ago(31)), await lt("desktop_approval", ago(31), null), await lt("email_verify", ago(40))];
     const kept = [await lt("login", ago(29)), await lt("desktop_link", ahead(1)), await lt("desktop_approval", ago(29), null)];
     const code = async (expiresAt: Date, consumedAt: Date | null) => (await db.insert(oauthAuthCodes).values({
-      userId, clientId: "tf-macos", codeHash: H(), codeChallenge: H(), redirectUri: "trafficflow://auth", expiresAt, consumedAt,
+      userId, accountId: accountOfUser(userId), clientId: "tf-macos", codeHash: H(), codeChallenge: H(), redirectUri: "trafficflow://auth", expiresAt, consumedAt,
     }).returning())[0]!.id;
     const oldCode = await code(ago(31), ago(31));
     const freshCode = await code(ago(29), ago(29));
     const pair = async (expiresAt: Date) => (await db.insert(pairingTokens).values({
-      createdByUserId: userId, grant: "device-pair", tokenHash: H(), expiresAt,
+      createdByUserId: userId, accountId: accountOfUser(userId), grant: "device-pair", tokenHash: H(), expiresAt,
     }).returning())[0]!.id;
     const oldPair = await pair(ago(31));
     const freshPair = await pair(ago(29));
@@ -220,7 +221,7 @@ describe("the sign-in retention pass", () => {
 
   it("a table with more than its batches left says so, and the clock stops the pass", async () => {
     const { db, tx, userId } = await seeded();
-    for (let i = 0; i < 3; i++) await db.insert(loginTokens).values({ userId, tokenHash: H(), expiresAt: ago(40) });
+    for (let i = 0; i < 3; i++) await db.insert(loginTokens).values({ userId, accountId: accountOfUser(userId), tokenHash: H(), expiresAt: ago(40) });
     const r = await prune(tx, { batch: 1, maxBatches: 2 });
     expect(r).toMatchObject({ loginTokens: 2, stoppedBy: "batches" });
     let t = 0;

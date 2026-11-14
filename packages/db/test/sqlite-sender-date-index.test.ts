@@ -38,13 +38,13 @@ function seed(db: Db, account: string): void {
   db.prepare("insert into mailboxes (id, account_id, provider, address) values (?, ?, 'imap', ?)").run(mb, account, `${mb}@tf.test`);
   const msg = db.prepare(`insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, from_address, date, created_at, unread)
     values (?, ?, ?, 'h', ?, ?, ?, ?, ?)`);
-  const fs = db.prepare("insert into folder_state (message_id, desired_folder, observed_folder, last_set_by) values (?, ?, ?, 'us')");
+  const fs = db.prepare("insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by) values (?, ?, ?, ?, 'us')");
   for (let s = 0; s < 50; s++) {
     for (let k = 0; k < 8; k++) {
       const id = randomUUID();
       const at = NOW - (k === 0 ? 400 : 420 + k) * DAY;
       msg.run(id, account, mb, `d:${id}`, `Quiet${s}@x.test`, at, at, 0);
-      fs.run(id, k === 0 ? "ohmail/Screener" : "INBOX", k === 0 ? "ohmail/Screener" : "INBOX");
+      fs.run(id, account, k === 0 ? "ohmail/Screener" : "INBOX", k === 0 ? "ohmail/Screener" : "INBOX");
     }
   }
 }

@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import { mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
@@ -69,9 +70,14 @@ async function seed(o: {
       nativeLocator: { folder: "INBOX", ref: "1:1" },
     })
     .returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.body });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.body });
+  // As every writer of a body does: the letter's search document with it.
+  await upsertMessageSearch(db as never, m!.id, {
+    accountId: A, subject: o.subject, from: { name: null, address: o.from }, to: [], cc: [],
+    attachmentNames: [], bodyText: o.body, source: "text",
+  });
   await db.insert(folderState).values({
-    messageId: m!.id,
+    messageId: m!.id, accountId: m!.accountId,
     desiredFolder: "INBOX",
     observedFolder: "INBOX",
     lastSetBy: "us",
@@ -136,6 +142,7 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
   afterAll(async () => {
     // FK order: the children first. The :5433 database is shared and long-lived, so a file that
     // leaves rows behind poisons the next run's counts rather than its own.
+    await db.execute(sql`delete from message_search where account_id = ${A}`);
     await db.execute(sql`delete from folder_state where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from message_bodies where message_id in (select id from messages where account_id = ${A})`);
     await db.execute(sql`delete from messages where account_id = ${A}`);
@@ -170,8 +177,8 @@ describe("the hosted search ranking table (real Postgres, pg_trgm)", () => {
       select count(*)::int as n
       from messages m left join message_bodies b on b.message_id = m.id
       where m.account_id = ${A}
-        and (m.subject_tsv @@ websearch_to_tsquery('english', 'grrat')
-             or b.body_tsv @@ websearch_to_tsquery('english', 'grrat'))`);
+        and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'grrat')
+             or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'grrat'))`);
     const rows = Array.isArray(lex) ? lex : (lex as { rows: Array<{ n: number }> }).rows;
     expect((rows as Array<{ n: number }>)[0]!.n).toBe(0);
 

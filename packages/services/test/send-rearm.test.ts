@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -351,7 +352,7 @@ describe("a refusal that will not pass is final, and says so", () => {
       nativeLocator: { folder: "INBOX", ref: "1:8" },
     });
     // Its words were let go by the store, so the forward reads them from the mailbox at send.
-    await w.db.insert(messageBodies).values({ messageId: orig.id, text: "", html: null, withheldReason: "storage_cap" });
+    await w.db.insert(messageBodies).values({ messageId: orig.id, accountId: accountOfMessage(orig.id), text: "", html: null, withheldReason: "storage_cap" });
     let reads = 0;
     const openFetchAdapter = async () => ({
       async fetchPart() { throw new Error("no parts here"); },

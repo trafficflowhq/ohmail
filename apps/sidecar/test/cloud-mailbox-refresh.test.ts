@@ -548,7 +548,7 @@ describe("an upgraded mirror re-keys itself", () => {
         bodyHash: "", dedupKey: `cloud:${id}`, subject: "Old mail",
         fromAddress: "stranger@nowhere.test", threadId, updatedAt: new Date(),
       });
-      await db.insert(messageBodies).values({ messageId: id, text: `body of ${id}`, html: null });
+      await db.insert(messageBodies).values({ messageId: id, accountId: world.accountId, text: `body of ${id}`, html: null });
     }
     /* THE 0.9.3 CURSOR, VERBATIM. Four keys, no `version`. If an absent version ever reads as
        "current", this file is the population that silently keeps the defect while every fresh

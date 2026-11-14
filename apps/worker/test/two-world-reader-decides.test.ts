@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
@@ -94,7 +95,7 @@ describe("the two-world reader-decides rig", () => {
       subject: "s", fromAddress: "person@example.com", unread: true,
     }).returning({ id: messages.id });
     await db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
 
@@ -185,7 +186,7 @@ describe("the two-world reader-decides rig", () => {
       subject: "s", fromAddress: "person@example.com", unread: true,
     }).returning({ id: messages.id });
     await db.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
 

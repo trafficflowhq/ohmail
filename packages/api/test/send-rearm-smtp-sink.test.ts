@@ -116,7 +116,7 @@ async function world(smtpPort: number) {
   for (const [transport, port] of [["imap", await closedPort()], ["smtp", smtpPort]] as const) {
     const enc = await made.deps.keyProvider.encrypt(`${transport}-pass`);
     await made.db.insert(mailboxCredentials).values({
-      mailboxId, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId, accountId: s.accountId, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "127.0.0.1", port, secure: false, user: "u@sink.example" },
     });
   }

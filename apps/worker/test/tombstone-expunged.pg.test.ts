@@ -85,7 +85,7 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
     }
     // A stored body with real content, and the counter that says the account is paying for it.
     const text = "the whole body of a message the server is about to expunge";
-    await db.insert(messageBodies).values({ messageId: m!.id, text, html: null });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text, html: null });
     await db.insert(accountStorage).values({ accountId, bytes: Buffer.byteLength(text) });
     return { accountId, mailboxId: mb!.id, messageId: m!.id, bytes: Buffer.byteLength(text) };
   }
@@ -181,7 +181,7 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
 
     const { accountId, mailboxId } = await seed();
     const junked = await parked(accountId, mailboxId, "Junk", "4:1");
-    await db.insert(messageBodies).values({ messageId: junked, text: "the junk letter's text", html: null });
+    await db.insert(messageBodies).values({ messageId: junked, accountId, text: "the junk letter's text", html: null });
     await worded(accountId, junked);
     await repo.transaction(async (r) => { await r.huskBody!(accountId, junked, "junk_filed"); });
     expect(await wordsOf(junked), "a live Junk husk lost its words").toEqual(KEPT);
@@ -436,10 +436,10 @@ describe.skipIf(!AVAILABLE)("mail 0065 — expunge propagation: the mirror row g
     }).returning();
     const observed = o.parkedIn ?? folder;
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: o.desired ?? observed, observedFolder: observed, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: o.desired ?? observed, observedFolder: observed, lastSetBy: "us",
       reconcileStatus: o.pending === true ? "pending" : "reconciled",
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "the text of a deleted letter", html: null });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "the text of a deleted letter", html: null });
     return m!.id;
   }
   const headerOf = async (id: string) =>

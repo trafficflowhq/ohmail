@@ -53,7 +53,7 @@ async function seedUnreachableMailbox(db: Db): Promise<{ accountId: string; mail
     .returning();
   const enc = await KP.encrypt("nope");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     // Nothing listens on 127.0.0.1:1 — connect fails fast.
     meta: { host: "127.0.0.1", port: 1, secure: false, user: cfg.auth.user },
   });

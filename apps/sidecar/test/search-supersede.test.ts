@@ -58,9 +58,9 @@ async function standUp(): Promise<Sidecar> {
         '[]'::jsonb, '[]'::jsonb
       from generate_series(1, ${n}) g`);
   }
-  await s.db.execute(sql`insert into message_bodies (message_id, text) select m.id, 'a letter' from messages m where m.account_id = ${accountId}::uuid`);
-  await s.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
+  await s.db.execute(sql`insert into message_bodies (message_id, account_id, text) select m.id, m.account_id, 'a letter' from messages m where m.account_id = ${accountId}::uuid`);
+  await s.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+    select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
   const built = await searchIndexBackfillPass({ db: s.db as unknown as Tx, accountId, rounds: 100, batch: 1_000 });
   expect(built.marked).toBe(true);
   return s;

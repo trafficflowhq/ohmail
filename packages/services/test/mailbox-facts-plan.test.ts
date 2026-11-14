@@ -40,8 +40,8 @@ async function filed(c: Client, account: string, mailbox: string, n: number): Pr
   await c.query(`insert into messages (account_id, mailbox_id, dedup_key, body_hash)
     select $1, $2, 'mid:<' || $3 || '-' || g || '@example.test>', 'plan-' || g from generate_series(1, $4::int) g`,
   [account, mailbox, mailbox.slice(-3), n]);
-  await c.query(`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status)
-    select id, 'Archive', 'Archive', 'us', 'reconciled' from messages where mailbox_id = $1`, [mailbox]);
+  await c.query(`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status)
+    select id, account_id, 'Archive', 'Archive', 'us', 'reconciled' from messages where mailbox_id = $1`, [mailbox]);
 }
 
 async function planOf(c: Client, text: string, params: unknown[]): Promise<PlanNode> {

@@ -5,6 +5,7 @@ import { makeTestDb } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, changeLog, folderState, mailboxes, messageBodies, messages,
   rules,
+  accountPass, requestPass,
 } from "@trafficflow/db";
 import { ohboxTidyPass } from "../src/ohbox-tidy.js";
 import type { Tx } from "@trafficflow/db";
@@ -78,10 +79,8 @@ describe("ohbox-tidy re-asks who is known at every page", () => {
     const [mb] = await db.insert(mailboxes).values({
       accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@ohmail.test`,
     }).returning();
-    await db.insert(accountSettings).values({
-      accountId, ohboxPolicy: "people_only",
-      ohboxTidyRequestedAt: new Date("2026-09-01T11:00:00Z"),
-    });
+    await db.insert(accountSettings).values({ accountId, ohboxPolicy: "people_only" });
+    await requestPass(db, accountPass("ohbox_tidy", accountId), new Date("2026-09-01T11:00:00Z"));
     return { accountId, mailboxId: mb!.id };
   }
 
@@ -103,12 +102,12 @@ describe("ohbox-tidy re-asks who is known at every page", () => {
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null,
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null,
       // A List-Unsubscribe is the header class the posture acts on.
       headers: { "list-unsubscribe": ["<https://x.test/u>"] },
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(rules).values({

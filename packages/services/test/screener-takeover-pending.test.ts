@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { accounts, folderState, mailboxCredentials, mailboxes, organizerRequests, rules } from "@trafficflow/db";
@@ -25,7 +26,7 @@ async function readerUnder(holder: { state: "held" | "stopped" | "none" }) {
     }).where(eq(mailboxes.id, w.mailboxId));
   // A stored login, as the connect wrote it: a claim with no password in the body requires one.
   await w.db.insert(mailboxCredentials).values({
-    mailboxId: w.mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: "imap.example.test", port: 993, secure: true, user: "u" }, updatedAt: new Date(),
   });
   const held = await seedMessage(w.db, w.accountId, w.mailboxId, { from: "b@b.test" });

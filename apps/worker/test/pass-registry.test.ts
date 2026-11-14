@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { PASS_NAMES } from "@trafficflow/db";
 import { WORKER_PASSES } from "../src/pass-registry.js";
 
 /**
@@ -664,5 +665,27 @@ describe("the worker pass registry", () => {
       const file = r.module.slice("apps/worker/src/".length);
       expect(exported.has(file), `row '${r.name}' claims the sidecar runs it, but ${file} is not a subpath export`).toBe(true);
     }
+  });
+});
+
+/**
+ * THE NAMES THE STORE KEEPS PROGRESS UNDER ARE THE REGISTRY'S (mail 0203). `pass_progress.job` has
+ * no CHECK on any store; the door that writes it refuses a name outside `PASS_NAMES`, and this
+ * holds that list to the registry: a name is a registered pass, or it says where else it runs.
+ */
+describe("every pass the store keeps progress for is a pass this registry knows", () => {
+  /** Kept in `pass_progress` and run by no worker pass, each with where it runs instead. */
+  const RUN_ELSEWHERE: ReadonlyMap<string, string> = new Map([
+    ["sensitive_rescreen", "the operator's command in packages/services (sensitive-rescreen-cli.ts); no worker pass has that name"],
+  ]);
+  const registered = new Set(WORKER_PASSES.map((p) => p.name));
+
+  it("names a registry row, or says where else it runs", () => {
+    expect(PASS_NAMES.filter((n) => !registered.has(n) && !RUN_ELSEWHERE.has(n))).toEqual([]);
+  });
+
+  it("and no exception outlives its reason", () => {
+    const known = new Set<string>(PASS_NAMES);
+    expect([...RUN_ELSEWHERE].filter(([n, why]) => registered.has(n) || !known.has(n) || why.trim() === "").map(([n]) => n)).toEqual([]);
   });
 });

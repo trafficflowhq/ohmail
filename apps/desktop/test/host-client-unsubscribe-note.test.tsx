@@ -58,7 +58,7 @@ const CONSENT = {
   blockAutoUnsubscribeAt: null, folderMailboxesOff: {}, signatures: {}, themeFace: null,
 };
 /** `GET /account/screening`, which the same pane reads for its Ohbox words. */
-const SCREENING = { ohboxPolicy: null, ohboxBar: null, defaultBar: "People who write to me themselves.", screenerAutoApply: false };
+const SCREENING = { ohboxPolicy: null, ohboxBar: null, defaultBar: "People who write to me themselves." };
 
 function answer(url: string): unknown {
   const path = url.split("?")[0]!;

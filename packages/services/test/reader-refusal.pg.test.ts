@@ -104,7 +104,7 @@ async function readerWorld(): Promise<World> {
   // fixture inserts the row directly (the encryption is not what these cases are about); the
   // takeover suite beside this one builds its mailboxes through `create`, which writes it.
   await dbA.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: "imap.reader.test", port: 993, secure: true, user: "u" },
     updatedAt: NOW,
   });
@@ -114,7 +114,7 @@ async function readerWorld(): Promise<World> {
     nativeLocator: { folder: "INBOX", ref: "1:7" },
   }).returning();
   await dbA.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
     lastSetBy: "external", reconcileStatus: "reconciled", conflict: false,
   });
   const [h] = await dbA.insert(messages).values({
@@ -123,7 +123,7 @@ async function readerWorld(): Promise<World> {
     nativeLocator: { folder: "ohmail/Screener", ref: "1:8" },
   }).returning();
   await dbA.insert(folderState).values({
-    messageId: h!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: h!.id, accountId: h!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   const [d] = await dbA.insert(drafts).values({

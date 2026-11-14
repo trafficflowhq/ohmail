@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { randomInt, randomUUID } from "node:crypto";
@@ -101,11 +102,11 @@ describe.skipIf(!AVAILABLE)("a folder name past the btree in bytes is dropped, a
     const [m] = await h.db.insert(messages).values({
       accountId: h.accountId, mailboxId: h.mailboxId, bodyHash: "h", dedupKey: `k-${randomUUID()}`,
     }).returning({ id: messages.id });
-    await h.db.insert(mailboxFolders).values({ mailboxId: h.mailboxId, folder: f });
+    await h.db.insert(mailboxFolders).values({ mailboxId: h.mailboxId, accountId: accountOfMailbox(h.mailboxId), folder: f });
     await h.db.insert(messageInstances).values({ accountId: h.accountId, mailboxId: h.mailboxId, messageId: m!.id, folder: f, uidvalidity: 1n, uid: 1 });
     await h.db.insert(messageFailures).values({ accountId: h.accountId, mailboxId: h.mailboxId, folder: f, uidvalidity: 1n, uid: 1, code: "unclassified" });
     await h.db.insert(junkRescues).values({ accountId: h.accountId, mailboxId: h.mailboxId, folder: f, uidvalidity: 1n, uid: 1 });
-    await h.db.insert(folderState).values({ messageId: m!.id, desiredFolder: f, observedFolder: "INBOX", lastSetBy: "external" });
+    await h.db.insert(folderState).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: f, observedFolder: "INBOX", lastSetBy: "external" });
     // CONTROL — 61 bytes past the bound is past the narrowest of them, so this arm can fail.
     const over = await h.db.insert(messageInstances).values({
       accountId: h.accountId, mailboxId: h.mailboxId, messageId: m!.id, folder: cjk(IMAP_FOLDER_PATH_MAX_BYTES + 61), uidvalidity: 1n, uid: 2,

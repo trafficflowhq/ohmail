@@ -60,8 +60,7 @@ const CONSENT = JSON.stringify({
 });
 /** `GET /account/screening`, which the same pane reads for its Ohbox words. */
 const SCREENING = JSON.stringify({
-  ohboxPolicy: null, ohboxBar: null, defaultBar: "People who write to me themselves.", screenerAutoApply: false,
-});
+  ohboxPolicy: null, ohboxBar: null, defaultBar: "People who write to me themselves.",});
 
 function fakeShell(status: EngineStatus): void {
   host.__TAURI_INTERNALS__ = {

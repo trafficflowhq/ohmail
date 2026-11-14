@@ -90,7 +90,7 @@ async function newWorld(each = 3): Promise<World> {
       nativeLocator: { folder: "ohmail/Screener", ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     held.push(m!.id);
@@ -242,8 +242,8 @@ describe.skipIf(!PG_UP)("EvalPlanQual — the Screener's re-route guard re-check
       // shape. Its own connection and its own transaction, so it parks on the rival's row lock.
       const unguarded = client.begin(async (tx) => {
         await tx`insert into folder_state
-                   (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-                 values (${victim}::uuid, 'INBOX', 'ohmail/Screener', 'us', 'pending', false)
+                   (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+                 select id, account_id, 'INBOX', 'ohmail/Screener', 'us', 'pending', false from messages where id = ${victim}::uuid
                  on conflict (message_id) do update
                     set desired_folder = 'INBOX', last_set_by = 'us',
                         reconcile_status = 'pending', conflict = false`;

@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -160,7 +161,7 @@ async function plantTombstone(db: LocalDb, accountId: string, address: string, n
     accountId, provider: "imap", address, status: "disabled", disabledReason: null,
   }).returning({ id: mailboxes.id });
   const id = row!.id;
-  await db.insert(mailboxFolders).values({ mailboxId: id, folder: "INBOX" } as never);
+  await db.insert(mailboxFolders).values({ mailboxId: id, accountId: accountOfMailbox(id), folder: "INBOX" } as never);
   for (let i = 0; i < n; i++) {
     await db.insert(messages).values({
       accountId, mailboxId: id, bodyHash: randomUUID(), dedupKey: randomUUID(),
@@ -390,7 +391,7 @@ describe("a mailbox removal and the app's own close", () => {
       }).returning({ id: mailboxes.id });
       switchedOff = off!.id;
       await o.db.insert(mailboxCredentials).values({
-        mailboxId: switchedOff, transport: "imap", secretEnc: "not-a-secret", keyVersion: 1,
+        mailboxId: switchedOff, accountId: accountOfMailbox(switchedOff), transport: "imap", secretEnc: "not-a-secret", keyVersion: 1,
       } as never);
       await oneMessage(switchedOff);
       await o.close();

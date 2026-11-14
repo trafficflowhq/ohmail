@@ -103,14 +103,15 @@ function normalizeExpr(rendered: string): string {
 /**
  * CHECKS THE SERVER CARRIES AND A DEVICE MAY NOT, which is a difference of MIGRATION COST.
  *
- * SQLite has no `ALTER … DROP CONSTRAINT`, so a set the server widens by DROP-then-ADD would cost
- * a fifty-column table rebuild on every device once the baseline ships. Those sets are enforced at
- * the write door instead and carry no CHECK here. The asymmetry is OWNED by
+ * SQLite has no `ALTER … DROP CONSTRAINT`, so a CHECK there is a fifty-column table rebuild. The
+ * three lists that grow are enforced at the write door on both stores; the server also holds
+ * each to a shape (mail 0202), and the device carries no CHECK for it. The asymmetry is OWNED by
  * `closed-set-parity.test.ts`, which asserts the class against the pg journal's own history and
- * reddens if one of them reappears on this store — dropping the names here compares the rest.
+ * reddens if one of them reappears on this store — dropping the names here compares the rest. A
+ * shape is dropped ONLY where the registry says the set is one.
  */
 const WIDENABLE_SET_CHECKS = new Set(
-  CLOSED_SETS.filter((s) => s.kind === "widenable").map((s) => s.constraint),
+  CLOSED_SETS.filter((s) => s.kind === "shape").map((s) => s.constraint),
 );
 
 /**
@@ -119,8 +120,6 @@ const WIDENABLE_SET_CHECKS = new Set(
  * generated columns and mail 0125's two search-document vectors have no twin there.
  */
 const GENERATED_SEARCH_COLUMNS: Record<string, readonly string[]> = {
-  messages: ["subject_tsv"],
-  message_bodies: ["body_tsv"],
   kb_entries: ["kb_tsv"],
   message_search: ["head_tsv", "text_tsv"],
 };
@@ -132,9 +131,47 @@ const GENERATED_SEARCH_COLUMNS: Record<string, readonly string[]> = {
  */
 const DEVICE_ONLY_TABLES = new Set(["messageRecipients"]);
 
+/**
+ * TABLES ONLY THE SERVER DECLARES: the calendar's ten (mail 0205). A phone that organizes on its
+ * own has no calendar in 2.0, so the device journal carries a `.noop` in that entry's place and
+ * the device's twin declares none of them. A desktop's engine runs the server's journal and holds
+ * them. By exported name, as the twins are compared.
+ */
+const SERVER_ONLY_TABLES = new Set([
+  "calConnections", "calCredentials", "calCalendars", "calEvents", "calAttendees",
+  "calAlarms", "calWrites", "calLinks", "calSuggestions", "calSettings",
+]);
+
+/**
+ * THE ACCOUNT ON A TABLE THAT BORROWED ITS PARENT'S (mail 0201) IS NOT NULL ON A SERVER AND
+ * NULLABLE HERE. A NOT NULL on this store is a rebuild of the table, and the device's twin of the
+ * entry fills the column and adds no constraint. Every writer names the column on both stores:
+ * the server's twin types it as required, and both stores share the insert. `pairing_tokens` is
+ * nullable on both (the first setup token has no creator), so it is not here.
+ */
+const DEVICE_NULLABLE_ACCOUNT_COLUMNS = new Set([
+  "message_bodies", "folder_state", "flag_state", "mailbox_credentials", "mailbox_folders",
+]);
+
+/**
+ * UNIQUE INDEXES ONLY THE SERVER CARRIES: the target of a composite foreign key onto a parent's
+ * `(id, account_id)`. The device's store has no such keys (a key there is a table rebuild, and it
+ * holds one account), so an index that exists to be a key's target has nothing to serve there.
+ */
+const SERVER_ONLY_UNIQUE_INDEXES = new Set([
+  "unsubscribe_records_id_account_uq",
+  // Mail 0118's twelve, which the device carried until its own entry 0206 dropped them, and the
+  // folders' key target on `(id, mailbox_id)`. `outbound_sends_id_account_uq` is on both stores:
+  // a sent copy keys onto it on a device too.
+  "mailboxes_id_account_uq", "messages_id_account_uq", "threads_id_account_uq", "contacts_id_account_uq",
+  "tags_id_account_uq", "drafts_id_account_uq", "routing_decisions_id_account_uq", "rules_id_account_uq",
+  "workflows_id_account_uq", "users_id_account_uq", "devices_id_account_uq", "sessions_id_account_uq",
+  "mailbox_folders_id_mailbox_uq",
+]);
+
 /** Indexes that exist only to serve those columns, and go with them. */
 const GENERATED_SEARCH_INDEXES = new Set([
-  "messages_subject_tsv_idx", "message_bodies_body_tsv_idx", "kb_entries_kb_tsv_idx",
+  "kb_entries_kb_tsv_idx",
   "message_search_head_tsv_idx", "message_search_text_tsv_idx",
 ]);
 
@@ -285,15 +322,16 @@ function pgShape(table: PgTable): Shape {
       .map((ck) => `${ck.name}:${checkText(ck.name, normalizeExpr(new PgDialect().sqlToQuery(ck.value).sql), "pg")}`).sort(),
     foreignKeys: foreignKeySignatures(c.foreignKeys as never),
     indexPredicates: c.indexes
-      .filter((i) => !GENERATED_SEARCH_INDEXES.has(indexName(i)))
+      .filter((i) => !GENERATED_SEARCH_INDEXES.has(indexName(i)) && !SERVER_ONLY_UNIQUE_INDEXES.has(indexName(i)))
       .map((i) => `${indexName(i)}:${i.config.where ? normalizeExpr(new PgDialect().sqlToQuery(i.config.where).sql) : "-"}`)
       .sort(),
-    notNull: c.columns.filter((col) => !drop.has(col.name) && col.notNull).map((col) => col.name),
+    notNull: c.columns.filter((col) => !drop.has(col.name) && col.notNull)
+      .filter((col) => !(col.name === "account_id" && DEVICE_NULLABLE_ACCOUNT_COLUMNS.has(c.name))).map((col) => col.name),
     primaryKey: c.columns.filter((col) => col.primary).map((col) => col.name)
       .concat(c.primaryKeys.flatMap((pk) => pk.columns.map((col) => col.name))).sort(),
     uniques: c.uniqueConstraints.map((u) => u.columns.map((col) => col.name).join(",")).sort(),
     indexes: c.indexes
-      .filter((i) => !GENERATED_SEARCH_INDEXES.has(indexName(i)))
+      .filter((i) => !GENERATED_SEARCH_INDEXES.has(indexName(i)) && !SERVER_ONLY_UNIQUE_INDEXES.has(indexName(i)))
       .map((i) => ({
         name: indexName(i),
         columns: i.config.columns.map((col) =>
@@ -361,7 +399,9 @@ function byName(shape: Shape): Shape {
   };
 }
 
-const pgTables = Object.entries(pgSchema).filter(([, v]) => is(v, PgTableClass)) as [string, PgTable][];
+const allPgTables = Object.entries(pgSchema).filter(([, v]) => is(v, PgTableClass)) as [string, PgTable][];
+/** The server's tables that have a twin: every one but the named server-only ones. */
+const pgTables = allPgTables.filter(([name]) => !SERVER_ONLY_TABLES.has(name));
 const sqliteTables = new Map(
   (Object.entries(sqliteSchema).filter(([, v]) => is(v, SQLiteTableClass)) as [string, SQLiteTable][]),
 );
@@ -394,18 +434,47 @@ describe("the SQLite twin is the same schema", () => {
     }
   });
 
-  it("drops only the widenable set CHECKs from the comparison, and still compares the rest", () => {
+  it("drops only the growing sets' shape CHECKs from the comparison, and still compares the rest", () => {
     // A filter that grew to cover everything would silence this whole column without a failure.
     // Three names today, and the twins carry more CHECKs than that on both sides.
     expect([...WIDENABLE_SET_CHECKS].sort()).toEqual([
-      "mailboxes_disabled_reason_closed",
-      "mailboxes_organized_by_kind_closed",
-      "mailboxes_sync_blocked_reason_closed",
+      "mailboxes_disabled_reason_shape",
+      "mailboxes_organized_by_kind_shape",
+      "mailboxes_sync_blocked_reason_shape",
     ]);
     const compared = pgTables.flatMap(([, t]) => pgShape(t).checks);
     expect(compared.length, "every CHECK was filtered out of the comparison").toBeGreaterThan(2);
     for (const name of WIDENABLE_SET_CHECKS) {
       expect(compared.some((c) => c.startsWith(`${name}:`)), `${name} survived the filter`).toBe(false);
+    }
+  });
+
+  it("lets the account be nullable here on the five tables that borrowed it, and nowhere else", () => {
+    // The exemption holds only while it describes something: required on the server, nullable here.
+    const pgOf = new Map(pgTables.map(([, t]) => [pgConfig(t).name, pgConfig(t)]));
+    const sqliteOf = new Map([...sqliteTables.values()].map((t) => [sqliteConfig(t).name, sqliteConfig(t)]));
+    for (const name of DEVICE_NULLABLE_ACCOUNT_COLUMNS) {
+      expect(pgOf.get(name)?.columns.find((c) => c.name === "account_id")?.notNull, `${name}: required on the server`).toBe(true);
+      expect(sqliteOf.get(name)?.columns.find((c) => c.name === "account_id")?.notNull, `${name}: nullable here`).toBe(false);
+    }
+    // And no other table's account differs: the comparison below still reads every other column.
+    const differs = [...pgOf].filter(([name, c]) => {
+      const here = sqliteOf.get(name)?.columns.find((col) => col.name === "account_id");
+      const there = c.columns.find((col) => col.name === "account_id");
+      return here !== undefined && there !== undefined && here.notNull !== there.notNull;
+    }).map(([name]) => name).sort();
+    expect(differs).toEqual([...DEVICE_NULLABLE_ACCOUNT_COLUMNS].sort());
+  });
+
+  it("leaves out only the server's key targets, each a unique index on (id, <owner>) the device lacks", () => {
+    const pgIndexes = new Map(pgTables.flatMap(([, t]) => pgConfig(t).indexes.map((i) => [indexName(i), i] as const)));
+    const sqliteIndexes = new Set([...sqliteTables.values()].flatMap((t) => sqliteConfig(t).indexes.map((i) => i.config.name)));
+    for (const name of SERVER_ONLY_UNIQUE_INDEXES) {
+      const ix = pgIndexes.get(name);
+      expect(ix?.config.unique, `${name}: a unique index on the server`).toBe(true);
+      const owner = name === "mailbox_folders_id_mailbox_uq" ? "mailbox_id" : "account_id";
+      expect(ix!.config.columns.map((c) => (c as { name: string }).name), name).toEqual(["id", owner]);
+      expect(sqliteIndexes.has(name), `${name}: absent on the device`).toBe(false);
     }
   });
 
@@ -417,6 +486,26 @@ describe("the SQLite twin is the same schema", () => {
     expect(extra, "exported names here that the server twin does not have").toEqual([]);
     // Each named device-only table exists here, so the exemption cannot outlive its table.
     for (const n of DEVICE_ONLY_TABLES) expect(sqliteTables.has(n), `${n} is exempted and not declared`).toBe(true);
+  });
+
+  it("the tables only the server declares are the calendar's: all of them, and nothing else", () => {
+    const declared = new Map(allPgTables.map(([name, t]) => [name, pgConfig(t).name]));
+    for (const n of SERVER_ONLY_TABLES) {
+      expect(declared.has(n), `${n} is exempted and not declared on the server`).toBe(true);
+      expect(sqliteTables.has(n), `${n} has a device twin and is still exempted`).toBe(false);
+    }
+    const calendar = [...declared].filter(([, sqlName]) => sqlName.startsWith("cal_")).map(([name]) => name).sort();
+    expect([...SERVER_ONLY_TABLES].sort()).toEqual(calendar);
+  });
+
+  it("every calendar table carries its account, and may not be without one", () => {
+    const calendar = allPgTables.map(([, t]) => pgConfig(t)).filter((c) => c.name.startsWith("cal_"));
+    expect(calendar.length).toBe(10);
+    const without = calendar.filter((c) => {
+      const account = c.columns.find((col) => col.name === "account_id");
+      return account === undefined || !account.notNull;
+    }).map((c) => c.name);
+    expect(without, "a calendar table whose rows can stand without an account").toEqual([]);
   });
 
   it("compares every foreign key, so a reference cannot drift on one store alone", () => {

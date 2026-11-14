@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "../src/testing.js";
@@ -25,7 +26,7 @@ async function world() {
       senderCheck, senderCheckBrand: senderCheck === "impersonation" ? "PostFinance" : null,
     }).returning({ id: messages.id });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

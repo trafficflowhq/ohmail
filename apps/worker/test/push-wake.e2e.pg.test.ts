@@ -147,6 +147,9 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
   let sql: ReturnType<typeof postgres>;
   let dz: ReturnType<typeof drizzle>;
   let db: Tx;
+  /** A wake registration names an account that exists (cloud 0103's key). */
+  const anAccount = async (): Promise<string> =>
+    (await db.insert(accounts).values({ name: `wake-${randomUUID()}` }).returning())[0]!.id;
 
   /**
    * WAIT FOR THE HUB'S LISTEN TO BE LIVE, by proving it delivers.
@@ -200,7 +203,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
   } as unknown as Parameters<ReturnType<typeof makePushService>["subscribe"]>[0]);
 
   it("MANAGED ARM — registers a public endpoint, wakes once per batch, coalesces, prunes, revokes", async () => {
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "push.managed-arm.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
 
@@ -285,7 +288,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
   }, 60_000);
 
   it("MANAGED ARM — an explicit unsubscribe stops wakes", async () => {
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "push.revoke-arm.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
     const guard = makePushEndpointGuard(
@@ -380,7 +383,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
 
   it("SELF-HOST ARM — the real POST on a real socket carries the byte-identical constant", async () => {
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/up/${randomUUID()}`;
 
     // The RELAXED policy — `TF_PUSH_ALLOW_PRIVATE=1`'s branch. Loopback is permitted, http is
@@ -446,7 +449,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * exercised here by a synthetic device that is real in every respect the code can observe.
      */
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/up/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -556,7 +559,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * plaintext case exists for it.
      */
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/wp/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -628,7 +631,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * that is not one, and nothing on the wire would ever say so.
      */
     const l = await listener();
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const endpoint = `${l.origin}/up/${randomUUID()}`;
     const sub = makeSubscriber();
 
@@ -682,7 +685,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * sealed body says nothing about where it is going — a re-pointed endpoint on a keyed
      * registration is the same attack with a different payload, so it gets the same refusal.
      */
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "sealed-flips.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
     const sub = makeSubscriber();
@@ -738,7 +741,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
   }, 60_000);
 
   it("SSRF at REGISTRATION — a private-range endpoint is refused before any row is written", async () => {
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const guard = makePushEndpointGuard(
       fixedResolver({ "rebind.example.com": ["169.254.169.254"] }), { allowPrivate: false },
     );
@@ -780,7 +783,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
      * by the time the worker dials it. Nothing about the stored row changed; the world did. A
      * design that cleared once and trusted the row forever would POST to `169.254.169.254` here.
      */
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     const host = "flips.example.com";
     const endpoint = `https://${host}/up/${randomUUID()}`;
 
@@ -837,7 +840,7 @@ describe.skipIf(!AVAILABLE)("acceptance — the new-mail wake, both arms", () =>
     // The absent-config-safe branch. `pushService` (the plain singleton) is what a composition
     // root gets by forgetting, and forgetting must not mean "accept an unvalidated endpoint".
     const { pushService } = await import("@trafficflow/services");
-    const accountId = randomUUID();
+    const accountId = await anAccount();
     await expect(pushService.subscribe(
       ctxFor(accountId), { transport: "unifiedpush", endpoint: "https://push.example.com/up/x" },
     )).rejects.toThrow(/not enabled on this server/);

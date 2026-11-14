@@ -9,11 +9,11 @@ import {
   classifyDrift, driftAdmitted, driftSentence, gitProvenanceReader,
   type MigrationDrift, type ProvenanceReader,
 } from "./migration-provenance.js";
-import { runMigrations, openMigrationSession, JOURNALS } from "./migrate.js";
+import { runMigrations, openMigrationSession, JOURNALS, type MigrateOptions } from "./migrate.js";
 import { ROLE_DEFAULT_TIMEOUTS } from "./client.js";
 import {
-  ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, retireBodyVector, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC,
-  type BodyVectorRetirement,
+  ensureSearchExtensions, ensureWithheldProvenanceIndex, ensureWordIndex, retireOldSearch, TRIGRAM_INDEX_SPECS, WORD_INDEX_SPEC,
+  type OldSearchRetirement,
 } from "./search-setup.js";
 import {
   ensureHotPathIndexes, HOT_PATH_INDEXES, DEFERRED_HOT_PATH_INDEXES,
@@ -48,8 +48,6 @@ import {
 
 /** The trigram GIN indexes {@link ensureSearchExtensions} creates — verified by name. */
 export const TRIGRAM_INDEXES = [
-  "messages_subject_trgm_idx",
-  "messages_from_address_trgm_idx",
   "message_search_terms_trgm_idx",
   "message_search_head_terms_trgm_idx",
   "message_search_names_trgm_idx",
@@ -109,8 +107,8 @@ export interface ProdSetupReport {
   pgTrgmVersion: string | null;
   /** The trigram GIN indexes and the word index that exist, sorted. */
   trigramIndexes: string[];
-  /** The old body vector's retirement on this server: its trigger, its GIN, the accounts that still read it. */
-  bodyVector: BodyVectorRetirement;
+  /** The old search's retirement on this server: its columns, its trigger, its GIN, what still reads it. */
+  oldSearch: OldSearchRetirement;
   /** Which of {@link HOT_PATH_INDEXES} exist, sorted — verified fail-closed below. */
   hotPathIndexes: string[];
   /** Deferred indexes whose table has crossed its ceiling and which are still missing. */
@@ -187,6 +185,12 @@ export interface ProdSetupOptions {
   dataApi?: DataApiPolicy;
   /** Injection seams for the HTTP half — tests supply them, production does not. */
   dataApiDeps?: DataApiDeps;
+  /**
+   * What a store at 1.0.11's heads needs to become a 2.0 store (`runMigrations`): its kind and an
+   * opener for its sealed values. Read in that one state only; absent there, the setup refuses
+   * with nothing changed.
+   */
+  transition?: MigrateOptions["transition"];
 }
 
 /** How long the endpoint half's config change is given to propagate before the probe fires. */
@@ -572,7 +576,7 @@ export async function setupProdDatabase(
       journals.map((j) => `${j.spec.name} ${before.get(j.spec.name)?.size ?? 0}/${j.entries.length}`).join(", ") +
       " already applied)",
   );
-  await runMigrations(url, { log: (m) => log(m) });
+  await runMigrations(url, { log: (m) => log(m), ...(opts.transition ? { transition: opts.transition } : {}) });
 
   // Same shape as `pre`: the trigram and hot-path builds take the migration lock on this session.
   const clientSession = await openMigrationSession(url, { log });
@@ -589,8 +593,8 @@ export async function setupProdDatabase(
     await ensureSearchExtensions(db);
     log("ensuring the account-keyed word index");
     await ensureWordIndex(db, { log: (m) => log(m) });
-    log("retiring the old body vector (server only: the desktop's store keeps it)");
-    const bodyVector = await retireBodyVector(db, { log: (m) => log(m) });
+    log("retiring the old search where nothing is found by it alone");
+    const oldSearch = await retireOldSearch(db, { log: (m) => log(m) });
 
     // AFTER the migrator, not before it: these index tables the journal creates, and unlike the
     // provenance prebuild there is no journal statement to beat to the punch. Same session, so
@@ -857,7 +861,7 @@ export async function setupProdDatabase(
       pgTrgm: ext.length > 0,
       pgTrgmVersion: ext[0]?.extversion ?? null,
       trigramIndexes: idx.map((r) => r.indexname).sort(),
-      bodyVector,
+      oldSearch,
       hotPathIndexes: hotIdx.map((r) => r.indexname).sort(),
       deferredIndexesOverCeiling: deferredOverCeiling.sort(),
       changeLogCompositeIndex: composite[0]?.indexname ?? null,
@@ -881,7 +885,7 @@ export async function setupProdDatabase(
       if (!report.trigramIndexes.includes(want)) problems.push(`trigram GIN index missing: ${want}`);
     }
     if (!report.trigramIndexes.includes(WORD_INDEX_SPEC.name)) problems.push(`search word index missing: ${WORD_INDEX_SPEC.name}`);
-    if (bodyVector.trigger === "bounded") problems.push("message_bodies_body_tsv_tg still runs message_bodies_body_tsv_bounded (every new body stores a vector)");
+    if (oldSearch.trigger === "bounded") problems.push("message_bodies_body_tsv_tg still runs message_bodies_body_tsv_bounded (every new body stores a vector)");
     for (const want of HOT_PATH_INDEXES) {
       if (!report.hotPathIndexes.includes(want)) {
         problems.push(`hot-path index missing or INVALID: ${want}`);

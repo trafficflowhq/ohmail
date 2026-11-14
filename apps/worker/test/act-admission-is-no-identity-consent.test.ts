@@ -9,6 +9,7 @@ import {
   accounts, accountSettings, applyScreenerDecision, auditLog, changeLog, contactNotes, contacts, folderState,
   learningSignals, mailboxFolders, mailboxes, messageInstances, messages, resolveCutline, rules, senderHasHeldClaimSql,
   type Tx,
+  accountPass, requestPass,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
@@ -51,7 +52,7 @@ async function world(o: { role?: "organizer" | "reader" } = {}) {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: me, createdAt: CONNECT, ...(o.role ? { organizerRole: o.role } : {}),
   }).returning();
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   const fleet = new FakeAdapterFleet();
   const adapter = fleet.factory(
     { host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
@@ -101,7 +102,7 @@ async function world(o: { role?: "organizer" | "reader" } = {}) {
       accountId, mailboxId: mb!.id, messageId: m!.id, folder: "Sent", uidvalidity: 7n, uid: uid++, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   const rulesOf = async () => (await db.select({ id: rules.id, match: rules.match, destination: rules.destination })
@@ -393,8 +394,7 @@ describe("a company's own address the act let in waits unless confirmed", () => 
       .toMatchObject({ desired: "INBOX", held: false });
 
     // The walks re-decide without the arrival door's fact: the confirmed letter stays, the held one too.
-    await w.db.insert(accountSettings).values({ accountId: w.accountId, ohboxTidyRequestedAt: new Date() })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { ohboxTidyRequestedAt: new Date() } });
+    await requestPass(w.db, accountPass("ohbox_tidy", w.accountId), new Date());
     await ohboxTidyPass(w.db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });
     await w.db.update(rules).set({ retroRequestedAt: new Date(), retroDoneAt: null }).where(eq(rules.accountId, w.accountId));
     await ruleRetroPass(w.db, { accountId: w.accountId, trustedAuthservIdsFor: NONE });

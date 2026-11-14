@@ -76,7 +76,7 @@ async function seedAccount(db: Db): Promise<{ accountId: string; mailboxId: stri
     .values({ accountId, provider: "imap", address: `o-${randomUUID().slice(0, 8)}@tf.test`, ...ORGANIZER_CONSENT }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "127.0.0.1", port: 3143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: mb!.id };

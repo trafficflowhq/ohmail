@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -123,7 +124,7 @@ describe("the press claims on this door within seconds, with the poll an hour aw
     ["the shared organize route", async (s) => {
       // The shared route asks only that a credential row exist (a paired device's press); no dial.
       await s.db.insert(mailboxCredentials).values({
-        mailboxId: s.world.mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+        mailboxId: s.world.mailboxId, accountId: accountOfMailbox(s.world.mailboxId), transport: "imap", secretEnc: "sealed", keyVersion: 1,
         meta: { host: "imap.invalid", port: 993, secure: true, user: "owner@trafficflow.test" },
       }).onConflictDoNothing();
       return json(s, `/mailboxes/${s.world.mailboxId}/organize`, { intent: "join" });

@@ -393,7 +393,7 @@ describe("imap_slot_release_failed — attachments-adapter.ts", () => {
       accountId, provider: "imap", address: `att-${randomUUID().slice(0, 8)}@example.invalid`,
     }).returning();
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "enc", keyVersion: 1,
       meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
     });
     const bag = {

@@ -69,3 +69,67 @@ jobs:
           mkdir -p build
           npx vitest run --reporter=default --reporter=json --outputFile=build/ci-search-budget.json packages/services/test/search-budget.pg.test.ts
           node -e 'const n=require("./build/ci-search-budget.json").testResults.length;if(n!==1){console.error("expected the one file, the report holds "+n);process.exit(1)}'
+
+  # THE 2.0 TRANSITION ON POSTGRES 17, THE HOSTED DATABASE'S MAJOR. A database walked along the 1.0 journals to their
+  # heads and planted is moved by the transition, and held against one made from empty by the ordinary
+  # migrator: the same catalog line for line, the counts the map's formulas give. ci.yml's nightly runs the
+  # same two files alone on the test stack's 16; the hosted database is 17, and a catalog read, a
+  # validation or a plan that differs between the two would otherwise first be met on the day. After the
+  # budget and never beside it (the budget is judged on a quiet runner), on docker-compose.yml's `db-17`
+  # (profile prod-major), which test/ci-shards.test.ts ties to this service.
+  transition-nightly-pg17:
+    name: suite · 2.0 transition · Postgres 17
+    needs: [search-budget]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres-17:
+        image: postgres:17.6@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+        env:
+          POSTGRES_USER: tf
+          POSTGRES_PASSWORD: tf
+          POSTGRES_DB: trafficflow_test
+        ports: ["5434:5432"]
+        options: >-
+          --shm-size=1g
+          --health-cmd "pg_isready -U tf -d trafficflow_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      PG17_PORT: "5434"
+      TF_REQUIRE_PG: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22.23.4
+
+      - name: Install the locked dependency tree
+        run: bash "$GITHUB_WORKSPACE/.github/scripts/retry-infra.sh" npm-network -- npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Apply the patches this repository carries
+        run: node scripts/apply-patches.mjs apply
+
+      - name: The project build
+        run: npm run build
+
+      - name: This checkout's own database, from empty, on the second server
+        run: |
+          set -euo pipefail
+          echo "DATABASE_URL_PG_TEST=postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:$PG17_PORT/$POSTGRES_DB" >> "$GITHUB_ENV"
+          DATABASE_URL_PG_TEST="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@localhost:$PG17_PORT/$POSTGRES_DB" bash scripts/lane-db.sh "$GITHUB_WORKSPACE"
+        env:
+          POSTGRES_USER: tf
+          POSTGRES_PASSWORD: tf
+          POSTGRES_DB: trafficflow_test
+
+      - name: The transition, and a store from empty against a moved one, on Postgres 17
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          psql_version="$(node -e 'const postgres=require("postgres");const s=postgres(process.env.DATABASE_URL_PG_TEST,{max:1});s`show server_version_num`.then(r=>{console.log(r[0].server_version_num);return s.end()})')"
+          case "$psql_version" in 17*) ;; *) echo "the second leg is not on Postgres 17: server_version_num $psql_version"; exit 1 ;; esac
+          npx vitest run --reporter=default --reporter=json --outputFile=build/ci-transition-17.json packages/db/test/transition.pg.test.ts packages/db/test/transition-fresh-equals-moved.pg.test.ts
+          node -e 'const n=require("./build/ci-transition-17.json").testResults.length;if(n!==2){console.error("expected the two files, the report holds "+n);process.exit(1)}'

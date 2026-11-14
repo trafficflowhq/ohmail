@@ -4,7 +4,7 @@ import { randomInt, randomUUID } from "node:crypto";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, like, lt as lessThan, or, sql } from "drizzle-orm";
 import {
   accounts, users, devices, sessions, readAccountErasedAt, fencedAccountOf, inTransactionHandle,
-  markFenced, type Tx,
+  markFenced, accountOfUser, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { createLogger } from "@trafficflow/core/mail";
@@ -876,7 +876,7 @@ export class AuthService extends SessionLifecycle {
         }
         throw e;
       });
-      await tx.insert(credentials).values({ userId: user!.id, passwordHash, algo: "scrypt" });
+      await tx.insert(credentials).values({ userId: user!.id, accountId: user!.accountId, passwordHash, algo: "scrypt" });
 
       if (outcome?.ok) {
         await tx.update(invites).set({ consumedByUserId: user.id }).where(eq(invites.id, outcome.inviteId));
@@ -1141,7 +1141,7 @@ export class AuthService extends SessionLifecycle {
         .limit(1).for("share");
       if (!still) return false;
       await tx.insert(loginTokens).values({
-        userId: user.id,
+        userId: user.id, accountId: user.accountId,
         tokenHash: hashToken(rawToken),
         methods,
         purpose: "login",
@@ -1336,7 +1336,7 @@ export class AuthService extends SessionLifecycle {
         eq(loginTokens.purpose, DESKTOP_LINK_PURPOSE),
       ));
       await db.insert(loginTokens).values({
-        userId,
+        userId, accountId: accountOfUser(userId),
         tokenHash: hashToken(code),
         methods: [],
         purpose: DESKTOP_LINK_PURPOSE,
@@ -1577,7 +1577,7 @@ export class AuthService extends SessionLifecycle {
       // stamped `approved_at`, a desktop signed in here could confirm the next one into a fresh window.
       const meta = await desktopGrantMeta(db, ctx);
       const [bound] = await db.update(loginTokens)
-        .set({ userId, approvedAt: now, oauthMeta: meta })
+        .set({ userId, accountId: accountOfUser(userId), approvedAt: now, oauthMeta: meta })
         .where(and(
           eq(loginTokens.id, approvalId),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
@@ -1611,7 +1611,7 @@ export class AuthService extends SessionLifecycle {
     return this.inTransaction(ctx, async (txCtx) => {
       const db = asTx(txCtx);
       const [killed] = await db.update(loginTokens)
-        .set({ userId, revokedAt: now })
+        .set({ userId, accountId: accountOfUser(userId), revokedAt: now })
         .where(and(
           eq(loginTokens.id, approvalId),
           eq(loginTokens.purpose, DESKTOP_APPROVAL_PURPOSE),
@@ -1767,7 +1767,7 @@ export class AuthService extends SessionLifecycle {
     // The challenge is consumed and the signature verified BEFORE the transaction
     // opens: single-use must survive a rolled-back enrollment (burning it on a failed
     // verify is the safe direction), and the crypto touches no rows.
-    const ch = await this.consumeChallenge(asTx(ctx), ctx, { userId, type: "registration" });
+    const ch = await this.consumeChallenge(asTx(ctx), ctx, { userId, accountId: ctx.accountId, type: "registration" });
     // `expectedOrigin` is the STORED origin, so a passkey created on one allow-listed
     // origin cannot land through a ceremony opened on another even
     // though both are allow-listed. A verification failure is a 401, not the 500 the
@@ -1785,7 +1785,7 @@ export class AuthService extends SessionLifecycle {
     return this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
       const [row] = await db.insert(webauthnCredentials).values({
-        userId, credentialId: reg.credentialId, publicKey: reg.publicKey,
+        userId, accountId: accountOfUser(userId), credentialId: reg.credentialId, publicKey: reg.publicKey,
         counter: reg.counter, transports: reg.transports, label: b.label ?? "",
         deviceType: reg.deviceType, backedUp: reg.backedUp,
       }).returning();
@@ -1897,7 +1897,7 @@ export class AuthService extends SessionLifecycle {
         return;
       }
       await db.delete(totpSecrets).where(and(eq(totpSecrets.userId, userId), eq(totpSecrets.activated, false)));
-      await db.insert(totpSecrets).values({ userId, secretEnc: ciphertext, keyVersion, activated: false });
+      await db.insert(totpSecrets).values({ userId, accountId: user.accountId, secretEnc: ciphertext, keyVersion, activated: false });
     }, { fence: { accountId: user.accountId } });
 
     const otpauthUrl = totpUri({ issuer: this.cfg.totpIssuer, label: user.email, secret });
@@ -2252,7 +2252,9 @@ export class AuthService extends SessionLifecycle {
     // is re-spoken in the wrong-code sentence — the caller must not learn WHICH part failed.
     let ch;
     try {
-      ch = await this.consumeChallenge(db, ctx, { userId: user.id, type: "authentication", challenge: submitted });
+      ch = await this.consumeChallenge(db, ctx, {
+        userId: user.id, accountId: user.accountId, type: "authentication", challenge: submitted,
+      });
     } catch {
       await this.twofaFail(db, user, ctx);
       throw credentialRefused("two-factor verification failed");
@@ -2360,13 +2362,13 @@ export class AuthService extends SessionLifecycle {
       // Regenerating invalidates the prior set.
       await db.delete(recoveryCodes).where(eq(recoveryCodes.userId, userId));
       const batchId = randomUUID();
-      const values = [] as Array<typeof recoveryCodes.$inferInsert>;
+      const values = [] as Array<Omit<typeof recoveryCodes.$inferInsert, "accountId">>;
       for (let i = 0; i < 10; i++) {
         const code = `${rand4()}-${rand4()}-${rand4()}`;
         codes.push(code);
         values.push({ userId, codeHash: hashToken(code), batchId });
       }
-      await db.insert(recoveryCodes).values(values);
+      await db.insert(recoveryCodes).values(values.map((v) => ({ ...v, accountId: accountOfUser(userId) })));
     }, { fence: { accountId: ctx.accountId } });
     return { codes, generatedAt: ctx.now().toISOString() };
   }
@@ -2543,7 +2545,7 @@ export class AuthService extends SessionLifecycle {
         eq(loginTokens.purpose, OAUTH_AUTHORIZE_PURPOSE),
       ));
       await db.insert(loginTokens).values({
-        userId,
+        userId, accountId: accountOfUser(userId),
         tokenHash: hashToken(handle),
         methods: [],
         purpose: OAUTH_AUTHORIZE_PURPOSE,
@@ -2635,7 +2637,7 @@ export class AuthService extends SessionLifecycle {
       // session row), so this is the arm that keeps it that way if a caller ever appears.
       if (!stored || stored.sessionId === null || stored.sessionId !== (ctx.sessionId ?? null)) return null;
       await db.insert(oauthAuthCodes).values({
-        userId, clientId: stored.clientId, codeHash: hashToken(rawCode),
+        userId, accountId: accountOfUser(userId), clientId: stored.clientId, codeHash: hashToken(rawCode),
         codeChallenge: stored.codeChallenge, codeChallengeMethod: "S256",
         redirectUri: stored.redirectUri, scope: stored.scope,
         twofaAt: stored.twofaAt === null ? null : new Date(stored.twofaAt),
@@ -2995,7 +2997,8 @@ export class AuthService extends SessionLifecycle {
   ): Promise<void> {
     const open = async (tx: Tx): Promise<void> => {
       await tx.insert(webauthnChallenges).values({
-        ...(v.userId !== undefined ? { userId: v.userId } : {}),
+        // The account is named exactly when the user is (cloud 0100).
+        ...(v.userId !== undefined ? { userId: v.userId, accountId: accountOfUser(v.userId) } : {}),
         ...(v.loginTokenId !== undefined ? { loginTokenId: v.loginTokenId } : {}),
         challenge: v.challenge, type: v.type,
         rpId: this.cfg.rpID, origin: v.origin,
@@ -3019,10 +3022,13 @@ export class AuthService extends SessionLifecycle {
     // with several open ceremonies gets "the newest", which is how two overlapping step-ups
     // burned each other. It is a selector only: the signature check downstream still binds the
     // claimed row's challenge and origin.
-    q: { userId?: string; loginTokenId?: string; type: string; challenge?: string },
+    // `accountId` rides with `userId`: cloud 0100's index on the user arm leads with the account,
+    // so a read that names the user alone would scan every open ceremony of the deployment.
+    q: { userId?: string; accountId?: string; loginTokenId?: string; type: string; challenge?: string },
   ): Promise<typeof webauthnChallenges.$inferSelect> {
     const preds = [eq(webauthnChallenges.type, q.type), isNull(webauthnChallenges.consumedAt)];
     if (q.userId) preds.push(eq(webauthnChallenges.userId, q.userId));
+    if (q.userId && q.accountId) preds.push(eq(webauthnChallenges.accountId, q.accountId));
     if (q.loginTokenId) preds.push(eq(webauthnChallenges.loginTokenId, q.loginTokenId));
     if (q.challenge) preds.push(eq(webauthnChallenges.challenge, q.challenge));
     const row = (await db.select().from(webauthnChallenges)

@@ -82,9 +82,9 @@ describe("a Cloud claim on a paired desktop and on the server", () => {
         date: new Date("2020-01-01T08:00:00.000Z"), arrivedAt: at(recorded), unread: false, createdAt: at(recorded),
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${who}` },
       }).returning();
-      await server.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await server.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
       await server.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await server.insert(contacts).values({ accountId, address: from, source: "inferred" });

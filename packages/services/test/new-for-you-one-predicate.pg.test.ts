@@ -59,7 +59,7 @@ async function world(n: number): Promise<{ accountId: string; ids: string[] }> {
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     ids.push(m!.id);

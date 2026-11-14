@@ -1,3 +1,6 @@
+import { UNWRITTEN_TABLES } from "../../db/test/_unwritten-tables.js";
+import { accountOfUser } from "@trafficflow/db";
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import { getTableColumns, getTableName, is, sql } from "drizzle-orm";
@@ -17,7 +20,6 @@ import {
   attachments,
   auditLog,
   awayReplies,
-  awayResponderSent,
   awaySenderState,
   awayResponders,
   changeLog,
@@ -57,6 +59,9 @@ import {
   mailboxFolders,
   folderOps,
   junkRescues,
+  messageInvitations,
+  mailboxPass,
+  writePassProgress,
   listAddresses,
 } from "@trafficflow/db";
 import {
@@ -64,6 +69,7 @@ import {
   alertState,
   authEvents,
   authThrottle,
+  accountCounters,
   connectAttempts,
   creditRefundObligations,
   credentials,
@@ -886,6 +892,10 @@ const UNSEEDED_TABLES: readonly string[] = [
   // `mailbox_storage_stats`, holds no text column and so is no part of this sweep.)
   "account_storage_prefs",
   "storage_mail_sent",
+  // ── Tables nothing writes yet (`packages/db/test/_unwritten-tables.ts`): no account has a row,
+  //    so there is nothing a staff surface could show. That list is held to the tree; a table's
+  //    first writer takes it off, and it then arrives here unseeded and red.
+  ...Object.keys(UNWRITTEN_TABLES),
 ];
 
 /**
@@ -1609,7 +1619,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     accountId, address: `ops-${tag}@example.com`, folders: [{ folder: "INBOX" }],
   });
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: `enc-${tag}`, keyVersion: 1,
+    mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: `enc-${tag}`, keyVersion: 1,
     meta: { host: "imap.example.com", user: `ops-${tag}@example.com` },
   });
 
@@ -1666,7 +1676,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   // and land in REFUSED_BY_CONSTRAINT instead. The subject row is its own mailbox_folders line
   // so the CHECK pairing (`rename` ⇔ `to_folder IS NOT NULL`) holds under the sweep's UPDATE.
   const [cmdFolder] = await db.insert(mailboxFolders).values({
-    mailboxId, folder: `Mandate ${tag}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
+    mailboxId, accountId: accountOfMailbox(mailboxId), folder: `Mandate ${tag}`, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n,
   }).returning();
   await db.insert(folderOps).values({
     accountId, mailboxId, folderId: cmdFolder!.id,
@@ -1679,6 +1689,19 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   // state accounts are genuinely found in between a press and the organizer's next cycle.
   await db.insert(junkRescues).values({
     accountId, mailboxId, folder: `Junk ${tag}`, uidvalidity: 7n, uid: 3,
+  });
+  // The identity of an invitation a letter carried (mail 0204). SEEDED rather than exempted: its
+  // text is the sender's own (an event's id, the organizer's address) and no staff surface reads
+  // the table, which the sweep proves by tainting every column of it.
+  await db.insert(messageInvitations).values({
+    accountId, messageId: message.id, mailboxId, uid: `event-${tag}@calendar.example`, method: "REQUEST",
+    startRaw: "20261201T100000Z", organizer: `organizer-${tag}@example.com`, invitedAddress: `invited-${tag}@example.com`,
+  });
+  // Where a one-time pass stands (mail 0203). SEEDED rather than exempted: the staff role is
+  // granted the table's names and timestamps and never `cursor`, which names the letter a pass
+  // stopped at. The sweep taints both text columns, and every staff response is checked for them.
+  await writePassProgress(db as never, mailboxPass("sensitive_rescreen", accountId, mailboxId), {
+    cursor: message.id, startedAt: FIXED_NOW,
   });
   // PHYSICAL identity. SEEDED rather than exempted, deliberately: the
   // sweep then taints `message_instances.folder` and every staff response is checked for the
@@ -1704,7 +1727,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   });
   await db.insert(messageStates).values({ accountId, messageId: message.id, state: "answer_later" });
   await db.insert(flagState).values({
-    messageId: message.id, desiredSeen: false, observedSeen: false, lastSetBy: "us",
+    messageId: message.id, accountId: accountOfMessage(message.id), desiredSeen: false, observedSeen: false, lastSetBy: "us",
   });
   await db.insert(trackerEvents).values({
     accountId, messageId: message.id, kind: "pixel", trackerHost: "track.example.com",
@@ -1752,10 +1775,6 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   await db.insert(snippets).values({ accountId, title: `snip ${tag}`, body: `snip body ${tag}` });
   await db.insert(awayResponders).values({
     accountId, body: `away body ${tag}`, throttle: "per_day", enabledAt: FIXED_NOW,
-  });
-  await db.insert(awayResponderSent).values({
-    accountId, sender: `correspondent-${tag}@example.com`, responderUpdatedAt: FIXED_NOW,
-    mintedMessageId: `<away-reply-${tag}@ohmail.app>`,
   });
   /* mail 0087 — the away responder's LEDGER and its per-correspondent throttle state.
      SEEDED rather than exempted, and the reason is the sweep's own subject: both tables key on a
@@ -1828,15 +1847,15 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
   });
 
   // Auth material — never staff-visible, and it is here so the sweep proves it.
-  await db.insert(credentials).values({ userId: session.userId, passwordHash: `password-hash-${tag}` });
+  await db.insert(credentials).values({ userId: session.userId, accountId: accountOfUser(session.userId), passwordHash: `password-hash-${tag}` });
   // With a replacement in progress (cloud 0046) seeded whole, so the CHECK that seals the trio
   // admits the sweep's marker in its ciphertext and that column is tainted rather than refused.
   await db.insert(totpSecrets).values({
-    userId: session.userId, secretEnc: `totp-${tag}`, keyVersion: 1,
+    userId: session.userId, accountId: accountOfUser(session.userId), secretEnc: `totp-${tag}`, keyVersion: 1,
     pendingSecretEnc: `totp-pending-${tag}`, pendingKeyVersion: 1, pendingStartedAt: FIXED_NOW,
   });
   await db.insert(recoveryCodes).values({
-    userId: session.userId, codeHash: `rec-${tag}`, batchId: crypto.randomUUID(),
+    userId: session.userId, accountId: accountOfUser(session.userId), codeHash: `rec-${tag}`, batchId: crypto.randomUUID(),
   });
   await db.insert(refreshTokens).values({
     accountId, userId: session.userId, sessionId: session.sessionId,
@@ -1844,14 +1863,14 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
   });
   await db.insert(loginTokens).values({
-    userId: session.userId, tokenHash: `lt-${tag}`,
+    userId: session.userId, accountId: accountOfUser(session.userId), tokenHash: `lt-${tag}`,
     expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
   });
   // A pairing token (mail 0059) — a credential the user minted, whose `label` is the user's own
   // words. Part of the account's world, so it is SEEDED (unlike the operator-side tables in
   // UNSEEDED_TABLES) and the sweep proves no staff response carries its digest or its label.
   await db.insert(pairingTokens).values({
-    createdByUserId: session.userId, grant: "invite", tokenHash: `pt-${tag}`,
+    createdByUserId: session.userId, accountId: accountOfUser(session.userId), grant: "invite", tokenHash: `pt-${tag}`,
     label: `pairing-label-${tag}`, expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),
   });
   await db.insert(invites).values({
@@ -1869,6 +1888,7 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     reason: "drafter_failed", lastFault: `fault-${tag}`,
   });
   await db.insert(authThrottle).values({ key: `throttle-${tag}` });
+  await db.insert(accountCounters).values({ accountId, key: `counter-${tag}` });
   await db.insert(idempotencyKeys).values({
     accountId, key: `idemk-${tag}`, requestHash: `hash-${tag}`, responseStatus: 200,
     responseJson: { ok: true }, expiresAt: new Date(FIXED_NOW.getTime() + 3600_000),

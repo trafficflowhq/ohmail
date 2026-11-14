@@ -149,7 +149,7 @@ describe("GET /internal/unsubscribe/drain — the worker's pass counts a refusal
     const s = await seedSession(db, { now: deps.now() });
     const from = `news@${path.slice(1)}.example`;
     const { id } = await seedMessage(db, { accountId: s.accountId, fromAddress: from, folder: "ohmail/Screened" });
-    await db.insert(messageBodies).values({ messageId: id, text: "", headers: headersFor(path) });
+    await db.insert(messageBodies).values({ messageId: id, accountId: s.accountId, text: "", headers: headersFor(path) });
     await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: from,
       destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
     await db.insert(learningSignals).values({ accountId: s.accountId, triggeringActionId: `screener:${crypto.randomUUID()}`,

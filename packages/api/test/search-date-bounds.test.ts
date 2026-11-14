@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
-import { makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedMailbox, seedMessage, seedSearchDocuments, req, FIXED_NOW } from "./helpers.js";
 
 /**
  * `GET /search?dateFrom=…&dateTo=…` — the two filter values that are CAST rather than compared.
@@ -55,6 +55,7 @@ describe("GET /search — a date bound that is not an instant is a 400, never a 
       subject: "quarterly report", date: FIXED_NOW,
     });
 
+    await seedSearchDocuments(db, s.accountId);
     const inRange = await H(
       req("GET", "/search?q=report&dateFrom=2026-07-01T00:00:00.000Z&dateTo=2026-08-01T00:00:00.000Z", { bearer: s.token }),
       deps,

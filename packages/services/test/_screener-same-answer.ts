@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { and, desc, eq, sql, type SQL } from "drizzle-orm";
@@ -72,7 +73,7 @@ export async function seed(given?: Db): Promise<World> {
       nativeLocator: { folder, ref: `1:${i}` },
     } as never).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder,
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: folder, observedFolder: folder,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     } as never);
   };

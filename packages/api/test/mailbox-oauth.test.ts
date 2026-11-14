@@ -728,7 +728,7 @@ describe("cloud 0009 — POST /mailboxes/oauth/microsoft/complete", () => {
     const enc = await w.deps.keyProvider.encrypt("the-old-password");
     for (const transport of ["imap", "smtp"] as const) {
       await w.db.insert(mailboxCredentials).values({
-        mailboxId: mb!.id, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        mailboxId: mb!.id, accountId: mb!.accountId, transport, secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
         meta: { host: "outlook.office365.com", port: 993, secure: true, user: "oauth-user@contoso-com.example" },
         updatedAt: FIXED_NOW,
       });

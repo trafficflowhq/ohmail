@@ -5,7 +5,7 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { sql } from "drizzle-orm";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { accountSettings, folderState, mailboxes, messageBodies, messages, messageTags, tags } from "@trafficflow/db";
+import { accountSettings, folderState, mailboxes, messageBodies, messages, messageTags, tags, accountPass, writePassProgress } from "@trafficflow/db";
 import { schema, makePooledDb, closePooledDbs } from "@trafficflow/db/cloud";
 import { runMigrations, ensureSearchExtensions } from "@trafficflow/db/admin";
 import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
@@ -34,11 +34,9 @@ const svc = new SearchService();
 const NOW = new Date("2026-09-24T12:00:00.000Z");
 const A = randomUUID();
 const B = randomUUID();
-/** Mail and no search document or marker yet: an account the backfill is still building. */
+/** Mail, a search document for its first three letters and no marker yet: an account the backfill is still building. */
 const C = randomUUID();
-/** The same: the backfill reaches it inside one test. */
-const D = randomUUID();
-const own: Record<string, Set<string>> = { [A]: new Set(), [B]: new Set(), [C]: new Set(), [D]: new Set() };
+const own: Record<string, Set<string>> = { [A]: new Set(), [B]: new Set(), [C]: new Set() };
 const PAGE = 4;
 
 function ctx(accountId: string): ServiceContext {
@@ -51,7 +49,7 @@ async function counted<T>(run: () => Promise<T>): Promise<{ value: T; statements
   return { value, statements: [...statements] };
 }
 
-async function seed(accountId: string, n: number, tagId: string, built = true): Promise<void> {
+async function seed(accountId: string, n: number, tagId: string, built = true, docs = built ? n : 0): Promise<void> {
   const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `${accountId.slice(0, 8)}@rt.example` }).returning();
   for (let i = 0; i < n; i++) {
     const [m] = await db.insert(messages).values({
@@ -60,18 +58,17 @@ async function seed(accountId: string, n: number, tagId: string, built = true): 
       date: new Date(NOW.getTime() - i * 3_600_000), unread: i % 2 === 0, hasAttachments: false,
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `a heron by the lake, note ${i}` });
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `a heron by the lake, note ${i}` });
+    await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
     if (i % 2 === 0) await db.insert(messageTags).values({ accountId, messageId: m!.id, tagId });
-    if (built) await upsertMessageSearch(db as never, m!.id, {
+    if (i < docs) await upsertMessageSearch(db as never, m!.id, {
       accountId, subject: `heron sighting ${i}`, from: { name: null, address: `watcher${i % 3}@rt.example` }, to: [], cc: [],
       attachmentNames: [], bodyText: `a heron by the lake, note ${i}`, source: "text",
     });
     own[accountId]!.add(m!.id);
   }
   if (!built) return;
-  await db.insert(accountSettings).values({ accountId, searchIndexBuiltAt: NOW })
-    .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+  await writePassProgress(db, accountPass("search_index_backfill", accountId), { doneAt: NOW });
 }
 
 const isTx = (s: string): boolean => /^(begin|commit)\b/i.test(s);
@@ -100,16 +97,16 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
   beforeAll(async () => {
     await runMigrations(PG_URL);
     await ensureSearchExtensions(db, { concurrently: false });
-    for (const acct of [A, B, C, D]) {
+    for (const acct of [A, B, C]) {
       const [t] = await db.insert(tags).values({ accountId: acct, name: "birds", hue: "moss" }).returning();
-      await seed(acct, acct === B ? 6 : 9, t!.id, acct !== C && acct !== D);
+      await seed(acct, acct === B ? 6 : 9, t!.id, acct !== C, acct === C ? 3 : undefined);
     }
     // Warm the per-handle extension probe, which is once per handle and not per answer.
     await svc.search(ctx(A), { q: "heron", parts: "page", limit: PAGE });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
 
   afterAll(async () => {
-    for (const a of [A, B, C, D]) {
+    for (const a of [A, B, C]) {
       await db.execute(sql`delete from message_search where account_id = ${a}`);
       await db.execute(sql`delete from message_tags where account_id = ${a}`);
       await db.execute(sql`delete from tags where account_id = ${a}`);
@@ -157,41 +154,21 @@ describe("a search answer is a bounded number of statements (real Postgres)", ()
 
   it("while the backfill builds, the count reads its progress once, and again after 30 s", async () => {
     const first = await svc.search(ctx(C), { q: "heron", parts: "estimate", limit: PAGE });
-    expect(first.indexed).toEqual({ done: 0, total: 9 });
+    expect(first.indexed).toEqual({ done: 3, total: 9 });
     for (const parts of ["estimate", "summary"] as const) {
       const r = await counted(() => svc.search(ctx(C), { q: "heron", parts, limit: PAGE }));
-      expect(r.value.total, parts).toBe(9);
-      expect(r.value.indexed, parts).toEqual({ done: 0, total: 9 });
+      expect(r.value.indexed, parts).toEqual({ done: 3, total: 9 });
       expect(r.statements.length, `${parts}: ${r.statements.map((s) => s.slice(0, 60)).join(" | ")}`).toBeLessThanOrEqual(4);
       expect(r.statements.filter((s) => !isTx(s)).length, parts).toBeLessThanOrEqual(2);
     }
     await searchIndexBackfillPass({ db: db as never, accountId: C, batch: 2, rounds: 1, now: () => NOW });
     const later = new Date(NOW.getTime() + 31_000);
     const after = await svc.search({ ...ctx(C), now: () => later }, { q: "heron", parts: "estimate", limit: PAGE });
-    expect(after.indexed).toEqual({ done: 2, total: 9 });
+    expect(after.indexed).toEqual({ done: 5, total: 9 });
   });
 
-  // Before the backfill reaches an account it has no search document: its page reads none, and
-  // asks no match whether it has one. Its answers are the same before, during and after the backfill.
-  it("before the backfill, a page reads no search document; the same page during and after it", async () => {
-    const page = async () => (await svc.search(ctx(D), { q: "heron", parts: "page", limit: 50 })).items.map((m) => m.id);
-    sent = [];
-    const before = await page();
-    const read = sent.find((s) => /\bfused\b/.test(s.q))!;
-    const [plan] = (await client.unsafe(`explain (format json) ${read.q}`, read.params as never[])) as unknown as Array<{ "QUERY PLAN": unknown }>;
-    const relations = (n: Record<string, unknown>): string[] => [String(n["Relation Name"] ?? ""),
-      ...((n["Plans"] as Array<Record<string, unknown>> | undefined) ?? []).flatMap(relations)];
-    const top = (plan!["QUERY PLAN"] as Array<{ Plan: Record<string, unknown> }>)[0]!.Plan;
-    expect(relations(top)).not.toContain("message_search");
-    expect(new Set(before)).toEqual(own[D]);
-    const summary = async () => (await svc.search(ctx(D), { q: "heron", parts: "summary" })).total;
-    expect(await summary()).toBe(9);
-    await searchIndexBackfillPass({ db: db as never, accountId: D, batch: 2, rounds: 1, now: () => NOW });
-    expect(await page()).toEqual(before);
-    expect(await summary()).toBe(9);
-    await searchIndexBackfillPass({ db: db as never, accountId: D, now: () => NOW });
-    expect(await page()).toEqual(before);
-  });
+  // (That an account's answers are the same before, during and after its documents are built is
+  // asked of a store that still carries the columns search read before them: `search-store-fact.pg.test.ts`.)
 
   it("on the pooled handle a page answers after ONE round trip: begin, the settings and the read in one flight", async () => {
     const RTT = 40;

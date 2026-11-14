@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 import { messages } from "@trafficflow/db";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { createLogger } from "@trafficflow/core/mail";
-import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, req, FIXED_NOW } from "./helpers.js";
+import { makeDeps, seedSession, seedMailbox, seedMessage, seedBody, seedSearchDocuments, req, FIXED_NOW } from "./helpers.js";
 
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -33,6 +33,7 @@ describe("GET /search — hybrid search endpoint", () => {
     });
     await seedBody(db, { messageId: other.id, text: "Deals this week." });
 
+    await seedSearchDocuments(db, s.accountId);
     const res = await H(req("GET", "/search?q=invoice", { bearer: s.token }), deps);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -54,6 +55,7 @@ describe("GET /search — hybrid search endpoint", () => {
       subject: "Invoice from Anna", fromAddress: "anna@acme-com.example", unread: true, date: FIXED_NOW,
     });
     await seedBody(db, { messageId: inv.id, text: "Please pay the invoice." });
+    await seedSearchDocuments(db, s.accountId);
     const lines: string[] = [];
     const logged = { ...deps, logger: createLogger({ service: "api", level: "debug", sink: (l: string) => { lines.push(l); } }) };
     for (const [path, part] of [["/search?q=invoice&parts=page", "page"], ["/search?q=invoice&parts=summary", "summary"],
@@ -90,6 +92,7 @@ describe("GET /search — hybrid search endpoint", () => {
     });
     await seedBody(db, { messageId: inv.id, text: "Please pay the invoice." });
 
+    await seedSearchDocuments(db, s.accountId);
     const res = await H(req("GET", "/search?q=invoice&parts=estimate", { bearer: s.token }), deps);
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -112,6 +115,7 @@ describe("GET /search — hybrid search endpoint", () => {
     const b = await seedMessage(db, { accountId: s.accountId, mailboxId: mb, folder: "ohmail/News", subject: "Report Q2", date: FIXED_NOW });
     await seedBody(db, { messageId: b.id, text: "quarterly report" });
 
+    await seedSearchDocuments(db, s.accountId);
     const res = await H(req("GET", "/search?q=report&folder=INBOX", { bearer: s.token }), deps);
     const body = await res.json();
     expect(body.items.map((m: { id: string }) => m.id)).toEqual([a.id]);
@@ -130,6 +134,7 @@ describe("GET /search — hybrid search endpoint", () => {
     const b = await seedMessage(db, { accountId: s.accountId, mailboxId: mb, folder: "INBOX", subject: "Report B", unread: false, date: FIXED_NOW });
     await seedBody(db, { messageId: b.id, text: "quarterly report" });
 
+    await seedSearchDocuments(db, s.accountId);
     const ids = async (query: string): Promise<string[]> => {
       const res = await H(req("GET", `/search?q=report&${query}`, { bearer: s.token }), deps);
       expect(res.status, query).toBe(200);
@@ -167,6 +172,8 @@ describe("GET /search — hybrid search endpoint", () => {
     const otherAcct = randomUUID();
     const theirs = await seedMessage(db, { accountId: otherAcct, folder: "INBOX", subject: "Invoice theirs", date: FIXED_NOW });
     await seedBody(db, { messageId: theirs.id, text: "invoice body" });
+    await seedSearchDocuments(db, s.accountId);
+    await seedSearchDocuments(db, otherAcct);
 
     const res = await H(req("GET", "/search?q=invoice", { bearer: s.token }), deps);
     const body = await res.json();

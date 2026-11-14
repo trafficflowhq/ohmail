@@ -112,7 +112,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
       accountId: s.accountId, mailboxId: mb,
       fromAddress: "news@sender.example", folder: "ohmail/Screened",
     });
-    await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK });
+    await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", headers: ONE_CLICK });
     // A person screened the sender out — the only licence the pass acts on (UD-R4-03).
     await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: "news@sender.example",
       destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
@@ -176,7 +176,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
         accountId: s.accountId, mailboxId: mb,
         fromAddress: "news@sender.example", folder: "ohmail/Screened",
       });
-      await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK });
+      await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", headers: ONE_CLICK });
       // A person screened the sender out — the only licence the pass acts on (UD-R4-03).
       await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: "news@sender.example",
         destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });
@@ -230,7 +230,7 @@ describe("GET /internal/unsubscribe/drain — the surface", () => {
         accountId: s.accountId, mailboxId: mb,
         fromAddress: "news@sender.example", folder: "ohmail/Screened",
       });
-      await db.insert(messageBodies).values({ messageId, text: "", headers: ONE_CLICK });
+      await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", headers: ONE_CLICK });
       // A person screened the sender out — the only licence the pass acts on (UD-R4-03).
       await db.insert(rules).values({ accountId: s.accountId, kind: "sender", match: "news@sender.example",
         destination: "ohmail/Screened", provenance: "promoted", personDecidedAt: deps.now() });

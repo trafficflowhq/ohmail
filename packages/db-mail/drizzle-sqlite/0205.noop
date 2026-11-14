@@ -1,0 +1,5 @@
+0205_calendar — NOT CARRIED AS A STEP: A DEVICE'S OWN STORE HAS NO CALENDAR.
+
+The shared entry makes the ten `cal_*` tables on a server. A phone that organizes on its own has
+no calendar in 2.0, so this store gets none of them; `schema-twin-parity.test.ts` names all ten as
+tables only the server declares. A desktop's engine runs the shared journal and holds them.

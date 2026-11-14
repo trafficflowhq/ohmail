@@ -86,9 +86,9 @@ async function world(throttle: "always" | "per_day"): Promise<World> {
       bodyHash: randomUUID(), dedupKey: randomUUID(), subject: "the roof",
       fromAddress: THEM, date: at, createdAt: at,
     }).returning();
-    await dbA.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+    await dbA.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
     await dbA.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
   }
   return { accountId, x, y };
