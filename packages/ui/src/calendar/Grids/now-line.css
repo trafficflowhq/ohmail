@@ -1,0 +1,29 @@
+/* The present hour: a line across today with the dot at its head. */
+@layer oh {
+  .oh-now {
+    --oh-now-w: 2px;
+    --oh-now-r: 1px;
+    --oh-now-head: 10px;
+    --oh-now-z: 3;
+    --oh-now-pull: calc(var(--oh-now-w) / -2);
+    position: absolute;
+    right: 2px;
+    left: -5px;
+    z-index: var(--oh-now-z);
+    height: var(--oh-now-w);
+    margin-top: var(--oh-now-pull);
+    border-radius: var(--oh-now-r);
+    background: var(--hot);
+    pointer-events: none;
+  }
+  .oh-now::before {
+    content: "";
+    position: absolute;
+    top: calc((var(--oh-now-w) - var(--oh-now-head)) / 2);
+    left: 0;
+    width: var(--oh-now-head);
+    height: var(--oh-now-head);
+    border-radius: var(--dot-r);
+    background: var(--hot);
+  }
+}

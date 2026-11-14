@@ -1,0 +1,2976 @@
+{
+  "component": "MonthGrid",
+  "state": "month",
+  "look": "ohmarchy-dark-phone",
+  "place": "cell",
+  "target": [24, 24, 1392, 816],
+  "clip": [24, 24, 1392, 816],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(26, 27, 38)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "textDecoration": "line-through rgb(141, 150, 188) thickness 1.5px",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(95, 100, 128) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(95, 100, 128)" },
+    { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 2 199f07f2a48b" },
+    { "backgroundColor": "oklch(0.83 0.085 151.7)" },
+    { "backgroundColor": "oklch(0.83 0.085 286.7)" },
+    { "backgroundColor": "oklch(0.83 0.085 241.7)" },
+    { "boxShadow": "oklch(0.83 0.085 11.7) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "oklch(0.83 0.085 11.7)" },
+    { "backgroundColor": "oklch(0.83 0.085 61.7)" },
+    { "backgroundColor": "rgb(122, 162, 247)" },
+    { "backgroundColor": "rgb(192, 202, 245)" },
+    { "boxShadow": "rgb(62, 64, 82) 0px 0px 0px 1px inset", "outline": "1px dashed rgb(141, 150, 188) -1px" },
+    { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 3 8c8578e2e715" },
+    { "boxShadow": "oklch(0.83 0.085 151.7) 0px 0px 0px 2px inset" },
+    { "outline": "1px dashed rgb(141, 150, 188) -1px" },
+    { "boxShadow": "oklch(0.83 0.085 151.7) 0px 0px 0px 1px inset" },
+    { "boxShadow": "rgb(169, 177, 214) 0px 0px 0px 1.5px inset" },
+    { "boxShadow": "oklch(0.83 0.085 241.7) 0px 0px 0px 1px inset" },
+    { "boxShadow": "oklch(0.83 0.085 286.7) 0px 0px 0px 1px inset" },
+    { "backgroundColor": "rgb(26, 27, 38)", "boxShadow": "rgb(66, 66, 69) 0px 0px 0px 2px" },
+    { "before.backgroundColor": "rgb(42, 46, 66)" },
+    { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 3 e11d3fbc7e31" },
+    { "ink": "stroke rgb(141, 150, 188) 1.6px square miter 4; shapes 2 6a115827ced0" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Monday 26 October",
+      "box": [12, 50, 26.4, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "26", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Tuesday 27 October",
+      "box": [208.6, 50, 26.4, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "27", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Wednesday 28 October",
+      "box": [405.1, 50, 26.4, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "28", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Thursday 29 October",
+      "box": [601.7, 50, 26.4, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "29", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Friday 30 October",
+      "box": [798.3, 50, 26.4, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "30", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Saturday 31 October",
+      "box": [994.8, 50, 26.4, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "31", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Sunday 1 November",
+      "box": [1191.4, 50, 48, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "1 Nov", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "All Saints' Day (regional)",
+      "box": [1189.4, 76, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(32, 33, 45)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "All Saints' Day (regional)", "type": 2 }],
+      "surfaces": [
+        { "box": [1189.4, 76, 188.6, 20], "paint": 0 },
+        { "box": [1197.4, 82, 8, 8], "paint": 1 },
+        { "box": [1356, 79, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "09:00 Studio Monday",
+      "box": [10, 76, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:00", "type": 0 },
+        { "said": "Studio Monday", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 82, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Catalogue weekly",
+      "box": [206.6, 76, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Catalogue weekly", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 82, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "18:30 Bouldering with Tim",
+      "box": [206.6, 97, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:30", "type": 0 },
+        { "said": "Bouldering with Tim", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 103, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "07:00 Run with Reto",
+      "box": [599.7, 76, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "07:00", "type": 0 },
+        { "said": "Run with Reto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 82, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "13:00 Glaze firing",
+      "box": [599.7, 97, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "13:00", "type": 0 },
+        { "said": "Glaze firing", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 103, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "16:30 Catalogue check-in",
+      "box": [599.7, 118, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:30", "type": 0 },
+        { "said": "Catalogue check-in", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 124, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "Monday 2 November",
+      "box": [12, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "2", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Tuesday 3 November",
+      "box": [208.6, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "3", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Wednesday 4 November",
+      "box": [405.1, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "4", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Thursday 5 November",
+      "box": [601.7, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "5", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Friday 6 November",
+      "box": [798.3, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "6", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Saturday 7 November",
+      "box": [994.8, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "7", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sunday 8 November",
+      "box": [1191.4, 177.3, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "8", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Tim Berger's birthday",
+      "box": [403.1, 203.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 11.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Tim Berger's birthday", "type": 2 }],
+      "surfaces": [
+        { "box": [403.1, 203.3, 188.6, 20], "paint": 6 },
+        { "box": [411.1, 209.3, 8, 8], "paint": 7 },
+        { "box": [569.7, 206.3, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "09:00 Studio Monday",
+      "box": [10, 203.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:00", "type": 0 },
+        { "said": "Studio Monday", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 209.3, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Catalogue weekly",
+      "box": [206.6, 203.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Catalogue weekly", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 209.3, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "18:30 Bouldering with Tim",
+      "box": [206.6, 224.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:30", "type": 0 },
+        { "said": "Bouldering with Tim", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 230.3, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "10:00 Catalogue captions",
+      "box": [403.1, 224.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "10:00", "type": 0 },
+        { "said": "Catalogue captions", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 230.3, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "07:00 Run with Reto",
+      "box": [599.7, 203.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "07:00", "type": 0 },
+        { "said": "Run with Reto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 209.3, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "13:00 Glaze firing (small kiln)",
+      "box": [599.7, 224.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "13:00", "type": 0 },
+        { "said": "Glaze firing (small kiln)", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 230.3, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "16:30 Catalogue check-in",
+      "box": [599.7, 245.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:30", "type": 0 },
+        { "said": "Catalogue check-in", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 251.3, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Poster photos: twelve tiles",
+      "box": [796.3, 203.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Poster photos: twelve tiles", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 209.3, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "18:00 Dinner at Mum's",
+      "box": [1189.4, 203.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:00", "type": 0 },
+        { "said": "Dinner at Mum's", "type": 2 }
+      ],
+      "surfaces": [{ "box": [1197.4, 209.3, 8, 8], "paint": 8 }]
+    },
+    {
+      "role": "button",
+      "name": "Monday 9 November",
+      "box": [12, 304.7, 24, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "9", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Tuesday 10 November",
+      "box": [208.6, 304.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "10", "type": 3 }],
+      "surfaces": [{ "box": [208.6, 304.7, 26.4, 24], "paint": 9 }]
+    },
+    {
+      "role": "button",
+      "name": "Wednesday 11 November",
+      "box": [405.1, 304.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "11", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Thursday 12 November",
+      "box": [601.7, 304.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "12", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Friday 13 November",
+      "box": [798.3, 304.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "13", "type": 3 }],
+      "surfaces": [{ "box": [798.3, 304.7, 26.4, 24], "paint": 10 }]
+    },
+    {
+      "role": "button",
+      "name": "Saturday 14 November",
+      "box": [994.8, 304.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "14", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sunday 15 November",
+      "box": [1191.4, 304.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "15", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Glaze order #2291 arrives",
+      "box": [599.7, 330.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Glaze order #2291 arrives", "type": 4 }],
+      "surfaces": [
+        { "box": [599.7, 330.7, 188.6, 20], "paint": 11 },
+        { "box": [607.7, 333.7, 14, 14], "paint": 12 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "09:00 Studio Monday",
+      "box": [10, 330.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:00", "type": 0 },
+        { "said": "Studio Monday", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 336.7, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "15:00 Menu cards to Gartenlokal Rosa",
+      "box": [10, 351.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "15:00", "type": 0 },
+        { "said": "Menu cards to Gartenlokal Rosa", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 357.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "09:00 Invoices, new template",
+      "box": [206.6, 330.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:00", "type": 0 },
+        { "said": "Invoices, new template", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 336.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Catalogue weekly",
+      "box": [206.6, 351.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Catalogue weekly", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 357.7, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "14:30 Poster review",
+      "box": [206.6, 372.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklab(0.4156 -0.0455207 0.0245104)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:30", "type": 0 },
+        { "said": "Poster review", "type": 2 }
+      ],
+      "surfaces": [
+        { "box": [206.6, 372.7, 188.6, 20], "paint": 13 },
+        { "box": [214.6, 378.7, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "18:30 Bouldering with Tim",
+      "box": [206.6, 393.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:30", "type": 0 },
+        { "said": "Bouldering with Tim", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 399.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "08:00 Kiln technician",
+      "box": [403.1, 330.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "08:00", "type": 0 },
+        { "said": "Kiln technician", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 336.7, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "18:00 Open bench",
+      "box": [403.1, 351.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:00", "type": 0 },
+        { "said": "Open bench", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 357.7, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "07:00 Run with Reto",
+      "box": [599.7, 351.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "07:00", "type": 0 },
+        { "said": "Run with Reto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 357.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "09:30 Dentist",
+      "box": [599.7, 372.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:30", "type": 0 },
+        { "said": "Dentist", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 378.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "+4",
+      "box": [597.7, 393.7, 196.6, 20],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "10px",
+        "paddingBottom": "0px",
+        "paddingLeft": "10px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "+4", "type": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "12:15 Lunch with Anna",
+      "box": [796.3, 330.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "12:15", "type": 0 },
+        { "said": "Lunch with Anna", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 336.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "15:00 Glaze test review",
+      "box": [796.3, 351.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "15:00", "type": 0 },
+        { "said": "Glaze test review", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 357.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "18:00 Pizza, wood oven",
+      "box": [796.3, 372.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:00", "type": 0 },
+        { "said": "Pizza, wood oven", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 378.7, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "08:02 Train to Lugano",
+      "box": [992.8, 330.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "08:02", "type": 0 },
+        { "said": "Train to Lugano", "type": 4 }
+      ],
+      "surfaces": [
+        { "box": [992.8, 330.7, 188.6, 20], "paint": 14 },
+        { "box": [1000.8, 333.7, 14, 14], "paint": 12 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "12:00 Monte Brè with Reto",
+      "box": [992.8, 351.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "12:00", "type": 0 },
+        { "said": "Monte Brè with Reto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [1000.8, 357.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "Monday 16 November",
+      "box": [12, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "16", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Tuesday 17 November",
+      "box": [208.6, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "17", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Wednesday 18 November",
+      "box": [405.1, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "18", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Thursday 19 November",
+      "box": [601.7, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "19", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Friday 20 November",
+      "box": [798.3, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "20", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Saturday 21 November",
+      "box": [994.8, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "21", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sunday 22 November",
+      "box": [1191.4, 432, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "22", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Makersfest",
+      "box": [796.3, 458, 581.7, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 151.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Makersfest", "type": 2 }],
+      "surfaces": [
+        { "box": [796.3, 458, 581.7, 20], "paint": 15 },
+        { "box": [804.3, 464, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "09:00 Studio Monday",
+      "box": [10, 458, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:00", "type": 0 },
+        { "said": "Studio Monday", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 464, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "10:00 Slides, last pass",
+      "box": [10, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "10:00", "type": 0 },
+        { "said": "Slides, last pass", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 485, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Stand list with Jonas",
+      "box": [10, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Stand list with Jonas", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 506, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Catalogue weekly",
+      "box": [206.6, 458, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Catalogue weekly", "type": 6 }
+      ],
+      "surfaces": [
+        { "box": [214.6, 464, 8, 8], "paint": 4 },
+        { "box": [379.1, 464, 8, 8], "paint": 9 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "16:00 Pack samples for Porto",
+      "box": [206.6, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:00", "type": 0 },
+        { "said": "Pack samples for Porto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 485, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "18:30 Bouldering with Tim",
+      "box": [206.6, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:30", "type": 0 },
+        { "said": "Bouldering with Tim", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 506, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "06:55 Flight to Porto",
+      "box": [403.1, 458, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "06:55", "type": 0 },
+        { "said": "Flight to Porto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 464, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "11:30 Catalogue shoot, day 1",
+      "box": [403.1, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "11:30", "type": 0 },
+        { "said": "Catalogue shoot, day 1", "type": 2 }
+      ],
+      "surfaces": [
+        { "box": [411.1, 485, 8, 8], "paint": 4 },
+        { "box": [575.7, 485, 8, 8], "paint": 9 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "18:00 Open bench",
+      "box": [403.1, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:00", "type": 0 },
+        { "said": "Open bench", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 506, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "20:30 Dinner with Inês and Duarte",
+      "box": [403.1, 521, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "20:30", "type": 0 },
+        { "said": "Dinner with Inês and Duarte", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 527, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "10:00 Catalogue shoot, day 2",
+      "box": [599.7, 458, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "10:00", "type": 0 },
+        { "said": "Catalogue shoot, day 2", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 464, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "13:00 Glaze firing",
+      "box": [599.7, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "13:00", "type": 0 },
+        { "said": "Glaze firing", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 485, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "16:20 Flight to Zürich",
+      "box": [599.7, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:20", "type": 0 },
+        { "said": "Flight to Zürich", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 506, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "16:30 Catalogue check-in",
+      "box": [599.7, 521, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:30", "type": 0 },
+        { "said": "Catalogue check-in", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 527, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "10:00 Talk rehearsal",
+      "box": [796.3, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "10:00", "type": 0 },
+        { "said": "Talk rehearsal", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 485, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "15:30 Stand set-up, Hall 2",
+      "box": [796.3, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "15:30", "type": 0 },
+        { "said": "Stand set-up, Hall 2", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 506, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "16:00 Tech check, main hall",
+      "box": [796.3, 521, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:00", "type": 0 },
+        { "said": "Tech check, main hall", "type": 2 }
+      ],
+      "surfaces": [
+        { "box": [796.3, 521, 188.6, 20], "paint": 16 },
+        { "box": [968.8, 527, 8, 8], "paint": 9 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "11:00 Wabi-sabi for web people",
+      "box": [992.8, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "11:00", "type": 0 },
+        { "said": "Wabi-sabi for web people", "type": 4 }
+      ],
+      "surfaces": [
+        { "box": [992.8, 479, 188.6, 20], "paint": 14 },
+        { "box": [1000.8, 482, 14, 14], "paint": 12 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "13:00 Stand shift",
+      "box": [992.8, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "13:00", "type": 0 },
+        { "said": "Stand shift", "type": 2 }
+      ],
+      "surfaces": [{ "box": [1000.8, 506, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "19:30 Winternacht",
+      "box": [992.8, 521, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "19:30", "type": 0 },
+        { "said": "Winternacht", "type": 4 }
+      ],
+      "surfaces": [
+        { "box": [992.8, 521, 188.6, 20], "paint": 14 },
+        { "box": [1000.8, 524, 14, 14], "paint": 12 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "10:00 Stand shift",
+      "box": [1189.4, 479, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "10:00", "type": 0 },
+        { "said": "Stand shift", "type": 2 }
+      ],
+      "surfaces": [{ "box": [1197.4, 485, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "16:00 Stand take-down",
+      "box": [1189.4, 500, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:00", "type": 0 },
+        { "said": "Stand take-down", "type": 2 }
+      ],
+      "surfaces": [{ "box": [1197.4, 506, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "Monday 23 November",
+      "box": [12, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "23", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Tuesday 24 November",
+      "box": [208.6, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "24", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Wednesday 25 November",
+      "box": [405.1, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "25", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Thursday 26 November",
+      "box": [601.7, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "26", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Friday 27 November",
+      "box": [798.3, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "27", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Saturday 28 November",
+      "box": [994.8, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "28", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sunday 29 November",
+      "box": [1191.4, 559.3, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "29", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Days off",
+      "box": [10, 585.3, 581.7, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 241.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Days off", "type": 2 }],
+      "surfaces": [
+        { "box": [10, 585.3, 581.7, 20], "paint": 17 },
+        { "box": [18, 591.3, 8, 8], "paint": 5 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Photo selects due",
+      "box": [206.6, 606.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 286.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Photo selects due", "type": 2 }],
+      "surfaces": [
+        { "box": [206.6, 606.3, 188.6, 20], "paint": 18 },
+        { "box": [214.6, 612.3, 8, 8], "paint": 4 },
+        { "box": [357, 609.3, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Lea Brunner's birthday",
+      "box": [599.7, 585.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 11.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Lea Brunner's birthday", "type": 2 }],
+      "surfaces": [
+        { "box": [599.7, 585.3, 188.6, 20], "paint": 6 },
+        { "box": [607.7, 591.3, 8, 8], "paint": 7 },
+        { "box": [766.3, 588.3, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Proofs due",
+      "box": [796.3, 585.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 286.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Proofs due", "type": 2 }],
+      "surfaces": [
+        { "box": [796.3, 585.3, 188.6, 20], "paint": 18 },
+        { "box": [804.3, 591.3, 8, 8], "paint": 4 },
+        { "box": [896.3, 588.3, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "First Advent",
+      "box": [1189.4, 585.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(32, 33, 45)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "First Advent", "type": 2 }],
+      "surfaces": [
+        { "box": [1189.4, 585.3, 188.6, 20], "paint": 0 },
+        { "box": [1197.4, 591.3, 8, 8], "paint": 1 },
+        { "box": [1303.8, 588.3, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "18:30 Bouldering with Tim",
+      "box": [206.6, 627.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:30", "type": 0 },
+        { "said": "Bouldering with Tim", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 633.3, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "18:00 Open bench",
+      "box": [403.1, 606.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:00", "type": 0 },
+        { "said": "Open bench", "type": 2 }
+      ],
+      "surfaces": [{ "box": [411.1, 612.3, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "07:00 Run with Reto",
+      "box": [599.7, 606.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "07:00", "type": 0 },
+        { "said": "Run with Reto", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 612.3, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "13:00 Glaze firing",
+      "box": [599.7, 627.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "13:00", "type": 0 },
+        { "said": "Glaze firing", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 633.3, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "+2",
+      "box": [597.7, 648.3, 196.6, 20],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "10px",
+        "paddingBottom": "0px",
+        "paddingLeft": "10px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "+2", "type": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "15:00 Month-end books",
+      "box": [796.3, 606.3, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "15:00", "type": 0 },
+        { "said": "Month-end books", "type": 2 }
+      ],
+      "surfaces": [{ "box": [804.3, 612.3, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "Monday 30 November",
+      "box": [12, 686.7, 26.4, 24],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "600",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "30", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Tuesday 1 December",
+      "box": [208.6, 686.7, 48, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "1 Dec", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Wednesday 2 December",
+      "box": [405.1, 686.7, 24, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "2", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Thursday 3 December",
+      "box": [601.7, 686.7, 24, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "3", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Friday 4 December",
+      "box": [798.3, 686.7, 24, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "4", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Saturday 5 December",
+      "box": [994.8, 686.7, 24, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "5", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Sunday 6 December",
+      "box": [1191.4, 686.7, 24, 24],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "6", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Catalogue to print",
+      "box": [796.3, 712.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 286.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Catalogue to print", "type": 2 }],
+      "surfaces": [
+        { "box": [796.3, 712.7, 188.6, 20], "paint": 18 },
+        { "box": [804.3, 718.7, 8, 8], "paint": 4 },
+        { "box": [953.9, 715.7, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Open studio? (hold)",
+      "box": [992.8, 712.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "oklch(0.27 0.04 151.7)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "Open studio? (hold)", "type": 2 }],
+      "surfaces": [
+        { "box": [992.8, 712.7, 188.6, 20], "paint": 15 },
+        { "box": [1000.8, 718.7, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "St Nicholas' Day",
+      "box": [1189.4, 712.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(32, 33, 45)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [{ "said": "St Nicholas' Day", "type": 2 }],
+      "surfaces": [
+        { "box": [1189.4, 712.7, 188.6, 20], "paint": 0 },
+        { "box": [1197.4, 718.7, 8, 8], "paint": 1 },
+        { "box": [1332.6, 715.7, 14, 14], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "09:00 Studio Monday",
+      "box": [10, 712.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "09:00", "type": 0 },
+        { "said": "Studio Monday", "type": 2 }
+      ],
+      "surfaces": [{ "box": [18, 718.7, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "14:00 Catalogue weekly",
+      "box": [206.6, 712.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "14:00", "type": 0 },
+        { "said": "Catalogue weekly", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 718.7, 8, 8], "paint": 4 }]
+    },
+    {
+      "role": "button",
+      "name": "18:30 Bouldering with Tim",
+      "box": [206.6, 733.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "18:30", "type": 0 },
+        { "said": "Bouldering with Tim", "type": 2 }
+      ],
+      "surfaces": [{ "box": [214.6, 739.7, 8, 8], "paint": 5 }]
+    },
+    {
+      "role": "button",
+      "name": "13:00 Glaze firing",
+      "box": [599.7, 712.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "13:00", "type": 0 },
+        { "said": "Glaze firing", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 718.7, 8, 8], "paint": 3 }]
+    },
+    {
+      "role": "button",
+      "name": "16:30 Catalogue check-in",
+      "box": [599.7, 733.7, 188.6, 20],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "12px",
+        "fontWeight": "400",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "text": [
+        { "said": "16:30", "type": 0 },
+        { "said": "Catalogue check-in", "type": 2 }
+      ],
+      "surfaces": [{ "box": [607.7, 739.7, 8, 8], "paint": 4 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "Mon Tue Wed Thu Fri Sat Sun", "type": 7 }],
+    "surfaces": [
+      { "box": [0, 0, 1392, 816], "paint": 19 },
+      { "box": [8, 171.3, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [8, 298.7, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [381.1, 309.7, 14, 14], "paint": 21 },
+      { "box": [577.7, 309.7, 14, 14], "paint": 22 },
+      { "box": [8, 426, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [184.6, 437, 14, 14], "paint": 21 },
+      { "box": [8, 553.3, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } },
+      { "box": [8, 680.7, 1376, 127.3], "paint": 20, "parts": { "before": [4, 0, 1368, 1] } }
+    ]
+  }
+}

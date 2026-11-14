@@ -1,0 +1,278 @@
+{
+  "component": "TimeGrid",
+  "state": "day",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 420, 560],
+  "clip": [24, 24, 420, 560],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLineClamp": "1",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLineClamp": "1",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "outline": "1px dashed rgb(90, 83, 75) -1px", "borderRadius": "999px" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 3 8c8578e2e715" },
+    { "borderRadius": "12px" },
+    { "backgroundColor": "oklch(0.6 0.14 243)", "borderRadius": "2px" },
+    { "opacity": "0.75" },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 4 b8f33a558d38" },
+    { "boxShadow": "rgb(255, 255, 255) 0px 0px 0px 2px", "borderRadius": "12px" },
+    { "backgroundColor": "rgb(31, 75, 255)", "borderRadius": "999px" },
+    {
+      "boxShadow": "rgb(221, 213, 201) 0px 0px 0px 1px, rgba(18, 16, 14, 0.22) 0px 6px 20px -8px, rgba(18, 16, 14, 0.08) 0px 1px 3px 0px",
+      "borderRadius": "999px"
+    },
+    { "ink": "stroke rgb(90, 83, 75) 1.8px round round; shapes 1 541a4a0ad8ca" },
+    { "backgroundColor": "oklch(0.6 0.14 153)", "borderRadius": "2px" },
+    { "backgroundColor": "oklch(0.6 0.14 288)", "borderRadius": "2px" },
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Glaze order #2291 arrives",
+      "box": [54, 0, 350, 22],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "8px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Glaze order #2291 arrives", "type": 0 }],
+      "surfaces": [
+        { "box": [54, 0, 350, 22], "paint": 0 },
+        { "box": [62, 4, 14, 14], "paint": 1 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Run with Reto",
+      "box": [54, 206, 352, 43],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "oklch(0.945 0.042 243)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "5px",
+        "paddingRight": "7px",
+        "paddingBottom": "4px",
+        "paddingLeft": "7px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Run with Reto", "type": 1 }],
+      "surfaces": [
+        { "box": [54, 206, 352, 43], "paint": 2 },
+        { "box": [61, 217, 8, 8], "paint": 3 },
+        { "box": [386, 213, 13, 13], "paint": 4 },
+        { "box": [387, 213, 13, 13], "paint": 5 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Dentist",
+      "box": [54, 356, 352, 73],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "oklch(0.945 0.042 243)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "5px",
+        "paddingRight": "7px",
+        "paddingBottom": "4px",
+        "paddingLeft": "7px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Dentist", "type": 1 }],
+      "surfaces": [
+        { "box": [54, 356, 352, 73], "paint": 2 },
+        { "box": [61, 367, 8, 8], "paint": 3 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Glaze evening, planning call",
+      "box": [103.3, 386, 302.7, 28],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "oklch(0.945 0.042 243)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "7px",
+        "paddingBottom": "0px",
+        "paddingLeft": "7px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Glaze evening, planning call", "type": 2 }],
+      "surfaces": [
+        { "box": [103.3, 386, 302.7, 28], "paint": 6 },
+        { "box": [110.3, 396, 8, 8], "paint": 3 },
+        { "box": [391, 396, 8, 8], "paint": 7 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "Later: 13:00 Glaze firing, 16:30 Catalogue check-in, 20:15 Film night",
+      "box": [102.1, 535, 301.9, 20],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(255, 255, 255)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "7px",
+        "paddingBottom": "0px",
+        "paddingLeft": "3px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "13:00 Glaze firing 16:30 Catalogue check-in", "type": 3 }],
+      "surfaces": [
+        { "box": [102.1, 535, 301.9, 20], "paint": 8 },
+        { "box": [105.1, 538, 14, 14], "paint": 9 },
+        { "box": [225.7, 541, 8, 8], "paint": 10 },
+        { "box": [389, 541, 8, 8], "paint": 11 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "all day", "type": 4 },
+      { "said": "04:00 05:00 06:00 07:00 08:00 09:00 10:00 11:00 12:00 13:00", "type": 5 },
+      { "said": "1 h 45 min 2 h 15 min", "type": 6 }
+    ],
+    "surfaces": [{ "box": [0, 0, 420, 560], "paint": 12 }]
+  }
+}

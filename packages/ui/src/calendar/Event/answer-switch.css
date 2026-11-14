@@ -1,0 +1,65 @@
+/* The answer, on the event itself: Yes, Maybe and No as one switch, then what else can be said. */
+@layer oh {
+  .oh-ans {
+    --oh-ans-ground: var(--soft-sheet);
+    --oh-seg-ground: var(--oh-ans-ground);
+    --oh-soft: var(--oh-ans-ground);
+    --oh-ans-ring: inset 0 0 0 var(--oh-hair) var(--btn-ring);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+  }
+  /* On the open event's own ground, or on an open row, the track is the sheet. */
+  .oh-ans[data-on="sheet"] {
+    --oh-ans-ground: var(--sheet);
+  }
+  .oh-ans .oh-seg {
+    flex: none;
+    box-shadow: var(--oh-ans-ring);
+  }
+  .oh-ans .oh-seg-item {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+  .oh-ans .oh-seg-item:not([aria-pressed="true"]):hover {
+    background: var(--hover);
+  }
+  .oh-ans .oh-seg-item[aria-pressed="true"] {
+    color: var(--on-pick);
+  }
+  /* The key that gives an answer stands after its word, where a pointer is. */
+  .oh-ans .oh-seg-item > .oh-key {
+    --oh-ans-key-gap: 6px;
+    margin-left: var(--oh-ans-key-gap);
+  }
+  .oh-ans .oh-seg-item > .oh-key::before {
+    content: attr(data-key);
+  }
+  .oh-ans .oh-seg-item[aria-pressed="true"] > .oh-key {
+    --oh-ans-key-on: color-mix(in srgb, var(--on-pick) 22%, transparent);
+    background: var(--oh-ans-key-on);
+    color: var(--on-pick);
+  }
+  .oh-ans > .oh-ans-propose {
+    --oh-ans-propose-gap: 6px;
+    --oh-button-pad: 0 var(--s2);
+    gap: var(--oh-ans-propose-gap);
+    color: var(--ink);
+    font-size: var(--t-meta);
+  }
+  /* One face keeps its controls' own gap between a glyph and its word. */
+  :root[data-face="ohmarchy"] .oh-ans > .oh-ans-propose {
+    --oh-ans-propose-gap: var(--s2);
+  }
+  .oh-ans-propose:disabled {
+    background: transparent;
+    color: var(--on-off);
+  }
+  .oh-ans-clock {
+    width: 16px;
+    height: 16px;
+  }
+}

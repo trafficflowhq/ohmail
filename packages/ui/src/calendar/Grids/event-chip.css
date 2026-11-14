@@ -1,0 +1,521 @@
+/* The event chip: a block of a time grid, a pill of the all-day lane, a line of a month.
+   A state is told by line: outlined is to answer, dashed is not on a calendar yet, struck is off.
+   --oh-ev-under is what the chip stands on; --oh-ev-bg is the chip's own ground in each state. */
+@layer oh {
+  .oh-ev {
+    --oh-ev-under: var(--sheet);
+    --oh-ev-ring: var(--oh-cal-mark, var(--ink2));
+    --oh-ev-edge: var(--oh-cal-mark, var(--ink));
+    --oh-ev-bg: var(--oh-cal-tint, transparent);
+    --oh-ev-pad: 5px 7px 4px;
+    --oh-ev-row: 1px;
+    --oh-ev-lead: 6px;
+    --oh-ev-hover: inset 0 0 0 var(--ev-line) var(--oh-ev-ring);
+    --oh-ev-out: inset 0 0 0 var(--ev-line) var(--oh-ev-edge);
+    --oh-ev-open: inset 0 0 0 var(--oh-cal-open-line) var(--oh-ev-edge);
+    --oh-ev-off: inset 0 0 0 1px var(--line);
+    --oh-ev-apart: 0 0 0 2px var(--oh-ev-under);
+    --oh-ev-dash: var(--ev-line) dashed var(--ink2);
+    --oh-ev-dash-in: calc(var(--ev-line) * -1);
+    --oh-ev-strike: 1.5px;
+    display: flex;
+    box-sizing: border-box;
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    border-radius: var(--ev-r);
+    background: var(--oh-ev-bg);
+    color: var(--ink);
+    font: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+    text-align: left;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+    -webkit-user-select: none;
+    transition:
+      box-shadow var(--d-hover) var(--e-std),
+      background-color var(--d-fade) var(--e-std),
+      opacity var(--d-fade) var(--e-std);
+  }
+  .oh-ev:hover {
+    box-shadow: var(--oh-ev-hover);
+  }
+  .oh-ev:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .oh-ev-tt {
+    min-width: 0;
+    overflow: hidden;
+    font-weight: var(--w-mid);
+  }
+  .oh-ev-ico {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--ink2);
+  }
+
+  /* The block. */
+  .oh-ev[data-size="block"] {
+    position: absolute;
+    flex-direction: column;
+    gap: var(--oh-ev-row);
+    padding: var(--oh-ev-pad);
+    font-size: var(--t-ev);
+    line-height: 1.25;
+    overflow: hidden;
+    touch-action: pan-y;
+  }
+  .oh-ev-t {
+    display: flex;
+    align-items: baseline;
+    gap: var(--oh-ev-lead);
+    min-width: 0;
+  }
+  .oh-ev-t > .oh-csq {
+    transform: translateY(-1px);
+  }
+  .oh-ev-t > .oh-ev-ico {
+    --oh-ev-ico-pull: 0 -1px;
+    align-self: center;
+    margin: var(--oh-ev-ico-pull);
+  }
+  .oh-ev-t > .oh-cal-wait {
+    align-self: center;
+    margin-left: auto;
+  }
+  .oh-ev[data-size="block"] .oh-ev-tt {
+    display: -webkit-box;
+    flex: 1;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--oh-ev-lines, 1);
+    overflow-wrap: normal;
+  }
+  .oh-ev-p {
+    --oh-ev-in: 14px;
+    padding-left: var(--oh-ev-in);
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: 1.3;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .oh-ev-was {
+    text-decoration-thickness: var(--oh-ev-strike);
+  }
+  .oh-ev:not(.oh-cal-tone) .oh-ev-p {
+    --oh-ev-in: 0;
+  }
+  .oh-ev[data-state="from-mail"] .oh-ev-p {
+    --oh-ev-in: 20px;
+  }
+  .oh-ev-st {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+  }
+  .oh-ev[data-failed] .oh-ev-st {
+    color: var(--hot-ink);
+    font-weight: var(--w-bold);
+  }
+
+  /* A narrow lane or a short block: the title at the small size, a long word wrapped whole. */
+  .oh-ev[data-small] {
+    font-size: var(--t-meta);
+  }
+  .oh-ev[data-small] .oh-ev-tt {
+    overflow-wrap: anywhere;
+    -webkit-hyphens: auto;
+    hyphens: auto;
+    text-overflow: ellipsis;
+  }
+  .oh-ev[data-small] .oh-ev-p {
+    --oh-ev-in: 0;
+  }
+  .oh-ev[data-small] .oh-ev-sign > .oh-ev-ico {
+    width: 11px;
+    height: 11px;
+  }
+  /* Under 60 px: one line with its ellipsis, never a letter or two a line. */
+  .oh-ev[data-tiny] {
+    --oh-ev-pad: 5px 4px 4px 5px;
+  }
+  .oh-ev[data-tiny] .oh-ev-t {
+    --oh-ev-lead: 4px;
+  }
+  .oh-ev[data-size="block"][data-tiny] .oh-ev-tt {
+    display: block;
+    white-space: nowrap;
+    overflow-wrap: normal;
+    -webkit-hyphens: manual;
+    hyphens: manual;
+    text-overflow: ellipsis;
+  }
+  .oh-ev[data-tiny] .oh-ev-p {
+    display: none;
+  }
+  /* Half an hour: the title alone, on the block's middle line. */
+  .oh-ev[data-one] {
+    --oh-ev-pad: 0 7px;
+    flex-direction: row;
+    align-items: center;
+  }
+  .oh-ev[data-one] .oh-ev-t {
+    flex: 1;
+  }
+  .oh-ev[data-size="block"][data-one] .oh-ev-tt {
+    display: block;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .oh-ev[data-tight] {
+    --oh-ev-pad: 2px 7px 4px;
+  }
+  .oh-ev[data-one][data-tight] {
+    --oh-ev-pad: 2px 7px 0;
+    align-items: flex-start;
+  }
+  .oh-ev[data-one][data-tiny] {
+    --oh-ev-pad: 0 4px 0 5px;
+  }
+
+  /* The line of now crosses it. The line keeps its whole reach over the chip and the words stand in front of
+     it: each glyph carries a halo of the chip's own ground, a stroke painted under its fill, so the line is
+     broken only round the ink. What the halo paints past a box's edge is given back to the box. */
+  .oh-ev[data-now] .oh-ev-t,
+  .oh-ev[data-now] .oh-ev-p {
+    position: relative;
+    z-index: var(--oh-ev-z-words);
+  }
+  .oh-ev[data-now] .oh-ev-tt,
+  .oh-ev[data-now] .oh-ev-p {
+    --oh-ev-halo: 5px;
+    -webkit-text-stroke: var(--oh-ev-halo) var(--oh-ev-bg);
+    paint-order: stroke fill;
+    transition: -webkit-text-stroke-color var(--d-fade) var(--e-std);
+  }
+  .oh-ev[data-now] .oh-ev-tt {
+    --oh-ev-halo-out: 0 -3px;
+    --oh-ev-halo-in: 0 3px;
+    margin: var(--oh-ev-halo-out);
+    padding: var(--oh-ev-halo-in);
+  }
+  .oh-ev[data-now] .oh-ev-p {
+    --oh-ev-halo-out: 0 -3px -3px;
+    --oh-ev-halo-in: 3px;
+    margin: var(--oh-ev-halo-out);
+    padding-right: var(--oh-ev-halo-in);
+    padding-bottom: var(--oh-ev-halo-in);
+    text-indent: var(--oh-ev-halo-in);
+  }
+  .oh-ev[data-now] .oh-ev-t .oh-ev-ico {
+    filter: drop-shadow(1.5px 0 0 var(--oh-ev-bg)) drop-shadow(-1.5px 0 0 var(--oh-ev-bg))
+      drop-shadow(0 1.5px 0 var(--oh-ev-bg)) drop-shadow(0 -1.5px 0 var(--oh-ev-bg));
+    transition: filter var(--d-fade) var(--e-std);
+  }
+  .oh-ev[data-now] .oh-ev-sign {
+    --oh-ev-sign-over: color-mix(in oklab, var(--ink2) 75%, var(--oh-ev-bg));
+    color: var(--oh-ev-sign-over);
+    opacity: 1;
+    transition: color var(--d-fade) var(--e-std);
+  }
+
+  /* The series' sign: the repeat glyph after the title; one changed for itself wears it struck. */
+  .oh-ev-sign {
+    --oh-ev-sign-in: 2px;
+    position: relative;
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    margin-left: auto;
+    padding-left: var(--oh-ev-sign-in);
+    color: var(--ink2);
+    opacity: 0.75;
+  }
+  .oh-ev-sign > .oh-ev-ico {
+    --oh-ev-ico-pull: 0 -1px;
+    width: 13px;
+    height: 13px;
+    margin: var(--oh-ev-ico-pull);
+  }
+  .oh-ev-sign[data-apart]::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -1px;
+    left: -1px;
+    height: var(--oh-ev-strike);
+    transform: translateY(-50%) rotate(-38deg);
+    background: currentColor;
+  }
+
+  /* The handles: the top and bottom 6 px of a block of your own lengthen it. */
+  .oh-ev-hd {
+    position: absolute;
+    right: 0;
+    left: 0;
+    height: 6px;
+    cursor: ns-resize;
+    touch-action: none;
+  }
+  .oh-ev-hd[data-edge="start"] {
+    top: 0;
+  }
+  .oh-ev-hd[data-edge="end"] {
+    bottom: 0;
+  }
+  .oh-ev[data-fixed] {
+    cursor: default;
+  }
+
+  /* The pill: an all-day event, a run across its days. */
+  .oh-ev[data-size="pill"] {
+    --oh-ev-pad: 0 8px;
+    --oh-ev-out-pad: 0 8px 0 2px;
+    align-items: center;
+    gap: var(--oh-ev-lead);
+    height: 22px;
+    margin: var(--oh-ev-out-pad);
+    padding: var(--oh-ev-pad);
+    border-radius: var(--r-pill);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+    transition: box-shadow var(--d-hover) var(--e-std);
+  }
+  .oh-ev[data-size="pill"] .oh-ev-tt,
+  .oh-ev[data-size="line"] .oh-ev-tt {
+    text-overflow: ellipsis;
+  }
+
+  /* The line: a month's event. No fill: square, time, title. */
+  .oh-ev[data-size="line"] {
+    --oh-ev-pad: 0 8px;
+    --oh-ev-out-pad: 0 6px 0 2px;
+    --oh-ev-bg: transparent;
+    z-index: var(--oh-ev-z-line);
+    align-items: center;
+    gap: var(--oh-ev-lead);
+    height: 20px;
+    margin: var(--oh-ev-out-pad);
+    padding: var(--oh-ev-pad);
+    border-radius: var(--r-pill);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+  }
+  .oh-ev-time {
+    flex: none;
+    color: var(--ink2);
+    font-variant-numeric: tabular-nums;
+  }
+  .oh-ev[data-size="line"] > .oh-cal-wait {
+    margin-left: auto;
+  }
+  .oh-ev[data-size="line"]:hover {
+    background: var(--hover);
+    box-shadow: none;
+  }
+  .oh-ev[data-size="line"][data-run] {
+    --oh-ev-bg: var(--oh-cal-tint, transparent);
+  }
+  .oh-ev[data-size="line"][data-run]:hover {
+    background: var(--oh-ev-bg);
+    box-shadow: var(--oh-ev-hover);
+  }
+
+  /* To answer: an outline and the dot. On no calendar yet the outline is ink and there is no square. */
+  .oh-ev[data-state="to-answer"] {
+    --oh-ev-bg: var(--oh-ev-under);
+    box-shadow: var(--oh-ev-out);
+  }
+  .oh-ev[data-size="line"][data-state="to-answer"] {
+    --oh-ev-bg: transparent;
+  }
+  /* The later of two that overlap is set in and laps over the earlier. */
+  .oh-ev[data-lap] {
+    z-index: var(--oh-ev-z-lap);
+    box-shadow: var(--oh-ev-apart);
+  }
+  .oh-ev[data-lap]:hover {
+    box-shadow: var(--oh-ev-apart), var(--oh-ev-hover);
+  }
+  .oh-ev[data-lap][data-state="to-answer"] {
+    box-shadow: var(--oh-ev-apart), var(--oh-ev-out);
+  }
+  .oh-ev[data-lap][data-now] {
+    z-index: auto;
+  }
+  /* Found in mail, a draft, a proposed time: dashed. Found has no colour yet: the letter's glyph instead. */
+  .oh-ev[data-state="from-mail"],
+  .oh-ev[data-state="draft"] {
+    --oh-ev-bg: var(--oh-ev-under);
+    outline: var(--oh-ev-dash);
+    outline-offset: var(--oh-ev-dash-in);
+  }
+  .oh-ev[data-size="pill"][data-state="from-mail"],
+  .oh-ev[data-size="pill"][data-state="draft"],
+  .oh-ev[data-size="line"][data-state="from-mail"],
+  .oh-ev[data-size="line"][data-state="draft"] {
+    --oh-ev-bg: transparent;
+  }
+  .oh-ev[data-state="from-mail"] .oh-ev-tt,
+  .oh-ev[data-size="pill"][data-state="from-mail"] {
+    color: var(--ink2);
+  }
+  .oh-ev[data-state="draft"] {
+    --oh-ev-dash: var(--ev-line) dashed var(--oh-ev-ring);
+  }
+  .oh-ev[data-state="from-mail"]:hover,
+  .oh-ev[data-size="block"][data-state="draft"]:hover {
+    box-shadow: none;
+    outline-style: solid;
+  }
+  .oh-ev[data-size="line"][data-state="from-mail"]:hover,
+  .oh-ev[data-size="line"][data-state="draft"]:hover {
+    outline-style: dashed;
+  }
+  /* The dashes are drawn with the outline: with the keys on the chip the focus ring takes their
+     place, under the pointer too. */
+  .oh-ev[data-size][data-state="from-mail"]:focus-visible,
+  .oh-ev[data-size][data-state="draft"]:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  /* Maybe: a lighter drawing. */
+  .oh-ev[data-size="block"][data-state="maybe"] {
+    --oh-ev-bg: color-mix(in oklab, var(--oh-cal-tint, transparent) 45%, var(--oh-ev-under));
+  }
+  .oh-ev[data-state="maybe"] .oh-ev-tt,
+  .oh-ev[data-state="off"] .oh-ev-tt {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  /* Cancelled, or declined and still shown: struck. */
+  .oh-ev[data-size="block"][data-state="off"] {
+    --oh-ev-bg: var(--oh-ev-under);
+    box-shadow: var(--oh-ev-off);
+  }
+  .oh-ev[data-state="off"] .oh-ev-tt {
+    text-decoration: line-through;
+    text-decoration-thickness: var(--oh-ev-strike);
+  }
+
+  /* The one you have open: its calendar's colour a step deeper and a line of it all round. Never ink. */
+  .oh-ev[data-open],
+  .oh-ev[data-open]:hover {
+    --oh-ev-bg: var(--oh-cal-open, var(--oh-cal-open-plain));
+    background: var(--oh-ev-bg);
+    color: var(--ink);
+    outline: 0;
+    box-shadow: var(--oh-ev-open);
+  }
+  .oh-ev[data-open]:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+  .oh-ev[data-lap][data-open],
+  .oh-ev[data-lap][data-open]:hover {
+    box-shadow: var(--oh-ev-apart), var(--oh-ev-open);
+  }
+  .oh-ev[data-open] .oh-ev-tt {
+    color: var(--ink);
+  }
+  .oh-ev[data-open][data-state="maybe"] .oh-ev-tt,
+  .oh-ev[data-open][data-state="off"] .oh-ev-tt {
+    color: var(--ink2);
+  }
+
+  /* Being dragged: the original stays at 40 %, a ringed copy stands at the target and says the new time. */
+  .oh-ev[data-drag="lifted"] {
+    opacity: 0.4;
+  }
+  .oh-ev[data-drag="copy"] {
+    --oh-ev-copy: 0 0 0 2px var(--ink), var(--lift);
+    z-index: var(--oh-ev-z-copy);
+    box-shadow: var(--oh-ev-copy);
+    pointer-events: none;
+    transition: none;
+  }
+  .oh-ev[data-drag="copy"] .oh-ev-p {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  /* Just set: its dashes close and its tint fills, its square drops in. */
+  @keyframes oh-ev-set {
+    from {
+      background: var(--oh-ev-under);
+      box-shadow: var(--oh-ev-hover);
+    }
+  }
+  .oh-ev[data-fresh] {
+    animation: oh-ev-set var(--d-set) var(--e-std) both;
+  }
+
+  /* The layers inside a day's column. */
+  .oh-ev {
+    --oh-ev-z-line: 1;
+    --oh-ev-z-lap: 2;
+    --oh-ev-z-words: 4;
+    --oh-ev-z-copy: 6;
+  }
+
+  @keyframes oh-ev-drop {
+    0% {
+      transform: var(--x-drop);
+    }
+    62% {
+      transform: var(--x-drop-land);
+    }
+  }
+  .oh-ev[data-fresh] .oh-csq {
+    animation: oh-ev-drop var(--d-in) var(--e-drop) both;
+  }
+
+  /* Ohmarchy: every event that is on a calendar's ground is a 1 px box in its calendar's colour, and
+     stays one under the pointer. What is dashed or struck takes a 2 px ring under the pointer. */
+  :root[data-face="ohmarchy"] .oh-ev {
+    --oh-ev-box: inset 0 0 0 1px var(--oh-cal-mark, var(--line));
+    --oh-ev-firm: inset 0 0 0 2px var(--oh-ev-ring);
+  }
+  :root[data-face="ohmarchy"] .oh-ev[data-size="block"] {
+    --oh-ev-pad: 4px 6px 3px;
+  }
+  :root[data-face="ohmarchy"]
+    .oh-ev[data-size="block"]:not(
+      [data-open],
+      [data-state="from-mail"],
+      [data-state="draft"],
+      [data-state="off"]
+    ),
+  :root[data-face="ohmarchy"]
+    .oh-ev[data-size="pill"]:not([data-open], [data-state="from-mail"], [data-state="draft"]),
+  :root[data-face="ohmarchy"] .oh-ev[data-size="line"][data-run]:not([data-open]) {
+    box-shadow: var(--oh-ev-box);
+  }
+  :root[data-face="ohmarchy"]
+    .oh-ev[data-size="block"]:is([data-state="from-mail"], [data-state="draft"], [data-state="off"]):not(
+      [data-open]
+    ):hover {
+    box-shadow: var(--oh-ev-firm);
+  }
+  :root[data-face="ohmarchy"]
+    .oh-ev[data-size="block"][data-lap]:is(
+      [data-state="from-mail"],
+      [data-state="draft"],
+      [data-state="off"]
+    ):not([data-open]) {
+    box-shadow: var(--oh-ev-apart), var(--oh-ev-box);
+  }
+
+  /* The unfolded phone: a block is padded a pixel less, and its second line starts at the block's edge. */
+  :root[data-device="fold"] .oh-ev[data-size="block"] {
+    --oh-ev-pad: 4px 6px;
+  }
+  :root[data-device="fold"] .oh-ev .oh-ev-p {
+    --oh-ev-in: 0;
+  }
+}

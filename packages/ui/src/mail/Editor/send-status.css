@@ -1,0 +1,95 @@
+/* What happened to a letter, set as a sentence: the sign, the heavy words, the reason, and the press beside it or under it. */
+@layer oh {
+  .oh-sendstatus {
+    --oh-sendstatus-lh: 1.4;
+    --oh-sendstatus-sign: 2px;
+    --oh-sendstatus-measure: 68ch;
+    --oh-sendstatus-basis: 17em;
+    --oh-sendstatus-top: 0 var(--s2) var(--s3) var(--s1);
+    --oh-sendstatus-foot: var(--s1) var(--s3) var(--s2) var(--s3);
+    --oh-sendstatus-end: 0 var(--s2) var(--s1) var(--s4);
+    --oh-sendstatus-end-bare: 0 var(--s3) var(--s1) var(--s4);
+    --oh-sendstatus-start: 0 var(--s3) var(--s1) var(--s3);
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-start;
+    gap: var(--s2) var(--s3);
+    color: var(--ink);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    line-height: var(--oh-sendstatus-lh);
+  }
+
+  .oh-sendstatus[data-place="top"] {
+    padding: var(--oh-sendstatus-top);
+  }
+
+  .oh-sendstatus[data-place="foot"] {
+    padding: var(--oh-sendstatus-foot);
+  }
+
+  /* The sentence keeps a readable measure; where there is no room beside it, its press goes under it, at the trailing edge. */
+  .oh-sendstatus-line {
+    flex: 1 1 var(--oh-sendstatus-basis);
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    min-width: 0;
+    text-wrap: pretty;
+  }
+
+  .oh-sendstatus-line > .oh-icon {
+    margin-top: var(--oh-sendstatus-sign);
+  }
+
+  .oh-sendstatus-line > .oh-sendstatus-words {
+    max-width: var(--oh-sendstatus-measure);
+  }
+
+  .oh-sendstatus-words {
+    min-width: 0;
+  }
+
+  .oh-sendstatus-verdict {
+    font-weight: var(--w-bold);
+  }
+
+  .oh-sendstatus-acts {
+    flex: none;
+    display: flex;
+    gap: var(--s1);
+    margin-left: auto;
+  }
+
+  /* One short line over the control it answers. */
+  .oh-sendstatus[data-place="end"],
+  .oh-sendstatus[data-place="start"] {
+    flex-wrap: nowrap;
+    gap: var(--s2);
+    padding: var(--oh-sendstatus-end);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-sendstatus[data-place="end"] {
+    justify-content: flex-end;
+  }
+
+  .oh-sendstatus[data-place="end"]:not(:has(> .oh-button)) {
+    padding: var(--oh-sendstatus-end-bare);
+  }
+
+  .oh-sendstatus[data-place="end"] > .oh-button {
+    margin-left: var(--s1);
+  }
+
+  .oh-sendstatus[data-place="start"] {
+    padding: var(--oh-sendstatus-start);
+  }
+
+  .oh-sendstatus[data-place="start"] > .oh-sendstatus-words {
+    overflow-wrap: anywhere;
+  }
+}

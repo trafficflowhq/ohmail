@@ -1,0 +1,40 @@
+/* A refusal: ink, bold, the warning sign before it; the way on stands beside it and goes under it where the line is short. */
+@layer oh {
+  .oh-warnrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s4);
+  }
+
+  .oh-message-body + .oh-warnrow {
+    margin-top: var(--s4);
+  }
+
+  .oh-files > .oh-warnrow {
+    grid-column: 1 / -1;
+  }
+
+  .oh-warnrow-warn {
+    --oh-warnrow-lh: 1.4;
+    --oh-warnrow-sign: 0.12em;
+
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    max-width: var(--measure);
+    color: var(--ink);
+    font-size: var(--t-ui);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-warnrow-lh);
+  }
+
+  .oh-warnrow-warn > .oh-icon {
+    margin-top: var(--oh-warnrow-sign);
+  }
+
+  .oh-warnrow-words {
+    min-width: 0;
+    text-wrap: pretty;
+  }
+}

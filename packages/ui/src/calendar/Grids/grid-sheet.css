@@ -1,0 +1,20 @@
+/* The paper a grid of days stands on: it fills its column, keeps its own corners and scrolls inside. */
+@layer oh {
+  .oh-cal-sheet {
+    --oh-cal-sheet-ring: 0 0 0 var(--ringw) var(--ring);
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--oh-cal-sheet-ring);
+  }
+  :root[data-device="phone"] .oh-cal-sheet {
+    --oh-cal-sheet-r: var(--r-sheet) var(--r-sheet) 0 0;
+    padding-top: var(--s2);
+    border-radius: var(--oh-cal-sheet-r);
+  }
+}

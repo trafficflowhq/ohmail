@@ -1,0 +1,159 @@
+/* A month to find a day in: in the rail, on the phone, in a menu, twelve times in the year. */
+@layer oh {
+  .oh-mini {
+    --oh-mini-pad: 0 var(--s1);
+    --oh-mini-row: var(--mini-row);
+    --oh-mini-disc: var(--mini-disc);
+    --oh-mini-type: var(--t-meta);
+    --oh-mini-wd: 16px;
+    padding: var(--oh-mini-pad);
+  }
+  .oh-mini-head {
+    --oh-mini-head-in: var(--s2);
+    display: flex;
+    align-items: center;
+    height: 30px;
+    padding-left: var(--oh-mini-head-in);
+  }
+  .oh-mini-title {
+    flex: none;
+    margin-right: auto;
+    font-size: var(--t-ui);
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .oh-mini-head .oh-button[data-bare][data-size="s"] {
+    width: 28px;
+    height: 28px;
+    color: var(--ink2);
+  }
+  .oh-mini-grid {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    text-align: center;
+  }
+  .oh-mini-wd {
+    height: var(--oh-mini-wd);
+    color: var(--ink2);
+    font-size: var(--oh-mini-type);
+    line-height: var(--oh-mini-wd);
+  }
+  .oh-mini-day {
+    position: relative;
+    display: grid;
+    place-items: center;
+    height: var(--oh-mini-row);
+    color: var(--ink);
+    font-size: var(--oh-mini-type);
+    font-weight: var(--w-text);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+  .oh-mini-day:focus-visible {
+    z-index: var(--oh-mini-z);
+    border-radius: var(--dot-r);
+  }
+  .oh-mini-day[data-out] {
+    color: var(--ink2);
+  }
+  .oh-mini-day[data-busy] {
+    font-weight: var(--w-bold);
+  }
+  .oh-mini-disc {
+    --oh-mini-z: 1;
+    position: relative;
+    z-index: var(--oh-mini-z);
+    display: grid;
+    place-items: center;
+    width: var(--oh-mini-disc);
+    height: var(--oh-mini-disc);
+    border-radius: var(--dot-r);
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+  .oh-mini-day:hover .oh-mini-disc {
+    background: var(--hover-ground);
+  }
+  /* The week on screen stands on one band. */
+  .oh-mini-day[data-band]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: var(--hover-ground);
+  }
+  .oh-mini-day[data-band="start"]::before {
+    --oh-mini-band-r: var(--r-pill) 0 0 var(--r-pill);
+    border-radius: var(--oh-mini-band-r);
+  }
+  .oh-mini-day[data-band="end"]::before {
+    --oh-mini-band-r: 0 var(--r-pill) var(--r-pill) 0;
+    border-radius: var(--oh-mini-band-r);
+  }
+  .oh-mini-day[data-band="only"]::before {
+    border-radius: var(--r-pill);
+  }
+  .oh-mini-day[data-band]:hover .oh-mini-disc {
+    background: var(--sheet);
+  }
+  .oh-mini-day[data-today] .oh-mini-disc,
+  .oh-mini-day[data-today]:hover .oh-mini-disc {
+    background: var(--hot);
+    color: var(--on-hot);
+    font-weight: var(--w-bold);
+  }
+  .oh-mini-day[data-picked] .oh-mini-disc,
+  .oh-mini-day[data-picked]:hover .oh-mini-disc {
+    background: var(--solid);
+    color: var(--on-solid);
+    font-weight: var(--w-bold);
+  }
+
+  /* A week's number: in the room left of the row's first day. */
+  .oh-mini-grid > .oh-wn {
+    --oh-wn-size: 9px;
+    --oh-mini-wn-z: 2;
+    position: absolute;
+    top: 0;
+    right: calc(100% - 1px);
+    bottom: 0;
+    z-index: var(--oh-mini-wn-z);
+    display: grid;
+    grid-column: 1 / 2;
+    place-items: center;
+  }
+  .oh-mini-grid > .oh-wn::after {
+    content: "";
+    position: absolute;
+    inset: 0 -3px 0 -4px;
+  }
+
+  /* The phone: rows of 40, the disc 34. */
+  .oh-mini[data-size="phone"] {
+    --oh-mini-pad: 0;
+    --oh-mini-row: 40px;
+    --oh-mini-disc: 34px;
+    --oh-mini-type: var(--t-ui);
+    --oh-mini-wd: 24px;
+  }
+  .oh-mini[data-size="phone"] .oh-mini-wd {
+    font-size: var(--t-meta);
+  }
+  .oh-mini[data-size="phone"] .oh-mini-grid > .oh-wn {
+    --oh-wn-size: 10px;
+    right: calc(50% + 17px);
+  }
+  /* A widget: small, no marks, a day without anything in the second ink. */
+  .oh-mini[data-size="widget"] {
+    --oh-mini-pad: 0;
+    --oh-mini-row: 17px;
+    --oh-mini-disc: 17px;
+    --oh-mini-type: 12px;
+    --oh-mini-wd: 17px;
+  }
+  .oh-mini[data-size="widget"] .oh-mini-day:not([data-busy], [data-today]) {
+    color: var(--ink2);
+  }
+  .oh-mini[data-size="widget"] .oh-mini-day[data-out] {
+    visibility: hidden;
+  }
+}

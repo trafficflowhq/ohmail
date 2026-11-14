@@ -1,0 +1,104 @@
+/* Every key, in the app's groups: three columns that fall to two and to one as the room narrows. */
+@layer oh {
+  .oh-keyhelp {
+    --oh-overlay-max: 1040px;
+    --oh-keyhelp-pad: var(--s5) var(--s6) var(--s6);
+    padding: var(--oh-keyhelp-pad);
+    overflow: hidden auto;
+    container-type: inline-size;
+    scrollbar-width: none;
+  }
+  .oh-keyhelp-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .oh-keyhelp-head > .oh-button {
+    margin-left: auto;
+  }
+  .oh-keyhelp-title {
+    font-size: var(--t-title);
+    line-height: 1.2;
+  }
+  .oh-keyhelp-grid {
+    --oh-keyhelp-columns: 3;
+    display: grid;
+    grid-template-columns: repeat(var(--oh-keyhelp-columns), minmax(0, 1fr));
+    gap: 0 var(--s6);
+  }
+  .oh-keyhelp-group {
+    --oh-keyhelp-group-pad: var(--s5) 0 var(--s2);
+    padding: var(--oh-keyhelp-group-pad);
+    font-size: var(--t-group);
+    line-height: var(--oh-lh-tight);
+  }
+  .oh-keyhelp-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: var(--h-s);
+  }
+  .oh-keyhelp-label {
+    flex: none;
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+  }
+  .oh-keyhelp-keys {
+    display: flex;
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--s1);
+    min-width: 0;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+  .oh-keyhelp-or {
+    font-style: normal;
+  }
+  .oh-keyhelp-chord {
+    --oh-keyhelp-chord-gap: 3px;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    gap: var(--oh-keyhelp-chord-gap);
+  }
+  /* The one place that is about keys draws them for a finger too: there a filled cap, in every face. */
+  :root[data-touch="1"] .oh-keyhelp .oh-key {
+    --oh-key-size: 20px;
+    --oh-key-pad: 0 5px;
+    --oh-key-ring: none;
+    display: inline-flex;
+    background: var(--ground);
+    color: var(--ink2);
+    font-weight: var(--w-bold);
+  }
+  :root[data-touch="1"] .oh-keyhelp-row {
+    --oh-keyhelp-row-touch: 32px;
+    min-height: var(--oh-keyhelp-row-touch);
+  }
+  :root[data-device="fold"] .oh-keyhelp-grid {
+    --oh-keyhelp-columns: 2;
+  }
+  /* Taller than a folding phone's room: it takes the room and scrolls inside. */
+  :root[data-device="fold"] .oh-overlay.oh-keyhelp {
+    --oh-overlay-max: 680px;
+    --oh-scrim-edge: var(--s3);
+    --oh-keyhelp-pad: var(--s4) var(--s5) 0;
+  }
+  :root[data-device="fold"] .oh-keyhelp-grid {
+    padding-bottom: var(--s4);
+  }
+  :root[data-device="phone"] .oh-keyhelp-grid {
+    --oh-keyhelp-columns: 1;
+  }
+  :root[data-device="phone"] .oh-keyhelp {
+    --oh-keyhelp-pad: var(--s4) var(--s5) var(--s5);
+  }
+  @container (max-width: 600px) {
+    .oh-keyhelp-grid {
+      --oh-keyhelp-columns: 1;
+    }
+  }
+}

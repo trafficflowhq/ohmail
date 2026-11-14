@@ -1,0 +1,97 @@
+/* What lies out of sight in a time grid: one small capsule at the edge it left by, under its day. */
+@layer oh {
+  .oh-oos {
+    --oh-oos-out: 5px 8px 5px 0;
+    --oh-oos-pad: 0 7px 0 3px;
+    --oh-oos-ring: 0 0 0 var(--oh-hair) var(--line), var(--lift);
+    --oh-oos-ring-on: 0 0 0 var(--oh-hair) var(--ink2), var(--lift);
+    position: relative;
+    display: flex;
+    grid-row: 1;
+    align-items: center;
+    justify-self: end;
+    gap: var(--s1);
+    min-width: 0;
+    max-width: calc(100% - 12px);
+    height: 20px;
+    margin: var(--oh-oos-out);
+    padding: var(--oh-oos-pad);
+    border-radius: var(--r-pill);
+    background: var(--sheet);
+    box-shadow: var(--oh-oos-ring);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    pointer-events: auto;
+    transition:
+      opacity var(--d-fade) var(--e-std),
+      color var(--d-hover) var(--e-std),
+      box-shadow var(--d-hover) var(--e-std);
+  }
+  .oh-oos:hover {
+    box-shadow: var(--oh-oos-ring-on);
+    color: var(--ink);
+  }
+  .oh-oos:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-oos-way {
+    --oh-oos-way-pull: 0 -2px 0 0;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin: var(--oh-oos-way-pull);
+  }
+  .oh-oos[data-side="above"] .oh-oos-way {
+    transform: rotate(180deg);
+  }
+  .oh-oos-item {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+  }
+  .oh-oos-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .oh-oos-glyph {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--ink2);
+  }
+  /* On no calendar yet: outlined in ink. Found in mail: dashed. */
+  .oh-oos-sq {
+    --oh-oos-sq-line: inset 0 0 0 var(--ev-line) var(--ink);
+    flex: none;
+    width: 8px;
+    height: 8px;
+    border-radius: var(--r-sq);
+    box-shadow: var(--oh-oos-sq-line);
+  }
+  .oh-oos-sq[data-dashed] {
+    box-shadow: none;
+    outline: var(--ev-line) dashed var(--ink2);
+    outline-offset: calc(var(--ev-line) * -1);
+  }
+
+  :root[data-touch="1"] .oh-oos {
+    --oh-oos-pad: 0 9px 0 5px;
+    height: 24px;
+  }
+  :root[data-touch="1"] .oh-oos::after {
+    content: "";
+    position: absolute;
+    inset: -5px -6px -12px;
+  }
+  :root[data-touch="1"] .oh-oos[data-side="below"]::after {
+    inset: -12px -6px -5px;
+  }
+  :root[data-face="ohmarchy"] .oh-oos {
+    --oh-oos-ring: 0 0 0 var(--oh-hair) var(--line);
+    --oh-oos-ring-on: 0 0 0 var(--oh-hair) var(--ink);
+  }
+}

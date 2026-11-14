@@ -1,0 +1,205 @@
+/* A short list that comes out of the thing you pressed. One at a time; it never leaves the window. */
+@layer oh {
+  .oh-menu {
+    --oh-menu-min: 232px;
+    --oh-menu-max: 340px;
+    --oh-menu-pad: var(--s2);
+    --oh-menu-edge: var(--s2);
+    --oh-soft: var(--soft-sheet);
+    position: absolute;
+    width: var(--oh-menu-width, auto);
+    min-width: var(--oh-menu-min);
+    max-width: var(--oh-menu-max);
+    max-height: calc(100% - 2 * var(--oh-menu-edge));
+    padding: var(--oh-menu-pad);
+    overflow: auto;
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: var(--float);
+    transform-origin: var(--x-pop-origin);
+    scrollbar-width: none;
+  }
+  .oh-menu:focus {
+    outline: none;
+  }
+  .oh-menu[data-up] {
+    transform-origin: var(--x-pop-origin-up);
+  }
+  .oh-menu[data-wide] {
+    --oh-menu-max: 560px;
+    --oh-menu-width: 560px;
+  }
+  .oh-menu[data-kind="context"] {
+    --oh-menu-min: 248px;
+  }
+  .oh-menu[data-kind="ask"] {
+    --oh-menu-width: 300px;
+    --oh-menu-pad: var(--s3);
+  }
+  .oh-menu[data-kind="card"] {
+    --oh-menu-width: 344px;
+    --oh-menu-max: calc(100% - 2 * var(--oh-menu-edge));
+    --oh-menu-pad: var(--s3);
+  }
+  .oh-menu[data-kind="context"] .oh-key,
+  .oh-menu[data-kind="card"] .oh-key {
+    display: inline-flex;
+  }
+
+  .oh-menu-title {
+    --oh-menu-title-pad: var(--s2) var(--s3) var(--s1);
+    padding: var(--oh-menu-title-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+  /* A small form's title stands on its field's edge, not on a menu row's. */
+  .oh-menu[data-kind="ask"] > .oh-menu-title {
+    --oh-menu-title-pad: var(--s2) var(--s1) var(--s1);
+  }
+  .oh-menu[data-kind="card"] .oh-menu-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+  }
+  .oh-menu-aside {
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+  }
+  .oh-menu-rule {
+    --oh-menu-rule-gap: var(--s1) var(--s3);
+    height: var(--oh-hair);
+    margin: var(--oh-menu-rule-gap);
+    border: 0;
+    background: var(--line);
+  }
+  .oh-menu-note {
+    --oh-menu-note-pad: var(--s1) var(--s3) var(--s2);
+    padding: var(--oh-menu-note-pad);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+
+  .oh-menu-item {
+    --oh-menu-item-gap: 10px;
+    --oh-menu-item-pad: 0 var(--s3);
+    display: flex;
+    align-items: center;
+    gap: var(--oh-menu-item-gap);
+    width: 100%;
+    min-height: var(--h-m);
+    padding: var(--oh-menu-item-pad);
+    border-radius: var(--r-row);
+    font-weight: var(--w-mid);
+    line-height: 1.2;
+    white-space: nowrap;
+  }
+  .oh-menu-item:hover,
+  .oh-menu-item:focus-visible {
+    background: var(--hover);
+    outline: none;
+  }
+  .oh-menu-item[data-sub] {
+    --oh-menu-item-pad: 0 var(--s3) 0 var(--s5);
+    font-weight: var(--w-text);
+  }
+  .oh-menu-item[data-sub] > .oh-tagdot {
+    --oh-tagdot-gap: 0 var(--s1) 0 0;
+  }
+  .oh-menu-item-note {
+    margin-left: auto;
+    padding-left: var(--s4);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+  }
+  .oh-menu-item > .oh-key {
+    margin-left: auto;
+  }
+  .oh-menu-item-note + .oh-key {
+    margin-left: var(--s2);
+  }
+  .oh-menu-item[data-dot] > .oh-dot {
+    --dot-size: 7px;
+    --oh-menu-dot-gap: 0 var(--s1) 0 2px;
+    margin: var(--oh-menu-dot-gap);
+  }
+  .oh-menu-item[data-dot] > .oh-menu-word {
+    --oh-menu-word-pad: var(--s2) 0;
+    padding: var(--oh-menu-word-pad);
+    line-height: 1.3;
+    white-space: normal;
+  }
+  .oh-menu-item:disabled,
+  .oh-menu-item:disabled:hover {
+    background: transparent;
+    color: var(--on-off);
+  }
+  .oh-menu-item[aria-checked="true"] {
+    font-weight: var(--w-bold);
+  }
+  /* The taken one carries the ink dot. */
+  .oh-menu-item[aria-checked="true"] > .oh-menu-word::after {
+    --oh-menu-mark: 6px;
+    --oh-menu-mark-gap: 3px;
+    content: "";
+    display: inline-block;
+    width: var(--oh-menu-mark);
+    height: var(--oh-menu-mark);
+    margin-left: var(--oh-menu-mark-gap);
+    border-radius: var(--dot-r);
+    background: var(--ink);
+  }
+
+  /* On the phone every menu comes up from the foot. */
+  :root[data-device="phone"] .oh-menu:not([data-anchored]),
+  .oh-menu[data-sheet] {
+    --oh-menu-sheet: 1;
+    --oh-menu-width: auto;
+    --oh-menu-max: none;
+    top: auto;
+    right: var(--s2);
+    bottom: var(--s2);
+    left: var(--s2);
+    transform-origin: 50% 100%;
+  }
+  :root[data-device="phone"] .oh-menu-item {
+    min-height: var(--h-l);
+  }
+
+  :root[data-face="ohmarchy"] .oh-menu {
+    --oh-menu-pad: var(--s1);
+  }
+  :root[data-face="ohmarchy"] .oh-menu[data-kind="ask"] {
+    --oh-menu-pad: var(--s3);
+  }
+  :root[data-face="ohmarchy"] .oh-menu[data-kind="card"] {
+    --oh-menu-width: 372px;
+    --oh-menu-pad: var(--s3);
+  }
+  :root[data-face="ohmarchy"][data-device="phone"] .oh-menu[data-kind="card"]:not([data-anchored]) {
+    --oh-menu-width: auto;
+  }
+  :root[data-face="ohmarchy"] .oh-menu-item {
+    --oh-menu-item-gap: var(--s2);
+  }
+  :root[data-face="ohmarchy"] .oh-menu-item:hover,
+  :root[data-face="ohmarchy"] .oh-menu-item:focus-visible {
+    background: var(--off);
+  }
+  :root[data-face="ohmarchy"] .oh-menu-item:disabled:hover {
+    background: transparent;
+  }
+  :root[data-face="ohmarchy"] .oh-menu-item:hover > .oh-key,
+  :root[data-face="ohmarchy"] .oh-menu-item:focus-visible > .oh-key,
+  :root[data-face="ohmarchy"] .oh-menu-item:hover > .oh-menu-item-note,
+  :root[data-face="ohmarchy"] .oh-menu-item:focus-visible > .oh-menu-item-note {
+    color: var(--ink2);
+  }
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-menu-item > .oh-icon {
+    --oh-menu-icon: 16px;
+    width: var(--oh-menu-icon);
+    height: var(--oh-menu-icon);
+  }
+}

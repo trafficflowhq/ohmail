@@ -1,0 +1,123 @@
+@layer oh;
+
+/* The kit's one cascade layer. The app's own styles are unlayered and win over it.
+   A part never stamps a root attribute: the page's root says the face, the scheme and the device. */
+@layer oh {
+  /* Measures the parts share that no token carries. Each is written here once. */
+  :root {
+    --oh-hair: 1px;
+    --oh-focus: 2px;
+    --oh-lh: 1.4;
+    --oh-lh-tight: 1;
+    --oh-ring-btn: inset 0 0 0 var(--oh-hair) var(--btn-ring);
+    --oh-ring-ctl: inset 0 0 0 var(--oh-hair) var(--ctl-ring);
+    --oh-ring-pick: inset 0 0 0 var(--oh-hair) var(--pick-ring);
+    --oh-ring-line: inset 0 0 0 var(--oh-hair) var(--line);
+    --oh-ring-focus: inset 0 0 0 var(--oh-focus) var(--focus);
+    --oh-ring-ink: inset 0 0 0 var(--oh-focus) var(--ink);
+    --oh-touch: 0;
+    --oh-layer-jump: 5;
+    --oh-layer-over: 40;
+    --oh-layer-top: 60;
+  }
+
+  :root[data-touch="1"] {
+    --oh-touch: 1;
+  }
+
+  /* The ground every part stands on: the app's root carries it, or the document's. */
+  .oh-root {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--f-text);
+    font-size: var(--t-ui);
+    font-weight: var(--w-text);
+    line-height: var(--oh-lh);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  .oh-root,
+  .oh-root *,
+  .oh-root *::before,
+  .oh-root *::after {
+    box-sizing: border-box;
+  }
+
+  .oh-root ::selection {
+    background: var(--hot);
+    color: var(--on-hot);
+  }
+
+  /* A control starts from nothing: the part's own class draws it. */
+  .oh-control {
+    appearance: none;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-align: inherit;
+    text-decoration: none;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .oh-control:focus {
+    outline: none;
+  }
+  .oh-control:focus-visible {
+    outline: var(--oh-focus) solid var(--focus);
+    outline-offset: var(--oh-focus);
+    border-radius: var(--r-row);
+  }
+  :root[data-face="ohmarchy"] .oh-control:focus-visible {
+    outline-offset: 0;
+  }
+  .oh-control:disabled,
+  .oh-control[aria-disabled="true"] {
+    cursor: default;
+  }
+
+  /* An icon keeps its size beside whatever it stands with. */
+  .oh-icon {
+    display: block;
+    flex: none;
+  }
+
+  /* A line of text starts from nothing too: no margin, the size and weight of what it stands in. */
+  .oh-text {
+    margin: 0;
+    padding: 0;
+    font-size: inherit;
+    font-weight: inherit;
+  }
+
+  /* Said to a screen reader, drawn for nobody. */
+  .oh-vh {
+    position: absolute;
+    width: var(--oh-hair);
+    height: var(--oh-hair);
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  /* The display face: a title, a sentence, a letter in a circle. */
+  .oh-display {
+    font-family: var(--f-display);
+    font-weight: var(--w-display);
+    letter-spacing: var(--track);
+    font-variation-settings: var(--opsz);
+  }
+
+  .oh-muted {
+    color: var(--ink2);
+  }
+
+  .oh-nowrap {
+    white-space: nowrap;
+  }
+}

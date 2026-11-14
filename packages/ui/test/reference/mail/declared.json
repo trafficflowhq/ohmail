@@ -1,0 +1,277 @@
+[
+  {
+    "key": "Row/unread@paper-light-phone",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "3 of 1089 pixels of the paper-clip antialias differently at double scale in this one look; its box, its path and its stroke are the reference's"
+  },
+  {
+    "key": "Dock/upright",
+    "since": "2026-11-14",
+    "reason": "the reference names a place without a count by its hint alone; the dock gives every place its name",
+    "nodes": [
+      { "role": "button", "name": "" },
+      { "role": "button", "name": "History" },
+      { "role": "button", "name": "Settings" }
+    ]
+  },
+  {
+    "key": "ListTail/rest",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole list, where the button that jumps back to the top stands over the last line; the line's own names, boxes and drawn values are the reference's"
+  },
+  {
+    "key": "SelectionBar/three@paper-dark-desktop",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken over a list, and a row's circle shows behind the bar's first corner; the bar itself is equal"
+  },
+  {
+    "key": "BlankColumn/tile",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the test window cuts the last three pixel rows off the kit's picture; above them the tile, its ring and its label are equal"
+  },
+  {
+    "key": "ContactCard/card",
+    "since": "2026-11-14",
+    "reason": "the kit names the card for its person and gives each line of the choice its role; the reference leaves the card unnamed and calls the two lines menu items",
+    "nodes": [
+      { "role": "dialog", "name": "" },
+      { "role": "dialog", "name": "Giulia Ferrari" },
+      { "role": "menuitem", "name": "This address 2 messages" },
+      { "role": "menuitem", "name": "Everyone at terracotta-milano.example 2 messages · 1 sender" },
+      { "role": "radio", "name": "This address 2 messages" },
+      { "role": "radio", "name": "Everyone at terracotta-milano.example 2 messages · 1 sender" }
+    ]
+  },
+  {
+    "key": "MovePicker/folders",
+    "since": "2026-11-14",
+    "reason": "the kit names the menu; the reference leaves it unnamed",
+    "nodes": [
+      { "role": "menu", "name": "" },
+      { "role": "menu", "name": "Move" }
+    ]
+  },
+  {
+    "key": "QuickLook/page",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the look itself is the app's: the reference draws a ruled page there, the kit's picture an empty one of the same size; the frame, its head, its tools and its foot are equal"
+  },
+  {
+    "key": "BlockedImages/said",
+    "since": "2026-11-14",
+    "reason": "the kit says the sentence in a card named for what was kept out; the reference holds it in an unnamed menu",
+    "nodes": [
+      { "role": "menu", "name": "" },
+      { "role": "dialog", "name": "Tracker blocked" }
+    ]
+  },
+  {
+    "key": "DesignedLetter/framed",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the letter itself is the app's: the reference draws its invented letter in the frame, the kit's picture an empty frame of the same size on the same paper"
+  },
+  {
+    "key": "FileNotArrived/set@paper-light-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@paper-dark-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-light-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-dark-foldl",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-light-fold",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-dark-fold",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken in a whole screen, where the action panel stands over the last tile; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-light-phone",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference stands in the reader's scrolled column, whose layer is set on whole pixels by itself, so the tiles' edges fall half a pixel lower there; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "FileNotArrived/set@ohmarchy-dark-phone",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference stands in the reader's scrolled column, whose layer is set on whole pixels by itself, so the tiles' edges fall half a pixel lower there; names, boxes and drawn values are equal"
+  },
+  {
+    "key": "Composer",
+    "since": "2026-11-14",
+    "reason": "the kit names the letter's sheet as a region and each line of people as a group; the text is the app's editor, handed in, so its own box stands inside the frame's padding where the reference's editor is the padded box itself",
+    "nodes": [
+      { "role": "region", "name": "New message" },
+      { "role": "region", "name": "Reply to Giulia Ferrari" },
+      { "role": "group", "name": "To" },
+      { "role": "textbox", "name": "Message" }
+    ]
+  },
+  {
+    "key": "Composer/blank",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference's editor shows its placeholder, the kit's frame holds an empty text (the editor is the app's); on the unfolded phone and in ohmarchy the column's own ring for the keys stands along the letter's edge; the frame's names, boxes and drawn values are equal"
+  },
+  {
+    "key": "Composer/failed",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "in ohmarchy the column's own ring for the keys stands along the letter's edge; in paper 45 pixels of the not-sent line's words antialias differently over the editor's ground; the frame's names, boxes and drawn values are equal"
+  },
+  {
+    "key": "Recipients",
+    "since": "2026-11-14",
+    "reason": "the kit gives each line of people its group, named by the line; the reference leaves the lines unnamed",
+    "nodes": [
+      { "role": "group", "name": "To" },
+      { "role": "group", "name": "Cc" },
+      { "role": "group", "name": "Bcc" }
+    ]
+  },
+  {
+    "key": "SendStatus",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken inside the editor's box, whose edge (paper) or 1 px ring (ohmarchy) runs along the line; the line's names, boxes and drawn values are equal"
+  },
+  {
+    "key": "AttachRoom",
+    "question": "picture",
+    "since": "2026-11-14",
+    "reason": "the reference was taken under the letter's sheet, whose rounded bottom and ring stand over the line, and the full stop after the slot stands two pixels further on (base's dot keeps its own margin); names, boxes and drawn values are equal"
+  },
+  {
+    "key": "SettingsSheet/lines",
+    "since": "2026-11-14",
+    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
+    "nodes": [{ "role": "heading", "name": "Notify about" }]
+  },
+  {
+    "key": "SettingsSheet/sign",
+    "since": "2026-11-14",
+    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
+    "nodes": [{ "role": "heading", "name": "ohmail on Linux" }]
+  },
+  {
+    "key": "SettingsSheet/person",
+    "since": "2026-11-14",
+    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
+    "nodes": [{ "role": "heading", "name": "Mila Brunner" }]
+  },
+  {
+    "key": "SettingsSheet/aside",
+    "since": "2026-11-14",
+    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
+    "nodes": [{ "role": "heading", "name": "Diagnostics" }]
+  },
+  {
+    "key": "SettingsSheet/slot",
+    "since": "2026-11-14",
+    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
+    "nodes": [{ "role": "heading", "name": "Model" }]
+  },
+  {
+    "key": "SettingsSheet/detail",
+    "since": "2026-11-14",
+    "reason": "the kit makes a sheet's title its level-2 heading under the pane's level-1 head; the reference prints it as bold text with no role. Its box, its weight and its ink stand in the picture",
+    "nodes": [{ "role": "heading", "name": "Signed in" }]
+  },
+  {
+    "key": "ListTail",
+    "reason": "The tail's slot is the kit's Slot: it says whether its menu is open (aria-expanded), which the reference's plain button does not. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ColumnHandle",
+    "reason": "The kit's handle is a separator that says its width (aria-valuenow), so a screen reader hears where the column stands; the reference's says no value.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "separator", "unstated": ["value 232"] }]
+  },
+  {
+    "key": "Message",
+    "reason": "The message's head carries the kit's way to its details, which says whether they are open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "MessageHead",
+    "reason": "The kit's buttons in the head say whether what they open is open (aria-expanded), and the time that shows the full date says it is pressed while it does; the reference's are plain buttons.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "pressed"] }]
+  },
+  {
+    "key": "FileTile",
+    "reason": "The message around the tiles carries the kit's way to its details, which says whether they are open (aria-expanded); the reference's is a plain button.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "BlockedImages",
+    "reason": "The kit's chip says whether its card is open (aria-expanded); the reference's is a plain button.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Composer",
+    "reason": "The kit's From slot and its emoji button say whether their menu is open (aria-expanded); the reference's are plain buttons.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "ContactCard",
+    "reason": "The reference marks the chosen place both checked and pressed; a radio is only checked, which is what the kit says.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "radio", "unstated": ["pressed"] }]
+  },
+  {
+    "key": "Recipients",
+    "reason": "The From slot is the kit's Slot, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state. A refused person says it is invalid (aria-invalid), where the reference only colours it.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed", "invalid"] }]
+  },
+  {
+    "key": "AttachRoom",
+    "reason": "The quality slot is the kit's Slot, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "SettingsSheet",
+    "reason": "A line's slot is the kit's Slot, which says whether what it opens is open (aria-expanded); the reference's is a plain button. The new reader reads that state. A line that cannot be changed disables its switch, where the reference only dims it.",
+    "since": "2026-11-15",
+    "alike": [
+      { "role": "button", "unstated": ["collapsed"] },
+      { "role": "switch", "unstated": ["disabled"] }
+    ]
+  }
+]

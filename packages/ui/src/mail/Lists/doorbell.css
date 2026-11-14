@@ -1,0 +1,146 @@
+/* The doorbell: the count on the hot disc. */
+@layer oh {
+  .oh-doorbell {
+    --oh-doorbell-gap: 6px;
+    --oh-doorbell-lead: var(--s2);
+    --oh-doorbell-reach: -6px;
+    --oh-doorbell-ring: 0 0 0 3px var(--hot);
+    --oh-doorbell-far: -14px;
+    --oh-doorbell-key: color-mix(in srgb, var(--on-hot) 16%, transparent);
+    --oh-doorbell-key-ring: none;
+
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--oh-doorbell-gap);
+    min-width: var(--h-bell);
+    height: var(--h-bell);
+    padding: 0 var(--s2) 0 var(--oh-doorbell-lead);
+    border-radius: var(--r-pill);
+    background: var(--hot);
+    color: var(--on-hot);
+    font-size: var(--t-ui);
+    line-height: var(--oh-lh-tight);
+    white-space: nowrap;
+    transition: transform var(--d-press) var(--e-press);
+  }
+
+  .oh-doorbell:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-doorbell:active {
+    transform: var(--x-press-l);
+  }
+
+  /* A finger reaches it a little outside its disc. */
+  .oh-doorbell::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-doorbell-reach);
+  }
+
+  .oh-doorbell-count {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-doorbell > .oh-key {
+    background: var(--oh-doorbell-key);
+    box-shadow: var(--oh-doorbell-key-ring);
+    color: var(--on-hot);
+  }
+
+  /* Arriving: it knocks, and a ring leaves it once. */
+  .oh-doorbell[data-ringing] {
+    animation: oh-doorbell-knock var(--d-ring) var(--e-knock);
+  }
+
+  .oh-doorbell[data-ringing]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--oh-doorbell-ring);
+    animation: oh-doorbell-ringout var(--d-ring) var(--e-out) both;
+    pointer-events: none;
+  }
+
+  @keyframes oh-doorbell-knock {
+    0% {
+      transform: scale(1);
+    }
+
+    18% {
+      transform: scale(0.92);
+    }
+
+    45% {
+      transform: scale(1.06);
+    }
+
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @keyframes oh-doorbell-ringout {
+    0% {
+      inset: 0;
+      opacity: 0.9;
+    }
+
+    100% {
+      inset: var(--oh-doorbell-far);
+      opacity: 0;
+    }
+  }
+
+  :root[data-rm="1"] .oh-doorbell[data-ringing],
+  :root[data-rm="1"] .oh-doorbell[data-ringing]::before {
+    animation: none;
+  }
+
+  :root[data-rm="1"] .oh-doorbell[data-ringing]::before {
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-doorbell[data-ringing],
+    .oh-doorbell[data-ringing]::before {
+      animation: none;
+    }
+
+    .oh-doorbell[data-ringing]::before {
+      opacity: 0;
+    }
+  }
+
+  /* As the sheet draws it: the count keeps the lead of the circles that stood before it. */
+  :root[data-device="fold"] .oh-doorbell {
+    --oh-doorbell-lead: var(--s3);
+  }
+
+  :root[data-face="ohmarchy"] .oh-doorbell {
+    --oh-doorbell-lead: var(--s1);
+    --oh-doorbell-edge: inset 0 0 0 1px var(--hot);
+    --oh-doorbell-key: transparent;
+    --oh-doorbell-key-ring: inset 0 0 0 1px color-mix(in srgb, currentColor 50%, transparent);
+
+    background: var(--wash);
+    box-shadow: var(--oh-doorbell-edge);
+    color: var(--ink);
+  }
+
+  :root[data-face="ohmarchy"] .oh-doorbell-count {
+    color: var(--hot-ink);
+  }
+
+  :root[data-face="ohmarchy"] .oh-doorbell > .oh-key {
+    color: inherit;
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"] .oh-doorbell {
+    --oh-doorbell-reach: -7px;
+  }
+}

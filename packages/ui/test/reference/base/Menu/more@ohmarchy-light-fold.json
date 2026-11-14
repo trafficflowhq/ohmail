@@ -1,0 +1,303 @@
+{
+  "component": "Menu",
+  "state": "more",
+  "look": "ohmarchy-light-fold",
+  "place": "block",
+  "target": [452.7031, 221, 232, 475],
+  "clip": [452, 221, 233, 475],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "fold",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 719,
+    "height": 781,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "500",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(32, 94, 166) 0px 0px 0px 2px" },
+    { "backgroundColor": "rgb(195, 193, 184)" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 3 1ee9a06216d2" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 3 653dc68cc5d9" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 2 090644d6b1e3" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 3 e11d3fbc7e31" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 2 1d9ee29ca690" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 3 8148a9ed60e6" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 3 3c3293115fd9" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 2 fa23e0e37623" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 1 088b9abb8387" },
+    {
+      "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; stroke rgb(16, 15, 15) 2.6px square miter 4; shapes 4 271051e8948d"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "menu",
+      "name": "",
+      "box": [0, 0, 232, 475],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(255, 252, 240)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "4px",
+        "paddingRight": "4px",
+        "paddingBottom": "4px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "surfaces": [
+        { "box": [0, 0, 232, 475], "paint": 0 },
+        { "box": [16, 316, 200, 1], "paint": 1 },
+        { "box": [16, 369, 200, 1], "paint": 1 },
+        { "box": [16, 422, 200, 1], "paint": 1 }
+      ]
+    },
+    {
+      "role": "menuitem",
+      "name": "Reply all",
+      "box": [4, 4, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Reply all", "type": 0 }],
+      "surfaces": [{ "box": [16, 16, 20, 20], "paint": 2 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Later",
+      "box": [4, 48, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Later", "type": 0 }],
+      "surfaces": [{ "box": [16, 60, 20, 20], "paint": 3 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Park",
+      "box": [4, 92, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Park", "type": 0 }],
+      "surfaces": [{ "box": [16, 104, 20, 20], "paint": 4 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Resurface",
+      "box": [4, 136, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Resurface", "type": 0 }],
+      "surfaces": [{ "box": [16, 148, 20, 20], "paint": 5 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Tag",
+      "box": [4, 180, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Tag", "type": 0 }],
+      "surfaces": [{ "box": [16, 192, 20, 20], "paint": 6 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Screening",
+      "box": [4, 224, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Screening", "type": 0 }],
+      "surfaces": [{ "box": [16, 236, 20, 20], "paint": 7 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Move",
+      "box": [4, 268, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Move", "type": 0 }],
+      "surfaces": [{ "box": [16, 280, 20, 20], "paint": 8 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Draft reply",
+      "box": [4, 321, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Draft reply", "type": 0 }],
+      "surfaces": [{ "box": [16, 333, 20, 20], "paint": 9 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Delete",
+      "box": [4, 374, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Delete", "type": 0 }],
+      "surfaces": [{ "box": [16, 386, 20, 20], "paint": 10 }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Add to calendar",
+      "box": [4, 427, 224, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "16.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "Add to calendar", "type": 0 }],
+      "surfaces": [{ "box": [16, 439, 20, 20], "paint": 11 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

@@ -1263,9 +1263,12 @@ packages/ui/test/bulk-strip.test.tsx	source-text	reads source as text (css)	styl
 packages/ui/test/date-picker.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/doorbell-stack.test.ts	source-text	reads source as text (css, mjs)	layer 2	kit	
 packages/ui/test/interactions.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/mail/letters.test.tsx	source-text	reads source as text (css): the kit's quote sheet, loaded into the page it draws in	layer 2	kit	
 packages/ui/test/motion.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/old-new-apart.test.ts	source-text	an import census: reads source as text (css, ts, tsx)	lint rule: the kit's new folders import only what stands below them, and today's folders none of them	kit	
 packages/ui/test/phone-type-census.test.ts	source-text	reads source as text (css)	layer 2	kit	
 packages/ui/test/reader-close.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/reference/count.test.ts	data	reads data files (json): the kit's reference lists, manifests and picture data	none	kit	
 packages/ui/test/segmented-control.test.tsx	source-text	reads source as text (css, tsx)	layer 2	kit	
 packages/ui/test/segmented-pair-fill.test.tsx	source-text	reads source as text (css, tsx)	layer 2	kit	
 packages/ui/test/smoke.test.tsx	source-text	through test/support/wordmark.ts: reads the product folders, for the wordmark's spelling	layer 2	kit	

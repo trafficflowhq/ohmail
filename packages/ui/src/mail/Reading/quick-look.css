@@ -1,0 +1,190 @@
+/* The Quick Look: a head with the file's name and its tools, the look on a quiet ground, the keys at the foot. */
+@layer oh {
+  .oh-quicklook {
+    --oh-overlay-max: 1040px;
+    --oh-scrim-edge: var(--s5);
+    --oh-quicklook-max-h: 900px;
+    --oh-quicklook-clear: 64px;
+    --oh-quicklook-clear-touch: 32px;
+    --oh-quicklook-r: calc(var(--r-sheet) + 2px);
+    --oh-quicklook-under: 0 var(--oh-hair) 0 var(--line);
+    --oh-quicklook-over: 0 calc(var(--oh-hair) * -1) 0 var(--line);
+    --oh-quicklook-nav: 40px;
+    --oh-quicklook-layer: 1;
+    --oh-quicklook-id-gap: 1px;
+    --oh-quicklook-hint-gap: 4px;
+    --oh-quicklook-key-gap: 2px;
+
+    display: flex;
+    flex-direction: column;
+    height: min(100% - var(--oh-quicklook-clear), var(--oh-quicklook-max-h));
+    max-height: none;
+    overflow: hidden;
+    border-radius: var(--oh-quicklook-r);
+  }
+
+  .oh-quicklook-head {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    padding: var(--s3) var(--s3) var(--s3) var(--s5);
+    box-shadow: var(--oh-quicklook-under);
+  }
+
+  .oh-quicklook-id {
+    display: flex;
+    flex-direction: column;
+    gap: var(--oh-quicklook-id-gap);
+    min-width: 0;
+  }
+
+  .oh-quicklook-name {
+    overflow: hidden;
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-quicklook-facts {
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-quicklook-tools {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  .oh-quicklook-tools > .oh-button {
+    color: var(--ink2);
+  }
+
+  .oh-quicklook-pager {
+    display: inline-flex;
+    gap: var(--oh-quicklook-key-gap);
+  }
+
+  .oh-quicklook-pager > [data-turned] {
+    display: inline-flex;
+    transform: rotate(180deg);
+  }
+
+  .oh-quicklook-all[aria-busy="true"] {
+    color: var(--ink2);
+    pointer-events: none;
+  }
+
+  .oh-quicklook-save {
+    display: contents;
+  }
+
+  .oh-quicklook-stage {
+    position: relative;
+    flex: 1;
+    display: flex;
+    min-height: 0;
+    padding: var(--s5);
+    overflow: auto;
+    overscroll-behavior: contain;
+    background: var(--soft-sheet);
+  }
+
+  .oh-quicklook-look {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-height: 100%;
+    margin: auto;
+  }
+
+  .oh-quicklook-nav {
+    position: absolute;
+    top: 50%;
+    z-index: var(--oh-quicklook-layer);
+    translate: 0 -50%;
+  }
+
+  .oh-quicklook-nav > .oh-button {
+    width: var(--oh-quicklook-nav);
+    height: var(--oh-quicklook-nav);
+    background: var(--sheet);
+    box-shadow: var(--lift);
+  }
+
+  .oh-quicklook-nav[data-side="prev"] {
+    left: var(--s3);
+  }
+
+  .oh-quicklook-nav[data-side="next"] {
+    right: var(--s3);
+    transform: scaleX(-1);
+  }
+
+  .oh-quicklook-foot {
+    flex: none;
+    display: flex;
+    justify-content: center;
+    gap: var(--s5);
+    padding: var(--s2) var(--s4);
+    box-shadow: var(--oh-quicklook-over);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+  }
+
+  .oh-quicklook-hint {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--oh-quicklook-hint-gap);
+  }
+
+  .oh-quicklook-hint > .oh-key {
+    display: inline-flex;
+    margin-right: var(--oh-quicklook-key-gap);
+  }
+
+  /* Under a finger it takes the window, has no keys to show, and Download is its arrow alone. */
+  :root[data-touch="1"] .oh-quicklook {
+    --oh-scrim-edge: var(--s2);
+
+    height: calc(100% - var(--oh-quicklook-clear-touch));
+  }
+
+  :root[data-touch="1"] .oh-quicklook-foot,
+  :root[data-device="phone"] .oh-quicklook-all {
+    display: none;
+  }
+
+  :root[data-touch="1"] .oh-quicklook-stage {
+    padding: var(--s3);
+  }
+
+  :root[data-touch="1"] .oh-quicklook-head {
+    padding-left: var(--s4);
+  }
+
+  :root[data-touch="1"] .oh-quicklook-save > .oh-button {
+    justify-content: center;
+    width: var(--h-s);
+    padding: 0;
+  }
+
+  :root[data-touch="1"] .oh-quicklook-save > .oh-button > :not(.oh-icon) {
+    display: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-quicklook {
+    --oh-quicklook-frame: 0 0 0 var(--oh-focus) var(--hot);
+
+    border-radius: 0;
+    box-shadow: var(--oh-quicklook-frame);
+  }
+}

@@ -1,0 +1,178 @@
+{
+  "component": "ReadingHead",
+  "state": "rest",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [728, 11, 700, 82.75],
+  "clip": [728, 11, 700, 83],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.91 0.065 78)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "oklch(0.91 0.065 250)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "28px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "31.36px",
+      "letterSpacing": "-0.616px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    {
+      "boxShadow": "rgb(14, 13, 12) 0px -2px 0px 0px",
+      "after.backgroundImage": "linear-gradient(rgb(14, 13, 12), color(srgb 0 0 0 / 0))"
+    },
+    {
+      "backgroundColor": "oklch(0.38 0.06 78)",
+      "boxShadow": "rgb(14, 13, 12) 0px 0px 0px 2px",
+      "borderRadius": "999px"
+    },
+    {
+      "backgroundColor": "oklch(0.38 0.06 250)",
+      "boxShadow": "rgb(14, 13, 12) 0px 0px 0px 2px",
+      "borderRadius": "999px"
+    },
+    { "backgroundColor": "rgb(44, 40, 36)", "borderRadius": "999px" },
+    { "backgroundColor": "oklch(0.74 0.12 150)", "borderRadius": "999px" },
+    {
+      "before.content": "\"·\"",
+      "before.color": "rgb(184, 175, 163)",
+      "before.font": "normal 600 13px / 18.2px \"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "before.textOverflow": "ellipsis",
+      "before.webkitLocale": "\"en\"",
+      "before.textRendering": "optimizelegibility"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [0, 0, 700, 82.8],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgb(14, 13, 12)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "5px",
+        "paddingRight": "32px",
+        "paddingBottom": "16px",
+        "paddingLeft": "32px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [
+        { "said": "G", "type": 0 },
+        { "said": "B", "type": 1 },
+        { "said": "Giulia Ferrari, Ben Arnold", "type": 2 },
+        { "said": "Pottery Project Studio", "type": 3 }
+      ],
+      "surfaces": [
+        { "box": [0, 0, 700, 82.8], "paint": 0, "parts": { "after": [0, 82.8, 700, 24] } },
+        { "box": [32, 44.5, 22, 22], "paint": 1 },
+        { "box": [49, 44.5, 22, 22], "paint": 2 },
+        { "box": [268, 44.5, 117.7, 22], "paint": 3 },
+        { "box": [276, 51.5, 8, 8], "paint": 4 },
+        { "box": [393.7, 46.5, 49.3, 18.2], "paint": 5 }
+      ]
+    },
+    {
+      "role": "heading",
+      "name": "Glaze order #2291",
+      "box": [32, 5, 636, 31.4],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "28px",
+        "fontWeight": "800",
+        "lineHeight": "31.36px",
+        "letterSpacing": "-0.616px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "level": 1,
+      "text": [{ "said": "Glaze order #2291", "type": 4 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

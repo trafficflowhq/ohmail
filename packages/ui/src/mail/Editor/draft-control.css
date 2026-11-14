@@ -1,0 +1,150 @@
+/* Draft stands at the foot's far end, in the box its text lands in: its price where the foot has room, then the control. */
+@layer oh {
+  .oh-draft {
+    flex: 0 1 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+    min-width: 0;
+    margin-left: auto;
+    padding-left: var(--s2);
+  }
+
+  .oh-draft-cost {
+    display: none;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .oh-draft-control {
+    --oh-draft-pad: 0 var(--s3) 0 var(--s2);
+    --oh-draft-pad-phone: 0 10px 0 6px;
+
+    flex: 0 1 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+    height: var(--h-s);
+    padding: var(--oh-draft-pad);
+    border-radius: var(--r-pill);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-btn);
+    color: var(--ink);
+    font-weight: var(--w-mid);
+    line-height: var(--oh-lh-tight);
+    transition:
+      transform var(--d-press) var(--e-press),
+      background-color var(--d-fade) var(--e-std);
+  }
+
+  .oh-draft-control:hover {
+    background: var(--off);
+  }
+
+  .oh-draft-control:active {
+    transform: var(--x-press);
+  }
+
+  .oh-draft-control:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-draft-control[aria-busy="true"] {
+    background: var(--soft-sheet);
+    color: var(--ink2);
+    transform: none;
+  }
+
+  .oh-draft-word,
+  .oh-draft-short {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-draft-short {
+    display: none;
+  }
+
+  /* Quiet: its words without the capsule, and no price. The pointer still finds a button there. */
+  .oh-draft[data-idle] > .oh-draft-control {
+    background: transparent;
+    box-shadow: none;
+    color: var(--ink2);
+  }
+
+  .oh-draft[data-idle] > .oh-draft-control:hover {
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-btn);
+    color: var(--ink);
+  }
+
+  /* The price where the foot is wide; fewer words where it is narrow; a line of its own on the narrowest. */
+  @container (min-width: 520px) {
+    .oh-draft-cost {
+      display: inline;
+    }
+  }
+
+  @container (min-width: 315px) and (max-width: 371px) {
+    .oh-draft-word[data-short] {
+      display: none;
+    }
+
+    .oh-draft-short {
+      display: block;
+    }
+  }
+
+  @container (max-width: 314px) {
+    .oh-draft {
+      flex-basis: 100%;
+      justify-content: flex-end;
+      padding-left: 0;
+    }
+  }
+
+  /* The two texts: tabs drawn as the marks are, so Send stays the one ink capsule. */
+  .oh-drafttabs {
+    display: flex;
+    padding: var(--s3) var(--s4) 0;
+  }
+
+  .oh-drafttabs > .oh-seg {
+    background: var(--soft-sheet);
+    box-shadow: none;
+  }
+
+  .oh-drafttabs > .oh-seg > [aria-pressed="true"] {
+    background: var(--sheet);
+    box-shadow: var(--oh-ring-ctl);
+    color: var(--ink);
+  }
+
+  .oh-drafttabs + .oh-composer-text {
+    padding-top: var(--s3);
+  }
+
+  :root[data-touch="1"] .oh-drafttabs > .oh-seg > * {
+    --oh-drafttabs-h: 36px;
+
+    height: var(--oh-drafttabs-h);
+  }
+
+  :root[data-device="phone"] .oh-draft {
+    padding-left: 0;
+  }
+
+  /* ohmarchy's small capsule is 10 px each side; the phone's own padding still wins on the phone. */
+  :root[data-face="ohmarchy"] .oh-draft-control {
+    --oh-draft-pad: 0 10px;
+  }
+
+  :root[data-device="phone"] .oh-draft-control {
+    padding: var(--oh-draft-pad-phone);
+  }
+}

@@ -1,0 +1,58 @@
+/* One row of the list of what waits. The list is a dialog's body. */
+@layer oh {
+  .oh-waitrow {
+    --oh-waitrow-pad: var(--s3) 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s4);
+    padding: var(--oh-waitrow-pad);
+    border-top: var(--oh-hair) solid var(--line);
+  }
+  .oh-waitrow-say {
+    --oh-waitrow-say-gap: 2px;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--oh-waitrow-say-gap);
+    min-width: min(15em, 100%);
+    line-height: 1.35;
+  }
+  .oh-waitrow-what {
+    font-weight: var(--w-bold);
+  }
+  .oh-waitrow-about {
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .oh-waitrow-why {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s1);
+    color: var(--ink2);
+    text-wrap: pretty;
+  }
+  .oh-waitrow[data-refused] .oh-waitrow-why {
+    color: var(--ink);
+  }
+  .oh-waitrow-why > .oh-icon {
+    --oh-waitrow-icon-gap: 3px 0 0;
+    margin: var(--oh-waitrow-icon-gap);
+  }
+  .oh-waitrow-acts {
+    display: flex;
+    flex: none;
+    gap: var(--s1);
+  }
+  :root[data-device="phone"] .oh-waitrow {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--s2);
+  }
+  :root[data-device="phone"] .oh-waitrow-acts > .oh-button {
+    height: var(--h-s);
+  }
+}

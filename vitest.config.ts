@@ -165,6 +165,10 @@ export default defineConfig({
       { find: "@ohmail/tokens/tokens.css", replacement: r("./packages/tokens/src/tokens.css") },
       { find: "@ohmail/tokens/faces.css", replacement: r("./packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("./packages/tokens/src/ohmarchy.css") },
+      // The next design's values. The bare subpath is anchored: as a prefix it would also take its two stylesheets.
+      { find: "@ohmail/tokens/design/motion.css", replacement: r("./packages/tokens/src/design/motion.css") },
+      { find: "@ohmail/tokens/design.css", replacement: r("./packages/tokens/src/design/tokens.css") },
+      { find: /^@ohmail\/tokens\/design$/, replacement: r("./packages/tokens/src/design/tokens.ts") },
       { find: "@ohmail/tokens", replacement: r("./packages/tokens/src/index.ts") },
       // Above the bare name, for the prefix reason the tokens entries give.
       { find: "@ohmail/testing/adapter", replacement: r("./packages/testing/src/adapter.ts") },
@@ -190,6 +194,10 @@ export default defineConfig({
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.
       { find: "@ohmail/ui/squares-window", replacement: r("./packages/ui/src/squares-window.ts") },
+      // The next design's components, three entries, above the bare name for the same reason.
+      { find: "@ohmail/ui/base", replacement: r("./packages/ui/src/base/index.ts") },
+      { find: "@ohmail/ui/mail", replacement: r("./packages/ui/src/mail/index.ts") },
+      { find: "@ohmail/ui/calendar", replacement: r("./packages/ui/src/calendar/index.ts") },
       { find: "@ohmail/ui", replacement: r("./packages/ui/src/index.ts") },
       // ONE PHYSICAL `next-intl` FOR THE WHOLE SUITE, and it is the same hazard the workspace
       // file pins `drizzle-orm`'s peers for: a React context is identified by the module object

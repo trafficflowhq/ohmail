@@ -1,0 +1,25 @@
+/* Lines that stand in columns keep them: one face of equal widths, no wrapping, a scroll of their own. */
+@layer oh {
+  .oh-lettercolumns {
+    --oh-columns-lh: 1.6;
+    --oh-columns-face: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+
+    max-width: 100%;
+    margin: var(--s3) 0 0;
+    padding: var(--s3) var(--s4);
+    overflow: auto hidden;
+    border-radius: var(--r-row);
+    background: var(--oh-columns-ground, var(--soft-sheet));
+    box-shadow: var(--oh-ring-btn);
+    font-family: var(--oh-columns-face);
+    font-size: var(--t-meta);
+    line-height: var(--oh-columns-lh);
+    white-space: pre;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+
+  .oh-lettercolumns + .oh-message-body {
+    margin-top: var(--s3);
+  }
+}

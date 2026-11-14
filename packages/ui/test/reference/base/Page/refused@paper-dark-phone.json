@@ -1,0 +1,188 @@
+{
+  "component": "Page",
+  "state": "refused",
+  "look": "paper-dark-phone",
+  "place": "window",
+  "target": [0, 0, 390, 844],
+  "clip": [0, 0, 390, 844],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "32px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "normal",
+      "letterSpacing": "-0.704px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "32px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "33.92px",
+      "letterSpacing": "-0.704px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "borderBottom": "3px dotted rgb(246, 241, 233)", "placeholder": "rgb(184, 175, 163)" },
+    { "ink": "stroke rgb(246, 241, 233) 1.8px round round; shapes 3 93b4b80b8950" },
+    { "backgroundColor": "rgb(255, 106, 61)", "borderRadius": "999px" },
+    {
+      "backgroundColor": "rgb(14, 13, 12)",
+      "before.backgroundImage": "linear-gradient(rgba(0, 0, 0, 0), rgb(14, 13, 12))"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [0, 0, 390, 52],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "24px",
+        "paddingBottom": "0px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(246, 241, 233)"
+      }
+    },
+    {
+      "role": "textbox",
+      "name": "Password",
+      "box": [175.8, 143.8, 94.3, 44],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "32px",
+        "fontWeight": "800",
+        "lineHeight": "35.2px",
+        "letterSpacing": "-0.704px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "1.28px",
+        "paddingBottom": "0px",
+        "paddingLeft": "1.28px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "state": ["shows its hint"],
+      "text": [{ "said": "type it", "type": 0, "shown": true }],
+      "surfaces": [{ "box": [175.8, 143.8, 94.3, 44], "paint": 0 }]
+    },
+    {
+      "role": "alert",
+      "name": "",
+      "box": [24, 199.8, 342, 67.2],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [
+        {
+          "said": "This link has expired or was already used. Sign in with your email address and password and we send you a new one.",
+          "type": 1
+        }
+      ],
+      "surfaces": [{ "box": [24, 201.8, 18, 18], "paint": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Sign in",
+      "box": [24, 764, 342, 56],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(246, 241, 233)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "16px",
+        "paddingBottom": "0px",
+        "paddingLeft": "16px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Sign in", "type": 2 }]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Confirm my email address with password", "type": 3 },
+      { "said": "It is the password you chose when you signed up.", "type": 1 }
+    ],
+    "surfaces": [
+      { "box": [272.7, 163.9, 10.9, 10.9], "paint": 2 },
+      { "box": [0, 752, 390, 92], "paint": 3, "parts": { "before": [0, -24, 390, 24] } }
+    ]
+  }
+}

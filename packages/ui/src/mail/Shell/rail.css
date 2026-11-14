@@ -1,0 +1,103 @@
+/* The rail: the places scroll when they must; the switch, Write and the foot stay. On the ground in oh, a sheet of its own in ohmarchy. */
+@layer oh {
+  .oh-rail {
+    --oh-hover: var(--hover-ground);
+    --oh-rail-between: 2px;
+    --oh-rail-fade: 28px;
+    --oh-rail-solid: var(--ink);
+
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    overflow: hidden;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .oh-rail-scroll {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    overflow: hidden auto;
+    min-height: 0;
+    scrollbar-width: none;
+  }
+
+  /* A mask reads only how solid a colour is: the ink stands for "all there". */
+  .oh-rail-scroll[data-clip="bottom"] {
+    mask-image: linear-gradient(var(--oh-rail-solid) calc(100% - var(--oh-rail-fade)), transparent);
+  }
+
+  .oh-rail-scroll[data-clip="top"] {
+    mask-image: linear-gradient(transparent, var(--oh-rail-solid) var(--oh-rail-fade));
+  }
+
+  .oh-rail-scroll[data-clip="both"] {
+    mask-image: linear-gradient(
+      transparent,
+      var(--oh-rail-solid) var(--oh-rail-fade),
+      var(--oh-rail-solid) calc(100% - var(--oh-rail-fade)),
+      transparent
+    );
+  }
+
+  .oh-rail-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--oh-rail-between);
+  }
+
+  .oh-rail-write {
+    flex: none;
+    display: flex;
+    align-self: flex-start;
+    margin-bottom: var(--s1);
+  }
+
+  :root[data-icons="1"] .oh-rail-write > .oh-button {
+    --oh-button-pad: 0 var(--s5) 0 var(--s4);
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail {
+    --oh-hover: var(--hover);
+    --oh-rail-between: 0;
+    --oh-rail-in: var(--s3) 10px 10px;
+    --oh-rail-ring: var(--ring);
+
+    gap: var(--gap);
+    padding: var(--oh-rail-in);
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--oh-rail-ring);
+  }
+
+  /* Without the switch over it the first control stands on the sheets' top line. */
+  :root[data-face="ohmarchy"] .oh-rail:not([data-switcher]) {
+    --oh-rail-in: 10px 10px 10px;
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail[data-focused] {
+    --oh-rail-ring: var(--focus);
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail-scroll {
+    gap: var(--gap);
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail-write {
+    align-self: stretch;
+    margin-bottom: 0;
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail-write > .oh-button {
+    --oh-button-pad: 0 var(--s2) 0 var(--s3);
+
+    flex: 1;
+    justify-content: flex-start;
+    height: 36px;
+  }
+
+  :root[data-face="ohmarchy"] .oh-rail-write > .oh-button > .oh-key {
+    margin-left: auto;
+  }
+}

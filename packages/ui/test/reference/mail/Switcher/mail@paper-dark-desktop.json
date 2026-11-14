@@ -1,0 +1,134 @@
+{
+  "component": "Switcher",
+  "state": "mail",
+  "look": "paper-dark-desktop",
+  "place": "cell",
+  "target": [24, 24, 232, 40],
+  "clip": [24, 24, 232, 40],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "-0.352px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "-0.352px",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(246, 241, 233)", "borderRadius": "999px" },
+    { "ink": "stroke rgb(18, 16, 14) 1.8px round round; shapes 2 bdcbbbfe63dc" },
+    { "backgroundColor": "rgb(255, 106, 61)", "borderRadius": "999px" },
+    {
+      "ink": "stroke rgb(184, 175, 163) 1.8px round round; stroke rgb(184, 175, 163) 2.6px round round; shapes 4 271051e8948d"
+    },
+    { "backgroundColor": "rgb(127, 160, 255)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "group",
+      "name": "Mail or Calendar",
+      "box": [0, 0, 232, 40],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgb(44, 40, 36)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "3px",
+        "paddingRight": "3px",
+        "paddingBottom": "3px",
+        "paddingLeft": "3px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "surfaces": [{ "box": [3, 3, 112, 34], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "ohmail",
+      "box": [3, 3, 112, 34],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "state": ["current"],
+      "text": [{ "said": "ohmail", "type": 0 }],
+      "surfaces": [
+        { "box": [18.1, 11, 18, 18], "paint": 1 },
+        { "box": [94.4, 18.4, 5.4, 5.4], "paint": 2 }
+      ]
+    },
+    {
+      "role": "button",
+      "name": "ohcal",
+      "box": [117, 3, 112, 34],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "text": [{ "said": "ohcal", "type": 1 }],
+      "surfaces": [
+        { "box": [137.2, 11, 18, 18], "paint": 3 },
+        { "box": [203.3, 18.4, 5.4, 5.4], "paint": 4 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

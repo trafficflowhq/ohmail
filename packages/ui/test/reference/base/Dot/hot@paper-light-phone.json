@@ -1,0 +1,28 @@
+{
+  "component": "Dot",
+  "state": "hot",
+  "look": "paper-light-phone",
+  "place": "cell",
+  "target": [120.3594, 36.5313, 7.4688, 7.4688],
+  "clip": [120, 36, 8, 9],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [{ "backgroundColor": "rgb(248, 67, 26)", "borderRadius": "999px" }],
+  "nodes": [],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 7.5, 7.5], "paint": 0 }] }
+}
