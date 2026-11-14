@@ -4,10 +4,12 @@ import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Button,
+  closeTopOverlay,
   contextTrigger,
   Dialog,
   KeyHelp,
   Menu,
+  MenuGroup,
   MenuItem,
   MenuRule,
   Overlay,
@@ -68,6 +70,13 @@ describe("Menu", () => {
     expect(screen.queryAllByRole("menuitemradio")).toEqual([]);
   });
 
+  it("names an item by its words alone: the key beside them is drawn and never said", () => {
+    render(<Opened />);
+    open();
+    const reply = screen.getByRole("menuitem", { name: "Reply" });
+    expect(reply.querySelector("kbd")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("draws nothing until it is open, then a named menu with its items", () => {
     render(<Opened />);
     expect(screen.queryByRole("menu")).toBeNull();
@@ -82,7 +91,7 @@ describe("Menu", () => {
     expect(items().map((i) => i.getAttribute("aria-checked"))).toEqual([null, null, "true", "false"]);
   });
 
-  it("a rule can carry the title of the group under it: a second titled group, which the arrows pass over", () => {
+  it("holds more than one titled group: each is a group said by its title, a rule between them, the arrows passing from one to the next", () => {
     function Decided() {
       const anchor = useRef<HTMLButtonElement | null>(null);
       return (
@@ -90,33 +99,45 @@ describe("Menu", () => {
           <Button ref={anchor} opens="menu" expanded>
             Ohbox
           </Button>
-          <Menu open onClose={() => {}} anchor={anchor} label="Where their mail goes" title="Goes to">
-            <MenuItem keyHint="o" checked>
-              Ohbox
-            </MenuItem>
-            <MenuItem keyHint="n" checked={false}>
-              News
-            </MenuItem>
-            <MenuRule title="Applies to" />
-            <MenuItem checked>This sender</MenuItem>
-            <MenuItem checked={false}>The whole domain</MenuItem>
+          <Menu open onClose={() => {}} anchor={anchor} label="Where their mail goes">
+            <MenuGroup title="Goes to">
+              <MenuItem keyHint="o" checked>
+                Ohbox
+              </MenuItem>
+              <MenuItem keyHint="n" checked={false}>
+                News
+              </MenuItem>
+            </MenuGroup>
+            <MenuRule />
+            <MenuGroup title="Applies to">
+              <MenuItem checked>This sender</MenuItem>
+              <MenuItem checked={false}>The whole domain</MenuItem>
+            </MenuGroup>
           </Menu>
         </>
       );
     }
     render(<Decided />);
     const menu = screen.getByRole("menu", { name: "Where their mail goes" });
-    const [first, second] = within(menu).getAllByRole("heading");
-    expect([first?.textContent, second?.textContent]).toEqual(["Goes to", "Applies to"]);
-    /* The second title stands under its rule, between the two groups, drawn as the menu's own title is. */
+    /* Each group is told by its own title, and holds its own items and no other's. */
+    const goes = within(menu).getByRole("group", { name: "Goes to" });
+    const applies = within(menu).getByRole("group", { name: "Applies to" });
+    const held = (group: HTMLElement) => items().filter((item) => group.contains(item));
+    expect([held(goes), held(applies)]).toEqual([items().slice(0, 2), items().slice(2)]);
+    expect(items()).toHaveLength(4);
+    /* The rule stands between the two groups, in neither; each title stands over its group's first item. */
     const before = (a: Node, b: Node) =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
     const rule = within(menu).getByRole("separator");
-    expect([before(items()[1]!, rule), before(rule, second!), before(second!, items()[2]!)]).toEqual([
-      true,
+    const [first, second] = within(menu).getAllByRole("heading");
+    expect([first?.textContent, second?.textContent]).toEqual(["Goes to", "Applies to"]);
+    expect([goes.contains(rule), applies.contains(rule), before(goes, rule), before(rule, applies)]).toEqual([
+      false,
+      false,
       true,
       true,
     ]);
+    expect([before(first!, items()[0]!), before(second!, items()[2]!)]).toEqual([true, true]);
     expect(second!.className).toBe(first!.className);
     items()[1]!.focus();
     fireEvent.keyDown(menu, { key: "ArrowDown" });
@@ -181,6 +202,39 @@ describe("Menu", () => {
     );
     open();
     fireEvent.keyDown(screen.getByRole("menu"), { key: "e" });
+    expect(below).not.toHaveBeenCalled();
+  });
+
+  it("hands a key to the app's own keys first: a key they take is spent, any other is the menu's as before", () => {
+    const [below, onClose, onPick] = [vi.fn(), vi.fn(), vi.fn()];
+    /* A card's own keys: a digit takes a row of it, and the key that sends takes the time it holds. */
+    const onKey = vi.fn((e: { key: string; metaKey: boolean; preventDefault(): void }) => {
+      const taken = e.key === "2" || (e.key === "Enter" && e.metaKey) || e.key === "Escape";
+      if (taken) onPick(e.key);
+      return taken;
+    });
+    render(
+      <div onKeyDown={below}>
+        <Menu open onClose={onClose} label="Send later" kind="card" onKey={onKey}>
+          <MenuItem onPress={() => {}}>This evening</MenuItem>
+          <MenuItem onPress={() => {}}>Tomorrow morning</MenuItem>
+        </Menu>
+      </div>,
+    );
+    const card = screen.getByRole("dialog", { name: "Send later" });
+    fireEvent.keyDown(card, { key: "2" });
+    fireEvent.keyDown(card, { key: "Enter", metaKey: true });
+    expect(onPick.mock.calls).toEqual([["2"], ["Enter"]]);
+    /* A key the app took is not the menu's any more: its own Escape does not close it. */
+    fireEvent.keyDown(card, { key: "Escape" });
+    expect(onClose).not.toHaveBeenCalled();
+    /* A key the app leaves is the menu's: the arrows still move, and Tab stays inside a card. */
+    const rows = within(card).getAllByRole("menuitem");
+    rows[0]!.focus();
+    fireEvent.keyDown(card, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(rows[1]);
+    expect(onKey).toHaveBeenCalledTimes(4);
+    /* Taken or not, no key reaches what lies under the menu. */
     expect(below).not.toHaveBeenCalled();
   });
 
@@ -392,7 +446,9 @@ describe("Dialog", () => {
     expect(within(dialog).queryByRole("status")).toBeNull();
     rerender(waiting({ line: "Not put back. Try again.", refused: true }));
     const list = within(dialog).getByRole("list");
-    const line = within(dialog).getByRole("status");
+    /* A refusal answers a press: it is said at once, as an alert, never held back as a status. */
+    expect(within(dialog).queryByRole("status")).toBeNull();
+    const line = within(dialog).getByRole("alert");
     expect(line.textContent).toBe("Not put back. Try again.");
     expect(list.contains(line)).toBe(false);
     expect(within(list).getAllByRole("listitem")).toHaveLength(2);
@@ -705,6 +761,42 @@ function Typed({
 }
 const marked = () =>
   screen.getAllByRole("option").find((o) => o.getAttribute("aria-selected") === "true")?.textContent;
+
+describe("the system's Back over an open overlay", () => {
+  it("closes the newest open overlay, once, and answers that Back is spent; with nothing open it answers no", () => {
+    const [dialog, menu] = [vi.fn(), vi.fn()];
+    expect(closeTopOverlay()).toBe(false);
+    const { rerender } = render(
+      <>
+        <Dialog
+          open
+          onClose={dialog}
+          title="Move"
+          confirm={{ label: "Move", onPress: () => {} }}
+          cancel={{ label: "Cancel" }}
+        />
+        <Menu open onClose={menu} label="Folders" anchor={{ x: 10, y: 10 }}>
+          <MenuItem onPress={() => {}}>Paperwork</MenuItem>
+        </Menu>
+      </>,
+    );
+    expect(closeTopOverlay()).toBe(true);
+    expect([dialog.mock.calls.length, menu.mock.calls.length]).toEqual([0, 1]);
+    rerender(
+      <Dialog
+        open
+        onClose={dialog}
+        title="Move"
+        confirm={{ label: "Move", onPress: () => {} }}
+        cancel={{ label: "Cancel" }}
+      />,
+    );
+    expect(closeTopOverlay()).toBe(true);
+    expect([dialog.mock.calls.length, menu.mock.calls.length]).toEqual([1, 1]);
+    rerender(<></>);
+    expect(closeTopOverlay()).toBe(false);
+  });
+});
 
 describe("Palette", () => {
   it("puts the keys on its line, with the first command marked and named to the line", () => {

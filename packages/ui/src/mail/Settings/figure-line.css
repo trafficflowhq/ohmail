@@ -13,6 +13,13 @@
     color: var(--ink);
   }
 
+  /* The mark that says more stands a step from what it is about, closer than the line's own gap. */
+  .oh-figureline > .oh-infomark {
+    --oh-figureline-info: calc(var(--s1) - var(--s2));
+
+    margin-left: var(--oh-figureline-info);
+  }
+
   .oh-figureline > .oh-tag {
     align-self: center;
     margin-left: auto;

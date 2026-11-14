@@ -53,11 +53,26 @@
     min-width: 0;
   }
 
+  /* Without a control the heading stands as it does alone: its line's box is unseen by the layout. */
+  .oh-groupheading-line[data-bare] {
+    display: contents;
+  }
+
+  .oh-groupheading-line[data-bare] > .oh-groupheading {
+    flex: initial;
+    min-width: initial;
+  }
+
+  /* The group's control is a word of the heading's line, a size smaller than its name, in the heading's own
+     cut of the face; it ends where the heading's line ends. */
   .oh-groupheading-aside {
     flex: none;
     display: inline-flex;
     align-items: center;
-    padding-right: var(--s3);
+    font-size: var(--t-meta);
+    font-variation-settings: var(--opsz);
+    line-height: var(--oh-lh-tight);
+    padding-right: var(--s5);
     color: var(--ink2);
   }
 

@@ -318,6 +318,14 @@ const said = (r: SuggestionRow) => `${r.primary}${r.secondary ?? ""}`;
 const options = () => screen.queryAllByRole("option").map((o) => o.textContent);
 const on = () => screen.queryByRole("option", { selected: true })?.textContent ?? null;
 const wait = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
+/** A source that is answered by hand: each question waits for its own answer. */
+const byHand = () => {
+  const answers: ((rows: SuggestionRow[]) => void)[] = [];
+  return {
+    ask: () => new Promise<SuggestionGroup[]>((resolve) => answers.push((rows) => resolve([{ rows }]))),
+    answer: (question: number, rows: SuggestionRow[]) => act(async () => answers[question]!(rows)),
+  };
+};
 
 describe("useSuggestions", () => {
   beforeEach(() => {
@@ -620,14 +628,6 @@ describe("the keys on a row of the older answer, the newer answer lands without 
 
   const OLDER = [row("hb", "Zürich HB"), row("air", "Zürich Airport")];
   const NEWER = [row("zoo", "Zürich Zoo"), row("see", "Zürichsee")];
-  /** A source that is answered by hand: each question waits for its own answer. */
-  const byHand = () => {
-    const answers: ((rows: SuggestionRow[]) => void)[] = [];
-    return {
-      ask: () => new Promise<SuggestionGroup[]>((resolve) => answers.push((rows) => resolve([{ rows }]))),
-      answer: (question: number, rows: SuggestionRow[]) => act(async () => answers[question]!(rows)),
-    };
-  };
   /** The older answer on screen, a longer text asked, the keys on "Zürich Airport", then the newer answer. */
   const raced = async (free: boolean, newer: SuggestionRow[] = NEWER) => {
     const source = byHand();
@@ -702,5 +702,92 @@ describe("the keys on a row of the older answer, the newer answer lands without 
     expect(onTake).not.toHaveBeenCalled();
     expect(onFormKey).toHaveBeenCalledTimes(1);
     expect(field().value).toBe("zürich");
+  });
+});
+
+/**
+ * THE ROW NO KEY WAS PUT ON. Where the typed text is no answer of its own the first row is on by itself. A newer
+ * answer can put another person first in the very moment Enter is pressed: a row an answer has only just put there
+ * is not taken, and it is once it has stood long enough to be seen.
+ */
+describe("the first row, on by itself, when a newer answer puts another row first", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  const OLDER = [row("muster", "Anna Muster"), row("annette", "Annette Beispiel")];
+  const NEWER = [row("schmid", "Anna Schmid"), row("muster", "Anna Muster")];
+  /** The older answer has stood, one more letter is typed with no arrow pressed, and the newer answer lands. */
+  const landed = async () => {
+    const source = byHand();
+    const [onTake, onFormKey] = [vi.fn(), vi.fn()];
+    render(<Place ask={source.ask} free={false} onTake={onTake} onFormKey={onFormKey} />);
+    type("ann");
+    await wait(200);
+    await source.answer(0, OLDER);
+    await wait(1000);
+    type("anna");
+    /* The older rows still stand, their first one on. */
+    expect(on()).toBe("Anna Muster");
+    await wait(200);
+    await source.answer(1, NEWER);
+    expect(on()).toBe("Anna Schmid");
+    onFormKey.mockClear();
+    return { onTake, onFormKey };
+  };
+
+  it("Enter at once takes nobody: the key is the form's own", async () => {
+    const { onTake, onFormKey } = await landed();
+    const enter = key("Enter");
+    expect(onTake).not.toHaveBeenCalled();
+    expect(enter.defaultPrevented).toBe(false);
+    expect(onFormKey).toHaveBeenCalledTimes(1);
+    expect(field().value).toBe("anna");
+  });
+
+  it("Tab at once goes on and takes nobody", async () => {
+    const { onTake } = await landed();
+    expect(key("Tab").defaultPrevented).toBe(false);
+    expect(onTake).not.toHaveBeenCalled();
+  });
+
+  it("Enter takes that row once it has stood to be seen, and the form does not hear the key", async () => {
+    const { onTake, onFormKey } = await landed();
+    await wait(300);
+    const enter = key("Enter");
+    expect(onTake.mock.calls).toEqual([[NEWER[0], "enter"]]);
+    expect(enter.defaultPrevented).toBe(true);
+    expect(onFormKey).not.toHaveBeenCalled();
+  });
+
+  it("a row the keys were put on is taken at once, as before", async () => {
+    const { onTake } = await landed();
+    key("ArrowDown");
+    expect(on()).toBe("Anna Muster");
+    key("Enter");
+    expect(onTake.mock.calls).toEqual([[NEWER[1], "enter"]]);
+  });
+
+  it("a newer answer that keeps the same row first changes nothing: Enter takes it at once", async () => {
+    const source = byHand();
+    const onTake = vi.fn();
+    render(<Place ask={source.ask} free={false} onTake={onTake} />);
+    type("ann");
+    await wait(200);
+    await source.answer(0, OLDER);
+    await wait(1000);
+    type("anna");
+    await wait(200);
+    await source.answer(1, [OLDER[0]!, NEWER[0]!]);
+    key("Enter");
+    expect(onTake.mock.calls).toEqual([[OLDER[0], "enter"]]);
+  });
+
+  it("the device's own first row, on while a person types, is taken at once", () => {
+    const onTake = vi.fn();
+    render(<Place own={own} free={false} onTake={onTake} />);
+    type("zür");
+    key("Enter");
+    expect(onTake.mock.calls).toEqual([[OWN[0], "enter"]]);
   });
 });

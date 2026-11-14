@@ -1,5 +1,5 @@
-import "./opening.css";
 import { Bar } from "./shape-bar.js";
+import "./rows-shape.css";
 
 /* How wide each bar of a row is, in parts of a hundred: who, the subject, the first line. */
 const ROWS = [
@@ -28,11 +28,11 @@ export interface RowsShapeProps {
 export function RowsShape({ rows = ROWS.length, within }: RowsShapeProps) {
   const shapes = Array.from({ length: Math.max(0, rows) }, (_, at) => ROWS[at % ROWS.length]!);
   return (
-    <div className="oh-opening-rows" data-within={within ? "" : undefined} aria-hidden="true">
+    <div className="oh-rowsshape" data-within={within ? "" : undefined} aria-hidden="true">
       {shapes.map(([who, subject, first], at) => (
-        <span key={at} className="oh-opening-row">
-          <i className="oh-opening-face" />
-          <span className="oh-opening-first">
+        <span key={at} className="oh-rowsshape-row">
+          <i className="oh-rowsshape-face" />
+          <span className="oh-rowsshape-first">
             <Bar part={who} as="who" />
             <Bar as="time" />
           </span>

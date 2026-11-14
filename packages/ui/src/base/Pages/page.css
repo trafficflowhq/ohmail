@@ -82,6 +82,10 @@
   .oh-page-say > .oh-sentence + .oh-sentence {
     margin-top: var(--s3);
   }
+  /* The first screen's mark stands over its sentence. */
+  .oh-page-say > .oh-mark {
+    margin-bottom: var(--s5);
+  }
   .oh-page-refusal {
     display: flex;
     align-items: flex-start;

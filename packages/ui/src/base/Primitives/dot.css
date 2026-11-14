@@ -29,6 +29,77 @@
   .oh-dot[data-kind="none"] {
     background: transparent;
   }
+  /* A dot that is pressed: drawn at its own size, reached by a finger as far as the smallest control. */
+  .oh-dot[data-press] {
+    --oh-dot-reach: min(0px, calc((var(--dot-size) - var(--h-s)) / 2));
+    position: relative;
+  }
+  .oh-dot[data-press]:focus-visible {
+    border-radius: var(--dot-r);
+  }
+  .oh-dot[data-press]::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-dot-reach);
+  }
+
+  /* Ringing: it knocks, and a ring leaves it once. */
+  .oh-dot[data-ringing] {
+    --oh-dot-ringout: 0 0 0 3px var(--hot);
+    --oh-dot-far: -14px;
+    position: relative;
+    animation: oh-dot-knock var(--d-ring) var(--e-knock);
+  }
+  .oh-dot[data-ringing]::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: var(--oh-dot-ringout);
+    animation: oh-dot-ringout var(--d-ring) var(--e-out) both;
+    pointer-events: none;
+  }
+  @keyframes oh-dot-knock {
+    0% {
+      transform: scale(1);
+    }
+    18% {
+      transform: scale(0.92);
+    }
+    45% {
+      transform: scale(1.06);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+  @keyframes oh-dot-ringout {
+    0% {
+      inset: 0;
+      opacity: 0.9;
+    }
+    100% {
+      inset: var(--oh-dot-far);
+      opacity: 0;
+    }
+  }
+  :root[data-rm="1"] .oh-dot[data-ringing],
+  :root[data-rm="1"] .oh-dot[data-ringing]::before {
+    animation: none;
+  }
+  :root[data-rm="1"] .oh-dot[data-ringing]::before {
+    opacity: 0;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .oh-dot[data-ringing],
+    .oh-dot[data-ringing]::before {
+      animation: none;
+    }
+    .oh-dot[data-ringing]::before {
+      opacity: 0;
+    }
+  }
+
   /* An app's own dot: that app's colour whichever app is open. In ohmarchy both wear the theme's. */
   :root:not([data-face="ohmarchy"]) .oh-dot[data-product] {
     background: var(--oh-dot-light);

@@ -1,0 +1,34 @@
+{
+  "component": "PullMark",
+  "state": "armed",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [187, 93.95, 16, 16],
+  "clip": [187, 93, 16, 17],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    {
+      "backgroundColor": "rgb(248, 67, 26)",
+      "boxShadow": "rgb(248, 67, 26) 0px 0px 0px 2.5px inset",
+      "borderRadius": "999px"
+    }
+  ],
+  "nodes": [],
+  "loose": { "text": [], "surfaces": [{ "box": [0, 0, 16, 16], "paint": 0 }] }
+}

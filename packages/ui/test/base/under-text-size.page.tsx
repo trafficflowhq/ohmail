@@ -12,12 +12,19 @@ import {
   MenuItem,
   Page,
   PhoneSheet,
+  Report,
+  Seg,
   Sentence,
   contextTrigger,
 } from "../../src/base/index.js";
 import { AgendaRow, EventCard } from "../../src/calendar/index.js";
 import {
+  ActionPanel,
   ColumnHandle,
+  Composer,
+  DraftControl,
+  ListHead,
+  ListLine,
   LookPicture,
   MovePicker,
   ReadSquares,
@@ -133,7 +140,11 @@ function Swipe() {
           people={[]}
           subject="Your talk is on the programme"
           when="08:47"
-          swipe={{ right: { label: "Done", icon: "check" }, left: { label: "Later", icon: "later" } }}
+          swipe={{
+            right: { label: "Done", icon: "check" },
+            left: { label: "Later", icon: "later" },
+            pulled: 60,
+          }}
         />
       </div>
     </div>
@@ -328,8 +339,116 @@ function Tiles({ tag = "follows Omarchy" }: { tag?: string }) {
   );
 }
 
+/** A place's head whose line of segments is wider than its list: seven years, the fifth the open one. */
+function Piles() {
+  const [year, setYear] = useState("2022");
+  return (
+    <div style={{ position: "absolute", left: 0, top: 40, width: 300 }}>
+      <ListHead
+        title="History"
+        below={
+          <Seg
+            label="Year"
+            value={year}
+            onChange={setYear}
+            options={["2026", "2025", "2024", "2023", "2022", "2021", "2020"].map((y) => ({
+              value: y,
+              label: y,
+            }))}
+          />
+        }
+      />
+    </div>
+  );
+}
+
+/** A letter's foot with the draft control at its end, its words German: the whole, and the fewer it may draw. */
+function DraftFoot() {
+  return (
+    <Composer
+      label="Neue Nachricht"
+      head={<p>An</p>}
+      foot={{
+        label: "Zur Nachricht hinzufügen",
+        format: { label: "Formatierung zeigen", word: "Aa", pressed: false },
+        draft: (
+          <DraftControl
+            label="Aus deinem Text entwerfen"
+            short="Aus Text entwerfen"
+            title="Aus deinem Text entwerfen"
+          />
+        ),
+      }}
+    >
+      <p>Text</p>
+    </Composer>
+  );
+}
+
+/** The reading panel in a narrow column, with a note that is to stay and is longer than the column. */
+function PanelNote() {
+  return (
+    <div id="column" style={{ position: "absolute", left: 0, top: 40, width: 300 }}>
+      <ActionPanel
+        label="Aktionen"
+        items={[
+          { note: "Dieses Postfach wird von nichts organisiert", keep: true },
+          { id: "boxes", label: "Postfächer", icon: "settings", rank: 0, wordOrder: 1 },
+        ]}
+      />
+    </div>
+  );
+}
+
+/** A list's lines in a narrow column: a quiet press wider than the column, and one that fits. */
+function LineFold() {
+  return (
+    <div id="column" style={{ position: "absolute", left: 0, top: 40, width: 250 }}>
+      <ListLine
+        act={{
+          label: "Auch den Spam-Ordner deines Mailservers nach passenden Nachrichten durchsuchen",
+          quiet: true,
+        }}
+      >
+        Nichts in Junk passt.
+      </ListLine>
+      <ListLine act={{ label: "Mehr", quiet: true }}>Das ist alles.</ListLine>
+    </div>
+  );
+}
+
+/**
+ * A report with its way back. `stepScene` ends its window: it fades, and what holds it takes it away when the
+ * part says that it is gone. Every press on the way back is counted where the case reads it.
+ */
+function ReportLeaving() {
+  const [leaving, setLeaving] = useState(false);
+  const [there, setThere] = useState(true);
+  const [taken, setTaken] = useState(0);
+  step = () => setLeaving(true);
+  return (
+    <div style={{ position: "absolute", left: 40, top: 40 }}>
+      <output id="taken">{taken}</output>
+      {there ? (
+        <Report
+          leaving={leaving}
+          onGone={() => setThere(false)}
+          undo={{ label: "Undo", keyHint: "z", onPress: () => setTaken((n) => n + 1) }}
+        >
+          Moved to News
+        </Report>
+      ) : null}
+    </div>
+  );
+}
+
 const SCENES = {
+  report: ReportLeaving,
+  lineFold: LineFold,
   tiles: Tiles,
+  piles: Piles,
+  draftFoot: DraftFoot,
+  panelNote: PanelNote,
   /* A catalogue's longer word beside the name (German says more than English). */
   tilesLong: () => <Tiles tag="übernimmt das Omarchy-Theme" />,
   control: AtControl,

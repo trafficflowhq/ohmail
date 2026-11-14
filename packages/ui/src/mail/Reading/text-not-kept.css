@@ -49,8 +49,8 @@
     margin-top: var(--s2);
   }
 
-  /* While it loads the act rests where it stands, and says so. */
-  .oh-notkept[aria-busy="true"] .oh-notkept-acts > .oh-button:disabled {
+  /* While it loads the act rests where it stands, and says so: off to a press, the keys still on it. */
+  .oh-notkept[aria-busy="true"] .oh-notkept-acts > .oh-button[aria-busy="true"] {
     background: var(--soft-sheet);
     color: var(--ink2);
   }

@@ -4,6 +4,7 @@ import {
   useState,
   type DragEvent,
   type ReactNode,
+  type RefObject,
   type SyntheticEvent,
 } from "react";
 import { Button } from "../../base/index.js";
@@ -35,6 +36,11 @@ export interface ComposerProps {
     label: string;
     text: string;
     onChange?: (text: string) => void;
+    /**
+     * The field was left, with the words it then holds: said apart from `onChange`, so what holds the letter can
+     * tell a leave from a keystroke (a field written down to nothing goes when it is left, not while it is typed in).
+     */
+    onLeave?: (text: string) => void;
     /** The letter is held by an earlier send: the signature is words alone, as while it goes. */
     locked?: boolean;
     /**
@@ -44,7 +50,9 @@ export interface ComposerProps {
     formatted?: ReactNode;
     /**
      * Beside a formatted signature: the one way to the plain field. `word` says what the press does; `label` names
-     * it whole where the word does not say what the press costs. The app answers by handing no `formatted`.
+     * it whole where the word does not say what the press costs. The app answers by handing no `formatted`: the
+     * field that press brings takes the keys. An app that draws the formatted signature again first (it asks
+     * before the formatting goes) puts the keys where its own answer leaves them.
      */
     asText?: { word: string; label?: string; onPress?: () => void };
     remove?: { label: string; onPress?: () => void };
@@ -133,9 +141,7 @@ export function Composer(props: ComposerProps) {
         {tabs}
         <div className="oh-composer-text">
           {props.placeholder ? (
-            <span className="oh-composer-placeholder" aria-hidden="true">
-              {props.placeholder}
-            </span>
+            <span className="oh-composer-placeholder" aria-hidden="true" data-words={props.placeholder} />
           ) : null}
           {children}
         </div>
@@ -206,9 +212,18 @@ function ComposerSignature({
 }) {
   const fixed = going || signature.locked;
   const { formatted, asText, remove } = signature;
-  const off = remove ? (
-    <Button kind="quiet" size="s" icon="x" label={remove.label} onPress={remove.onPress} />
-  ) : null;
+  /* "Edit as text" was pressed: the press takes its own button away, so the field it opens takes the keys. */
+  const opened = useRef(false);
+  /* The press is answered by the field or not at all: where the formatted signature is drawn again after it (an
+     app that asks first, and is told no), the press is forgotten, and a field that comes later takes no keys. */
+  useLayoutEffect(() => {
+    if (formatted !== undefined) opened.current = false;
+  });
+  /* A letter on its way, or held by an earlier send, keeps its signature: the way to take it off is not offered. */
+  const off =
+    remove && !fixed ? (
+      <Button kind="quiet" size="s" icon="x" label={remove.label} onPress={remove.onPress} />
+    ) : null;
   if (formatted !== undefined) {
     return (
       <div className="oh-composer-signature" data-formatted="">
@@ -217,7 +232,15 @@ function ComposerSignature({
         </div>
         <span className="oh-composer-signacts">
           {asText && !fixed ? (
-            <Button kind="quiet" size="s" label={asText.label} onPress={asText.onPress}>
+            <Button
+              kind="quiet"
+              size="s"
+              label={asText.label}
+              onPress={() => {
+                opened.current = true;
+                asText.onPress?.();
+              }}
+            >
               {asText.word}
             </Button>
           ) : null}
@@ -231,15 +254,32 @@ function ComposerSignature({
       {fixed ? (
         <span className="oh-composer-signed">{signature.text}</span>
       ) : (
-        <SignatureField signature={signature} />
+        <SignatureField signature={signature} opened={opened} />
       )}
       {off}
     </div>
   );
 }
 
-function SignatureField({ signature }: { signature: NonNullable<ComposerProps["signature"]> }) {
+function SignatureField({
+  signature,
+  opened,
+}: {
+  signature: NonNullable<ComposerProps["signature"]>;
+  /** Whether the press that opens the plain field brought it here: then the keys are its own, once. */
+  opened: RefObject<boolean>;
+}) {
   const field = useRef<HTMLSpanElement | null>(null);
+  useLayoutEffect(() => {
+    const el = field.current;
+    if (!el || !opened.current) return;
+    opened.current = false;
+    el.focus();
+    /* The caret after the words, where a person goes on writing. */
+    const caret = el.ownerDocument.getSelection();
+    caret?.selectAllChildren(el);
+    caret?.collapseToEnd();
+  }, [opened]);
   /* The field's words are its own while it is typed in. It is drawn once with the words it starts with, and
      written again only where it holds other words than it is handed: the caret stays where the person types. */
   const [first] = useState(signature.text);
@@ -260,7 +300,10 @@ function SignatureField({ signature }: { signature: NonNullable<ComposerProps["s
       suppressContentEditableWarning
       spellCheck={false}
       onInput={report}
-      onBlur={report}
+      onBlur={(event) => {
+        report(event);
+        signature.onLeave?.(event.currentTarget.textContent ?? "");
+      }}
     >
       {first}
     </span>

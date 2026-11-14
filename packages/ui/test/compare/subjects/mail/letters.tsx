@@ -155,6 +155,25 @@ export const letters: KitSubject[] = [
       })}
     />
   )),
+  /* A letter of yours whose copy for the Sent folder could not be saved: the head says so under to whom it went. */
+  part("MessageHead/copy", ".oh-messagehead", () => (
+    <MessageHead
+      {...head({
+        sender: { ...W.ME, printed: "You" },
+        stamp: { when: "Fri 11:40", full: false, title: "Full dates" },
+        to: [
+          { word: "to", people: [{ name: "Giulia Ferrari" }] },
+          { word: "cc", people: [{ name: "Ben Arnold" }] },
+        ],
+        marks: [
+          {
+            lead: "No copy in Sent.",
+            text: "The message went out, but its copy for your Sent folder could not be saved. There is nothing to send again.",
+          },
+        ],
+      })}
+    />
+  )),
   views("images", { id: "images", label: "Show images", icon: "image" }),
   views("adapted", { id: "adapt", label: "Original", icon: "sun" }),
   /* The letter closes its message's sheet, which stands on the ground: its lower corners show it. */

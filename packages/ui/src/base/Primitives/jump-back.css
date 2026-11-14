@@ -4,7 +4,8 @@
     --oh-jumpback-ring: var(--oh-ring-btn), var(--lift);
     position: absolute;
     right: var(--s3);
-    bottom: var(--s3);
+    /* Its own margin, or the system's bar where that is more. */
+    bottom: max(var(--s3), var(--oh-inset-foot));
     z-index: var(--oh-layer-jump);
     visibility: hidden;
     /* On the sheet of its column, unless what holds it says the ground of its second buttons. */

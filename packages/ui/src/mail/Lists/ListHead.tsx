@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import { Dot } from "../../base/index.js";
+import { cssRect } from "../../base/ui-zoom.js";
 import "./list-head.css";
 
 /** One part of the way to a place that lives inside a tree. */
@@ -29,12 +30,21 @@ export interface ListHeadProps {
   aside?: ReactNode;
   /** The way to a place that lives inside a tree. Its title is then content and may take two lines. */
   way?: Way;
-  /** What stands under the title on a line of its own: a search field, a filter. */
+  /**
+   * What stands under the title on a line of its own: a search field, a filter, a line of segments (a place's
+   * piles, a person's directions). The line never widens the head: segments wider than their list scroll sideways
+   * inside it, the pressed one in view, and the line fades at each end that hides more.
+   */
   below?: ReactNode;
   /** A quiet line under the title, over what stands below: a person's address. */
   meta?: string;
   /** How many the list holds, in words, at the line's end before its tools: "1 draft". */
   count?: string;
+  /**
+   * The place's own sections, a `Seg` with their counts: beside the name with a pointer, the head's second
+   * line under a finger, each as wide as its share of the list. The name's line keeps a place's first line.
+   */
+  sections?: ReactNode;
 }
 
 /* A way longer than its line gives up parts, never letters: the ones nearest the root, and one mark stands for them. */
@@ -51,7 +61,7 @@ function fitWay(line: HTMLElement): void {
 }
 
 /** Where you are, and the list's own tools. */
-export function ListHead({ title, hot, aside, way, below, meta, count }: ListHeadProps) {
+export function ListHead({ title, hot, aside, way, below, meta, count, sections }: ListHeadProps) {
   const line = useRef<HTMLParagraphElement>(null);
   useLayoutEffect(() => {
     const el = line.current;
@@ -64,15 +74,18 @@ export function ListHead({ title, hot, aside, way, below, meta, count }: ListHea
   }, [way]);
 
   return (
-    <header className="oh-listhead" data-way={way ? "" : undefined}>
+    <header className="oh-listhead" data-way={way ? "" : undefined} data-sections={sections ? "" : undefined}>
       <h1 className="oh-text oh-display oh-listhead-title">
         {title}
         <Dot kind={hot ? "hot" : "ink"} />
       </h1>
-      <div className="oh-listhead-aside">
-        {count ? <span className="oh-listhead-count">{count}</span> : null}
-        {aside}
-      </div>
+      {sections ? <div className="oh-listhead-sections">{sections}</div> : null}
+      {!sections || count || aside ? (
+        <div className="oh-listhead-aside">
+          {count ? <span className="oh-listhead-count">{count}</span> : null}
+          {aside}
+        </div>
+      ) : null}
       {way || below || meta ? (
         <div className="oh-listhead-below">
           {meta ? <p className="oh-text oh-listhead-meta">{meta}</p> : null}
@@ -93,10 +106,45 @@ export function ListHead({ title, hot, aside, way, below, meta, count }: ListHea
               </button>
             </p>
           ) : null}
-          {below}
+          {below ? <Run>{below}</Run> : null}
         </div>
       ) : null}
     </header>
+  );
+}
+
+/* What stays in view after the pressed segment of a line that scrolls: the start of the one after it. */
+const PEEK = 24;
+
+/** The head's own line under its name: as wide as the head, whatever it holds, and scrolled inside itself. */
+function Run({ children }: { children: ReactNode }) {
+  const run = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = run.current;
+    if (!el) return;
+    /* The line says which of its ends hides more: its sheet fades those. */
+    const ends = () => {
+      el.toggleAttribute("data-less", el.scrollLeft > 1);
+      el.toggleAttribute("data-more", el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+    };
+    const on = el.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (on && el.scrollWidth > el.clientWidth + 1) {
+      const end = cssRect(on).right - cssRect(el).left + el.scrollLeft;
+      el.scrollLeft = Math.max(0, end + PEEK - el.clientWidth);
+    }
+    ends();
+    el.addEventListener("scroll", ends, { passive: true });
+    const watch = typeof ResizeObserver === "function" ? new ResizeObserver(ends) : null;
+    watch?.observe(el);
+    return () => {
+      el.removeEventListener("scroll", ends);
+      watch?.disconnect();
+    };
+  }, []);
+  return (
+    <div ref={run} className="oh-listhead-run">
+      {children}
+    </div>
   );
 }
 

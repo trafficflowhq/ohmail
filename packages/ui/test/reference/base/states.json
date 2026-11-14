@@ -4,11 +4,13 @@
     "EndDot": "Dot",
     "Blank": "Sentence",
     "FieldPair": "FieldStack",
+    "SentencePart": "Sentence",
     "Faces": "Avatar",
     "Sign": "Avatar",
     "TagDot": "Tag",
     "Where": "Tag",
     "RowsShape": "Opening",
+    "MenuGroup": "Menu",
     "MenuItem": "Menu",
     "MenuRule": "Menu",
     "MenuNote": "Menu",
@@ -479,6 +481,11 @@
       ]
     },
     {
+      "component": "Empty",
+      "state": "decided",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
       "component": "WaitRow",
       "state": "refused",
       "looks": [
@@ -501,6 +508,18 @@
     },
     { "component": "RefusalLine", "state": "start" },
     { "component": "Page", "state": "refused", "looks": "all" },
+    {
+      "component": "Counters",
+      "state": "rest",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "CameraSquare",
+      "state": "live",
+      "looks": ["paper-light-phone", "ohmarchy-light-phone"]
+    },
+    { "component": "CameraSquare", "state": "off", "looks": ["paper-light-phone"] },
+    { "component": "Mark", "state": "bell", "looks": ["paper-light-phone", "ohmarchy-light-phone"] },
     {
       "component": "StepDots",
       "state": "rest",

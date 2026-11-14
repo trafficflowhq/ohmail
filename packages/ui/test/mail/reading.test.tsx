@@ -9,9 +9,11 @@ import {
   Message,
   MessageHead,
   ReadingHead,
+  ReadingLine,
   type MessageHeadProps,
   type PanelVerb,
 } from "../../src/mail/index.js";
+import { Dot, SentencePart, Slot, Tag } from "../../src/base/index.js";
 
 afterEach(cleanup);
 
@@ -149,6 +151,36 @@ describe("ActionPanel", () => {
       expect(screen.getByText("2 of 5").hidden).toBe(false);
       expect(shown()).toEqual(["Reply", "Forward*"]);
     });
+
+    it("lets a note that is to stay take a second line only once nothing else can give, and takes it back when there is room", () => {
+      /* A note that stays is 200 px on one line and 110 on two. */
+      const note = "This mailbox is organized by nothing";
+      const items = [{ note, keep: true }, ...verbs.slice(0, 2)];
+      wide.mockImplementation(function (this: HTMLElement) {
+        let sum = 0;
+        for (const el of this.querySelectorAll<HTMLElement>("button, [data-note]")) {
+          if (el.hidden) continue;
+          if ("note" in el.dataset) sum += el.dataset.fold === undefined ? 200 : 110;
+          else sum += el.dataset.short === undefined ? 80 : 40;
+        }
+        return sum;
+      });
+      /* Room for the note on one line once both verbs stand as their signs: it keeps its line. */
+      fits(280);
+      const { rerender } = render(<ActionPanel label="Actions" items={items} />);
+      expect(shown()).toEqual(["Reply*", "Forward*"]);
+      expect(screen.getByText(note).dataset.fold).toBeUndefined();
+      /* Less than that: the verbs have given all they can, and the note folds. It is never taken away. */
+      fits(200);
+      rerender(<ActionPanel label="Actions" items={[...items]} />);
+      expect(shown()).toEqual(["Reply*", "Forward*"]);
+      expect([screen.getByText(note).hidden, screen.getByText(note).dataset.fold]).toEqual([false, ""]);
+      /* With room again it stands on one line, and the verbs have their words. */
+      fits(2000);
+      rerender(<ActionPanel label="Actions" items={[...items]} />);
+      expect(shown()).toEqual(["Reply", "Forward"]);
+      expect(screen.getByText(note).dataset.fold).toBeUndefined();
+    });
   });
 });
 
@@ -273,6 +305,9 @@ describe("Message, in a stream", () => {
     expect(within(article).queryByText("an invitation")).toBeNull();
     const open = within(article).getByRole("button", { name: "Expand" });
     expect(open.getAttribute("aria-expanded")).toBe("false");
+    /* The control names the box it opens and shuts: the cut text. */
+    const cut = article.ownerDocument.getElementById(open.getAttribute("aria-controls") ?? "none");
+    expect(cut?.textContent).toBe("The first lines of a long letter.");
     fireEvent.click(open);
     expect(onPress).toHaveBeenCalledTimes(1);
     rerender(
@@ -387,6 +422,142 @@ describe("ReadingHead", () => {
   it("stands without a heading where every message carries its own subject", () => {
     render(<ReadingHead names="Giulia Ferrari" people={[]} />);
     expect(screen.queryByRole("heading")).toBeNull();
+  });
+});
+
+describe("ReadingHead, a sentence that is the control", () => {
+  const head = (onCard = vi.fn(), onPlace = vi.fn()) => (
+    <ReadingHead
+      sentence={
+        <>
+          <SentencePart>Lena Kaufmann</SentencePart>{" "}
+          <SentencePart>
+            goes to <Slot onPress={onPlace}>Ohbox</Slot>
+            <Dot kind="hot" />
+          </SentencePart>
+        </>
+      }
+      lines={
+        <>
+          <ReadingLine
+            sign="ok"
+            person={{ label: "lena@atelier-eichspan.example", onPress: onCard }}
+            word={{ text: "Confirmed" }}
+          >
+            <Tag>Unsubscribe offered</Tag>
+          </ReadingLine>
+          <ReadingLine sign="spark" figure={{ text: "92%", title: "Confidence" }} why>
+            A personal note from a real address
+          </ReadingLine>
+        </>
+      }
+    />
+  );
+
+  it("stands the sentence in the subject's place, as a line and no heading, with its slot a control of the head", () => {
+    const onPlace = vi.fn();
+    render(head(vi.fn(), onPlace));
+    const banner = screen.getByRole("banner");
+    expect(within(banner).queryByRole("heading")).toBeNull();
+    expect(banner.firstElementChild?.tagName).toBe("P");
+    expect(banner.firstElementChild?.textContent).toBe("Lena Kaufmann goes to Ohbox");
+    fireEvent.click(within(banner).getByRole("button", { name: "Ohbox" }));
+    expect(onPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("says who it is under the sentence: the address a way to the card, with what the check found said in words", () => {
+    const onCard = vi.fn();
+    render(head(onCard));
+    const address = screen.getByRole("button", { name: "lena@atelier-eichspan.example" });
+    expect(address.getAttribute("aria-haspopup")).toBe("dialog");
+    fireEvent.click(address);
+    expect(onCard).toHaveBeenCalledTimes(1);
+    expect(onCard.mock.calls[0]![0]).toBe(address);
+    /* Good news is said and not drawn; the sign carries it for the eye, and the pointer's hint names it. */
+    const word = screen.getByText("Confirmed");
+    expect(word.className).toContain("oh-vh");
+    expect(address.parentElement?.getAttribute("title")).toBe("Confirmed");
+    expect(screen.getByText("Unsubscribe offered")).toBeTruthy();
+  });
+
+  it("draws the check's word where it warns, and the advice with how sure it is before its reason", () => {
+    render(
+      <ReadingHead
+        sentence="Cinderlock Security"
+        lines={
+          <>
+            <ReadingLine
+              sign="warn"
+              person={{ label: "alerts@cinder1ock.example" }}
+              word={{ text: "Not Cinderlock", warns: true }}
+            />
+            <ReadingLine sign="spark" figure={{ text: "92%", title: "Confidence" }} why>
+              A personal note from a real address
+            </ReadingLine>
+          </>
+        }
+      />,
+    );
+    expect(screen.getByText("Not Cinderlock").className).not.toContain("oh-vh");
+    /* An address that opens nothing is words: no control, and nothing said to open. */
+    expect(screen.queryByRole("button", { name: "alerts@cinder1ock.example" })).toBeNull();
+    const plain = screen.getByText("alerts@cinder1ock.example");
+    expect(plain.hasAttribute("aria-haspopup")).toBe(false);
+    expect(plain.parentElement?.getAttribute("title")).toBe("Not Cinderlock");
+    const sure = screen.getByText("92%");
+    expect(sure.getAttribute("title")).toBe("Confidence");
+    expect(sure.parentElement?.textContent).toBe("92%A personal note from a real address");
+  });
+
+  it("keeps the conversation's head as it was: a subject is the heading, and who is in it stands under it", () => {
+    render(<ReadingHead subject="Glaze order #2291" names="Giulia Ferrari" people={[]} />);
+    expect(screen.getByRole("heading", { level: 1, name: "Glaze order #2291" })).toBeTruthy();
+    expect(screen.getByText("Giulia Ferrari")).toBeTruthy();
+  });
+});
+
+describe("MessageHead, a held letter", () => {
+  it("says to whom it was written in the recipients' line: the word, then each name a way to the card", () => {
+    const onYou = vi.fn();
+    render(
+      <MessageHead
+        sender={{ name: "Lena Kaufmann", address: "lena@atelier-eichspan.example" }}
+        stamp={{ when: "08:40", full: false, title: "Show the full date" }}
+        to={[{ word: "to", people: [{ name: "you", onPress: onYou }] }]}
+      />,
+    );
+    const you = screen.getByRole("button", { name: "you" });
+    expect(you.parentElement?.textContent).toBe("to you");
+    fireEvent.click(you);
+    expect(onYou).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ActionPanel, a decision", () => {
+  it("stands the answers that let mail in apart from those that keep it out, and says of More that its menu is shut", () => {
+    const { rerender } = render(
+      <ActionPanel
+        label="Actions"
+        items={[
+          { id: "ohbox", label: "Ohbox", kind: "ink", icon: "ohbox", rank: 0, segment: "in" },
+          { id: "news", label: "News", icon: "news", rank: 3, segment: "in" },
+          { note: "+ unsubscribe" },
+          { id: "screened", label: "Screen out", icon: "screenout", rank: 0, segment: "out" },
+          { id: "spam", label: "Spam", icon: "spam", rank: 5, segment: "out" },
+        ]}
+        more={{ label: "More", behind: true }}
+      />,
+    );
+    const bar = screen.getByRole("toolbar", { name: "Actions" });
+    const apart = [...bar.querySelectorAll("button")].filter((b) => b.hasAttribute("data-apart"));
+    expect(apart.map((b) => b.getAttribute("aria-label"))).toEqual(["Screen out", "More"]);
+    expect(within(bar).getByText("+ unsubscribe")).toBeTruthy();
+    /* A control that opens a menu says whether it stands open: shut where nothing is handed, as every such control. */
+    expect(screen.getByRole("button", { name: "More" }).getAttribute("aria-expanded")).toBe("false");
+    rerender(
+      <ActionPanel label="Actions" items={[]} more={{ label: "More", behind: true, expanded: true }} />,
+    );
+    expect(screen.getByRole("button", { name: "More" }).getAttribute("aria-expanded")).toBe("true");
   });
 });
 

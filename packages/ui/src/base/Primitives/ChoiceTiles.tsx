@@ -1,3 +1,4 @@
+import { useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { Button } from "./Button.js";
 import "./choice-tiles.css";
 
@@ -23,18 +24,59 @@ export interface ChoiceTilesProps<V extends string> {
 /**
  * The tiles of a choice among names: second buttons of one width, as many in a row as the room has. A press takes
  * one at once. What is typed beside them narrows them by stepping the others back, never by taking them away.
+ * The group is one stop of Tab, on the taken tile or else the first; the arrows, Home and End move the keys between
+ * the tiles and take none.
  */
 export function ChoiceTiles<V extends string>(props: ChoiceTilesProps<V>) {
   const { label, options, value, enter, onChange } = props;
+  const group = useRef<HTMLDivElement | null>(null);
+  /* The tile the keys are on while they are in the group: Tab leaves the group from there. */
+  const [on, setOn] = useState<number | null>(null);
+  const stop =
+    on ??
+    Math.max(
+      0,
+      options.findIndex((option) => option.value === value),
+    );
+  const tiles = () => [...(group.current?.querySelectorAll<HTMLElement>("button") ?? [])];
+  const move = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const step =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
+    const edge = e.key === "Home" ? 0 : e.key === "End" ? options.length - 1 : null;
+    if (!step && edge === null) return;
+    e.preventDefault();
+    tiles()[edge ?? (stop + step + options.length) % options.length]?.focus();
+  };
+  const entered = (e: FocusEvent<HTMLDivElement>) => {
+    const at = tiles().indexOf(e.target);
+    if (at >= 0) setOn(at);
+  };
+  const left = (e: FocusEvent<HTMLDivElement>) => {
+    if (!group.current?.contains(e.relatedTarget)) setOn(null);
+  };
   return (
-    <div className="oh-choicetiles" role="group" aria-label={label}>
+    <div
+      ref={group}
+      className="oh-choicetiles"
+      role="group"
+      aria-label={label}
+      onKeyDown={move}
+      onFocus={entered}
+      onBlur={left}
+    >
       <div className="oh-choicetiles-grid">
-        {options.map((option) => (
+        {options.map((option, i) => (
           <span key={option.value} className="oh-choicetiles-tile" data-dim={option.dim ? "" : undefined}>
             <Button
               kind="two"
               size="l"
               pressed={option.value === value}
+              stop={i === stop}
               keyHint={enter?.value === option.value ? enter.keyHint : undefined}
               onPress={() => onChange?.(option.value)}
             >

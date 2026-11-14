@@ -27,6 +27,18 @@ describe("Row", () => {
     expect(onOpen).toHaveBeenCalledTimes(3);
   });
 
+  it("in a stream an unread row carries no dot on its circle: its newness is its place and its weight", () => {
+    const dots = () => row().querySelectorAll("[data-kind='hot']").length;
+    const { rerender } = render(<Row {...base} unread />);
+    expect(dots()).toBe(1);
+    rerender(<Row {...base} unread stream />);
+    expect(dots()).toBe(0);
+    /* It stays the unread row to everything else that reads it. */
+    expect(row().hasAttribute("data-unread")).toBe(true);
+    rerender(<Row {...base} stream />);
+    expect([dots(), row().hasAttribute("data-unread")]).toEqual([0, false]);
+  });
+
   it("leaves every other key to the app", () => {
     const onOpen = vi.fn();
     render(<Row {...base} onOpen={onOpen} />);
@@ -283,6 +295,24 @@ describe("Row, a sender that waits", () => {
     expect(stops).toEqual([option, accept, choose]);
   });
 
+  it("the control that chooses another place holds its name as words, unseen, beside its arrow", () => {
+    render(
+      <Row
+        {...base}
+        place={{
+          word: "News",
+          accept: { label: "News and unsubscribe" },
+          choose: { label: "Choose a place" },
+        }}
+      />,
+    );
+    const choose = screen.getByRole("button", { name: "Choose a place" });
+    const words = within(choose).getByText("Choose a place");
+    expect(words.className).toContain("oh-vh");
+    /* The room the row keeps for it holds no second copy of the words. */
+    expect(screen.getAllByText("Choose a place")).toHaveLength(1);
+  });
+
   it("where nobody has a suggestion, the word itself chooses a place, and says its menu is open", () => {
     const onChoose = vi.fn();
     const { rerender } = render(
@@ -400,7 +430,7 @@ describe("Row, in a listbox", () => {
         swipe={{
           right: { label: "Done", icon: "check" },
           left: { label: "Later", icon: "later" },
-          onSwipe: () => {},
+          pulled: 0,
         }}
       />,
     );
@@ -430,49 +460,56 @@ describe("Row, under a finger", () => {
     }
     globalThis.PointerEvent = PointerEventHere as unknown as typeof PointerEvent;
   }
-  const swipe = (onSwipe: () => void) => ({
+  const sides = {
     right: { label: "Done", icon: "check" as const },
     left: { label: "Later", icon: "later" as const },
-    onSwipe,
-  });
-  const drag = (from: [number, number], to: [number, number], pointerType = "touch") => {
-    fireEvent.pointerDown(row(), { pointerId: 1, pointerType, clientX: from[0], clientY: from[1] });
-    fireEvent.pointerMove(row(), { pointerId: 1, pointerType, clientX: to[0], clientY: to[1] });
   };
-  const letGo = (at: [number, number]) =>
-    fireEvent.pointerUp(row(), { pointerId: 1, pointerType: "touch", clientX: at[0], clientY: at[1] });
+  const at = () => row().style.transform;
 
-  it("shows the verb it lands on while it is pulled, armed once it has gone far enough", () => {
-    const { container } = render(<Row {...base} swipe={swipe(() => {})} />);
-    drag([100, 40], [140, 42]);
+  it("shows the verb of the side it is pulled to, armed once the finger has gone far enough", () => {
+    const { container, rerender } = render(<Row {...base} swipe={{ ...sides, pulled: 40 }} />);
     expect(within(container).getByText("Done")).toBeTruthy();
     expect(container.querySelector("[data-armed]")).toBeNull();
-    fireEvent.pointerMove(row(), { pointerId: 1, pointerType: "touch", clientX: 190, clientY: 42 });
+    rerender(<Row {...base} swipe={{ ...sides, pulled: 76 }} />);
+    expect(container.querySelector("[data-armed]")).not.toBeNull();
+    rerender(<Row {...base} swipe={{ ...sides, pulled: -90 }} />);
+    expect(within(container).getByText("Later")).toBeTruthy();
     expect(container.querySelector("[data-armed]")).not.toBeNull();
   });
 
-  it("runs the verb of the side it was pulled to, only when it went far enough", () => {
-    const onSwipe = vi.fn();
-    render(<Row {...base} swipe={swipe(onSwipe)} />);
-    drag([100, 40], [150, 40]);
-    letGo([150, 40]);
-    expect(onSwipe).not.toHaveBeenCalled();
-    drag([100, 40], [190, 44]);
-    letGo([190, 44]);
-    drag([200, 40], [100, 38]);
-    letGo([100, 38]);
-    expect(onSwipe.mock.calls.map((c) => c[0])).toEqual(["right", "left"]);
+  it("travels with the finger to where the verb fires and with resistance past it, eased once", () => {
+    const { rerender } = render(<Row {...base} swipe={{ ...sides, pulled: 60 }} />);
+    expect(at()).toBe("translateX(60px)");
+    /* The reference: a finger at 96 draws the row at 80; at 112, 83.2; it never travels past 112. */
+    rerender(<Row {...base} swipe={{ ...sides, pulled: 96 }} />);
+    expect(at()).toBe("translateX(80px)");
+    rerender(<Row {...base} swipe={{ ...sides, pulled: -112 }} />);
+    expect(at()).toBe("translateX(-83.2px)");
+    rerender(<Row {...base} swipe={{ ...sides, pulled: 2000 }} />);
+    expect(at()).toBe("translateX(112px)");
   });
 
-  it("leaves a finger that scrolls, and a pointer, alone", () => {
-    const onSwipe = vi.fn();
-    const { container } = render(<Row {...base} swipe={swipe(onSwipe)} />);
-    drag([100, 40], [104, 160]);
-    letGo([190, 160]);
-    drag([100, 40], [200, 40], "mouse");
-    fireEvent.pointerUp(row(), { pointerId: 1, pointerType: "mouse", clientX: 200, clientY: 40 });
-    expect(onSwipe).not.toHaveBeenCalled();
+  it("at rest, and pulled to a side that has no verb, it stands where it lies with nothing behind it", () => {
+    const { container, rerender } = render(<Row {...base} swipe={{ ...sides, pulled: 0 }} />);
+    expect(at()).toBe("");
     expect(container.querySelector(".oh-row-back")).toBeNull();
+    rerender(<Row {...base} swipe={{ right: sides.right, pulled: -90 }} />);
+    expect(at()).toBe("");
+    expect(container.querySelector(".oh-row-back")).toBeNull();
+  });
+
+  it("listens for no finger itself: the list's own layer says how far it is pulled", () => {
+    const { container } = render(<Row {...base} swipe={{ ...sides, pulled: 0 }} />);
+    /* A row that took the finger for itself would hold the pointer, and the layer's own listener would lose it. */
+    const held = vi.fn();
+    row().setPointerCapture = held;
+    fireEvent.pointerDown(row(), { pointerId: 1, pointerType: "touch", clientX: 100, clientY: 40 });
+    fireEvent.pointerMove(row(), { pointerId: 1, pointerType: "touch", clientX: 200, clientY: 42 });
+    expect(held).not.toHaveBeenCalled();
+    expect(at()).toBe("");
+    expect(container.querySelector(".oh-row-back")).toBeNull();
+    fireEvent.pointerUp(row(), { pointerId: 1, pointerType: "touch", clientX: 200, clientY: 42 });
+    expect(at()).toBe("");
   });
 });
 

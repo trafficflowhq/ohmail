@@ -74,7 +74,7 @@ export function TextNotKept(props: TextNotKeptProps) {
       {act || more ? (
         <div className="oh-notkept-acts">
           {act ? (
-            <Button kind="two" size="s" disabled={act.busy} onPress={act.onPress}>
+            <Button kind="two" size="s" busy={act.busy} onPress={act.onPress}>
               {act.label}
             </Button>
           ) : null}

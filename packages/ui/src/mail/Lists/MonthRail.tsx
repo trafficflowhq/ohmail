@@ -27,13 +27,21 @@ export interface MonthRailProps {
 /**
  * The way through a long list's time, at the list's right edge. It holds the list: the rail stays at the top of
  * the box the rows scroll in while they run under it, and the rows end where the rail starts. With no step to
- * take, the list stands alone.
+ * take, the list stands as if alone: its boxes are there and draw nothing.
  */
 export function MonthRail({ label, entries, current, onPick, children }: MonthRailProps) {
-  if (entries.length === 0) return <>{children}</>;
+  /* The same box with and without steps: rows that stand before the steps arrive keep their nodes, and the keys. */
+  if (entries.length === 0)
+    return (
+      <div className="oh-monthrail" data-bare="">
+        <div key="list" className="oh-monthrail-list">
+          {children}
+        </div>
+      </div>
+    );
   return (
     <div className="oh-monthrail">
-      <div className="oh-monthrail-keep">
+      <div key="keep" className="oh-monthrail-keep">
         <nav className="oh-monthrail-steps" aria-label={label}>
           {entries.map((entry) => (
             <button
@@ -51,7 +59,9 @@ export function MonthRail({ label, entries, current, onPick, children }: MonthRa
           ))}
         </nav>
       </div>
-      <div className="oh-monthrail-list">{children}</div>
+      <div key="list" className="oh-monthrail-list">
+        {children}
+      </div>
     </div>
   );
 }

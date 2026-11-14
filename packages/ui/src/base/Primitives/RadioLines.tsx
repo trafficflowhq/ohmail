@@ -19,10 +19,16 @@ export interface RadioLinesProps<V extends string> {
   options: readonly RadioLine<V>[];
   value: V;
   onChange?: (value: V) => void;
+  /**
+   * `sheet`: on a sheet of settings each answer is one of the sheet's lines (a plan among the plans): its mark,
+   * its name and tag, what it is about beside them and its figure at the line's end; under a finger what it is
+   * about goes under the name. Left out: a line each, with what it is about under it.
+   */
+  kind?: "sheet";
 }
 
 /** Two answers with consequences. The choice takes effect at once; the arrows move it. */
-export function RadioLines<V extends string>({ label, options, value, onChange }: RadioLinesProps<V>) {
+export function RadioLines<V extends string>({ label, options, value, onChange, kind }: RadioLinesProps<V>) {
   const group = useRef<HTMLDivElement | null>(null);
   const move = (e: KeyboardEvent<HTMLDivElement>) => {
     const step =
@@ -44,7 +50,14 @@ export function RadioLines<V extends string>({ label, options, value, onChange }
   };
   const taken = options.some((o) => o.value === value);
   return (
-    <div ref={group} className="oh-radiolines" role="radiogroup" aria-label={label} onKeyDown={move}>
+    <div
+      ref={group}
+      className="oh-radiolines"
+      role="radiogroup"
+      aria-label={label}
+      data-kind={kind}
+      onKeyDown={move}
+    >
       {options.map((option, i) => {
         const checked = option.value === value;
         return (
@@ -57,6 +70,7 @@ export function RadioLines<V extends string>({ label, options, value, onChange }
             tabIndex={checked || (!taken && i === 0) ? 0 : -1}
             onClick={() => onChange?.(option.value)}
           >
+            {kind === "sheet" ? <i className="oh-radioline-mark" aria-hidden="true" /> : null}
             <span className="oh-radioline-word">
               {option.label}
               {option.tag ? <Tag>{option.tag}</Tag> : null}

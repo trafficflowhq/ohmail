@@ -114,6 +114,22 @@ describe("the view switch", () => {
     expect(screen.getByRole("button", { name: "Year" }).textContent).toBe("Year");
   });
 
+  it("a segment with a key is named by its word alone: the key is drawn and never said", () => {
+    render(
+      <ViewSwitch
+        label="View"
+        views={[
+          { value: "day", label: "Day", keyHint: "1" },
+          { value: "week", label: "Week", keyHint: "2" },
+        ]}
+        value="week"
+      />,
+    );
+    const week = screen.getByRole("button", { name: "Week" });
+    expect(within(week).getByText("2").getAttribute("aria-hidden")).toBe("true");
+    expect(screen.getByRole("button", { name: "Day" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("is one capsule that names the view and opens the views' menu where there is no room for four", () => {
     const onOpen = vi.fn();
     const { rerender } = render(

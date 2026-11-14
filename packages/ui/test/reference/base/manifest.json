@@ -1,10 +1,10 @@
 {
   "shard": {
     "id": "kit-base",
-    "file": "kit-base-ef39f74114ff.6.tar.gz",
-    "revision": 6,
-    "sha256": "b21f0af8b48572bd3b76cba5c305a0dfffa5329c8fe835c9f14d489be5b25edd",
-    "bytes": 8908811,
+    "file": "kit-base-ef39f74114ff.9.tar.gz",
+    "revision": 9,
+    "sha256": "853791a3d3fd7f4d1088065af02191518d118348bc88c9f92e6acbee9c52ebdd",
+    "bytes": 8987088,
     "urls": []
   },
   "rows": [
@@ -1325,6 +1325,48 @@
       "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
     },
     {
+      "key": "CameraSquare/live@ohmarchy-light-phone",
+      "file": "bb1446a19ec107b6",
+      "png": {
+        "sha256": "4daeff83dbb6dac87c4167126620f86f57427ed72a823f3e3ac26b590aa12507",
+        "w": 684,
+        "h": 684,
+        "scale": 2
+      },
+      "scene": { "sha256": "00f29ccf5686c581943d6d0ddd9f174de388f2681e8a3f58ac57834ebaeeca59" },
+      "stateHash": "cabe38fd8cc9e016",
+      "source": "a42bd88cb605cf2e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CameraSquare/live@paper-light-phone",
+      "file": "51577b346330cdf4",
+      "png": {
+        "sha256": "a603d96a464724faf066fd4d9aa0490e55c42b78bd60f297e7ad23a57bbaa39e",
+        "w": 684,
+        "h": 684,
+        "scale": 2
+      },
+      "scene": { "sha256": "6f563d84732985bb65588ec66c635077286ee85cdbbc5678193ca8a1c9b9b656" },
+      "stateHash": "cabe38fd8cc9e016",
+      "source": "a42bd88cb605cf2e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "CameraSquare/off@paper-light-phone",
+      "file": "b0936c890e133328",
+      "png": {
+        "sha256": "8430c13ec49b8cb369e98398f359bcbd022d49e40b5e149ffca3786f67562bd9",
+        "w": 684,
+        "h": 684,
+        "scale": 2
+      },
+      "scene": { "sha256": "0824102f7943c9f9aa18579ee9e8c3aab18f292c4a90d7a74f28b37656205250" },
+      "stateHash": "2ae57cc84fec9970",
+      "source": "2cfe74ae83c6207e",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
       "key": "ChoiceTiles/rest@ohmarchy-light-desktop",
       "file": "6093889e4c2b4c41",
       "png": {
@@ -1476,6 +1518,48 @@
       "scene": { "sha256": "f56ae4e18a66b60ec9523f94ee4d3a6ebfa80704729e61f3a8c49a75167294fc" },
       "stateHash": "4e38e8ae47b416e6",
       "source": "fcea551ee911fc26",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Counters/rest@ohmarchy-light-desktop",
+      "file": "7994b30c5db688ba",
+      "png": {
+        "sha256": "1be8a665b2547e7aaab422e5cdbccd6ec32d3787ca0c461c1f2bfb1da4ce4484",
+        "w": 412,
+        "h": 93,
+        "scale": 1
+      },
+      "scene": { "sha256": "1dfc81f044a8be30dd947aea7a3b240c68daa37f486877e76fa341d323fc68f3" },
+      "stateHash": "c978a014353a9649",
+      "source": "6518a425f7ff262f",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Counters/rest@paper-light-desktop",
+      "file": "3cb1ee3e9260b84e",
+      "png": {
+        "sha256": "bcdf7879dbaf3edb6a0359c9f317647704b3af3bfc86014e79533d500b7ad440",
+        "w": 476,
+        "h": 140,
+        "scale": 1
+      },
+      "scene": { "sha256": "fcfa49104457f3a51bb2c54ee465698c3da719586ae1334f134bd40414156223" },
+      "stateHash": "c978a014353a9649",
+      "source": "6518a425f7ff262f",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Counters/rest@paper-light-phone",
+      "file": "81f88ae2e7054ae1",
+      "png": {
+        "sha256": "c034b11ccbbf161b045f51bd2a2073c908aaeeed4e4f58f01e97d10b081e99e9",
+        "w": 684,
+        "h": 214,
+        "scale": 2
+      },
+      "scene": { "sha256": "148d4340b9bb510b3cd00cd79a3a87a2ae30fc0e7b5f19b923203412420e9d41" },
+      "stateHash": "c978a014353a9649",
+      "source": "6518a425f7ff262f",
       "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
     },
     {
@@ -2204,6 +2288,34 @@
       "scene": { "sha256": "6448b5d0cd8c2a6e8d87db9fb695ecf4e96c1f426555e4bc1909ce0b67e2d78b" },
       "stateHash": "b482a5ed874448ba",
       "source": "e9216a17c7c485fa",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Empty/decided@ohmarchy-light-desktop",
+      "file": "070b2d0d3889e397",
+      "png": {
+        "sha256": "234d479a7ca43ca857c38b69d32e14f9b27682e7ec34a1971f47f6d182fcd184",
+        "w": 200,
+        "h": 236,
+        "scale": 1
+      },
+      "scene": { "sha256": "fc4865680a9dfad7847793d0ccc8f8099913c672be95b4d5632044418d311036" },
+      "stateHash": "843d92ae74b07eb6",
+      "source": "0d7a770cb7ce5c9b",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Empty/decided@paper-light-desktop",
+      "file": "2abf59870b756454",
+      "png": {
+        "sha256": "592cb3058c9673259e3ef8dca25f3e106326d13bd700a3c25b16a97297f0ebac",
+        "w": 330,
+        "h": 340,
+        "scale": 1
+      },
+      "scene": { "sha256": "65f535d6835df9d921fcd34196758197bd721fb792c21d71b121dc9235dc57eb" },
+      "stateHash": "843d92ae74b07eb6",
+      "source": "0d7a770cb7ce5c9b",
       "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
     },
     {
@@ -4010,6 +4122,34 @@
       "scene": { "sha256": "16dd97cf133008a72e081354a6792738b3f96551ef7bdaeb68e01fccea1652dd" },
       "stateHash": "8472e5b468476bbe",
       "source": "e1841c478a8b036d",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Mark/bell@ohmarchy-light-phone",
+      "file": "838b85aff7979c88",
+      "png": {
+        "sha256": "9951e822e4eba29add074b81e96684c6fad00b247bedc259bf361ee31d378491",
+        "w": 684,
+        "h": 126,
+        "scale": 2
+      },
+      "scene": { "sha256": "4c199da7f0afd6bb0d6850c68257ac405a5e8115ca92258f13adf45c25e74469" },
+      "stateHash": "ca66726c9f9aa748",
+      "source": "494bab0cdffa4087",
+      "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
+    },
+    {
+      "key": "Mark/bell@paper-light-phone",
+      "file": "b9344f773d266aac",
+      "png": {
+        "sha256": "af84e4b8a4f1fc24fa98fd0e6dd125a15f278c1e0931182d50630d4f5d1dd4b4",
+        "w": 684,
+        "h": 222,
+        "scale": 2
+      },
+      "scene": { "sha256": "f2afadb8ac37cadb0e55cc4f4075587244135a4122b56a54b1aa60ef8bd0ca25" },
+      "stateHash": "ca66726c9f9aa748",
+      "source": "494bab0cdffa4087",
       "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b"
     },
     {

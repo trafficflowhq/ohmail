@@ -2,7 +2,7 @@
 @layer oh {
   .oh-lettercolumns {
     --oh-columns-lh: 1.6;
-    --oh-columns-face: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --oh-columns-face: var(--oh-face-mono);
 
     max-width: 100%;
     margin: var(--s3) 0 0;

@@ -48,7 +48,10 @@ export interface ActionPanelProps {
   /** The toolbar's name. */
   label: string;
   items: readonly (PanelVerb | PanelNote)[];
-  /** What stands behind the panel. It is drawn only while something is behind it or something folded. */
+  /**
+   * What stands behind the panel. It is drawn only while something is behind it or something folded. It says
+   * whether its menu stands open, as every control that opens one: shut where `expanded` is not handed.
+   */
   more?: { label: string; behind: boolean; expanded?: boolean; onPress?: (at: HTMLElement) => void };
   /** Key hints are switched on. */
   keysShown?: boolean;
@@ -129,7 +132,7 @@ export function ActionPanel({ label, items, more, keysShown, folded, short, onFo
             aria-label={more.label}
             title={more.label}
             aria-haspopup="menu"
-            aria-expanded={more.expanded}
+            aria-expanded={more.expanded ?? false}
             onClick={(event) => more.onPress?.(event.currentTarget)}
           >
             <Icon name="more" size={20} />

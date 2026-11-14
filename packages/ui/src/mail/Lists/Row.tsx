@@ -4,10 +4,13 @@ import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
 import { RowPlaceFace, type RowPlace } from "./row-place.js";
-import { useRowSwipe, type RowSwipe } from "./row-swipe.js";
+import { rowSwipe, type RowSwipe } from "./row-swipe.js";
+import { breakable, RowAmount, RowTickMark, type RowTick } from "./row-tick.js";
 
 export type { RowPlace } from "./row-place.js";
 export type { RowSwipe, RowSwipeVerb } from "./row-swipe.js";
+export type { RowTick } from "./row-tick.js";
+export { Rows } from "./rows.js";
 
 /** Somebody of a conversation, as the row's circles show them. */
 export interface RowPerson {
@@ -76,6 +79,8 @@ export interface RowProps {
   onWhen?: () => void;
   /** An amount in place of the time. */
   amount?: string;
+  /** The amount in words, said in the figure's place: "2 messages". */
+  amountSaid?: string;
   /** It carries a file: the paper-clip, by this name. */
   file?: string;
   /** How far the conversation is read: its squares. */
@@ -98,6 +103,8 @@ export interface RowProps {
   receded?: boolean;
   /** Not read yet: bold, in the ink, the dot on the circle. */
   unread?: boolean;
+  /** A row of a stream (News, Receipts): unread, it carries no dot: its newness is its place and its weight. */
+  stream?: boolean;
   /** It is the one open in the reading column. */
   open?: boolean;
   /** The keys are on it. */
@@ -112,7 +119,7 @@ export interface RowProps {
   own?: { label: string; icon?: IconName; onPress?: () => void };
   /** Where a waiting sender's mail would go, at the end of the last line: accepted by one press, or chosen. */
   place?: RowPlace;
-  /** Under a finger: the verb at each side, and what a swipe that went far enough does. */
+  /** Under a finger: the verb at each side, and how far the list's layer says the row is pulled. */
   swipe?: RowSwipe;
   onOpen?: () => void;
   /** A press on the address: the contact card opens at it. */
@@ -121,6 +128,8 @@ export interface RowProps {
   onMenu?: (at: { x: number; y: number }) => void;
   /** In a listbox: the row is an option, named and described as the list says. Absent, it is a button. */
   listing?: RowListing;
+  /** A row to tick: it is a checkbox, and no dot stands on its circle. */
+  tick?: RowTick;
   /** The marks a list finds the row by; with `swipe` the index rides the slot, which is what is measured. */
   mark?: RowMark;
 }
@@ -130,12 +139,14 @@ const stop = (event: { stopPropagation(): void }) => event.stopPropagation();
 /** One conversation: who, what about, how far read. */
 export function Row(props: RowProps) {
   const { subject, preview, unread, open, picked, entry, quick, own, onOpen, onContact, onMenu } = props;
-  const swipe = useRowSwipe(props.swipe);
-  const { listing, mark, place } = props;
+  const swipe = rowSwipe(props.swipe);
+  const { listing, mark, place, tick } = props;
   const slotted = Boolean(props.swipe || quick || own || place);
   /* WebKitGTK does not expose aria-description; a description a hidden node carries, it does. */
   const saidId = useId();
   const said = listing?.spoken ? saidId : undefined;
+  /* A row whose ticks were taken takes no press. */
+  const press = tick?.settled ? undefined : onOpen;
   /* A section of Settings is named by its section alone; what line two says is its description. */
   const section = entry && !listing;
   const secondId = useId();
@@ -143,7 +154,7 @@ export function Row(props: RowProps) {
   const key = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
     event.preventDefault();
-    onOpen?.();
+    press?.();
   };
   const menu = onMenu
     ? (event: MouseEvent<HTMLDivElement>) => {
@@ -161,10 +172,12 @@ export function Row(props: RowProps) {
   const row = (
     <div
       className="oh-row"
-      role={listing ? "option" : "button"}
+      role={tick ? "checkbox" : listing ? "option" : "button"}
       tabIndex={listing?.stop === false ? -1 : 0}
       aria-label={section ? props.who : listing?.name}
       aria-description={listing?.spoken || undefined}
+      aria-checked={tick ? tick.on : undefined}
+      aria-disabled={tick?.settled ? true : undefined}
       aria-describedby={section ? secondId : said}
       aria-current={section && open ? "page" : undefined}
       aria-posinset={listing?.place?.at}
@@ -181,28 +194,30 @@ export function Row(props: RowProps) {
       data-located={props.located ? "" : undefined}
       data-receded={props.receded ? "" : undefined}
       data-own={own ? "" : undefined}
+      data-tick={tick ? "" : undefined}
       data-swiping={swipe.moving ? "" : undefined}
       aria-selected={listing ? listing.selected : picked ? true : undefined}
       style={swipe.style}
-      onClick={onOpen}
+      onClick={press}
       onKeyDown={key}
       onContextMenu={slotted ? undefined : menu}
-      {...swipe.handlers}
     >
       <RowFace {...props} />
       <RowFirst {...props} contact={contact} />
       <span className="oh-row-second" id={section ? secondId : undefined} data-place={place ? "" : undefined}>
-        <span className="oh-row-subject">{subject}</span>
-        {preview ? <> </> : null}
+        {/* A row that is about nothing (a person to tick) has no subject's line and no space before its preview. */}
+        {subject === "" ? null : <span className="oh-row-subject">{subject}</span>}
+        {preview && subject !== "" ? <> </> : null}
         {preview ? (
           <span className="oh-row-preview">
             {entry && subject ? <i className="oh-row-sep">· </i> : null}
-            {preview}
+            {tick ? breakable(preview) : preview}
           </span>
         ) : null}
         {place ? <RowPlaceFace place={place} room /> : null}
       </span>
       {own ? <OwnRoom own={own} /> : null}
+      {tick ? <RowTickMark tick={tick} /> : null}
       {said ? <span id={said} hidden aria-label={listing?.spoken} /> : null}
     </div>
   );
@@ -221,7 +236,7 @@ export function Row(props: RowProps) {
 }
 
 /** The circle or circles, the sign of a section, and the check a pick turns it into. */
-function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread }: RowProps) {
+function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread, tick, stream }: RowProps) {
   const [lead, second] = people;
   return (
     <span
@@ -232,7 +247,7 @@ function RowFace({ people, peopleMore, peopleLabel, sign, entry, unread }: RowPr
       title={peopleLabel}
     >
       {lead ? (
-        <Avatar name={lead.name} address={lead.address} unread={unread} />
+        <Avatar name={lead.name} address={lead.address} unread={unread && !tick && !stream} />
       ) : sign ? (
         <Sign icon={sign} unread={entry && unread} />
       ) : null}
@@ -296,7 +311,7 @@ function RowFirst(props: RowProps & { contact?: (event: MouseEvent<HTMLElement>)
         </span>
       ) : null}
       {props.amount ? (
-        <span className="oh-row-amount">{props.amount}</span>
+        <RowAmount figure={props.amount} said={props.amountSaid} />
       ) : props.when ? (
         <time
           className="oh-row-when"
@@ -375,22 +390,5 @@ function RowVerbs({ quick, own, travel }: Pick<RowProps, "quick" | "own"> & { tr
         </button>
       ) : null}
     </>
-  );
-}
-
-/**
- * The rows of one group: the list they stand in, set in from the sheet's edge. Named, it is a listbox of options
- * (`Row.listing`), many-selectable when picks are made in it.
- */
-export function Rows({ children, label, many }: { children: ReactNode; label?: string; many?: boolean }) {
-  return (
-    <div
-      className="oh-rows"
-      role={label ? "listbox" : "list"}
-      aria-label={label}
-      aria-multiselectable={label && many ? true : undefined}
-    >
-      {children}
-    </div>
   );
 }

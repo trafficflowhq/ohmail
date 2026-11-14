@@ -7,7 +7,10 @@ import "./report.css";
 interface ReportCommon {
   /** What happened, in four words or fewer. It ends in the dot. */
   children: string;
-  /** It is on its way out: it fades, then says so once. */
+  /**
+   * It is on its way out: it fades, then says so once. The fade is for the eye alone: the way back takes a
+   * press, by a pointer and by the keys, until what holds the report takes it away.
+   */
   leaving?: boolean;
   onGone?: () => void;
 }
@@ -30,6 +33,9 @@ export type ReportProps = ReportCommon &
       }
   );
 
+/* It goes as it was said, with no weight: its opacity alone runs out. */
+const FADE: Keyframe[] = [{ opacity: 1 }, { opacity: 0 }];
+
 /** It is done, and this is the one place to take it back. */
 export function Report(props: ReportProps) {
   const { children, leaving, onGone } = props;
@@ -41,7 +47,7 @@ export function Report(props: ReportProps) {
   useLayoutEffect(() => {
     const node = el.current;
     if (!node) return;
-    if (leaving) animate(node, "hush", { ease: "--e-hush", onDone: () => gone.current?.() });
+    if (leaving) animate(node, "hush", { ease: "--e-hush", keyframes: FADE, onDone: () => gone.current?.() });
     else animate(node, "in", { ease: "--e-arrive" });
   }, [leaving]);
   const press = props.kind === "why" ? props.act : props.undo;

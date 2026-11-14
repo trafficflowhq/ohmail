@@ -18,6 +18,11 @@
   .oh-sentence .oh-slot[data-kind="none"] {
     font-weight: inherit;
   }
+  /* A sentence of parts breaks between them, never inside one that fits a line. */
+  .oh-sentence-part {
+    display: inline-block;
+    max-width: 100%;
+  }
 
   .oh-blank {
     --oh-blank-pad: 0 0.04em;
