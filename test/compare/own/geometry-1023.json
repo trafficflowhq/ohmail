@@ -1,0 +1,296 @@
+{
+ "reader": 5,
+ "variant": {
+  "device": "desktop",
+  "face": "paper",
+  "scheme": "light",
+  "width": 1023,
+  "height": 800,
+  "scale": 1
+ },
+ "page": {
+  "scrollWidth": 1023,
+  "clientWidth": 1023,
+  "scrollHeight": 800
+ },
+ "fonts": [],
+ "types": [
+  {
+   "color": "oklch(0.42 0.015 60)",
+   "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+   "fontSize": "11.5px",
+   "fontWeight": "400",
+   "fontStyle": "normal",
+   "lineHeight": "17.25px",
+   "letterSpacing": "normal",
+   "fontVariationSettings": "normal",
+   "textTransform": "none"
+  },
+  {
+   "color": "oklch(0.245 0.012 60)",
+   "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+   "fontSize": "14px",
+   "fontWeight": "700",
+   "fontStyle": "normal",
+   "lineHeight": "21px",
+   "letterSpacing": "normal",
+   "fontVariationSettings": "normal",
+   "textTransform": "none"
+  },
+  {
+   "color": "oklch(0.245 0.012 60)",
+   "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+   "fontSize": "24px",
+   "fontWeight": "600",
+   "fontStyle": "normal",
+   "lineHeight": "30px",
+   "letterSpacing": "-0.6px",
+   "fontVariationSettings": "normal",
+   "textTransform": "none"
+  },
+  {
+   "color": "oklch(0.245 0.012 60)",
+   "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+   "fontSize": "14px",
+   "fontWeight": "400",
+   "fontStyle": "normal",
+   "lineHeight": "21px",
+   "letterSpacing": "normal",
+   "fontVariationSettings": "normal",
+   "textTransform": "none"
+  }
+ ],
+ "paints": [
+  {
+   "backgroundColor": "oklch(0.985 0.002 85)"
+  },
+  {
+   "boxShadow": "oklch(0.4 0.05 55 / 0.04) 0px 0px 0px 1px, oklch(0.4 0.05 55 / 0.05) 0px 1px 2px 0px, oklch(0.36 0.05 52 / 0.08) 0px 4px 10px -2px",
+   "borderRadius": "99px"
+  },
+  {
+   "backgroundColor": "oklch(1 0 0)",
+   "boxShadow": "oklch(0.4 0.05 55 / 0.025) 0px 0px 0px 1px, oklch(0.4 0.05 55 / 0.03) 0px 2px 4px 0px, oklch(0.35 0.05 52 / 0.07) 0px 14px 32px -10px, oklch(0.3 0.05 50 / 0.1) 0px 40px 96px -28px",
+   "borderRadius": "20px"
+  },
+  {
+   "boxShadow": "oklch(0.4 0.05 55 / 0.025) 0px 0px 0px 1px, oklch(0.4 0.05 55 / 0.03) 0px 2px 4px 0px, oklch(0.35 0.05 52 / 0.07) 0px 14px 32px -10px, oklch(0.3 0.05 50 / 0.1) 0px 40px 96px -28px",
+   "borderRadius": "20px"
+  }
+ ],
+ "nodes": [
+  {
+   "role": "button",
+   "name": "Menu",
+   "box": [
+    16,
+    12,
+    54.7,
+    29.3
+   ],
+   "drawn": {
+    "color": "oklch(0.42 0.015 60)",
+    "backgroundColor": "oklch(1 0 0)",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+    "fontSize": "11.5px",
+    "fontWeight": "400",
+    "lineHeight": "17.25px",
+    "letterSpacing": "normal",
+    "borderRadius": "99px",
+    "paddingTop": "6px",
+    "paddingRight": "12px",
+    "paddingBottom": "6px",
+    "paddingLeft": "12px",
+    "borderColor": "oklch(0.42 0.015 60)"
+   },
+   "text": [
+    {
+     "said": "Menu",
+     "type": 0
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      16,
+      12,
+      54.7,
+      29.3
+     ],
+     "paint": 1
+    }
+   ]
+  },
+  {
+   "role": "button",
+   "name": "Find",
+   "box": [
+    135.5,
+    12,
+    47.4,
+    29.3
+   ],
+   "drawn": {
+    "color": "oklch(0.42 0.015 60)",
+    "backgroundColor": "oklch(1 0 0)",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+    "fontSize": "11.5px",
+    "fontWeight": "400",
+    "lineHeight": "17.25px",
+    "letterSpacing": "normal",
+    "borderRadius": "99px",
+    "paddingTop": "6px",
+    "paddingRight": "12px",
+    "paddingBottom": "6px",
+    "paddingLeft": "12px",
+    "borderColor": "oklch(0.42 0.015 60)"
+   },
+   "text": [
+    {
+     "said": "Find",
+     "type": 0
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      135.5,
+      12,
+      47.4,
+      29.3
+     ],
+     "paint": 1
+    }
+   ]
+  },
+  {
+   "role": "main",
+   "name": "",
+   "box": [
+    10,
+    49.3,
+    1003,
+    740.8
+   ],
+   "drawn": {
+    "color": "oklch(0.245 0.012 60)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "lineHeight": "21px",
+    "letterSpacing": "normal",
+    "borderRadius": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "oklch(0.245 0.012 60)"
+   },
+   "surfaces": [
+    {
+     "box": [
+      10,
+      49.3,
+      380,
+      740.8
+     ],
+     "paint": 2
+    }
+   ]
+  },
+  {
+   "role": "region",
+   "name": "Open message",
+   "box": [
+    406,
+    49.3,
+    607,
+    740.8
+   ],
+   "drawn": {
+    "color": "oklch(0.245 0.012 60)",
+    "backgroundColor": "oklch(1 0 0)",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+    "fontSize": "14px",
+    "fontWeight": "400",
+    "lineHeight": "21px",
+    "letterSpacing": "normal",
+    "borderRadius": "20px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "oklch(0.245 0.012 60)"
+   },
+   "text": [
+    {
+     "said": "Body",
+     "type": 3
+    }
+   ],
+   "surfaces": [
+    {
+     "box": [
+      406,
+      49.3,
+      607,
+      740.8
+     ],
+     "paint": 3
+    }
+   ]
+  },
+  {
+   "role": "heading",
+   "name": "A subject",
+   "box": [
+    440,
+    89.3,
+    539,
+    30
+   ],
+   "drawn": {
+    "color": "oklch(0.245 0.012 60)",
+    "backgroundColor": "rgba(0, 0, 0, 0)",
+    "fontFamily": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Inter, sans-serif",
+    "fontSize": "24px",
+    "fontWeight": "600",
+    "lineHeight": "30px",
+    "letterSpacing": "-0.6px",
+    "borderRadius": "0px",
+    "paddingTop": "0px",
+    "paddingRight": "0px",
+    "paddingBottom": "0px",
+    "paddingLeft": "0px",
+    "borderColor": "oklch(0.245 0.012 60)"
+   },
+   "level": 2,
+   "text": [
+    {
+     "said": "A subject",
+     "type": 2
+    }
+   ]
+  }
+ ],
+ "loose": {
+  "text": [
+   {
+    "said": "Ohbox",
+    "type": 1
+   }
+  ],
+  "surfaces": [
+   {
+    "box": [
+     0,
+     0,
+     1023,
+     800
+    ],
+    "paint": 0
+   }
+  ]
+ }
+}
