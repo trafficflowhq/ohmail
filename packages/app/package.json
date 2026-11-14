@@ -418,6 +418,12 @@
       "node": "./dist/doors/wall/index.js",
       "default": "./src/doors/wall/index.ts"
     },
+    "./phone-door": {
+      "types": "./src/phone-door/index.ts",
+      "ohmail-source": "./src/phone-door/index.ts",
+      "node": "./dist/phone-door/index.js",
+      "default": "./src/phone-door/index.ts"
+    },
     "./touch": {
       "types": "./src/touch/index.ts",
       "ohmail-source": "./src/touch/index.ts",

@@ -71,6 +71,7 @@
       "hiddenBlank": "eintippen",
       "appHiddenBlank": "16 Buchstaben",
       "nameLabel": "Dein Name (freiwillig)",
+      "nameHint": "Wird den Empfängern neben deiner Adresse angezeigt.",
       "nameBlank": "Name",
       "imapHost": "Eingangsserver (IMAP)",
       "imapPort": "IMAP-Port",
@@ -115,6 +116,11 @@
       "say": "Gekoppelt.",
       "line": "Die Kopie deiner Mails auf diesem Handy wird geöffnet.",
       "syncing": "Deine Mails werden synchronisiert"
+    },
+    "upgrade": {
+      "migrating": "Der Mail-Speicher auf diesem Handy wird aktualisiert…",
+      "migratingOf": "Der Mail-Speicher auf diesem Handy wird aktualisiert… ({applied} von {pending})",
+      "migratingSlow": "Bei einem großen Postfach kann das einige Minuten dauern."
     }
   },
   "servers": {

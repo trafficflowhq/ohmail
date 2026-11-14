@@ -10,7 +10,7 @@ import {
   armConsentPress, forgetOrganizerSessionForTests, organizerDoor, organizerRestrictedSaid, standaloneLaunchGeneration,
   takeConsentPress,
 } from "../src/engine/organizer-session";
-import type { StandaloneEngine, StartPhoneEngine } from "../src/engine/standalone-door";
+import type { StandaloneEngine, StartPhoneEngine, StoreMigrating } from "../src/engine/standalone-door";
 import type { Attempt, ConnectionState, ForgetAttempt } from "../src/net/connection";
 import { installPinning, type PinningNative } from "../src/net/host-pinning";
 import type { Negotiation, PairAdmission, ProbeOutcome, ShellSession } from "../src/net/pairing";
@@ -20,6 +20,7 @@ import type { DoorAt, DoorConfig, DoorEvent, DoorKind, DoorRequests, DoorState, 
 import { DoorHost, SCAN_REARM_MS, type DoorConnection } from "../src/shell/door-host";
 import { said } from "../src/shell/door-state";
 import { TICKET_LIFE_MS } from "../src/shell/door-tickets";
+import { bootMigratingLines, type BootMigrating } from "../src/ui/boot-migrating";
 
 const ORIGIN = "https://appassets.androidplatform.net";
 const LOCAL = "http://sidecar";
@@ -594,6 +595,36 @@ describe("the door's host: the list of servers", () => {
     w.conn.state = { k: "ended", reason: refuse("pairEnded") };
     expect((await w.ask("config", {})).state).toMatchObject({ session: "ended", said: { code: "pairEnded", args: [] }, openId: null });
     expect((await world({ asked: "servers" }).ask("config", {})).at, "asked for by the open mailbox's page").toBe("servers");
+  });
+
+  it("tells a store's upgrade under a connect as its count and its start, only where the boot screen would count it, and nothing of it once the connect is over", async () => {
+    const w = world();
+    const origin = "https://mail.example.test";
+    const upgrade = (m: StoreMigrating): BootMigrating => ({ ...m, since: 1_700_000_000_000 });
+    const told = async (m: BootMigrating | undefined) => {
+      w.conn.state = m === undefined ? { k: "connecting", origin } : { k: "connecting", origin, migrating: m };
+      w.host.changed();
+      const event = lastState(w.events)!;
+      expect((await w.ask("config", {})).state.migrating, "the config says what the event says").toEqual(event.migrating);
+      expect(event.session).toBe("opening");
+      return event.migrating;
+    };
+    expect(await told(undefined)).toBeNull();
+    expect(await told(upgrade({ applied: 3, pending: 12, fresh: false }))).toEqual({ applied: 3, pending: 12, since: 1_700_000_000_000 });
+    // The later announcement of the same upgrade keeps the phase's start.
+    expect(await told(upgrade({ applied: 11, pending: 12, fresh: false }))).toEqual({ applied: 11, pending: 12, since: 1_700_000_000_000 });
+    // A first launch's empty store and a single entry have nothing to count: the boot screen's own rule, row by row.
+    for (const m of [
+      { applied: 0, pending: 12, fresh: true }, { applied: 0, pending: 1, fresh: false }, { applied: 0, pending: 0, fresh: false },
+      { applied: 1, pending: 2, fresh: false }, { applied: 4, pending: 40, fresh: true },
+    ])
+      expect((await told(upgrade(m))) !== null, JSON.stringify(m)).toBe(bootMigratingLines(upgrade(m), 0).count !== null);
+    // Over: a live session, a refusal and an idle phone say none.
+    for (const state of [shell(profile({})), { k: "refused", reason: refuse("pairEnded") }, { k: "idle" }] as ConnectionState[]) {
+      w.conn.state = state;
+      w.host.changed();
+      expect(lastState(w.events)!.migrating, state.k).toBeNull();
+    }
   });
 
   it("after a forget of the open pairing the next state holds no row of it, and what could not be taken back stands", async () => {

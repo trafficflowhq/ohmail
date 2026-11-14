@@ -70,6 +70,7 @@
       "@ohmail/client-engine/calendar-span": ["../packages/client-engine/src/engine/calendar-span.ts"],
       "@ohmail/client-engine/calendar-acts": ["../packages/client-engine/src/calendar-acts.ts"],
       "@ohmail/client-engine/calendar-writes": ["../packages/client-engine/src/calendar-writes.ts"],
+      "@ohmail/client-engine/providers": ["../packages/client-engine/src/providers.ts"],
       "@ohmail/client-engine": ["../packages/client-engine/src/index.ts"],
       "@ohmail/letter-body/links": ["../packages/letter-body/src/rendered-links.ts"],
       "@ohmail/letter-body/cache": ["../packages/letter-body/src/mail-doc-cache.ts"],

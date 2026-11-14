@@ -1,4 +1,4 @@
-import { asAuthHint, type AuthHint } from "@ohmail/client-engine";
+import { asAuthHint, type AuthHint } from "@ohmail/client-engine/providers";
 
 /**
  * IS THIS HOST THIS COMPUTER? The client's copy of `loopbackHarnessReason` (core `imap-types.ts`):

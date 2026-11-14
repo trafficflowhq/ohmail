@@ -16,7 +16,8 @@ export interface FormWords {
   readonly lead: Word | null;
   readonly note: Word | null;
   readonly address: Word;
-  readonly user: Word;
+  /** The login where it is not the address. `null`: on this mount the login is the address, and no field asks. */
+  readonly user: Word | null;
   readonly userPlaceholder: Word | null;
   readonly password: Word;
   readonly passwordHint: Word | null;
@@ -40,6 +41,8 @@ export interface FormWords {
     readonly again: Word;
     readonly factorLine: Word;
   } | null;
+  /** The name the mailbox's letters carry: its field and the line under it. `null`: this mount asks for none. */
+  readonly name: { readonly label: Word; readonly hint: Word } | null;
 }
 
 const JOIN: FormWords = {
@@ -59,6 +62,7 @@ const JOIN: FormWords = {
   codeElsewhere: word("join", "mailboxMicrosoftAfterSetup"),
   signInInstead: word("mailboxes", "oauthContinue"),
   test: null,
+  name: null,
 };
 
 /* The password's own hint differs by whose service this is; the stage that mounts the form says it. */
@@ -85,6 +89,7 @@ const RUN: FormWords = {
     again: word("onboarding", "testAgain"),
     factorLine: word("onboarding", "mailboxStepUp"),
   },
+  name: null,
 };
 
 const EDIT: FormWords = {
@@ -104,6 +109,31 @@ const EDIT: FormWords = {
   codeElsewhere: null,
   signInInstead: null,
   test: null,
+  name: null,
+};
+
+/*
+ * A phone's own mailbox, in the phone's words. The login is the address, the open itself is the test, and the
+ * letters carry a name. No second factor and no provider's sign-in stand before it: their two lines are never said.
+ */
+const STANDALONE: FormWords = {
+  lead: null,
+  note: null,
+  address: word("phoneDoor", "form.addressLabel"),
+  user: null,
+  userPlaceholder: null,
+  password: word("phoneDoor", "form.passwordLabel"),
+  passwordHint: null,
+  imapHost: word("phoneDoor", "form.imapHost"),
+  smtpHost: word("phoneDoor", "form.smtpHost"),
+  submit: word("phoneDoor", "form.connect"),
+  working: word("phoneDoor", "form.opening"),
+  signInWorking: word("phoneDoor", "form.opening"),
+  factorLine: word("mailboxes", "factorBody"),
+  codeElsewhere: null,
+  signInInstead: null,
+  test: null,
+  name: { label: word("phoneDoor", "form.nameLabel"), hint: word("phoneDoor", "form.nameHint") },
 };
 
 export const FORM_WORDS: Readonly<Record<ConnectPurposeKind, FormWords>> = {
@@ -112,6 +142,7 @@ export const FORM_WORDS: Readonly<Record<ConnectPurposeKind, FormWords>> = {
   add: RUN,
   edit: EDIT,
   reconnect: EDIT,
+  standalone: STANDALONE,
 };
 
 /** The edit's own words beside the table's: its ports, what a blank keeps, its way back, and its lead on a mailbox that takes an app password. */

@@ -9,10 +9,17 @@ import doorsDe from "../../../messages/doors.de.json" with { type: "json" };
 import doorsEn from "../../../messages/doors.en.json" with { type: "json" };
 import mailboxesDe from "../../../messages/mailboxes.de.json" with { type: "json" };
 import mailboxesEn from "../../../messages/mailboxes.en.json" with { type: "json" };
+import phoneDe from "../../../messages/phone.de.json" with { type: "json" };
+import phoneEn from "../../../messages/phone.en.json" with { type: "json" };
 
 type Catalogue = Record<string, Record<string, unknown>>;
-const EN: Catalogue = { ...accountEn, ...doorsEn, ...mailboxesEn };
-const DE: Catalogue = { ...accountDe, ...doorsDe, ...mailboxesDe };
+const EN: Catalogue = { ...accountEn, ...doorsEn, ...mailboxesEn, ...phoneEn };
+const DE: Catalogue = { ...accountDe, ...doorsDe, ...mailboxesDe, ...phoneDe };
+/** A namespace's sentence by its key, which may be a path into it (`form.addressLabel`). */
+const at = (of: Catalogue, ns: string, key: string): unknown =>
+  key
+    .split(".")
+    .reduce<unknown>((held, part) => (held as Record<string, unknown> | undefined)?.[part], of[ns]);
 
 /** Every word of a purpose's table, the nested ones too. */
 function wordsOf(value: unknown): Word[] {
@@ -34,8 +41,8 @@ describe("the form's words", () => {
       expect(words.length).toBeGreaterThan(8);
       for (const { ns, key } of words) {
         expect(CONNECT_NAMESPACES).toContain(ns);
-        expect(typeof EN[ns]?.[key], `${ns}.${key} in English`).toBe("string");
-        expect(typeof DE[ns]?.[key], `${ns}.${key} in German`).toBe("string");
+        expect(typeof at(EN, ns, key), `${ns}.${key} in English`).toBe("string");
+        expect(typeof at(DE, ns, key), `${ns}.${key} in German`).toBe("string");
       }
     },
   );

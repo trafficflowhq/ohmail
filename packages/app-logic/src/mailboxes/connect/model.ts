@@ -217,7 +217,9 @@ export function connectStep(state: ConnectState, event: ConnectEvent, facts: Con
     case "typed": {
       const typed = { ...state.typed, [event.field]: event.value };
       const next = changed({ ...state, typed });
-      return still(event.field === "address" || event.field === "user" ? next : forgetServer(next));
+      // An address, a username and a name are no server's: what is known of the servers stays.
+      const noServers = event.field === "address" || event.field === "user" || event.field === "displayName";
+      return still(noServers ? next : forgetServer(next));
     }
     case "provider":
       return still(provider(state, event.id, event.byHand));

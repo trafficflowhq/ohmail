@@ -196,6 +196,7 @@ export default defineConfig({
       { find: "@ohmail/client-engine/calendar-span", replacement: r("./packages/client-engine/src/engine/calendar-span.ts") },
       { find: "@ohmail/client-engine/calendar-acts", replacement: r("./packages/client-engine/src/calendar-acts.ts") },
       { find: "@ohmail/client-engine/calendar-writes", replacement: r("./packages/client-engine/src/calendar-writes.ts") },
+      { find: "@ohmail/client-engine/providers", replacement: r("./packages/client-engine/src/providers.ts") },
       { find: "@ohmail/client-engine", replacement: r("./packages/client-engine/src/index.ts") },
       // Behaviour without a screen. A folder's door first, then a file by its own name (the files moved
       // out of the web app's shell are imported one by one, as they were).

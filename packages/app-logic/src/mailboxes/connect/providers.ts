@@ -8,7 +8,8 @@
 /**
  * The engine is the one module every client already depends on. This file stays so that nothing had to move: the
  * shell, the Mailboxes pane, the join screen, the desktop's local door and four test files import the table from
- * here, by this path.
+ * here, by this path. It reads the table's own entry, a file that imports nothing, so that a page holding no engine
+ * (the phone's door) can mount the connect form.
  */
 export {
   AUTH_HINTS,
@@ -33,4 +34,4 @@ export {
   type Discovery,
   type ProviderPreset,
   type ServerGuess,
-} from "@ohmail/client-engine";
+} from "@ohmail/client-engine/providers";

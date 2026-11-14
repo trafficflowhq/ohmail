@@ -12,9 +12,11 @@ import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "esbuild";
 import { afterAll, describe, expect, it } from "vitest";
 import { readDoorRequest, type DoorConfig, type DoorState } from "../src/shell/door-kinds";
-import { BENCH_MARKER, DOOR_NAMESPACES, buildShell, policyOf } from "../scripts/build-shell.mjs";
+import { BENCH_MARKER, DOOR_NAMESPACES, buildShell, pageCatalogue, policyOf } from "../scripts/build-shell.mjs";
 import { BridgeRefused, createDoorBridge } from "../web/src/door/bridge";
 import { doorHandle } from "../web/src/door/handle";
 import type { PagePort } from "../web/src/port";
@@ -27,8 +29,12 @@ const POLICY =
   "connect-src 'none'; media-src 'none'; object-src 'none'; frame-src 'none'; worker-src 'none'; manifest-src 'none'; " +
   "base-uri 'none'; form-action 'none'";
 
+const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+/** The one file of the engine the door's page holds: the provider table the connect form reads, a leaf. */
+const PROVIDER_LEAF = "packages/client-engine/src/providers.ts";
+
 const STATE: DoorState = {
-  session: "none", said: null, openId: null, syncing: false, syncSaid: null, syncStopped: null, pinned: false, total: null, paired: [], after: null,
+  session: "none", migrating: null, said: null, openId: null, syncing: false, syncSaid: null, syncStopped: null, pinned: false, total: null, paired: [], after: null,
 };
 const CONFIG: DoorConfig = {
   app: "ohmail", os: "android", pad: false, language: "en", build: { version: "2.0.0", commit: null }, at: "welcome",
@@ -66,7 +72,8 @@ describe("the door's page, built", () => {
     const scoped = /^apps\/mobile\/web\/src\/(boot|engine|engine-package|kept-storage|kept-store|owner|old-copy|bridge-fetch|account-guard|host|page|main|bench)\.tsx?$/;
     expect(doorInputs.filter((p: string) => scoped.test(p))).toEqual([]);
     expect(doorInputs.filter((p: string) => /^apps\/(webapp|desktop|paired-page|sidecar|worker|server)\//.test(p))).toEqual([]);
-    expect(doorInputs.filter((p: string) => /^packages\/(client-engine|core|db|db-mail|services|api|testing)\//.test(p))).toEqual([]);
+    // Of the engine, the provider table alone: the connect form reads it, and the next case holds that it imports nothing.
+    expect(doorInputs.filter((p: string) => /^packages\/(client-engine|core|db|db-mail|services|api|testing)\//.test(p) && p !== PROVIDER_LEAF)).toEqual([]);
     // The census reads a real list: the door's own files and the doors' stage are in it, and the scoped page's has the engine.
     expect(doorInputs).toContain("apps/mobile/web/src/door/main.tsx");
     expect(doorInputs).toContain("apps/mobile/web/src/door/pages.tsx");
@@ -76,8 +83,18 @@ describe("the door's page, built", () => {
     expect(readFileSync(join(out, "door.js"), "utf8")).not.toContain(BENCH_MARKER);
     expect((await buildShell({ out: join(out, "bench"), bench: true })).doorInputs.filter((p: string) => scoped.test(p))).toEqual([]);
     expect(readFileSync(join(out, "bench", "door.js"), "utf8")).not.toContain(BENCH_MARKER);
-    expect(DOOR_NAMESPACES).toEqual([]);
+    expect(DOOR_NAMESPACES).toEqual(["phoneDoor", "phoneRefusal", "providerPicker", "mailboxes"]);
   }, 120_000);
+
+  it("may hold the provider table because that file imports nothing: built alone, it names no import and is its bundle's one input", async () => {
+    // Read as the census reads the page, off what the bundler took: a comment that names a path changes nothing.
+    const { metafile } = await build({
+      absWorkingDir: ROOT, entryPoints: [PROVIDER_LEAF], bundle: true, write: false, metafile: true,
+      format: "esm", platform: "browser", conditions: ["ohmail-source"], logLevel: "silent",
+    });
+    expect(metafile.inputs[PROVIDER_LEAF]?.imports, "the provider table imports something: the door's page would carry it").toEqual([]);
+    expect(Object.keys(metafile.inputs)).toEqual([PROVIDER_LEAF]);
+  });
 
   /**
    * The native side as the door's page sees it, and a watch on the four doors to storage, in before any script of the
@@ -165,8 +182,9 @@ describe("the door's page, built", () => {
       expect(seen.touched).toEqual([]);
       expect(seen.stage).toBe(1);
       expect(seen.stamped).toBe(true);
-      // Its two pages are not built into it yet: the stage stands with nothing on it.
-      expect(seen.words).toBe("");
+      // Its first page is the ways in: the first screen says the app's one sentence (its full stop drawn as the dot).
+      const first = (pageCatalogue(undefined, DOOR_NAMESPACES).en as { phoneDoor: { welcome: { line: { ohmail: string } } } }).phoneDoor;
+      expect(seen.words).toContain(first.welcome.line.ohmail.replace(/\.$/, ""));
       expect(left).toEqual([]);
       expect(outside).toEqual([]);
       expect(faults).toEqual([]);

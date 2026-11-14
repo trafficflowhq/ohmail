@@ -99,6 +99,8 @@ export interface ConnectInput {
   readonly provider: string;
   readonly imap: ConnectServer & { readonly pass: Secret };
   readonly smtp?: ConnectServer & { readonly pass?: Secret };
+  /** The name this mailbox's letters carry, as it is stored: only where the form asks for one and one was typed. */
+  readonly displayName?: string;
 }
 
 /** What a passed test proved: the host that answered, the login it took, the folders, the sending leg. */
@@ -115,8 +117,8 @@ export interface Connected {
   readonly address: string | null;
 }
 
-/** What the form is opened for. */
-export const CONNECT_PURPOSES = ["join", "firstRun", "add", "edit", "reconnect"] as const;
+/** What the form is opened for. `standalone`: a phone's own mailbox, which that phone organizes itself. */
+export const CONNECT_PURPOSES = ["join", "firstRun", "add", "edit", "reconnect", "standalone"] as const;
 export type ConnectPurposeKind = (typeof CONNECT_PURPOSES)[number];
 
 /** A provider whose own sign-in connects a mailbox. Another provider widens this list, and nothing else. */
@@ -186,6 +188,8 @@ export interface ConnectTyped {
   readonly smtpPort: string;
   /** On a provider that signs in: "use an app password instead" was taken. */
   readonly byPassword: boolean;
+  /** The name the mailbox's letters carry, as typed, where the form asks for one. */
+  readonly displayName?: string;
 }
 
 /**

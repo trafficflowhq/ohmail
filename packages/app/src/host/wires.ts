@@ -247,8 +247,8 @@ export interface ProviderSignInWire {
  * throws; a refusal is the plain record a shell's adapter read off its transport.
  */
 export interface ConnectWire {
-  /** Try the login and store nothing. */
-  probe(input: ConnectInput): Promise<Answered<ConnectProbed>>;
+  /** Try the login and store nothing. `none`: this shell has no test, and the form draws no test press. */
+  probe: ((input: ConnectInput) => Promise<Answered<ConnectProbed>>) | None;
   /** Connect it. `seed`: an install's first mailbox; `add`: a further one. The mode is stated, never defaulted. */
   connect(input: ConnectInput, mode: "seed" | "add"): Promise<Answered<Connected>>;
   /** New credentials for a connected mailbox, proven before they are stored. It names no mailbox in its answer: the one asked. */

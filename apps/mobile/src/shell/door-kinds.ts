@@ -60,9 +60,19 @@ export interface PairedRow {
   readonly needsPair: boolean;
 }
 
+/** A store's upgrade under a connect, where there is a count to say: entries applied, of entries this open owes. */
+export interface DoorMigrating {
+  readonly applied: number;
+  readonly pending: number;
+  /** Epoch ms of the upgrade's first announcement in this connect: a second line joins a while after it. */
+  readonly since: number;
+}
+
 /** The connection as the door draws it. The page keeps no row of its own: it draws the last one. */
 export interface DoorState {
   readonly session: "none" | "opening" | "live" | "refused" | "ended";
+  /** While opening: the phone's own store is being upgraded. Null with no upgrade, and with one nobody counts. */
+  readonly migrating: DoorMigrating | null;
   /** Why the session was refused or ended. */
   readonly said: SaidRefusal | null;
   /** The row the session stands on, or null with none. */

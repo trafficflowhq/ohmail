@@ -30,7 +30,7 @@ type Send = NonNullable<Stepped["send"]>;
 /** One press, on the wire: its own verb, never another. A verb the shell does not have is no answer. */
 async function wired(run: Send, door: ConnectFormInput["door"]): Promise<Answered<unknown>> {
   const { act } = run;
-  if (act.verb === "test") return door.probe(act.body as ConnectInput);
+  if (act.verb === "test" && door.probe !== NONE) return door.probe(act.body as ConnectInput);
   if (act.verb === "connect" && act.mode !== null) return door.connect(act.body as ConnectInput, act.mode);
   if (act.verb === "edit" && act.subject !== null && door.edit !== NONE)
     return door.edit(act.subject, act.body as ConnectPatch);

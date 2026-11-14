@@ -27,4 +27,4 @@ export const wordAsSubject: ConnectSubject = { ...subject, id: "a-word" };
 // @ts-expect-error the mode is stated, never defaulted
 export const noMode = wire.connect(input);
 // @ts-expect-error a body's password is sealed
-export const openBody = wire.probe({ ...input, imap: { ...input.imap, pass: "typed" } });
+export const openBody = wire.connect({ ...input, imap: { ...input.imap, pass: "typed" } }, "seed");

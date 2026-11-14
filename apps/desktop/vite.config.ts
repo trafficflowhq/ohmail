@@ -877,6 +877,7 @@ export default defineConfig({
       { find: "@ohmail/client-engine/html-tree-budget", replacement: r("../../packages/client-engine/src/html-tree-budget.ts") },
       { find: "@ohmail/client-engine/calendar-acts", replacement: r("../../packages/client-engine/src/calendar-acts.ts") },
       { find: "@ohmail/client-engine/calendar-writes", replacement: r("../../packages/client-engine/src/calendar-writes.ts") },
+      { find: "@ohmail/client-engine/providers", replacement: r("../../packages/client-engine/src/providers.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       // The kit's doors and its squares window, ABOVE the old kit's bare name.
       { find: "@ohmail/ui/body-parts", replacement: r("../../packages/ui/src/body-parts.ts") },

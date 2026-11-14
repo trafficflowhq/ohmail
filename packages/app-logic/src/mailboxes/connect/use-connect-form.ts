@@ -23,7 +23,9 @@ import {
 } from "./providers.js";
 import { PORT_INVALID } from "./refusal.js";
 import { secretIsEmpty } from "./secret.js";
+import { senderNameOf } from "./sender-name.js";
 import { codeElsewhere, wayOf } from "./sign-in.js";
+import { NAME_REFUSED } from "./standalone-said.js";
 import {
   hostsNow,
   presetOf,
@@ -39,11 +41,13 @@ import { useSignInPress, useSignInReturn, useWays } from "./use-sign-in.js";
 export type { ConnectCalls, ConnectFormInput, PasswordHandle } from "./calls.js";
 
 /** The mode a connect states, by what the form was opened for. An edit connects nothing. */
-export const MODE_OF: Readonly<Record<"join" | "firstRun" | "add", "seed" | "add">> = Object.freeze({
-  join: "seed",
-  firstRun: "seed",
-  add: "add",
-});
+export const MODE_OF: Readonly<Record<"join" | "firstRun" | "add" | "standalone", "seed" | "add">> =
+  Object.freeze({
+    join: "seed",
+    firstRun: "seed",
+    add: "add",
+    standalone: "seed",
+  });
 
 export interface ConnectForm {
   readonly state: ConnectState;
@@ -215,6 +219,9 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
   const hosts = hostsNow(state.typed, facts);
   const submit = (): void => {
     if (way !== null) return signIn.signIn();
+    // A name that cannot be stored sends nothing and says so; only the mount that asks for one can hold one.
+    if (senderNameOf(state.typed.displayName ?? "") === undefined)
+      return dispatch({ kind: "said", shown: { said: NAME_REFUSED, calm: false } });
     if (!edits) return press("connect");
     // A port is optional; one that is none sends nothing and says so.
     const bad = (port: string): boolean => filled(port) && !validPort(port.trim());
@@ -266,7 +273,10 @@ export function useConnectForm(input: ConnectFormInput): ConnectForm {
       input.guard?.clear();
     },
     lookUp: addressFirst.lookUp,
-    test: () => press("test"),
+    // A shell with no test has no test press, and a press of none sends nothing.
+    test: () => {
+      if (door.probe !== NONE) press("test");
+    },
     submit,
     signIn: signIn.signIn,
     stopCode: signIn.stopCode,
