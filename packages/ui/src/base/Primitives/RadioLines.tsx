@@ -1,11 +1,16 @@
 import { useRef, type KeyboardEvent } from "react";
 import "./radio-lines.css";
+import { Tag } from "./Tag.js";
 
 export interface RadioLine<V extends string> {
   value: V;
   label: string;
   /** What this answer is about, in words: "12 messages". */
   note?: string;
+  /** A word after its name: "Your plan". */
+  tag?: string;
+  /** A figure that ends its line: a plan's price. */
+  figure?: string;
 }
 
 export interface RadioLinesProps<V extends string> {
@@ -52,8 +57,12 @@ export function RadioLines<V extends string>({ label, options, value, onChange }
             tabIndex={checked || (!taken && i === 0) ? 0 : -1}
             onClick={() => onChange?.(option.value)}
           >
-            <span className="oh-radioline-word">{option.label}</span>
+            <span className="oh-radioline-word">
+              {option.label}
+              {option.tag ? <Tag>{option.tag}</Tag> : null}
+            </span>
             {option.note ? <small className="oh-radioline-note">{option.note}</small> : null}
+            {option.figure ? <b className="oh-radioline-figure">{option.figure}</b> : null}
           </button>
         );
       })}

@@ -19,7 +19,8 @@
     cursor: pointer;
     transition: background-color var(--d-hover) var(--e-std);
   }
-  .oh-erow:hover {
+  .oh-erow:hover,
+  .oh-erow[data-cursor] {
     background: var(--hover);
   }
   .oh-erow:focus-visible {
@@ -120,8 +121,8 @@
   :root[data-face="ohmarchy"] .oh-erow-time {
     color: var(--ink3);
   }
-  :root[data-face="ohmarchy"] .oh-erow:hover .oh-erow-second,
-  :root[data-face="ohmarchy"] .oh-erow:hover .oh-erow-time {
+  :root[data-face="ohmarchy"] .oh-erow:is(:hover, [data-cursor]) .oh-erow-second,
+  :root[data-face="ohmarchy"] .oh-erow:is(:hover, [data-cursor]) .oh-erow-time {
     color: var(--ink2);
   }
   /* On now: bold, and until when in the hot ink. */

@@ -38,8 +38,12 @@ export { Blank } from "./Primitives/Blank.js";
 export type { BlankProps } from "./Primitives/Blank.js";
 export { Field } from "./Primitives/Field.js";
 export type { FieldProps } from "./Primitives/Field.js";
+export { FieldPair, FieldStack } from "./Primitives/FieldStack.js";
+export type { FieldPairProps, FieldStackProps } from "./Primitives/FieldStack.js";
 export { FindField } from "./Primitives/FindField.js";
 export type { FindFieldProps } from "./Primitives/FindField.js";
+export { ChoiceTiles } from "./Primitives/ChoiceTiles.js";
+export type { ChoiceTile, ChoiceTilesProps } from "./Primitives/ChoiceTiles.js";
 export { Switch } from "./Primitives/Switch.js";
 export type { SwitchProps } from "./Primitives/Switch.js";
 export { Seg } from "./Primitives/Seg.js";
@@ -73,10 +77,30 @@ export { MenuItem } from "./Overlays/MenuItem.js";
 export type { MenuItemProps } from "./Overlays/MenuItem.js";
 export { MenuNote } from "./Overlays/MenuNote.js";
 export { MenuRule } from "./Overlays/MenuRule.js";
+export type { MenuRuleProps } from "./Overlays/MenuRule.js";
 export { Overlay } from "./Overlays/Overlay.js";
 export type { OverlayProps } from "./Overlays/Overlay.js";
 export { contextTrigger, placeMenu } from "./Overlays/menu-place.js";
 export type { Edges, Point, Size } from "./Overlays/menu-place.js";
+export { SuggestionCredit, SuggestionList, suggestionId } from "./Overlays/SuggestionList.js";
+export type {
+  SuggestionCreditProps,
+  SuggestionGroup,
+  SuggestionListProps,
+  SuggestionRow,
+  SuggestionVia,
+} from "./Overlays/SuggestionList.js";
+export { markTyped } from "./Overlays/suggestion-mark.js";
+export type { TypedPart } from "./Overlays/suggestion-mark.js";
+export { placeSuggestions } from "./Overlays/suggestion-place.js";
+export type { FieldPlace } from "./Overlays/suggestion-place.js";
+export { suggestionStore, useSuggestions } from "./Overlays/use-suggestions.js";
+export type {
+  SuggestionField,
+  Suggestions,
+  SuggestionsOptions,
+  SuggestionStore,
+} from "./Overlays/use-suggestions.js";
 export { Dialog } from "./Overlays/Dialog.js";
 export type { DialogProps } from "./Overlays/Dialog.js";
 export { PhoneSheet } from "./Overlays/PhoneSheet.js";
@@ -101,5 +125,9 @@ export type { RefusalLineProps } from "./Feedback/RefusalLine.js";
 
 export { Page } from "./Pages/Page.js";
 export type { PageLinePart, PageProps } from "./Pages/Page.js";
+export { StepDots } from "./Pages/StepDots.js";
+export type { StepDotsProps } from "./Pages/StepDots.js";
 export { Opening } from "./Pages/Opening.js";
 export type { OpeningProps } from "./Pages/Opening.js";
+export { RowsShape } from "./Pages/RowsShape.js";
+export type { RowsShapeProps } from "./Pages/RowsShape.js";

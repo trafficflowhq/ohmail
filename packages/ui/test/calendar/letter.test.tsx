@@ -56,6 +56,23 @@ describe("the invitation card in a letter", () => {
     expect(onChange).toHaveBeenCalledWith("no");
   });
 
+  it("on an event a person may only view, the answer is read and not given: every part is off, the given one still said", () => {
+    const onChange = vi.fn();
+    render(
+      <AnswerSwitch label="Answer" answers={{ options: THREE, value: "maybe", onChange, readOnly: true }} />,
+    );
+    const parts = within(screen.getByRole("group", { name: "Answer" })).getAllByRole(
+      "button",
+    ) as HTMLButtonElement[];
+    expect(parts.map((b) => [b.disabled, b.getAttribute("aria-pressed")])).toEqual([
+      [true, "false"],
+      [true, "true"],
+      [true, "false"],
+    ]);
+    for (const part of parts) fireEvent.click(part);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("draws the answers closer while they are wider than the card, and wide where they fit", () => {
     /* The card's line is 219 px wide (the unfolded phone's letter); the wide track needs 247. */
     const wide = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (

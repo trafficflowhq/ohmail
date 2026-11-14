@@ -1,0 +1,77 @@
+/* The way through a long list's time: a narrow rail of years and months at the list's right edge. What keeps it
+   takes no room of the rows' run and stays at the run's top; the list it holds ends where the rail starts. */
+@layer oh {
+  .oh-monthrail {
+    /* Measures of this part that no token carries yet. */
+    --oh-monthrail-w: 52px;
+    --oh-monthrail-step: 26px;
+    --oh-monthrail-gap: 2px;
+    --oh-monthrail-pad: 3px;
+    --oh-monthrail-layer: 2;
+    --oh-monthrail-room: calc(var(--oh-monthrail-w) + var(--s2));
+  }
+
+  .oh-monthrail-keep {
+    position: sticky;
+    top: 0;
+    z-index: var(--oh-monthrail-layer);
+    height: 0;
+  }
+
+  .oh-monthrail-list {
+    margin-right: var(--oh-monthrail-room);
+  }
+
+  .oh-monthrail-steps {
+    position: absolute;
+    top: var(--s1);
+    right: var(--s2);
+    box-sizing: border-box;
+    width: var(--oh-monthrail-w);
+    display: flex;
+    flex-direction: column;
+    gap: var(--oh-monthrail-gap);
+    padding: var(--oh-monthrail-pad);
+    border-radius: var(--r-row);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-btn);
+  }
+
+  .oh-monthrail-step {
+    height: var(--oh-monthrail-step);
+    border-radius: var(--r-pill);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    white-space: nowrap;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-monthrail-step[data-year] {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-monthrail-step:hover {
+    background: var(--hover-ground);
+  }
+
+  .oh-monthrail-step[aria-current="true"] {
+    background: var(--pick);
+    box-shadow: var(--oh-ring-pick);
+    color: var(--on-pick);
+    font-weight: var(--w-bold);
+  }
+
+  /* With a pointer the rail is narrower. */
+  :root[data-touch="0"] .oh-monthrail {
+    --oh-monthrail-w: 46px;
+  }
+
+  /* Under a finger a step is as tall as the smallest control a finger takes. */
+  :root[data-touch="1"] .oh-monthrail-step {
+    height: var(--h-s);
+  }
+}

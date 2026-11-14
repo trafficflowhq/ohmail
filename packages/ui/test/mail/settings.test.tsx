@@ -2,9 +2,13 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Button, Field, InfoMark, Menu, Seg, Slot } from "../../src/base/index.js";
+import { Button, Field, InfoMark, Menu, RadioLines, Seg, Slot } from "../../src/base/index.js";
 import {
   RuleLine,
+  FigureLine,
+  FigureTable,
+  ScaleBar,
+  SettingActs,
   SettingArea,
   SettingFilter,
   SettingLine,
@@ -220,6 +224,157 @@ describe("SettingNote", () => {
     const note = screen.getByText("You have no unused recovery codes.").closest("p");
     expect(note?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     expect(note?.textContent).toBe("You have no unused recovery codes.");
+  });
+});
+
+describe("SettingNote, on a sheet that counts and waits", () => {
+  it("draws a sentence's emphasis where the app marks it, and stays one sentence", () => {
+    render(
+      <SettingNote>{["Your plan keeps ", { strong: "all your mail" }, " on this device."]}</SettingNote>,
+    );
+    const strong = screen.getByText("all your mail");
+    expect(strong.closest("p")!.textContent).toBe("Your plan keeps all your mail on this device.");
+    /* The emphasis is in the markup, for a reader that reads it: not a look alone. */
+    expect(["B", "STRONG"]).toContain(strong.tagName);
+  });
+
+  it("is said when it appears where it warns or says that something is being read, and is not where it only notes", () => {
+    const { rerender } = render(<SettingNote>Kept for 30 days.</SettingNote>);
+    expect(screen.queryByRole("status")).toBeNull();
+    rerender(<SettingNote warn>The payment did not go through.</SettingNote>);
+    expect(screen.getByRole("status").textContent).toBe("The payment did not go through.");
+    rerender(<SettingNote busy>Reading the plans</SettingNote>);
+    expect(screen.getByRole("status").textContent).toBe("Reading the plans");
+    expect(screen.getByRole("status").getAttribute("aria-busy")).toBe("true");
+  });
+});
+
+describe("SettingActs", () => {
+  it("is a sheet's own row of acts under its lines, named as a group", () => {
+    const onPlan = vi.fn();
+    render(
+      <SettingActs label="Storage">
+        <Button onPress={onPlan}>Change plan</Button>
+        <Button kind="two">Add storage</Button>
+      </SettingActs>,
+    );
+    const acts = screen.getByRole("group", { name: "Storage" });
+    expect([...acts.querySelectorAll("button")].map((b) => b.textContent)).toEqual([
+      "Change plan",
+      "Add storage",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Change plan" }));
+    expect(onPlan).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a plan's line", () => {
+  it("ends in its figure, after its facts, on a line of settings", () => {
+    render(<SettingLine label="Solo" tag="Your plan" value="50 GB" figure="CHF 6 a month" />);
+    const line = screen.getByRole("group", { name: "Solo" });
+    expect(line.textContent).toBe("SoloYour plan50 GBCHF 6 a month");
+  });
+
+  it("is one of a choice where it can be picked: its tag and its figure are part of what the choice is called", () => {
+    const onChange = vi.fn();
+    render(
+      <RadioLines
+        label="Plan"
+        value="solo"
+        onChange={onChange}
+        options={[
+          { value: "solo", label: "Solo", tag: "Your plan", note: "50 GB", figure: "CHF 6 a month" },
+          {
+            value: "duo",
+            label: "Duo",
+            tag: "Keeps all your mail",
+            note: "200 GB",
+            figure: "CHF 12 a month",
+          },
+        ]}
+      />,
+    );
+    const duo = screen.getByRole("radio", { name: /Duo.*Keeps all your mail.*200 GB.*CHF 12 a month/ });
+    expect(duo.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(duo);
+    expect(onChange).toHaveBeenCalledWith("duo");
+    /* A line with neither is as it was. */
+    cleanup();
+    render(<RadioLines label="Whose mail" value="a" options={[{ value: "a", label: "This address" }]} />);
+    expect(screen.getByRole("radio").textContent).toBe("This address");
+  });
+});
+
+describe("FigureLine", () => {
+  it("says a figure, what it is of, what explains it and a word at its end, in that order", () => {
+    render(
+      <FigureLine
+        figure="12.4 GB"
+        of="of 50 GB · trial"
+        info={<InfoMark label="What counts" />}
+        tag="Your plan"
+      />,
+    );
+    const line = screen.getByText("12.4 GB").closest("p")!;
+    expect(line.textContent).toBe("12.4 GBof 50 GB · trialYour plan");
+    const order = [
+      screen.getByText("12.4 GB"),
+      screen.getByText("of 50 GB · trial"),
+      screen.getByRole("button", { name: "What counts" }),
+      screen.getByText("Your plan"),
+    ];
+    for (let i = 1; i < order.length; i++)
+      expect(
+        order[i - 1]!.compareDocumentPosition(order[i]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+  });
+});
+
+describe("ScaleBar", () => {
+  it("is one picture named by its words, with its marks' labels and the captions of its scale to read", () => {
+    render(
+      <ScaleBar
+        label="12.4 GB of 50 GB used; 3 GB still on the server"
+        parts={[{ share: 20 }, { share: 5, kind: "second" }, { share: 6, kind: "rest" }]}
+        marks={[{ at: 60, label: "30 GB" }]}
+        scale={[{ label: "0" }, { label: "Still on the server", rest: true }, { label: "50 GB" }]}
+      />,
+    );
+    const picture = screen.getByRole("img", { name: "12.4 GB of 50 GB used; 3 GB still on the server" });
+    expect(picture.textContent).toBe("30 GB");
+    for (const caption of ["0", "Still on the server", "50 GB"])
+      expect(screen.getByText(caption)).toBeTruthy();
+  });
+});
+
+describe("FigureTable", () => {
+  it("is a table: its columns named, each row starting with what it counts, and the row that sums them", () => {
+    render(
+      <FigureTable
+        label="What takes the room"
+        columns={["Mailbox", "Mail", "Files", "Total"]}
+        rows={[
+          { id: "a", name: "mila@lichtgrat.example", hue: 210, figures: ["8.1 GB", "2.3 GB", "10.4 GB"] },
+          { id: "b", name: "studio@lichtgrat.example", figures: ["1.5 GB", "0.5 GB", "2.0 GB"] },
+        ]}
+        sum={{ name: "All mailboxes", figures: ["9.6 GB", "2.8 GB", "12.4 GB"] }}
+      />,
+    );
+    const table = screen.getByRole("table", { name: "What takes the room" });
+    expect(screen.getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Mailbox",
+      "Mail",
+      "Files",
+      "Total",
+    ]);
+    /* A row starts with what it counts, then a figure a column: as the design's own table reads. */
+    const rows = [...table.querySelectorAll('[role="row"]')].slice(1);
+    expect(rows.map((row) => [...row.querySelectorAll('[role="cell"]')].map((c) => c.textContent))).toEqual([
+      ["mila@lichtgrat.example", "8.1 GB", "2.3 GB", "10.4 GB"],
+      ["studio@lichtgrat.example", "1.5 GB", "0.5 GB", "2.0 GB"],
+      ["All mailboxes", "9.6 GB", "2.8 GB", "12.4 GB"],
+    ]);
+    expect(table.querySelectorAll('[role="row"]')).toHaveLength(4);
   });
 });
 

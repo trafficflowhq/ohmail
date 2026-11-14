@@ -345,6 +345,33 @@ describe("Sheet, the reading column", () => {
     expect(within(scroller.current!).getByRole("heading", { name: "Glaze order" })).toBeTruthy();
   });
 
+  it("stands the way back first in the bar over the column: named by its word or its label, and a press goes back", () => {
+    const onBack = vi.fn();
+    const { rerender } = render(
+      <Sheet
+        kind="reading"
+        label="Conversation"
+        back={{ word: "Ohbox", onPress: onBack }}
+        top={<span>the squares</span>}
+      >
+        <p>The first letter</p>
+      </Sheet>,
+    );
+    const back = screen.getByRole("button", { name: "Ohbox" });
+    fireEvent.click(back);
+    expect(onBack).toHaveBeenCalledTimes(1);
+    const after =
+      back.compareDocumentPosition(screen.getByText("the squares")) & Node.DOCUMENT_POSITION_FOLLOWING;
+    expect(after).toBeTruthy();
+    expect(screen.getByRole("region", { name: "Conversation" }).contains(back)).toBe(true);
+    rerender(<Sheet kind="reading" label="Conversation" back={{ word: "Ohbox", label: "Back to Ohbox" }} />);
+    expect(screen.getByRole("button", { name: "Back to Ohbox" }).textContent).toBe("Ohbox");
+    rerender(<Sheet kind="reading" label="Conversation" back={{ label: "Back" }} />);
+    expect(screen.getByRole("button", { name: "Back" }).getAttribute("title")).toBe("Back");
+    rerender(<Sheet kind="reading" label="Conversation" />);
+    expect(screen.queryByRole("button")).toBeNull();
+  });
+
   it("carries the way back to its start, with the action panel and without one", () => {
     const jump = <JumpBack label="Back to top" to="top" shown onPress={() => {}} />;
     const { rerender } = render(

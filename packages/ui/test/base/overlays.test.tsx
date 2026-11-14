@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useRef, useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -80,6 +80,47 @@ describe("Menu", () => {
       "menuitemradio",
     ]);
     expect(items().map((i) => i.getAttribute("aria-checked"))).toEqual([null, null, "true", "false"]);
+  });
+
+  it("a rule can carry the title of the group under it: a second titled group, which the arrows pass over", () => {
+    function Decided() {
+      const anchor = useRef<HTMLButtonElement | null>(null);
+      return (
+        <>
+          <Button ref={anchor} opens="menu" expanded>
+            Ohbox
+          </Button>
+          <Menu open onClose={() => {}} anchor={anchor} label="Where their mail goes" title="Goes to">
+            <MenuItem keyHint="o" checked>
+              Ohbox
+            </MenuItem>
+            <MenuItem keyHint="n" checked={false}>
+              News
+            </MenuItem>
+            <MenuRule title="Applies to" />
+            <MenuItem checked>This sender</MenuItem>
+            <MenuItem checked={false}>The whole domain</MenuItem>
+          </Menu>
+        </>
+      );
+    }
+    render(<Decided />);
+    const menu = screen.getByRole("menu", { name: "Where their mail goes" });
+    const [first, second] = within(menu).getAllByRole("heading");
+    expect([first?.textContent, second?.textContent]).toEqual(["Goes to", "Applies to"]);
+    /* The second title stands under its rule, between the two groups, drawn as the menu's own title is. */
+    const before = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    const rule = within(menu).getByRole("separator");
+    expect([before(items()[1]!, rule), before(rule, second!), before(second!, items()[2]!)]).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    expect(second!.className).toBe(first!.className);
+    items()[1]!.focus();
+    fireEvent.keyDown(menu, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(items()[2]);
   });
 
   it("puts the keys on the first item that is not off", () => {
@@ -312,6 +353,61 @@ describe("Dialog", () => {
     way.focus();
     fireEvent.keyDown(dialog, { key: "Tab" });
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Verify code" }));
+  });
+
+  it("holds a second answer between the one that does it and the way out", () => {
+    const [keep, forget, close] = [vi.fn(), vi.fn(), vi.fn()];
+    render(
+      <Dialog
+        open
+        onClose={close}
+        title="Start over"
+        hot
+        line="Keep the mailboxes you connected?"
+        confirm={{ label: "Keep them", onPress: keep, keyHint: "↵" }}
+        second={{ label: "Forget them", onPress: forget }}
+        cancel={{ label: "Cancel", keyHint: "Esc" }}
+      />,
+    );
+    const dialog = screen.getByRole("dialog", { name: "Start over" });
+    expect(
+      within(dialog)
+        .getAllByRole("button")
+        .map((b) => b.querySelector("span")?.textContent),
+    ).toEqual(["Keep them", "Forget them", "Cancel"]);
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: /Keep them/ }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Forget them" }));
+    expect([keep.mock.calls.length, forget.mock.calls.length, close.mock.calls.length]).toEqual([0, 1, 0]);
+  });
+
+  it("says what a press inside it came to beside its answers: no item of its list, and after the list", () => {
+    const waiting = (said?: { line: string; refused?: boolean }) => (
+      <Dialog open onClose={() => {}} title="2 changes wait" cancel={{ label: "Close" }} list said={said}>
+        <div role="listitem">Archive, Lena</div>
+        <div role="listitem">Move, Paperbird</div>
+      </Dialog>
+    );
+    const { rerender } = render(waiting());
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).queryByRole("status")).toBeNull();
+    rerender(waiting({ line: "Not put back. Try again.", refused: true }));
+    const list = within(dialog).getByRole("list");
+    const line = within(dialog).getByRole("status");
+    expect(line.textContent).toBe("Not put back. Try again.");
+    expect(list.contains(line)).toBe(false);
+    expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+    const before = (a: Node, b: Node) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect([before(list, line), before(line, screen.getByRole("button", { name: "Close" }))]).toEqual([
+      true,
+      true,
+    ]);
+    /* A refusal leads with its sign; a line that only tells has none. */
+    expect(line.querySelector("svg")).not.toBeNull();
+    rerender(waiting({ line: "Sent to the install that organizes this mailbox." }));
+    const told = within(dialog).getByRole("status");
+    expect(told.textContent).toBe("Sent to the install that organizes this mailbox.");
+    expect(told.querySelector("svg")).toBeNull();
   });
 });
 

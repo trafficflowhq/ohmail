@@ -1,0 +1,127 @@
+/* A letter being written, block by block. The app's editor stamps these names on what it draws.
+
+   A LETTER IS WRITTEN IN LINES, AND A LIST STANDS ON THEM. An empty line is one line tall, and it is the only air
+   between two lines of text. A paragraph that a list follows, and a list that a paragraph follows, end without air,
+   and an item has none: a list after an empty line starts exactly one empty line under the text, a list right after
+   a line starts on the next line, and its items stand one line apart. A quote and a block of code stand off the
+   lines by a gap of their own. */
+@layer oh {
+  .oh-lettertext {
+    /* Measures of this part that no token carries yet. */
+    --oh-lettertext-gap: var(--s2);
+    --oh-lettertext-indent: 1.4em;
+    --oh-lettertext-quote: inset 3px 0 0 var(--ctl-ring);
+    --oh-lettertext-mono: ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
+    --oh-lettertext-mono-size: 0.9em;
+    --oh-lettertext-code-pad: 0 0.3em;
+    --oh-lettertext-offset: 0.14em;
+
+    outline: none;
+  }
+
+  .oh-lettertext-p,
+  .oh-lettertext-bullets,
+  .oh-lettertext-numbers,
+  .oh-lettertext-quote,
+  .oh-lettertext-codeblock {
+    margin: 0 0 var(--oh-lettertext-gap);
+  }
+
+  .oh-lettertext-bullets,
+  .oh-lettertext-numbers {
+    padding: 0 0 0 var(--oh-lettertext-indent);
+  }
+
+  .oh-lettertext-bullets {
+    list-style: disc outside;
+  }
+
+  .oh-lettertext-numbers {
+    list-style: decimal outside;
+  }
+
+  .oh-lettertext-item .oh-lettertext-bullets {
+    list-style-type: circle;
+  }
+
+  .oh-lettertext-item .oh-lettertext-numbers {
+    list-style-type: lower-alpha;
+  }
+
+  /* The four pairs are said one by one: not every reader of a sheet reads a list of names inside `:has()`. */
+  .oh-lettertext-p:has(+ .oh-lettertext-bullets),
+  .oh-lettertext-p:has(+ .oh-lettertext-numbers),
+  .oh-lettertext-bullets:has(+ .oh-lettertext-p),
+  .oh-lettertext-numbers:has(+ .oh-lettertext-p) {
+    margin-bottom: 0;
+  }
+
+  .oh-lettertext-item,
+  .oh-lettertext-item > .oh-lettertext-p,
+  .oh-lettertext-item > .oh-lettertext-bullets,
+  .oh-lettertext-item > .oh-lettertext-numbers {
+    margin: 0;
+  }
+
+  .oh-lettertext-quote {
+    padding: 0 0 0 var(--s4);
+    box-shadow: var(--oh-lettertext-quote);
+    color: var(--ink2);
+  }
+
+  .oh-lettertext-code,
+  .oh-lettertext-codeblock {
+    border-radius: var(--r-sq);
+    background: var(--oh-soft, var(--soft-sheet));
+    box-shadow: var(--oh-ring-btn);
+    font-family: var(--oh-lettertext-mono);
+  }
+
+  .oh-lettertext-code {
+    padding: var(--oh-lettertext-code-pad);
+  }
+
+  .oh-lettertext-codeblock {
+    padding: var(--s2) var(--s3);
+    font-size: var(--oh-lettertext-mono-size);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+  }
+
+  /* Code inside a block carries the block's ground, not a second box of its own. */
+  .oh-lettertext-codeblock .oh-lettertext-code {
+    padding: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .oh-lettertext-link {
+    color: inherit;
+    text-decoration: underline solid var(--oh-hair) var(--link-line);
+    text-underline-offset: var(--oh-lettertext-offset);
+    cursor: text;
+  }
+
+  /* The last block ends where the text's box ends. */
+  .oh-lettertext > :last-child,
+  .oh-lettertext-quote > :last-child {
+    margin-bottom: 0;
+  }
+
+  /* A plain text box that is the whole text: the text's own type, no line and no ground, as tall as its words. */
+  .oh-lettertext-plain {
+    display: block;
+    box-sizing: border-box;
+    width: 100%;
+    min-height: inherit;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    outline: none;
+    background: none;
+    color: inherit;
+    font: inherit;
+    resize: none;
+    field-sizing: content;
+  }
+}

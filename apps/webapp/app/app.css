@@ -7946,7 +7946,11 @@ input.set-tag-input {
 
 /* The eight marks, as the recipient will see them. Deliberately the same list as the toolbar
    and the server's outbound allowlist — a style here for something the editor cannot produce
-   would be a style for a message nobody can write. */
+   would be a style for a message nobody can write.
+   One thing is drawn closer here than a letter is read: the air around a list (the rules under
+   this block). The sheet a letter is read by keeps its own 0.7em round a list, because a received
+   letter must not move; so a sent letter read again shows a little more room round its list than
+   was drawn while it was written. That was chosen. */
 .rte-surface > :first-child { margin-top: 0; }
 .rte-surface > :last-child { margin-bottom: 0; }
 .rte-surface p {
@@ -7957,8 +7961,24 @@ input.set-tag-input {
   margin: 0 0 0.7em;
   padding-left: 1.4em;
 }
+/* A LETTER IS WRITTEN IN LINES, AND A LIST STANDS ON THEM. An empty line is one line tall, and it is
+   the only air between two lines of text. A list used to bring air of its own: 0.7em under the
+   paragraph before it and 0.7em under itself, on top of the empty line a person had left there, and
+   0.15em round each item. So a list after an empty line stood almost a line and a half from the text
+   around it (31.7px where a line is 22.3px; the item's air falls into the paragraph's), and its items
+   stood further apart than the lines of the text (24.3px).
+   Now a paragraph that a list follows, and a list that a paragraph follows, end without air, and an
+   item has none: a list after an empty line starts exactly one empty line under the text, a list
+   right after a line starts on the next line, and its items stand one line apart. A quote and a code
+   block keep their 0.7em. */
+.rte-surface p:has(+ ul),
+.rte-surface p:has(+ ol),
+.rte-surface ul:has(+ p),
+.rte-surface ol:has(+ p) {
+  margin-bottom: 0;
+}
 .rte-surface li {
-  margin: 0.15em 0;
+  margin: 0;
 }
 .rte-surface li p {
   margin: 0;

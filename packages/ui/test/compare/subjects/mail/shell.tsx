@@ -222,6 +222,19 @@ export const shell: KitSubject[] = [
       </Sheet>
     ),
   },
+  /* The way back over the reading column on a phone, drawn as it stands in its bar. */
+  {
+    key: "Sheet/back",
+    place: "block",
+    width: 390,
+    target: ".oh-sheet-back > .oh-button",
+    on: "ground",
+    render: () => (
+      <div style={{ display: "flex", flexDirection: "column", height: 200 }}>
+        <Sheet kind="reading" label="Conversation" back={{ word: "Ohbox" }} />
+      </div>
+    ),
+  },
   {
     key: "FolderShelf/open",
     place: "block",

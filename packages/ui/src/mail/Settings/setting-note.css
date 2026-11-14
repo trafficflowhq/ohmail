@@ -12,6 +12,12 @@
     color: var(--ink2);
   }
 
+  /* The words a sentence leans on: heavier, in the ink. */
+  .oh-settingnote-strong {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
   .oh-settingnote > .oh-icon {
     flex: none;
     margin-top: var(--oh-settingnote-sign-drop);
