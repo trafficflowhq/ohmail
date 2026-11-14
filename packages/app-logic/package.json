@@ -790,6 +790,12 @@
       "node": "./dist/text/idn.js",
       "default": "./src/text/idn.ts"
     },
+    "./text/live-copy": {
+      "types": "./src/text/live-copy.ts",
+      "ohmail-source": "./src/text/live-copy.ts",
+      "node": "./dist/text/live-copy.js",
+      "default": "./src/text/live-copy.ts"
+    },
     "./text/locale": {
       "types": "./src/text/locale.ts",
       "ohmail-source": "./src/text/locale.ts",

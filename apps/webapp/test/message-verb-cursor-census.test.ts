@@ -44,7 +44,7 @@ function sources(dir: string): string[] {
   return out.sort();
 }
 
-const files = [...sources(APP), ...sources(new URL("../../../packages/app-logic/src/", import.meta.url).pathname)];
+const files = [...sources(APP), ...sources(new URL("../../../packages/app-logic/src/", import.meta.url).pathname), ...sources(new URL("../../../packages/letter-body/src/", import.meta.url).pathname)];
 const read = (p: string): string => readFileSync(p, "utf8");
 const name = (p: string): string => relative(APP, p);
 

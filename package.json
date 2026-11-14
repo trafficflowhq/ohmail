@@ -28,6 +28,7 @@
     "packages/app",
     "packages/app-logic",
     "packages/client-engine",
+    "packages/letter-body",
     "packages/core",
     "packages/db",
     "packages/db-mail",

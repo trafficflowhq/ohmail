@@ -675,7 +675,8 @@ apps/webapp/test/junk-rescue-claims.test.ts	source-text	reads source as text (ts
 apps/webapp/test/junk-window-hook.test.tsx	source-text	reads source as text (tsx)	layer 2	removals	
 apps/webapp/test/keymap-enter-on-link.test.tsx	behaviour	Enter on the where-line's link follows it	none	frame	gone:apps/webapp/app/shell/OhboxWhereLine.tsx
 apps/webapp/test/lazy-view-retries.test.tsx	source-text	reads source as text (js, tsx)	layer 2	removals	
-apps/webapp/test/letter-focus-browser.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	reader	
+apps/webapp/test/letter-body-words.test.tsx	data	reads data files (json): the message catalogue	none	reader	
+apps/webapp/test/letter-focus-browser.test.ts	source-text	reads source as text (js, mjs, ts)	layer 2	unassigned	
 apps/webapp/test/list-older-wired.test.ts	source-text	reads source as text (ts)	layer 2	ohbox	
 apps/webapp/test/list-surface-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	ohbox	
 apps/webapp/test/list-title-size.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	ohbox	
@@ -697,11 +698,11 @@ apps/webapp/test/mailbox-row-width.test.ts	source-text	reads source as text (css
 apps/webapp/test/mailbox-stand-down.test.tsx	source-text	reads source as text (ts)	layer 2	mailboxes	
 apps/webapp/test/mailbox-status-honesty.test.tsx	source-text	reads source as text (ts)	layer 2	mailboxes	
 apps/webapp/test/mailto-over-the-route-mirror.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
-apps/webapp/test/message-body-code.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
-apps/webapp/test/message-body-line-spacing.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
-apps/webapp/test/message-body-prose.test.ts	source-text	reads source as text (css, ts)	layer 2	reader	
-apps/webapp/test/message-body-reflow.test.ts	source-text	reads source as text (css, ts)	layer 2	reader	
-apps/webapp/test/message-body-tables.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	reader	
+apps/webapp/test/message-body-code.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	unassigned	
+apps/webapp/test/message-body-line-spacing.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	unassigned	
+apps/webapp/test/message-body-prose.test.ts	source-text	reads source as text (css, ts)	layer 2	unassigned	
+apps/webapp/test/message-body-reflow.test.ts	source-text	reads source as text (css, ts)	layer 2	unassigned	
+apps/webapp/test/message-body-tables.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	unassigned	
 apps/webapp/test/message-body-viewing.test.ts	data	through packages/client-engine/test/fixtures/letter-paper-corpus.ts: reads recorded newsletters	none	removals	
 apps/webapp/test/message-verb-cursor-census.test.ts	source-text	reads source as text (ts, tsx)	layer 2	removals	
 apps/webapp/test/modal-suspends-keymap.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
@@ -1229,6 +1230,7 @@ packages/db/test/transition-window.test.ts	data	reads data files (json): a journ
 packages/db/test/transition.pg.test.ts	data	reads data files (json, sql): a journal and its migrations copied to its own folder	none	services-proof	
 packages/db/test/tx-dialect-carry-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/worker-timeouts.pg.test.ts	source-text	reads source as text (ts): the database client and the worker's leader lock	layer 1	services-proof	
+packages/letter-body/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	reader	
 packages/organizer/test/manifest-entries.test.ts	data	reads data files (json): its own manifest	none	worker	
 packages/services/test/admin-freetext-projection.test.ts	source-text	reads source as text (ts): the admin service	layer 1	services-proof	
 packages/services/test/ai-refusal-contradiction.test.ts	data	through packages/services/test/helpers/plane-pricing.ts: reads a recorded answer	none	services-proof	

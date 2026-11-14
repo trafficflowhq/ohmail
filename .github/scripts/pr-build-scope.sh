@@ -70,7 +70,7 @@ selfhost() {
     apps/server/* | apps/worker/* | apps/webapp/*) return 0 ;;
     packages/core/* | packages/db/* | packages/db-mail/* | packages/services/* | packages/api/*) return 0 ;;
     packages/client-engine/* | packages/testing/* | packages/tokens/* | packages/ui/* | packages/wire/*) return 0 ;;
-    packages/app-logic/* | packages/app/*) return 0 ;;
+    packages/app-logic/* | packages/app/* | packages/letter-body/*) return 0 ;;
     packages/cal-core/* | packages/cal-providers/*) return 0 ;;
     packages/organizer/*) return 0 ;;
     deploy/selfhost/* | .github/workflows/selfhost-smoke.yml | .github/scripts/selfhost-smoke.sh | .github/scripts/pr-build-scope.sh) return 0 ;;

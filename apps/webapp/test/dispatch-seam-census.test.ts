@@ -31,6 +31,8 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const APP = join(HERE, "..", "app");
 /** The behaviour moved out of the shell, the press path with it: read with it, keyed `app-logic/…`. */
 const LOGIC = join(HERE, "..", "..", "..", "packages", "app-logic", "src");
+/** The letter's body, moved out of the web app: read with it, keyed `letter-body/…`. */
+const BODY = join(HERE, "..", "..", "..", "packages", "letter-body", "src");
 const NEEDLE = "void engine.mutate(";
 
 /**
@@ -131,7 +133,7 @@ describe("the shell's dispatch seam", () => {
 
   it("pins the remainder, one reason each, and refuses a new bare dispatch", () => {
     const counted = new Map<string, number>();
-    for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"]] as const) for (const file of tsFiles(root)) {
+    for (const [root, prefix] of [[APP, ""], [LOGIC, "app-logic/"], [BODY, "letter-body/"]] as const) for (const file of tsFiles(root)) {
       const hits = bareIn(readFileSync(file, "utf8"));
       if (hits.length > 0) counted.set(prefix + relative(root, file).split("\\").join("/"), hits.length);
     }

@@ -33,7 +33,7 @@ const SHEETS = [
   "packages/ui/src/base.css",
   "packages/ui/src/composites/message.css",
   "apps/webapp/app/app.css",
-  "apps/webapp/app/letter-body/message-body.css",
+  "packages/letter-body/src/message-body.css",
 ].map((p) => readFileSync(join(ROOT, p), "utf8")).join("\n");
 
 function chunk(tag: string, data: Buffer): Buffer {

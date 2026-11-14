@@ -24,7 +24,7 @@ interface Door {
   strip: string;
 }
 const WEB: Door = {
-  roots: ["apps/webapp/app", "apps/desktop/src", "apps/paired-page/src"],
+  roots: ["apps/webapp/app", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src"],
   tags: new Set(["MessageBody", "MessageBodyView", "BodyText", "StreamCard"]),
   bodyMember: false,
   strip: "MessageFiles",
@@ -39,7 +39,7 @@ const PHONE: Door = {
 
 /** `file#Component` → why that mount shows no files. */
 const NO_FILES: Record<string, string> = {
-  "apps/webapp/app/letter-body/MessageBody.tsx#MessageBody": "the viewer itself; every host that mounts it is held here",
+  "packages/letter-body/src/MessageBody.tsx#MessageBody": "the viewer itself; every host that mounts it is held here",
   "apps/webapp/app/views/TrashView.tsx#TrashLiveRead": "the live Trash window: an un-mirrored row read as text, with no list route",
   "apps/mobile/src/ui/MailBodyFrame.tsx#MailBodyFrame": "the reader's frame; its host, MessageReader, draws the tiles",
   "apps/mobile/src/ui/DraftReader.tsx#DraftReader": "the person's own unsent draft; its files are the composer's",
@@ -123,12 +123,12 @@ describe("web and desktop: every body mount draws MessageFiles, or is named", ()
   it("the walk read both roots and found the known hosts (the positive control)", () => {
     expect(files, "the walk read nothing").toBeGreaterThan(100);
     expect(hosts(mounts)).toEqual([
-      "apps/webapp/app/letter-body/MessageBody.tsx#MessageBody",
       "apps/webapp/app/shell/MessageCard.tsx#MessageCard",
       "apps/webapp/app/shell/MessagePane.tsx#MessagePane",
       "apps/webapp/app/shell/StreamCardMemo.tsx#StreamCardMemoInner",
       "apps/webapp/app/views/ScreenerView.tsx#HeldMail",
       "apps/webapp/app/views/TrashView.tsx#TrashLiveRead",
+      "packages/letter-body/src/MessageBody.tsx#MessageBody",
     ]);
   });
 

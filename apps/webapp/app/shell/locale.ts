@@ -12,6 +12,8 @@ import { createTranslator } from "next-intl";
 import { durableSet } from "@ohmail/app-logic/storage/durable";
 import { fillOver, type Messages } from "@ohmail/app/text/fill";
 import { LOCALES, isAppLocale, normalizeLocale, type AppLocale } from "@ohmail/app-logic/text/locale";
+import { liveCopyOver } from "@ohmail/app-logic/text/live-copy";
+import { setBodyWords } from "@ohmail/letter-body/words";
 
 /* The closed set and its two readers are behaviour's (`@ohmail/app-logic/text/locale`); every importer of this file
    keeps taking them here. */
@@ -139,6 +141,7 @@ export function setActiveCatalog(locale: AppLocale, messages: Catalog | null): v
   activeLocale = locale;
   activeCatalog = messages;
   translators = new Map();
+  setBodyWords({ locale, translatorOf: activeTranslator });
 }
 
 /** The locale the register is holding — what `format.ts` passes to `Intl`. */
@@ -263,30 +266,5 @@ export function liveCopy<T extends Record<string, unknown>>(
   english: T,
   params: Partial<Record<keyof T, readonly string[]>> = {},
 ): T {
-  const out: Record<string, unknown> = {};
-  for (const key of Object.keys(english)) {
-    const fallback = english[key];
-    if (typeof fallback === "function") {
-      const names = params[key as keyof T] ?? [];
-      out[key] = (...values: unknown[]): string => {
-        const t = activeTranslator(namespace);
-        if (t === null) return (fallback as (...a: unknown[]) => string)(...values);
-        const named: Record<string, unknown> = {};
-        names.forEach((name, i) => { named[name] = values[i]; });
-        const formatted = t(key, named);
-        return formatted === "" ? (fallback as (...a: unknown[]) => string)(...values) : formatted;
-      };
-      continue;
-    }
-    Object.defineProperty(out, key, {
-      enumerable: true,
-      get(): unknown {
-        const t = activeTranslator(namespace);
-        if (t === null) return fallback;
-        const formatted = t(key);
-        return formatted === "" ? fallback : formatted;
-      },
-    });
-  }
-  return out as T;
+  return liveCopyOver(() => activeTranslator(namespace), english, params);
 }
