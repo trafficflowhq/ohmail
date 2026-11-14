@@ -62,7 +62,7 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
     wires: {
       organizerNotice: NONE, gapLetters: NONE, liveBody: NONE, away: NONE, profileImport: NONE, consent: NONE,
       images: NONE, olderBody: NONE, junk: NONE, trash: NONE, suggest: NONE, draftReply: NONE, firstRun: NONE,
-      screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, mailboxes: NONE,
+      screening: NONE, autoFiled: NONE, seedReview: NONE, folderSummary: NONE, ownModelAutoSuggest: NONE, connect: NONE, mailboxes: NONE,
       calendar: NONE,
     },
     capabilities: {
@@ -89,7 +89,8 @@ export function phoneHost(engine: Engine, facts: PhoneFacts, has: PhoneSupplies)
       screener: NONE, help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
-      reader: NONE,
+      reader: has.frame.reader,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

@@ -31,7 +31,7 @@ describe("undo in the reader", () => {
     );
     expect(screen.getByRole("button", { name: /Undo/ })).toBeTruthy();
     await act(async () => {
-      fireEvent.keyDown(window, { key: "z" });
+      fireEvent.keyDown(document.body, { key: "z" });
     });
     expect(mail.mutations).toEqual([
       { kind: "triage_set", messageId: "m1", state: "reply_later" },

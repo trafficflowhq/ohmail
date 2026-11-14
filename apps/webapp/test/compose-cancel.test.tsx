@@ -775,7 +775,11 @@ describe("the shell is the consumer, not just the harness", () => {
     ).toMatch(/onCancel=\{cancelCompose\}/);
     const shell = readSource("app/shell/shell-compose.ts");
 
-    const body = /const cancelCompose = useStableCallback\(\(\) => \{([\s\S]*?)\n  \}\);/.exec(shell)?.[1];
+    /* The cancel's body is the discard's shared one (`abandonCompose`), which the cancel calls with no Undo. */
+    expect(shell, "the cancel is not the shared discard without its Undo").toMatch(
+      /const cancelCompose = useStableCallback\(\(\) => abandonCompose\(false\)\);/,
+    );
+    const body = /const abandonCompose = useStableCallback\(\(undo: boolean\) => \{([\s\S]*?)\n  \}\);/.exec(shell)?.[1];
     expect(body, "there is no `cancelCompose` in the shell").toBeDefined();
     expect(body!, "cancelling does not delete the account row").toContain("autosave.discard()");
     expect(body!, "cancelling leaves the message in the local scratch buffer")

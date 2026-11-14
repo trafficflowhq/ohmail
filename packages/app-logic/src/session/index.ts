@@ -4,6 +4,7 @@ export * from "./account-erased.js";
 export * from "./boot-cache.js";
 export * from "./browser-online.js";
 export * from "./confirm-schedule.js";
+export * from "./day-clock.js";
 export * from "./document-hidden.js";
 export * from "./drain-mark.js";
 export * from "./first-paint.js";

@@ -10,7 +10,8 @@ import { webHost, type WebFacts, type WebSupplies } from "../app/(product)/mailb
 
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
-  "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "mailboxes",
+  "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "connect",
+  "mailboxes",
 ] as const;
 /** A stand-in that is only ever compared: which thing was handed on, not what it does. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
@@ -22,8 +23,8 @@ const has: WebSupplies = {
   features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as WebSupplies["features"],
   notifications: named("notifications"),
   frame: {
-    places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-    appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+    places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), address: named("address"),
+    window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
   },
 };
 const engine = named<HostContract["engine"]>("engine");
@@ -52,7 +53,8 @@ const entries = (...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (has.features as Record<string, unknown>)[feature] : NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
-    reader: NONE,
+    reader: has.frame.reader,
+    above: has.frame.above,
     calendar: has.frame.calendar,
   });
 /** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */
@@ -90,6 +92,7 @@ describe("the web shell's answers on the managed service", () => {
   it("hands on every wire it has but the switch for a person's own model", () => {
     expect(withheld(host)).toEqual(["calendar", "ownModelAutoSuggest"]);
     expect(host.wires.liveBody).toBe(has.wires.liveBody);
+    expect(host.wires.connect).toBe(has.wires.connect);
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
 

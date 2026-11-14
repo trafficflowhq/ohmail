@@ -64,7 +64,7 @@ async function mount(opts: {
   thread?: { id: string; messageIds: string[] };
 }): Promise<void> {
   setViewport();
-  const OhboxView = await (await import("./_today.js")).prepareToday();
+  const OhboxView = await (await import("./_today.js")).prepareSeated();
   const { KeymapProvider } = await import("@ohmail/app/keys");
   const rows = pinnedRows(opts.pinned.map(msg), (opts.siblings ?? []).map(msg), opts.pinnedAt);
   // The server's own thread length, which a windowed mirror need not hold — stamped on the row

@@ -1,49 +1,83 @@
 /**
  * THE OHBOX'S REGISTERED STATES, drawn by address over the fake host: the Ohbox's place through the real frame,
- * its model from the real behaviour hook over a plain world (the reference's people and letters), the shell's
- * words beside it. The address carries the reference's words (`open=none`, `show=pick`, `show=end`, `show=menu`,
- * `state=clear`, `device=phone`, `face=ohmarchy`, `scheme=dark`) and `lang`. What the reading column draws once a
- * letter is open, and its blank while none is, are the reader's (the list hands it the blank); what the rail lists
- * is the frame's fed model.
+ * its model from the real behaviour hook over a plain world (the reference's people, letters and nine conversations,
+ * one table with the reader's states page: `reader-world.ts`), the shell's words beside it. The address carries the
+ * reference's words (`open=none`, `show=pick`, `show=end`, `show=menu`, `state=clear`, `device=phone`,
+ * `face=ohmarchy`, `scheme=dark`, `hold=1`, `show=allfiles`) and `lang`. Both columns are drawn: the host hands the
+ * reader (`readerEntry` with the body's own renderer, over a fake engine holding the page's letters, their files and
+ * the account's tags and mailboxes), which draws the open conversation and, while none is open, the blank the list
+ * hands it. What the rail lists is the frame's fed model. `hold=1` is the read rule held: the open letter stays as
+ * the world has it; without it the open letter is read, as the reference draws it once opened. The presses a key
+ * names in the reading column (`at=`, `hist=`, a menu) are the opener's (`reader-pages.ts`), as a person makes them.
  */
 import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import type { EngineMessage, ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
+import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
 import { OhboxAbove, OhboxList, ohboxPlace, type OhboxBeside } from "../../src/ohbox/index.js";
+import { readerEntry, type ReaderFile, type ReaderFiles } from "../../src/reader/index.js";
+import { letterBody } from "./reader-body-part.mjs";
+import { fakeMail } from "../reader/support/fake-mail.js";
 import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
-import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
+import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeAppearance, fakeWindow, ROOMS } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
 import ohboxDe from "../../messages/ohbox.de.json" with { type: "json" };
 import ohboxEn from "../../messages/ohbox.en.json" with { type: "json" };
 import sharedDe from "../../messages/shared.de.json" with { type: "json" };
 import sharedEn from "../../messages/shared.en.json" with { type: "json" };
+import readerDe from "../../messages/reader.de.json" with { type: "json" };
+import readerEn from "../../messages/reader.en.json" with { type: "json" };
+import screenerDe from "../../messages/screener.de.json" with { type: "json" };
+import screenerEn from "../../messages/screener.en.json" with { type: "json" };
+import trashDe from "../../messages/trash.de.json" with { type: "json" };
+import trashEn from "../../messages/trash.en.json" with { type: "json" };
+import doorsDe from "../../messages/doors.de.json" with { type: "json" };
+import doorsEn from "../../messages/doors.en.json" with { type: "json" };
+import { CONVERSATIONS, conversationLetters, NOW, PEOPLE, TAGS, type Who } from "./reader-world.js";
+
+/* The reference is drawn on Tuesday 10 November 2026: the page's clock starts there and runs on, as the reader's
+   states page holds it, so every stamp the reader prints reads from that day. */
+const Real = Date;
+const SHIFT = NOW.getTime() - Real.now();
+globalThis.Date = class extends Real {
+  constructor(...args: ConstructorParameters<typeof Date>) {
+    super(...((args.length > 0 ? args : [Real.now() + SHIFT]) as [number]));
+  }
+  static now(): number {
+    return Real.now() + SHIFT;
+  }
+} as DateConstructor;
 
 const q = new URLSearchParams(location.search);
 const lang = q.get("lang") === "de" ? "de" : "en";
 const device = (q.get("device") ?? "desktop") as "desktop" | "phone" | "fold" | "foldl";
-const room = device === "foldl" ? ROOMS.land : ROOMS[device];
+/* A posture of a folding phone is no window the page stands: it draws the computer's (its states are declared). */
+const room = device === "foldl" ? ROOMS.land : (ROOMS[device as keyof typeof ROOMS] ?? ROOMS.desktop);
 const show = q.get("show");
 const clear = q.get("state") === "clear";
 const open = q.get("open") === "none" ? null : q.get("open");
+/* The read rule held: the open letter stays unread as the world has it. */
+const hold = q.get("hold") === "1";
 /* The product's own states (no reference draws them): an empty Ohbox, one still loading, no mailbox, and a mailbox
    nothing organizes yet. */
 const own = q.get("own") as "empty" | "loading" | "nomailbox" | "notorganizing" | null;
 const none = own === "empty" || own === "loading" || own === "nomailbox";
 
-const NOW = new Date("2026-11-10T10:30:00.000Z");
-const today = (h: number, m: number) => new Date(Date.UTC(2026, 10, 10, h - 1, m)).toISOString();
-const daysAgo = (d: number, h = 16) => new Date(Date.UTC(2026, 10, 10 - d, h - 1, 0)).toISOString();
+/* Times as the reference prints them: the comparison's browser reads the clock in UTC (`reader-world.ts`). */
+const today = (h: number, m: number) => new Date(Date.UTC(2026, 10, 10, h, m)).toISOString();
+const daysAgo = (d: number, h = 16) => new Date(Date.UTC(2026, 10, 10 - d, h, 0)).toISOString();
+/* The mailbox every letter of the page is in: the account's studio mailbox, as its heads name it. */
+const MAILBOX = "mb-studio";
 
 interface Plain {
   id: string;
-  from: string;
-  address: string;
+  who: Who;
   subject: string;
   snippet: string;
   date: string;
@@ -56,12 +90,12 @@ const letter = (p: Plain): EngineMessage =>
   ({
     id: p.id,
     accountId: "mila",
-    mailboxId: "mb",
+    mailboxId: MAILBOX,
     threadId: p.thread ?? null,
     messageIdHeader: null,
     subject: p.subject,
-    from: { name: p.from, address: p.address },
-    to: [],
+    from: { name: PEOPLE[p.who].name, address: PEOPLE[p.who].address },
+    to: [{ name: PEOPLE.mila.name, address: PEOPLE.mila.address }],
     cc: [],
     date: p.date,
     folder: "INBOX",
@@ -82,20 +116,25 @@ const letter = (p: Plain): EngineMessage =>
     labels: [],
     remoteContent: "none",
     updatedAt: p.date,
+    /* What the reader draws as the letter's text: its first words, or its subject where it has none. */
+    body: p.snippet || p.subject,
   }) as unknown as EngineMessage;
 
-const hostwerk = {
-  ...letter({
-    id: "hostwerk-renewal",
-    from: "Hostwerk",
-    address: "billing@hostwerk.example",
-    subject: "Domain renewal: lichtgrat.example expires 30 Nov",
-    snippet: "Renew before the end of the month to keep the domain.",
-    date: daysAgo(7, 9),
-    unread: true,
-  }),
-  triage: { state: "resurfaced" },
-} as unknown as EngineMessage;
+/* The nine conversations the reference's keys open, each letter as the reference's scenes hold it. Without `hold=1`
+   the open letter is read: the reader read it, as the reference draws it once opened. */
+const CONVERSED = new Map<string, EngineMessage[]>(
+  Object.keys(CONVERSATIONS).map((id) => [
+    id,
+    conversationLetters(id, MAILBOX).map((m) =>
+      m.id === open && !hold ? ({ ...m, unread: false, lastReadAt: m.date } as EngineMessage) : m,
+    ),
+  ]),
+);
+/** A letter of the nine, as the world holds it. */
+const said = (conversation: string, id = conversation): EngineMessage =>
+  CONVERSED.get(conversation)!.find((m) => m.id === id)!;
+
+const hostwerk = { ...said("hostwerk-renewal"), triage: { state: "resurfaced" } } as unknown as EngineMessage;
 const RESURFACED: ResurfacedThreadRow[] = [
   {
     key: "msg:hostwerk-renewal",
@@ -112,151 +151,92 @@ const RESURFACED: ResurfacedThreadRow[] = [
   },
 ];
 const NEW: EngineMessage[] = [
-  letter({
-    id: "giulia-glaze",
-    thread: "glaze",
-    from: "Giulia Rossi",
-    address: "giulia@terra-cotta.example",
-    subject: "Re: Glaze order #2291",
-    snippet: "Both glazes leave Milano on Thursday.",
-    date: today(9, 12),
-    unread: true,
-    file: true,
-  }),
-  letter({
-    id: "ben-glaze",
-    thread: "glaze",
-    from: "Ben Arnold",
-    address: "ben@kiln.example",
-    subject: "Re: Glaze order #2291",
-    snippet: "Can we add the celadon?",
-    date: today(8, 59),
-    unread: true,
-  }),
-  letter({
-    id: "petra-talk",
-    from: "Petra Wyss",
-    address: "petra@makersfest.example",
-    subject: "Your talk is on the programme",
-    snippet: "“Wabi-sabi for the rest of us” made the final programme.",
-    date: today(8, 47),
-    unread: true,
-    file: true,
-  }),
-  letter({
-    id: "ben-kiln",
-    thread: "kiln",
-    from: "Ben Arnold",
-    address: "ben@kiln.example",
-    subject: "Kiln is fixed, and Friday pizza",
-    snippet: "The new element is in and it reaches temperature.",
-    date: today(7, 58),
-    unread: true,
-  }),
-  letter({
-    id: "jonas-kiln",
-    thread: "kiln",
-    from: "Jonas Halter",
-    address: "jonas@kiln.example",
-    subject: "Re: Kiln is fixed, and Friday pizza",
-    snippet: "Pizza from the wood oven, I bring the dough.",
-    date: today(7, 41),
-    unread: true,
-  }),
+  said("giulia-glaze"),
+  said("giulia-glaze", "ben-glaze"),
+  said("petra-talk"),
+  said("ben-kiln"),
+  said("ben-kiln", "ben-kiln-11"),
 ];
 const EARLIER: EngineMessage[] = [
-  letter({
-    id: "petra-techcheck",
-    from: "Petra Wyss",
-    address: "petra@makersfest.example",
-    subject: "Invitation: Tech check, main hall",
-    snippet: "Petra Wyss invited you to the tech check.",
-    date: today(8, 39),
-  }),
-  letter({
-    id: "nadja-glaze",
-    from: "Nadja Lehner",
-    address: "nadja@erdton-atelier.example",
-    subject: "New time proposed: glaze evening planning call",
-    snippet: "Thursday 18:00 works better for the studio.",
-    date: today(8, 35),
-  }),
+  said("petra-techcheck"),
+  said("nadja-newtime"),
   letter({
     id: "cinderlock-code",
-    from: "Cinderlock",
-    address: "no-reply@cinderlock.example",
+    who: "cinderlock",
     subject: "Your verification code",
     snippet: "",
     date: today(8, 31),
     protectedCode: true,
   }),
+  said("anna-menu"),
+  said("reto-photos"),
   letter({
-    id: "anna-menu",
-    thread: "menu",
-    from: "Anna Odermatt",
-    address: "anna@odermatt.example",
-    subject: "Re: The new menu cards",
-    snippet: "The cards arrived and they look great.",
-    date: daysAgo(1, 17),
+    id: "flurina-workshop",
+    who: "flurina",
+    subject: "Saturday's workshop is full",
+    snippet:
+      "All twelve places are booked, and two people already asked about a second date. Shall we plan one for January?",
+    date: daysAgo(1, 9),
   }),
   letter({
-    id: "reto-photos",
-    thread: "ridge",
-    from: "Reto Frei",
-    address: "reto@frei.example",
-    subject: "Photos from the ridge",
-    snippet: "The promised photos from Saturday.",
-    date: daysAgo(1, 15),
+    id: "lea-lunch",
+    who: "lea",
+    subject: "Sunday lunch at Mum's",
+    snippet:
+      "Mum is making the plum tart, so come hungry. Twelve o'clock, and bring the photos from the ridge if Reto has sent them.",
+    date: daysAgo(2, 19),
+  }),
+  letter({
+    id: "tim-tickets",
+    who: "tim",
+    subject: "Got us tickets for the 21st",
+    snippet:
+      "Row 8, right side, close enough to see the drummer sweat. I will forward the details. You owe me a beer.",
+    date: daysAgo(3, 18),
+  }),
+  letter({
+    id: "carla-posters",
+    who: "carla",
+    subject: "The posters went up on Friday",
+    snippet:
+      "Half the neighbourhood asked who made them. See you at the market on Saturday, we kept a raclette for you.",
+    date: daysAgo(3, 10),
+  }),
+  letter({
+    id: "nadja-teach",
+    who: "nadja",
+    subject: "Would you teach the December glaze evening?",
+    snippet:
+      "Two hours, twelve people, Thursday the 10th or the 17th. Three people have asked who made the matte white bowls on your table.",
+    date: daysAgo(4, 15),
+  }),
+  said("jonas-openstudio"),
+  letter({
+    id: "rahel-template",
+    who: "rahel",
+    subject: "Invoice template, final",
+    snippet:
+      "Final version attached, with the new bank details and the VAT line moved under the total. Use this one from Monday.",
+    date: daysAgo(5, 16),
     file: true,
   }),
-  letter({
-    id: "flurina-pottery",
-    from: "Flurina Caduff",
-    address: "flurina@caduff.example",
-    subject: "Pottery project: next steps",
-    snippet: "Shall we meet at the studio on Monday?",
-    date: daysAgo(1, 11),
-  }),
-  ...[
-    "Atelier Ahorn",
-    "Tonwerk",
-    "Glasurhaus",
-    "Ofenbau",
-    "Werkraum",
-    "Kursbuero",
-    "Marktplatz",
-    "Paketpost",
-    "Rahmenwerk",
-    "Holzlager",
-  ].map((from, i) =>
-    letter({
-      id: `earlier-${i}`,
-      from,
-      address: `${from.split(" ")[0]!.toLowerCase()}@post.example`,
-      subject: [
-        "Studio hours over the holidays",
-        "Clay delivery on Friday",
-        "Workshop photos",
-        "Invoice 2026-114",
-        "Your order has shipped",
-        "Kiln schedule for December",
-        "Market stall in January",
-        "The glaze recipe you asked for",
-        "Course feedback",
-        "Shelf for the drying room",
-      ][i]!,
-      snippet: "A few lines about it.",
-      date: daysAgo(2 + i),
-    }),
+  ...(
+    [
+      ["old-carla-proofs", "carla", "Poster proofs, second round", 19, 14],
+      ["old-tim-schedule", "tim", "Kiln schedule for October", 22, 9],
+      ["old-lea-birthday", "lea", "Mum turns seventy", 25, 18],
+      ["old-rahel-shelving", "rahel", "Shelving quote", 27, 11],
+    ] as const
+  ).map(([id, who, subject, d, h]) =>
+    letter({ id, who, subject, snippet: "A few lines about it.", date: daysAgo(d, h) }),
   ),
 ];
 /* `many=N`: N more rows in Earlier, every fifth a conversation of three letters, to hold the window in a real browser. */
 const many = Math.max(0, Math.min(10_000, Number(q.get("many") ?? 0) || 0));
 const MANY: EngineMessage[] = Array.from({ length: many }, (_, i) => {
-  const date = new Date(Date.parse(daysAgo(12, 9)) - i * 60_000).toISOString();
+  const date = new Date(Date.parse(daysAgo(30, 9)) - i * 60_000).toISOString();
   const base = {
-    from: `Sender ${i}`,
-    address: `sender${i}@post.example`,
+    who: "tim" as const,
     subject: `Letter ${i}`,
     snippet: "A few lines about it.",
     date,
@@ -280,8 +260,7 @@ if (long > 1) {
     letter({
       id: "long-newest",
       thread: "long",
-      from: "Kathrin Baumgartner",
-      address: "kathrin@baumgartner.example",
+      who: "rahel",
       subject: "Re: The studio roof, again",
       snippet: "Another note about the roof.",
       date: today(9, 25),
@@ -290,70 +269,10 @@ if (long > 1) {
     }),
   );
 }
-/* The conversations as they stand: who is in each, the reference's people, the account's own letters among them. */
-const ME = { from: "Mila Brunner", address: "mila@lichtgrat.example" };
-const sent = (id: string, thread: string, subject: string, date: string): EngineMessage =>
-  ({
-    ...letter({ id, thread, subject, snippet: "", date, ...ME }),
-    folder: "Sent",
-  }) as unknown as EngineMessage;
-const by = (id: string): EngineMessage => [...NEW, ...EARLIER].find((m) => m.id === id)!;
-const CONVERSATIONS: Record<string, () => EngineMessage[]> = {
-  glaze: () => [
-    sent("mila-glaze", "glaze", "Re: Glaze order #2291", daysAgo(1, 9)),
-    by("giulia-glaze"),
-    by("ben-glaze"),
-  ],
-  kiln: () => [
-    sent("mila-kiln", "kiln", "Re: Kiln is fixed, and Friday pizza", daysAgo(1, 8)),
-    letter({
-      id: "tobias-kiln",
-      thread: "kiln",
-      from: "Tobias Frei",
-      address: "tobias@kiln.example",
-      subject: "Re: Kiln is fixed, and Friday pizza",
-      snippet: "",
-      date: daysAgo(1, 10),
-    }),
-    letter({
-      id: "rahel-kiln",
-      thread: "kiln",
-      from: "Rahel Beck",
-      address: "rahel@kiln.example",
-      subject: "Re: Kiln is fixed, and Friday pizza",
-      snippet: "",
-      date: daysAgo(1, 11),
-    }),
-    by("jonas-kiln"),
-    by("ben-kiln"),
-  ],
-  menu: () => [sent("mila-menu", "menu", "Re: The new menu cards", daysAgo(1, 16)), by("anna-menu")],
-  ridge: () => [
-    letter({
-      id: "tim-ridge",
-      thread: "ridge",
-      from: "Tim Berger",
-      address: "tim@berger.example",
-      subject: "Photos from the ridge",
-      snippet: "",
-      date: daysAgo(2, 9),
-    }),
-    letter({
-      id: "lea-ridge",
-      thread: "ridge",
-      from: "Lea Brunner",
-      address: "lea@brunner.example",
-      subject: "Photos from the ridge",
-      snippet: "",
-      date: daysAgo(2, 10),
-    }),
-    sent("mila-ridge", "ridge", "Re: Photos from the ridge", daysAgo(1, 14)),
-    by("reto-photos"),
-  ],
-};
+/* The conversations as they stand: the nine of the reference, each letter of the account's own among them. */
 const conversationOf = (id: string): readonly EngineMessage[] => {
   const thread = [...NEW, ...EARLIER].find((m) => m.id === id)?.threadId;
-  return thread && CONVERSATIONS[thread] ? CONVERSATIONS[thread]() : [];
+  return thread ? (CONVERSED.get(thread) ?? []) : [];
 };
 const builtMarks: [string, ThreadMark[]][] = [
   ...(long > 0
@@ -368,17 +287,41 @@ const builtMarks: [string, ThreadMark[]][] = [
     .filter((i) => i % 5 === 0)
     .map((i): [string, ThreadMark[]] => [`many-${i}`, ["read", "read", "read"]]),
 ];
+/* Each conversation's squares: the account's own letters, then read or not, as the world holds them. */
 const MARKS: Record<string, ThreadMark[]> = {
   ...Object.fromEntries(builtMarks),
-  glaze: ["read", "read", "read", "unread", "unread"],
-  kiln: ["read", "read", "read", "read", "read", "read", "read", "read", "unread", "unread"],
-  menu: ["read", "read", "mine"],
-  ridge: ["read", "read", "read", "mine"],
+  ...Object.fromEntries(
+    [...CONVERSED].map(([id, letters]): [string, ThreadMark[]] => [
+      id,
+      letters.map((m): ThreadMark =>
+        m.from.address === PEOPLE.mila.address ? "mine" : m.unread ? "unread" : "read",
+      ),
+    ]),
+  ),
 };
 
 const words: Messages = fillOver(
-  { ...FRAME_WORDS.en, ...(ohboxEn as Messages), ...(sharedEn as Messages) },
-  lang === "de" ? { ...FRAME_WORDS.de, ...(ohboxDe as Messages), ...(sharedDe as Messages) } : {},
+  /* The reader's words, and the namespaces its parts read (a sender's screening, the way to Trash, the session's). */
+  {
+    ...FRAME_WORDS.en,
+    ...(ohboxEn as Messages),
+    ...(sharedEn as Messages),
+    ...(readerEn as Messages),
+    ...(screenerEn as Messages),
+    ...(trashEn as Messages),
+    ...(doorsEn as Messages),
+  },
+  lang === "de"
+    ? {
+        ...FRAME_WORDS.de,
+        ...(ohboxDe as Messages),
+        ...(sharedDe as Messages),
+        ...(readerDe as Messages),
+        ...(screenerDe as Messages),
+        ...(trashDe as Messages),
+        ...(doorsDe as Messages),
+      }
+    : {},
 );
 
 const entry = (
@@ -423,8 +366,8 @@ const RAIL: RailModel = {
   ],
   write: { label: "Write", onPress: () => undefined },
   account: {
-    name: "Mila Brunner",
-    address: "mila@lichtgrat.example",
+    name: PEOPLE.mila.name,
+    address: PEOPLE.mila.address,
     note: "2 mailboxes",
     title: "Account",
     onPress: () => undefined,
@@ -451,7 +394,7 @@ const beside: OhboxBeside = {
       if (days === 0)
         return {
           when: d.toLocaleTimeString("en-GB", {
-            timeZone: "Europe/Zurich",
+            timeZone: "UTC",
             hour: "2-digit",
             minute: "2-digit",
           }),
@@ -459,7 +402,7 @@ const beside: OhboxBeside = {
       if (days === 1) return { when: lang === "de" ? "gestern" : "yesterday" };
       return {
         when: d.toLocaleDateString(lang === "de" ? "de-CH" : "en-GB", {
-          timeZone: "Europe/Zurich",
+          timeZone: "UTC",
           day: "numeric",
           month: "short",
         }),
@@ -478,7 +421,7 @@ const beside: OhboxBeside = {
   doorbell: { count: none ? 0 : 6, settled: true },
   notOrganizing:
     own === "notorganizing"
-      ? { every: true, mailboxes: [{ id: "mb", address: "mila@lichtgrat.example" }] }
+      ? { every: true, mailboxes: [{ id: MAILBOX, address: PEOPLE.mila.address }] }
       : null,
   pull: { busy: show === "pull", run: () => undefined },
   keysShown: false,
@@ -506,7 +449,12 @@ function Page() {
     onEnterReader: () => undefined,
     onMarkSeen: () => undefined,
     readerId: null,
-    readSetFor: (id) => [id],
+    /* What a visit of the row marks read, as today's shell reads it: the unread letters of its conversation. */
+    readSetFor: (id) => {
+      const members = conversationOf(id);
+      const own = [hostwerk, ...NEW, ...EARLIER].filter((m) => m.id === id);
+      return (members.length > 0 ? members : own).filter((m) => m.unread).map((m) => m.id);
+    },
     doorbellInitials: [],
     doorbellCount: none ? 0 : 6,
     settled: own !== "loading",
@@ -564,11 +512,85 @@ const look = {
 } as const;
 document.documentElement.setAttribute("data-face", look.face);
 document.documentElement.setAttribute("data-theme", look.scheme);
+/* The mirror the reader reads: every letter of the list, and the members of its conversations. */
+const MIRRORED = new Map<string, EngineMessage>();
+for (const m of [hostwerk, ...NEW, ...EARLIER, ...[...CONVERSED.values()].flat()]) MIRRORED.set(m.id, m);
+/* The account's tags, as the reading head names them. */
+const TAG_ROWS = Object.fromEntries(
+  Object.entries(TAGS).map(([id, tag]) => [`tag:${id}`, { id, name: tag.name, hue: tag.hue }]),
+);
+const mail = fakeMail([...MIRRORED.values()], [], {}, TAG_ROWS);
+/* The files of the nine conversations' letters, as the reference's tiles print them; each is here, none loads. */
+const FILES = new Map(
+  Object.values(CONVERSATIONS).flatMap((c) =>
+    c.letters.map((l): [string, typeof l.files] => [l.id, l.files]),
+  ),
+);
+const mimeOf = (name: string): string =>
+  name.endsWith(".pdf")
+    ? "application/pdf"
+    : name.endsWith(".jpg")
+      ? "image/jpeg"
+      : name.endsWith(".txt")
+        ? "text/plain"
+        : "application/octet-stream";
+const files: ReaderFiles = {
+  hold: () => () => undefined,
+  itemsOf: (id) => ({
+    state: "ready",
+    items: (FILES.get(id) ?? []).map((f, i): ReaderFile => ({
+      id: `f${i}`,
+      filename: f.name,
+      mimeType: mimeOf(f.name),
+      sizeBytes: f.size,
+      inline: false,
+      state: "idle",
+    })),
+  }),
+  open: () => undefined,
+  ensure: () => undefined,
+  downloadAll: () => undefined,
+  /* `show=allfiles`: the person pressed Download all, and it is under way. */
+  downloadingAll: () => show === "allfiles",
+  cidImagesOf: () => new Map(),
+  needCidImages: () => undefined,
+};
+/* The reader as a host hands it: the body's own renderer, the letters' files and a look at them; this world keeps
+   no pictures and answers nothing: no reply's sheet, no invitation's note. */
+const reader = readerEntry({
+  body: letterBody,
+  files,
+  pictures: "none",
+  look: () => undefined,
+  sentCopy: "none",
+  reply: "none",
+  invitation: "none",
+});
+
 const { host } = fakeHost({
-  engine: NO_ENGINE,
+  engine: mail.engine,
   service: "managed",
   scope: "mila",
   places: { ohbox },
+  reader,
+  /* The account's two mailboxes: the letters are in the studio's, which each reading head names. */
+  mailboxes: async () => [
+    {
+      id: "mb-mila",
+      address: PEOPLE.mila.address,
+      addressIsOwn: true,
+      status: "active",
+      organizerRole: "organizer",
+    },
+    {
+      id: MAILBOX,
+      address: "studio@lichtgrat.example",
+      displayName: "Studio",
+      addressIsOwn: true,
+      status: "active",
+      organizerRole: "organizer",
+    },
+  ],
   window: fakeWindow({ ...room, posture: "flat", reducedMotion: true }),
   address: fakeAddress(open ? `#/ohbox/m/${open}` : "#/ohbox"),
   appearance: fakeAppearance(look),
@@ -576,6 +598,8 @@ const { host } = fakeHost({
 
 createRoot(document.getElementById("root")!).render(
   <TextProvider locale={lang} messages={words} timeZone="Europe/Zurich">
-    <Page />
+    <PresentedMirrorContext.Provider value={mail.engine.read()}>
+      <Page />
+    </PresentedMirrorContext.Provider>
   </TextProvider>,
 );

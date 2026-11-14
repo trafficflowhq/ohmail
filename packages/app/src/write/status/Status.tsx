@@ -1,0 +1,85 @@
+/**
+ * WHAT HAPPENED TO THE LETTER, over its lines: the send line's sentence for the state the composition hands, the
+ * offline sentence while the browser is offline and the letter waits, and the two answers for a send nobody can
+ * confirm. Nothing here decides whether a letter may go: Send's state is the composition's.
+ */
+import type { ReactNode } from "react";
+import { SendStatus } from "@ohmail/ui/mail";
+import { SENDING_LONG_MS, type SendState } from "@ohmail/app-logic/writing/mail-send";
+import { useText } from "../../text/index.js";
+import { useWriteBeside, useWriting } from "../above.js";
+import { statusWords } from "./status-words.js";
+import type { WriteBeside } from "../ports.js";
+
+/** Where the letter's send line stands: over the people for a send nobody can confirm or cannot see the end of, else
+ * over the foot; null: the send says nothing. */
+export function sendLineAt(
+  send: SendState,
+  held: string | null,
+  locked: string | null,
+  beside: Pick<WriteBeside, "sendLine">,
+): "top" | "foot" | null {
+  if (locked !== null) return "top";
+  if (beside.sendLine(send, sendingLong(send)) === null) return null;
+  return held !== null && send.phase === "unverified" ? "top" : "foot";
+}
+
+const sendingLong = (send: SendState): boolean =>
+  send.since !== undefined && Date.now() - send.since >= SENDING_LONG_MS;
+
+export function Status({
+  at,
+  send,
+  held,
+  locked,
+  onResolve,
+}: {
+  /**
+   * Which of the letter's places draws it: `top` over the people (a send nobody can confirm, a send this letter
+   * cannot see the end of), `foot` over the foot (what happened to a send: why it was not sent, that it is on its
+   * way); `one`, every line over the people (the reply, whose foot line is not ruled yet).
+   */
+  at: "top" | "foot" | "one";
+  send: SendState;
+  /** The row of a send that is not confirmed: its two answers are offered. */
+  held: string | null;
+  /** The sentence of a send this letter cannot see the end of. */
+  locked: string | null;
+  onResolve: (draftId: string, outcome: "arrived" | "not_arrived") => void;
+}) {
+  const t = useText("write");
+  const beside = useWriteBeside();
+  const where = sendLineAt(send, held, locked, beside);
+  if (where === null || (at !== "one" && at !== where)) return null;
+  if (locked !== null) return <SendStatus place="top">{locked}</SendStatus>;
+  const line = beside.sendLine(send, sendingLong(send))!;
+  const place = at === "one" ? "top" : where;
+  const offline = send.phase === "queued" && send.accepted !== true && !beside.online();
+  const words = offline ? t("status.offline") : statusWords(t, line.key, beside);
+  const acts =
+    held !== null && send.phase === "unverified"
+      ? [
+          { label: t("held.sendAgain"), onPress: () => onResolve(held, "not_arrived") },
+          { label: t("held.itWasSent"), onPress: () => onResolve(held, "arrived") },
+        ]
+      : undefined;
+  return (
+    <SendStatus place={place} sign={line.tone === "pending" ? "clock" : undefined} acts={acts}>
+      {words}
+    </SendStatus>
+  );
+}
+
+/** The new letter's send line, in the place it stands: over the people, or over the foot; null where it says nothing. */
+export function useLetterSendLines(): { top: ReactNode; foot: ReactNode } {
+  const w = useWriting();
+  const beside = useWriteBeside();
+  const held = w.composeHeld?.draftId ?? null;
+  const locked = w.composeLocked?.sentence ?? null;
+  const said = { send: w.composeSend, held, locked, onResolve: w.resolveHeldSend };
+  const at = sendLineAt(w.composeSend, held, locked, beside);
+  return {
+    top: at === "top" ? <Status at="top" {...said} /> : null,
+    foot: at === "foot" ? <Status at="foot" {...said} /> : null,
+  };
+}

@@ -400,7 +400,7 @@ describe("a tab that closes inside the autosave window", () => {
     expect(drafts(), "the closed page reached the account after all").toHaveLength(0);
 
     newTab();
-    await mountShell({ hash: "#/ohbox" });
+    await mountShell({ hash: "#/history" });
     await waitFor(
       () => subjects().includes("Friday"), "the next open writing the message to the account",
       AUTOSAVE_DELAY_MS + 3000,
@@ -413,7 +413,7 @@ describe("a tab that closes inside the autosave window", () => {
     const first = await mountShell({ hash: "#/compose" });
     await closeTab(first);
     newTab();
-    await mountShell({ hash: "#/ohbox" });
+    await mountShell({ hash: "#/history" });
     await pause(AUTOSAVE_DELAY_MS + 400);
     expect(drafts(), "an untouched composer became a draft").toHaveLength(0);
   });
@@ -517,7 +517,7 @@ describe("a tab that dies without pagehide", () => {
     window.navigator.locks && (window.navigator.locks as unknown as FakeLocks).held.clear();
 
     newTab();
-    await mountShell({ hash: "#/ohbox", rows: ["row-x"] });
+    await mountShell({ hash: "#/history", rows: ["row-x"] });
     await pause(200);
     await goHash("#/compose");
     await waitFor(() => container.querySelector(".view-compose") !== null, "the compose view");
@@ -629,9 +629,9 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
   async function replySentThenParentGone(text: string): Promise<void> {
     newTab();
     holdSends = true;
-    await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
-    await waitFor(() => container.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]') !== null, "m1 in the Ohbox");
-    const row = container.querySelector<HTMLElement>('.view-ohbox :is(.row, [role=option])[data-id="m1"]')!;
+    await mountShell({ hash: "#/history", messages: ["m1", "m2"] });
+    await waitFor(() => container.querySelector('.view-history :is(.row, [role=option])[data-id="m1"]') !== null, "m1 in History");
+    const row = container.querySelector<HTMLElement>('.view-history :is(.row, [role=option])[data-id="m1"]')!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
@@ -673,9 +673,9 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
   it("is saved as a draft when the send restored at the next open is refused for good", async () => {
     newTab();
     sendMode = "lose";
-    const first = await mountShell({ hash: "#/ohbox", messages: ["m1", "m2"] });
+    const first = await mountShell({ hash: "#/history", messages: ["m1", "m2"] });
     const kept = store!;
-    const row = container.querySelector<HTMLElement>('.view-ohbox :is(.row, [role=option])[data-id="m1"]')!;
+    const row = container.querySelector<HTMLElement>('.view-history :is(.row, [role=option])[data-id="m1"]')!;
     await act(async () => {
       row.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
       row.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
@@ -697,7 +697,7 @@ describe("a reply whose send was under way when its parent was deleted elsewhere
     sendMode = "refuse";
     sent = [];
     newTab();
-    await mountShell({ hash: "#/ohbox", store: kept });
+    await mountShell({ hash: "#/history", store: kept });
     await waitFor(() => sent.some((m) => m.kind === "mail_send"), "the restored send replayed", 6000);
     await waitFor(() => drafts().length > 0, "the lane handed back after its restored send was refused", 6000);
     expect(drafts()[0]!.body).toContain("the answer from yesterday");

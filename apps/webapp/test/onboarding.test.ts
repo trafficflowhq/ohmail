@@ -164,13 +164,24 @@ describe("the presets cannot be a downgrade or a dead end", () => {
     expect(providerById("does-not-exist").id).toBe("imap");
     expect(providerById("").manual).toBe(true);
   });
+
+  it("the shell's path to the table offers the table's names, as it did before the move, and no rule that moved beside it", async () => {
+    const path = await import("../app/shell/providers.js");
+    expect(Object.keys(path).sort()).toEqual([
+      "AUTH_HINTS", "PROTON", "PROVIDERS", "appPasswordPresetFor", "asAuthHint", "authHintPreset", "authHintWantsLinks",
+      "discoveryRequestFor", "hostsFor", "isProtonAddress", "passwordLabelKey", "portMeansImplicitTls", "presetForAddress",
+      "providerById", "providerLabel", "readDiscovery", "serverGuessFor",
+    ].sort());
+  });
 });
 
 describe("refusals are the server's sentence, never a client copy of it", () => {
   const client = read("../app/api-client.ts");
-  // The wizard, with its mailbox step (moved to its own file).
+  // The wizard, with its mailbox step: the one connect form's drawing and the web's wire for it.
   const join = read("../app/(product)/join/JoinRoute.tsx") + read("../app/(product)/join/use-join-door.ts")
-    + read("../app/(product)/join/MailboxStep.tsx")
+    + read("../app/(product)/mailbox/connect-wire.ts")
+    + ["ConnectForm", "Fields", "Lines"]
+      .map((part) => read(`../../../packages/app/src/mailboxes/connect/${part}.tsx`)).join("")
     + ["JoinPage", "AccountSteps", "FactorSteps", "PlanSteps", "parts"]
       .map((part) => read(`../../../packages/app/src/doors/join/${part}.tsx`)).join("");
 

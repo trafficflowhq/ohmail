@@ -93,8 +93,29 @@ export type PlacePanes =
       readonly Reading: ComponentType<PaneProps> | "reader";
       /** An own `Reading` whose verbs go through the frame's one press seam asks for the room (where a reader is). */
       readonly room?: true;
+      /**
+       * `always`: the reading column stands and has the keys whatever is open, and on a phone it stands over the list
+       * with no dock at the foot (a letter being written is the place's whole point). Left out: by the open letter.
+       */
+      readonly holds?: "always";
+      /** What the place stands above both of its columns and nothing else: mounted with them, unmounted with them. */
+      readonly Above?: ComponentType<{ readonly children: ReactNode }>;
+      /**
+       * The place keeps its open letter over a walk to another place and back: the frame remembers the last letter
+       * open here for the frame's life and opens it again when a `go` to this place names none, at two columns only,
+       * never on one. `open(null)` forgets it. It is never stored, and never carried into another scope.
+       */
+      readonly keepsOpen?: true;
     }
-  | { readonly kind: "wide"; readonly Wide: ComponentType<PaneProps> };
+  | {
+      readonly kind: "wide";
+      readonly Wide: ComponentType<PaneProps>;
+      /**
+       * This body is mounted with the frame and stays mounted, hidden and inert, while a place of another body is on
+       * screen. At most one entry's body in a host's `places` is kept.
+       */
+      readonly kept?: true;
+    };
 /** A place's registration. Places with one `body` share one mounted instance (today's views: "today"). */
 export interface PlaceEntry {
   readonly id: AnyPlaceId;
@@ -123,7 +144,15 @@ export interface ColumnsProps {
   /** The list has the keys: the face that rings the column with the keyboard rings the list's sheet. */
   readonly listKeys: boolean;
   readonly reading: ReactNode;
+  /** A wide pane on screen whose body is not kept. */
   readonly wide: ReactNode | null;
+  /** The kept body's pane, drawn at one position whether it is on screen or hidden; null where no body is kept. */
+  readonly kept: { readonly pane: ReactNode; readonly shown: boolean } | null;
+  /** What the place on screen stands above both of its columns, with the body it is mounted for; null where none. */
+  readonly above: {
+    readonly Above: ComponentType<{ readonly children: ReactNode }>;
+    readonly body: string;
+  } | null;
   readonly labels: {
     readonly list: string;
     readonly reading: string;

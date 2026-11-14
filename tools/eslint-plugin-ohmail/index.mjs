@@ -476,6 +476,94 @@ const noConfigComment = {
   },
 };
 
+/** A file of the old shell's side of the frame, by its name: `Todays<Name>` or `todays-<name>`. */
+const isOldShellFrameName = (base) => /^(Todays[A-Z]|todays-)/.test(base);
+/** A context the old shell feeds a place through, by its name: `Todays<Name>`, or `<Name>Fed`. */
+const isOldShellFeedName = (name) => /^Todays[A-Z]/.test(name) || /[a-z0-9]Fed$/.test(name);
+const callsCreateContext = (call) =>
+  call?.type === "CallExpression" &&
+  ((call.callee.type === "Identifier" && call.callee.name === "createContext") ||
+    (call.callee.type === "MemberExpression" &&
+      !call.callee.computed &&
+      call.callee.property.name === "createContext"));
+
+/**
+ * THE OLD SHELL'S SIDE OF THE FRAME IS CLOSED. A place seated after the first one reads the mail ground and is named
+ * once in the mail entry's list: no file of the web shell is written for it, and no context is fed to it from the old
+ * shell's composition. So in the old shell's folder itself (tools/shell-adapters.json names it) a file whose name
+ * says that side (`Todays<Name>`, `todays-<name>`) stands only if the list names it, and a context whose name says a
+ * feed (`Todays<Name>`, `<Name>Fed`) is declared only where the list names it for that file. The list only shrinks:
+ * the check refuses a name added against the base. The rule reads names: a feed under another name is intent, which
+ * a review reads. Without its list, every file of the folder is refused, never none.
+ */
+const oldShellAdapters = {
+  meta: {
+    type: "problem",
+    schema: [
+      {
+        type: "object",
+        properties: {
+          root: { type: "string" },
+          folder: { type: "string" },
+          files: { type: "array", items: { type: "object" } },
+        },
+        additionalProperties: false,
+      },
+    ],
+    messages: {
+      file: "{{file}} is a new file of the old shell's side of the frame, and none is written any more: a place reads the mail ground and is named in the mail entry's list (tools/shell-adapters.json only shrinks)",
+      fed: "{{name}} is a context the old shell would feed a place through, and none is written any more: a place reads the mail ground (tools/shell-adapters.json only shrinks)",
+      noList:
+        "ohmail/old-shell-adapters has no list (tools/shell-adapters.json), so every file of the old shell is refused",
+    },
+  },
+  create(context) {
+    const { folder, files } = context.options[0] ?? {};
+    if (typeof folder !== "string" || !Array.isArray(files) || files.length === 0) {
+      return { Program: (node) => context.report({ node, messageId: "noList" }) };
+    }
+    const root = context.options[0]?.root ?? context.cwd;
+    const rel = path.relative(root, context.filename).split(path.sep).join("/");
+    if (path.posix.dirname(rel) !== folder) return {};
+    const base = path.posix.basename(rel);
+    const listed = files.find((entry) => entry.file === base);
+    const contexts = listed?.contexts ?? [];
+    return {
+      Program(node) {
+        if (isOldShellFrameName(base) && !listed)
+          context.report({ node, messageId: "file", data: { file: base } });
+      },
+      VariableDeclarator(node) {
+        if (node.id.type !== "Identifier" || !callsCreateContext(asRun(node.init))) return;
+        const name = node.id.name;
+        if (isOldShellFeedName(name) && !contexts.includes(name))
+          context.report({ node: node.id, messageId: "fed", data: { name } });
+      },
+    };
+  },
+};
+
+/** What a list of the old shell's files names that another did not: a file, or a context of a file it had. */
+export function shellAdaptersAdded(now, before) {
+  const names = (files) =>
+    files.flatMap((entry) => [
+      entry.file,
+      ...(entry.contexts ?? []).map((name) => `${entry.file}: the context ${name}`),
+    ]);
+  const held = new Set(names(before));
+  return names(now).filter((name) => !held.has(name));
+}
+
+/** tools/shell-adapters.json as the options of `ohmail/old-shell-adapters`: the folder, and the files it names. */
+export function readShellAdapters(root) {
+  try {
+    const { folder, files } = JSON.parse(readFileSync(path.join(root, "tools/shell-adapters.json"), "utf8"));
+    return { folder, files: files.map(({ file, contexts }) => ({ file, contexts: contexts ?? [] })) };
+  } catch {
+    return { folder: "", files: [] }; // the rule then refuses every file it binds
+  }
+}
+
 /**
  * tools/owner-readers.json as the options of `ohmail/owner-lookup`: every host's file, the parts that read the shell's
  * scope, and the files that spell the marker's cookie name and nothing more.
@@ -515,5 +603,6 @@ export default {
     "wire-exports-no-value": wireExportsNoValue,
     "no-inline-config": noInlineConfig,
     "no-config-comment": noConfigComment,
+    "old-shell-adapters": oldShellAdapters,
   },
 };

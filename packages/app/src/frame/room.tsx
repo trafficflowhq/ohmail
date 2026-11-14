@@ -1,139 +1,119 @@
 /**
- * THE ROOM: the one press seam of a frame whose current place draws the reader. While `on`, one headless child calls
- * `useShellDispatch` once and binds `z` to its armed Undo; a feature reaches it with `usePress()`, which throws where no
- * room is on. Off, nothing runs: the old shell's own seam stands alone on today's places. The provider is always the
- * same element, so the columns under it never mount again when the place changes.
+ * THE ROOM: the one press seam of a frame. A feature reaches it with `usePress()`, which throws where no room is on.
+ * Whose seam it is, the host's record says, statically (`features.above`, whether that component says `handsSeam`,
+ * and `features.reader`):
+ *
+ * - with a ground above the panes, or a reader handed: the room's own. One component calls `useShellDispatch` once,
+ *   for the frame's life, whatever place is on screen. It stands around everything the room holds, says the held
+ *   presses in its own render and binds `z` to its armed Undo. The delete journal a closed tab left is replayed once,
+ *   at that one mount;
+ * - where the old shell stands above the panes and says so: that shell hands its own (`useRoomHandOver`). The room
+ *   mounts none and calls `useShellDispatch` never, and is on at every place the frame draws but the body that shell
+ *   keeps, whose views press through the shell's seam themselves;
+ * - on a host that hands nothing above the panes and no reader: none. Nothing there can press, so no seam reads the
+ *   engine or asks the catalogue a sentence for nobody, and `usePress()` throws.
+ *
+ * What a room holds, and the readers of it, are `room-store.ts`.
  */
 import {
-  createContext,
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type MutableRefObject,
   type ReactNode,
 } from "react";
 import { EngineContext } from "@ohmail/app-logic/engine";
+import { useOptionalKeyBindings } from "@ohmail/app-logic/keys";
 import { useShellDispatch, type ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
-import {
-  mailboxLabelKey,
-  mailboxLabelResolver,
-  placeLabelOver,
-  pressWords,
-  type MailboxLabelFact,
-} from "@ohmail/app-logic/reader";
-import { ownAddressesOf, rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
-import type { Folder, OhmailEngine } from "@ohmail/client-engine";
+import { placeLabelOver, pressWords } from "@ohmail/app-logic/reader";
+import { rosterStateOf } from "@ohmail/app-logic/mail-state/mail-state";
+import type { OhmailEngine } from "@ohmail/client-engine";
 import { useText } from "../text/index.js";
 import { NONE, type HostReads } from "../host/index.js";
 import { useFrame, useReport } from "./commands.js";
+import {
+  factsStore,
+  HeldContext,
+  holdStore,
+  NO_RESURFACE,
+  ownStore,
+  resurfaceStore,
+  RoomContext,
+  useHandedHolds,
+  useRoomFill,
+  wordStore,
+  type Facts,
+  type HandedFacts,
+  type ResurfaceTime,
+  type Room,
+  type RoomHolds,
+  type RoomSeam,
+} from "./room-store.js";
 
-/** What the seam holds back for its Undo, as the presented mirror needs it: deletes and routing presses. */
-export interface RoomHolds {
-  readonly held: ReadonlySet<string>;
-  readonly places: ReadonlyMap<string, Folder>;
-}
-
-const NO_HOLDS: RoomHolds = { held: new Set(), places: new Map() };
-
-/** A value as state: the seam writes it, a reader of it re-renders when it changes. */
-function cellOf<T>(first: T, same: (a: T, b: T) => boolean) {
-  let now = first;
-  const listeners = new Set<() => void>();
-  return {
-    get: (): T => now,
-    set(next: T): void {
-      if (same(next, now)) return;
-      now = next;
-      for (const l of [...listeners]) l();
-    },
-    subscribe(l: () => void): () => void {
-      listeners.add(l);
-      return () => {
-        listeners.delete(l);
-      };
-    },
-  };
-}
-const holdStore = () => cellOf<RoomHolds>(NO_HOLDS, (a, b) => a.held === b.held && a.places === b.places);
-const NO_OWN: readonly string[] = [];
-const ownStore = () => cellOf<readonly string[]>(NO_OWN, (a, b) => a.join("\n") === b.join("\n"));
-/** Which mailbox a letter is in, as a word; null on an account with one. */
-export type MailboxWord = (mailboxId: string, form?: "short" | "label") => string | null;
-/** Where a mailbox stands (`active`, `removed`, …), as the facts say it; null where they do not. */
-export type MailboxStatus = (mailboxId: string) => string | null;
-const NO_WORD: { key: string; of: MailboxWord; statusOf: MailboxStatus } = {
-  key: "null",
-  of: () => null,
-  statusOf: () => null,
-};
-const wordStore = () => cellOf(NO_WORD, (a, b) => a.key === b.key);
-type HoldStore = ReturnType<typeof holdStore>;
-type WordStore = ReturnType<typeof wordStore>;
-type OwnStore = ReturnType<typeof ownStore>;
-
-interface Room {
-  readonly on: boolean;
-  readonly seam: MutableRefObject<ShellDispatch | null>;
-  readonly holds: HoldStore;
-  readonly own: OwnStore;
-  readonly words: WordStore;
-}
-
-const RoomContext = createContext<Room | null>(null);
-
-const editable = (t: EventTarget | null): boolean =>
-  t instanceof HTMLElement &&
-  (t.isContentEditable ||
-    t.closest('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]') !==
-      null ||
-    t.tagName === "INPUT" ||
-    t.tagName === "TEXTAREA" ||
-    t.tagName === "SELECT");
-
-/** The seam itself: mounted only while the room is on, so `useShellDispatch` runs once per frame or not at all. */
-type Facts = Parameters<typeof rosterStateOf>[1];
+export {
+  useMailboxStatus,
+  useMailboxWord,
+  useOwnAddresses,
+  useResurfaceTime,
+  useRoomHolds,
+  type MailboxStatus,
+  type MailboxWord,
+  type ResurfaceTime,
+  type RoomHolds,
+} from "./room-store.js";
 
 /**
- * The account's mailbox facts as the seam reads them: who organizes each mailbox (a reader install's delete is
- * refused at the press) and the re-read a filing press asks for. `none`: no roster, the wire is the authority, and a
- * refresh reads nothing.
+ * The account's mailbox facts as the room reads them off the host itself: who organizes each mailbox (a reader
+ * install's delete is refused at the press) and the re-read a filing press asks for. `none`: no roster, the wire is
+ * the authority, and a refresh reads nothing. While a part above the panes hands the facts (`useRoomFacts`) the room
+ * reads the host never: one reader of them stands in a frame.
  */
-function useFacts(read: HostReads["mailboxes"]): { facts: Facts; refresh: () => void } {
+function useFacts(
+  read: HostReads["mailboxes"],
+  handed: Room["facts"],
+  isHanded: boolean,
+): { facts: Facts; refresh: () => void } {
   const [facts, setFacts] = useState<Facts>(null);
   const refresh = useCallback(() => {
-    if (read === NONE) return;
+    /* What is handed NOW, not what this render read: the part that hands fills the cell in the layout phase of the
+       commit this effect belongs to. */
+    if (read === NONE || handed.get() !== null) return;
     read().then(
       (rows) => setFacts(rows as Facts),
       () => undefined,
     );
-  }, [read]);
-  useEffect(refresh, [refresh]);
+  }, [read, handed]);
+  /* At the mount, and again when a part that handed the facts goes. */
+  useEffect(refresh, [refresh, isHanded]);
   return { facts, refresh };
 }
 
+/**
+ * THE ROOM'S OWN SEAM, around everything the room holds: mounted with the frame and unmounted with it, so
+ * `useShellDispatch` runs once per frame. The held presses are a context value written here, in the render in which
+ * the seam's state moves: a list composed over them never draws a letter under the report of its delete. What it
+ * stands around is one stable element, so a move of the seam's state renders the readers of that value and no other
+ * part. It draws no node of its own: a frame with a seam and one without draw the same nodes.
+ */
 function Seam({
   engine,
   demo,
   scope,
-  into,
-  holds,
-  own,
-  words,
+  room,
   mailboxes,
+  children,
 }: {
   engine: OhmailEngine;
   demo: boolean;
   /** Whose journals the seam's windows keep their presses in: the scope of the frame it stands in. */
   scope: string | null;
-  into: MutableRefObject<ShellDispatch | null>;
-  holds: HoldStore;
-  own: OwnStore;
-  words: WordStore;
+  room: Room;
   mailboxes: HostReads["mailboxes"];
+  children: ReactNode;
 }) {
   const report = useReport();
   const ohbox = useText("ohbox");
@@ -156,94 +136,124 @@ function Seam({
     () => 0,
   );
   const reader = engine.read();
-  const facts = useFacts(mailboxes);
+  /* The mailbox facts: a part above the panes hands the ones it holds, else the room reads the host itself. */
+  const handed = useSyncExternalStore(room.facts.subscribe, room.facts.get, room.facts.get);
+  const read = useFacts(mailboxes, room.facts, handed !== null);
+  const rows = handed !== null ? handed.rows : read.facts;
+  const refresh = handed !== null ? handed.refresh : read.refresh;
   /* The seam takes one constant door: it reads the latest re-read through a ref. */
-  const refreshNow = useRef(facts.refresh);
-  refreshNow.current = facts.refresh;
+  const refreshNow = useRef(refresh);
+  refreshNow.current = refresh;
   const refreshFacts = useRef(() => refreshNow.current()).current;
   const seam = useShellDispatch({ engine, reader, toast: report, t, placeLabel, demo, refreshFacts, scope });
   const roster = seam.rosterRef;
-  roster.current = rosterStateOf(mailboxes !== NONE, facts.facts);
-  /* The account's own addresses, as the shell reads them off the same facts: a head says "you" for them. */
-  const rows = facts.facts;
-  useEffect(() => own.set(rows === null ? NO_OWN : ownAddressesOf(rows as never)), [own, rows]);
-  useEffect(() => () => own.set(NO_OWN), [own]);
-  /* Which mailbox a letter is in, as a word, off the same facts. */
-  useEffect(() => {
-    const labels =
-      rows === null
-        ? null
-        : (rows as readonly Partial<MailboxLabelFact>[]).filter(
-            (m): m is MailboxLabelFact => typeof m.id === "string" && typeof m.address === "string",
-          );
-    const statuses = new Map((labels ?? []).map((m) => [m.id, (m as { status?: unknown }).status] as const));
-    words.set({
-      key: `${mailboxLabelKey(labels)}${JSON.stringify([...statuses])}`,
-      of: mailboxLabelResolver(labels),
-      statusOf: (id) => {
-        const status = statuses.get(id);
-        return typeof status === "string" ? status : null;
-      },
-    });
-  }, [words, rows]);
-  useEffect(() => () => words.set(NO_WORD), [words]);
-  into.current = seam;
-  useEffect(
-    () => () => {
-      into.current = null;
-    },
-    [into],
-  );
+  roster.current = rosterStateOf(mailboxes !== NONE, rows);
+  /* The room's own seam keeps no resurface hour: the reader offers its own, and nothing is stored. */
+  useRoomFill(room, { seam, rows, resurface: NO_RESURFACE });
   const held = seam.deleting.held;
   const places = seam.routing.places;
-  useEffect(() => holds.set({ held, places }), [holds, held, places]);
-  useEffect(() => () => holds.set(NO_HOLDS), [holds]);
-  /* `z` takes back the armed Undo, wherever the person is in the room but a field: the room's own window. */
-  const [mark, setMark] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    const win = mark?.ownerDocument.defaultView;
-    if (!win) return;
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== "z" || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || editable(e.target))
-        return;
-      if (into.current?.runArmedUndo()) e.preventDefault();
-    };
-    win.addEventListener("keydown", onKey);
-    return () => win.removeEventListener("keydown", onKey);
-  }, [mark, into]);
-  return <span hidden ref={setMark} />;
+  const holds = useMemo((): RoomHolds => ({ held, places }), [held, places]);
+  const into = room.seam;
+  /* `z` takes back the armed Undo, wherever the person is in the room but a field: a binding of the key map's
+     registry for as long as this seam stands, named in the frame's own word. */
+  const tf = useText("frame");
+  useOptionalKeyBindings(
+    [{ chord: "z", group: "app", label: tf("report.undo"), run: () => void into.current?.runArmedUndo() }],
+    "view",
+  );
+  return <HeldContext.Provider value={holds}>{children}</HeldContext.Provider>;
 }
 
-export function RoomGate({ on, children }: { on: boolean; children: ReactNode }): ReactNode {
+/**
+ * The room of a frame. `whose` is read off the host's record, never off what a child did in a render: where the old
+ * shell stands above the panes and says `handsSeam`, it hands its own seam (`useRoomHandOver`), and the room mounts
+ * none and calls `useShellDispatch` never. A room that first mounted a seam of its own and then met a handed one would
+ * run two for one commit, and the delete journal's replay at mount would run twice. Where the host hands a ground or a
+ * reader the room's own seam stands around what the room holds for the frame's life: no walk between places mounts it
+ * again. Where it hands neither, no seam stands. `on` says where `usePress()` answers.
+ */
+export function RoomGate({
+  on,
+  whose,
+  children,
+}: {
+  on: boolean;
+  whose: RoomSeam;
+  children: ReactNode;
+}): ReactNode {
   const seam = useRef<ShellDispatch | null>(null);
   const holds = useMemo(holdStore, []);
-  const own = useMemo(ownStore, []);
+  const addresses = useMemo(ownStore, []);
   const words = useMemo(wordStore, []);
+  const resurface = useMemo(resurfaceStore, []);
+  const facts = useMemo(factsStore, []);
   const binding = useContext(EngineContext);
   const { host } = useFrame();
-  const room = useMemo(() => ({ on, seam, holds, own, words }), [on, holds, own, words]);
+  const room = useMemo(
+    (): Room => ({ on, whose, seam, holds, own: addresses, words, resurface, facts }),
+    [on, whose, holds, addresses, words, resurface, facts],
+  );
   return (
     <RoomContext.Provider value={room}>
-      {on && binding ? (
+      {whose === "own" && binding ? (
         <Seam
           engine={binding.engine}
           demo={binding.demo}
           scope={host.session.scope}
-          into={seam}
-          holds={holds}
-          own={own}
-          words={words}
+          room={room}
           mailboxes={host.reads.mailboxes}
-        />
-      ) : null}
-      {children}
+        >
+          {children}
+        </Seam>
+      ) : (
+        children
+      )}
     </RoomContext.Provider>
   );
 }
 
+const NO_SEAM = "this room has no seam: its host hands nothing above the panes and no reader";
+
+/**
+ * A SHELL HANDS ITS OWN SEAM TO THE ROOM, once, from what it stands above the panes: the seam every press of its own
+ * leaves through, the mailbox facts it holds, and the account's stored resurface hour. At every place the frame draws
+ * but the body that shell keeps, the room serves that same seam, so one seam stands per frame, with its undo windows,
+ * for the frame's life. It sets no roster (the shell sets its own), binds no key (`z` is the shell's) and reads no
+ * host. Throws in a room that mounts its own seam: two seams would stand. Throws in a room with none: its host's record
+ * names no shell that hands one.
+ */
+export function useRoomHandOver(input: { seam: ShellDispatch; rows: Facts; resurface: ResurfaceTime }): void {
+  const room = useContext(RoomContext);
+  if (room === null) throw new Error("useRoomHandOver: no room stands here");
+  if (room.whose === "own") throw new Error("useRoomHandOver: this room mounts its own seam");
+  if (room.whose === "none") throw new Error(`useRoomHandOver: ${NO_SEAM}`);
+  useRoomFill(room, input);
+  useHandedHolds(room, input.seam);
+}
+
+/**
+ * A PART ABOVE THE PANES HANDS THE ROOM THE MAILBOX FACTS IT HOLDS: the mail ground hands the mail state's rows and
+ * its re-read. The room's seam then reads its roster, the account's own addresses and the mailbox words off those
+ * rows, asks that re-read after a filing press, and reads the host never: one reader of the mailbox facts stands in a
+ * frame. With nothing handed the room reads the host itself. Throws with no room, in a room whose seam a shell hands
+ * (there the facts come with the hand-over), and in a room with no seam (nothing there reads them).
+ */
+export function useRoomFacts({ rows, refresh }: HandedFacts): void {
+  const room = useContext(RoomContext);
+  if (room === null) throw new Error("useRoomFacts: no room stands here");
+  if (room.whose === "handed")
+    throw new Error("useRoomFacts: this room's seam is handed, and its facts with it");
+  if (room.whose === "none") throw new Error(`useRoomFacts: ${NO_SEAM}`);
+  const { facts } = room;
+  /* In the layout phase: the room's own read is a passive effect of the same commit, and finds these handed. */
+  useLayoutEffect(() => facts.set({ rows, refresh }), [facts, rows, refresh]);
+  useLayoutEffect(() => () => facts.set(null), [facts]);
+}
+
 /**
  * The room's press seam. Every member is read at the moment it is used, so a press always reaches the seam that
- * stands now. Throws where no room is on: a feature drawn off a reader's place has no seam of its own to make.
+ * stands now. Throws where no room is on: under a shell that hands its seam, over the body that shell keeps; and
+ * everywhere on a host whose room has no seam.
  */
 export function usePress(): ShellDispatch {
   const press = usePressWhereOn();
@@ -268,53 +278,4 @@ export function usePressWhereOn(): ShellDispatch | null {
     [seam],
   );
   return on ? press : null;
-}
-
-const NO_STORE = (): (() => void) => () => undefined;
-
-/**
- * The room's held deletes and held routing presses, as state: what the frame's slot composes the presented mirror
- * from (`presentedOver` of `@ohmail/app-logic/reading`). Nothing held where no room is on.
- */
-export function useRoomHolds(): RoomHolds {
-  const room = useContext(RoomContext);
-  const store = room?.holds;
-  return useSyncExternalStore(
-    store ? store.subscribe : NO_STORE,
-    store ? store.get : () => NO_HOLDS,
-    () => NO_HOLDS,
-  );
-}
-
-/** The account's own addresses, as the room read them off the mailbox facts; none where no room is on. */
-export function useOwnAddresses(): readonly string[] {
-  const room = useContext(RoomContext);
-  const store = room?.own;
-  return useSyncExternalStore(
-    store ? store.subscribe : NO_STORE,
-    store ? store.get : () => NO_OWN,
-    () => NO_OWN,
-  );
-}
-
-/** Which mailbox a letter is in, as a word, off the room's mailbox facts: null on an account with one, or no room. */
-export function useMailboxWord(): MailboxWord {
-  const room = useContext(RoomContext);
-  const store = room?.words;
-  return useSyncExternalStore(
-    store ? store.subscribe : NO_STORE,
-    store ? store.get : () => NO_WORD,
-    () => NO_WORD,
-  ).of;
-}
-
-/** Where each mailbox stands, off the room's mailbox facts: null for one the facts do not name, or with no room. */
-export function useMailboxStatus(): MailboxStatus {
-  const room = useContext(RoomContext);
-  const store = room?.words;
-  return useSyncExternalStore(
-    store ? store.subscribe : NO_STORE,
-    store ? store.get : () => NO_WORD,
-    () => NO_WORD,
-  ).statusOf;
 }

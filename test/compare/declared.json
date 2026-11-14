@@ -852,6 +852,281 @@
     "since": "2026-11-17"
   },
   {
+    "key": "provider=bluewin&screen=onboarding&state=c-bluewin&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=fastmail&screen=onboarding&state=c-fastmail&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=gmail&screen=onboarding&state=c-gmail-app&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=gmail&screen=onboarding&state=c-gmail-imap&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=gmail&screen=onboarding&state=c-gmail-invalid&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=gmail&screen=onboarding&state=c-gmail-web&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=gmx&screen=onboarding&state=c-gmx&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=icloud&screen=onboarding&state=c-icloud&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=infomaniak&screen=onboarding&state=c-infomaniak&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=microsoft&screen=onboarding&state=c-microsoft&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=microsoft&screen=onboarding&state=c-oauth&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-auth&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-backed&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-changed&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-check&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-check-unknown&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-connect&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-dns&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-exists&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-host-empty&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-host-missing&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-host-private&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-host-self&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-host-shape&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-limit&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-local&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-localwait&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-noport&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-notpermitted&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-plain&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-plain-on&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-plain-public&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-port&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-samelogin&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-smtp-auth&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-smtp-connect&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-smtp-timeout&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-suspended&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-timeout&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-early&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-expired&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-name&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-self&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-self-own&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-smtp&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-suggest&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-trust&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-trusted&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-tls-untrusted&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-unpaid&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=other&screen=onboarding&state=c-unverified&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=tonline&screen=onboarding&state=c-tonline&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=webde&screen=onboarding&state=c-webde&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "provider=yahoo&screen=onboarding&state=c-yahoo&step=signin",
+    "reason": "The one connect form alone, opened for the state's own purpose (a further mailbox, or a mailbox's edit), on the doors' stage. The reference draws the state inside the first run's own page, which that page's seat draws around the form, and draws the step as a sentence with blanks where the form is a block of the kit's fields, tiles, switches and lines: the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "scheme=dark&screen=approve",
     "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
     "since": "2026-11-15",
@@ -1310,6 +1585,11 @@
     "key": "screen=linkdesktop&state=factor",
     "reason": "The second factor's dialog is the kit's Dialog: it is named by its sentence, its other ways stand above its answers, and its words are the catalogue's; the dialog's own looks are compared on its rows over the settings panes, the account task's.",
     "since": "2026-11-15"
+  },
+  {
+    "key": "screen=onboarding&step=provider",
+    "reason": "The sign-up's mailbox step as the join seats it: the join's page, its stations and heading, with the one connect form in its slot before a tile is chosen. The reference draws no mailbox step of the join; its nearest picture is the first run's choice of a provider, on the first run's page, with the providers as a grid of capsules: the studio is asked which the step follows.",
+    "since": "2026-11-17"
   },
   {
     "key": "screen=serversetup",

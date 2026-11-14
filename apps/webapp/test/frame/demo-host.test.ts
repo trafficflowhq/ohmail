@@ -6,8 +6,8 @@ import { demoHost } from "../../app/(product)/demo/host";
 /** The invented world reaches nothing: every wire, read, feature and signal is none, and it says its own service. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
-  places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-  appearance: named("appearance"), recover: NONE,
+  places: named("places"), stages: named("stages"), above: named("above"), address: named("address"),
+  window: named("window"), appearance: named("appearance"), recover: NONE,
 } as FrameSupplies;
 const engine = named<HostContract["engine"]>("engine");
 
@@ -16,6 +16,7 @@ describe("the demo's host", () => {
 
   it("hands no wire, read, feature or signal to the invented world", () => {
     expect(Object.values(host.wires).every((w) => w === NONE)).toBe(true);
+    expect(host.wires.connect).toBe(NONE);
     expect(host.reads).toEqual({ mailboxes: NONE, copyAge: NONE, access: NONE });
     expect(FEATURE_NAMES.filter((f) => host.features[f] !== NONE)).toEqual([]);
     expect(Object.values(host.signals).every((s) => s === NONE)).toBe(true);
@@ -29,6 +30,7 @@ describe("the demo's host", () => {
 
   it("stands in a browser: the frame's address, window and look, and the browser's notifications", () => {
     expect(host.device).toMatchObject({ address: frame.address, window: frame.window, appearance: frame.appearance });
+    expect(host.features).toMatchObject({ places: frame.places, stages: frame.stages, above: frame.above });
     expect(host.device.build.surface).toBe("web");
     expect(host.device.notifications).not.toBe(NONE);
   });

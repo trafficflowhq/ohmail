@@ -141,7 +141,7 @@ async function renderBody(props: Record<string, unknown>, withSlot: boolean): Pr
   await act(async () => {
     root!.render(h(ThemeProvider, {
       defaultPreference: "dark", storageKey: null,
-      children: h(MessageBody, { text: "fallback", html: LIGHT_TABLE, ...props, ...(withSlot ? { adaptSlot: slot } : {}) } as never),
+      children: h(MessageBody, { owner: null, text: "fallback", html: LIGHT_TABLE, ...props, ...(withSlot ? { adaptSlot: slot } : {}) } as never),
     }));
   });
   return { slot };

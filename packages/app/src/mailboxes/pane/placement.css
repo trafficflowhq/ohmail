@@ -1,0 +1,17 @@
+/* The Mailboxes pane's own placement: where its parts stand, never how they look. Own classes: `mbx-`. */
+
+/* The pane's parts, and an opened row's lines, one under the other. */
+.mbx-pane,
+.mbx-row-lines {
+  display: grid;
+  gap: var(--s3);
+  min-width: 0;
+}
+
+/* A row's verbs and a confirmation's answers: a row that wraps. */
+.mbx-pane-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}

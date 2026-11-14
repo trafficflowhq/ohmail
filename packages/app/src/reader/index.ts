@@ -2,7 +2,9 @@
  * The reader's door: the reading column a shell hands the frame, and what it takes. The letter's body is a second
  * entry (`@ohmail/app/reader/body`): this one never loads the renderer.
  */
-export { readerEntry } from "./entry.js";
+export { readerEntry, readerEntryFrom } from "./entry.js";
+/** The reading column's scrolling box under a root that holds the column: what a list's walk keeps in view. */
+export { scrollerOf as readingScrollerIn } from "./read-dom.js";
 export type {
   LetterControl,
   LetterNotice,
@@ -12,5 +14,6 @@ export type {
   ReaderFileList,
   ReaderFiles,
   ReaderParts,
+  ReaderReply,
 } from "./ports.js";
 export type { PictureSeam } from "@ohmail/app-logic/reader";

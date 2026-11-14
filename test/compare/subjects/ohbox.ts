@@ -1,8 +1,8 @@
 /**
  * The Ohbox's states, drawn by address through the real frame over the fake host (the Ohbox's states page,
  * `packages/app/test/states/ohbox-page.tsx`): the place's list from the real behaviour hook over the reference's
- * people and letters. Each key is the reference's own address, read by the page as it stands. What the reading
- * column draws is the reader's, declared in `declared.json` until the reader draws it.
+ * people and letters, and both columns: the page's host hands the reader, which draws the open letter and the list's
+ * blank. Each key is the reference's own address, read by the page as it stands.
  */
 import { holdTouchState } from "../../../packages/app/test/states/touch-hold.js";
 import type { Subject } from "../subject.js";

@@ -194,9 +194,12 @@ export interface ShellVerbsInput {
   doneSetFor?: ShellOpenState["doneSetFor"];
   /** The pins a delete spends at the press (`pinsSpentBy`); the engine spends every other filing's. */
   pinsSpentFor?: ShellOpenState["pinsSpentFor"];
-  /** The open reader's id: a delete or restore closes the sheet only over ITS own message. */
-  readerFor: ShellOpenState["readerFor"];
-  setReaderFor: ShellOpenState["setReaderFor"];
+  /**
+   * The letter that is up over the list (today's sheet's, or a seated place's letter over its list on one column),
+   * and its close: a delete or restore closes it only over ITS own message.
+   */
+  letterUp: ShellOpenState["letterUp"];
+  closeLetterUp: ShellOpenState["closeLetterUp"];
   setPicker: ShellOpenState["setPicker"];
   setPickerIds: ShellOpenState["setPickerIds"];
   setSenderMenu: ShellOpenState["setSenderMenu"];
@@ -223,7 +226,7 @@ export function useShellVerbs({
   engine, reader, t, toast, consent, demo, nowAt, tags, ownAddresses, firstImportDoneAt, rulesTravel = false,
   fileAndRefresh, toastWithUndo, mutateAndReport, mutateSetAndReport, surface, refusalCopy,
   rosterRef, routing, pressWatch, deleting, restoring,
-  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, readerFor, setReaderFor, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
+  markSeen, readSetFor, offOhbox = false, ownFaceFor, pileSetFor, doneSetFor, pinsSpentFor, letterUp, closeLetterUp, setPicker, setPickerIds, setSenderMenu, setSenderAudit,
   setSubjectRule,
   toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
 }: ShellVerbsInput) {
@@ -953,7 +956,8 @@ export function useShellVerbs({
    * is `sender-hit.ts` — a pure function of one element, so which elements count as "the sender" can be asserted
    * without standing up an engine and a router.
    */
-  const onStageClickCapture = useStableCallback((e: ReactMouseEvent<HTMLElement>) => {
+  /* A press as React hands it on the stage, or as the page hands it for a seated list (which stands outside it). */
+  const onStageClickCapture = useStableCallback((e: ReactMouseEvent<HTMLElement> | MouseEvent) => {
     if (e.shiftKey) return;
     const hit = senderHitOf(e.target as HTMLElement);
     if (!hit) return;
@@ -1259,8 +1263,8 @@ export function useShellVerbs({
              a refused reader delete closed the reading sheet over the very message it had just
              declined to touch — the person is left looking at a list, told nothing moved, with
              the message they were reading gone from the screen (review finding). */
-          if (removeSpending([{ id: m.id, mailboxId: m.mailboxId }]) && readerFor === m.id) {
-            setReaderFor(null);
+          if (removeSpending([{ id: m.id, mailboxId: m.mailboxId }]) && letterUp === m.id) {
+            closeLetterUp();
           }
           break;
         }
@@ -1283,8 +1287,8 @@ export function useShellVerbs({
            * arm's own ordering: reversed, a refused reader restore closed the sheet over the very message it had
            * declined to touch.
            */
-          if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && readerFor === m.id) {
-            setReaderFor(null);
+          if (restoring.remove({ id: m.id, mailboxId: m.mailboxId }) && letterUp === m.id) {
+            closeLetterUp();
           }
           break;
         }

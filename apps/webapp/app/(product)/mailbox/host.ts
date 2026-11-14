@@ -73,7 +73,7 @@ export interface WebSupplies {
   readonly wires: Transports<
     | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "consent" | "olderBody" | "junk" | "trash"
     | "suggest" | "draftReply"
-  > & MayBeNone<"images" | "firstRun" | "screening" | "autoFiled" | "seedReview" | "folderSummary" | "mailboxes">;
+  > & MayBeNone<"images" | "firstRun" | "screening" | "autoFiled" | "seedReview" | "folderSummary" | "connect" | "mailboxes">;
   /** The account's features. Never the desktop's. */
   readonly features: Entries<
     | "account" | "mailboxes" | "ai" | "subscription" | "storage" | "storageCard" | "accountStrip" | "invites"
@@ -139,7 +139,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       stageCard: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
-      reader: NONE,
+      reader: has.frame.reader,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

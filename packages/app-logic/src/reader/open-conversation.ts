@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import {
   bodyOf,
   threadOf,
+  threadSubject,
   type EngineMessage,
   type EntityReader,
   type MessageBody,
@@ -46,6 +47,12 @@ export interface ConversationShown {
   readonly opened: EngineMessage | null;
   /** Oldest first, each row as the lists present it where the presentation holds it. */
   readonly messages: EngineMessage[];
+  /**
+   * What the conversation is called: where several letters stand, its thread's own subject (the server names it with
+   * the reply prefixes gone), the opened letter's own until that thread has synced; a single letter's own. Empty
+   * with nothing opened.
+   */
+  readonly subject: string;
   /** The opened letter was read off the presented mirror: false where no shell handed one, or it holds no row of it. */
   readonly presented: boolean;
   /** The letters read off the presented mirror; any other one fails closed (it loads no picture by itself). */
@@ -73,15 +80,22 @@ export function conversationShown(
       state: isGone(openId) ? "gone" : "absent",
       opened,
       messages: [],
+      subject: "",
       presented: false,
       presentedIds: NONE,
     };
+  const named = (messages: readonly EngineMessage[]): string =>
+    messages.length > 1 && opened.threadId !== null
+      ? (threadSubject(presented ?? raw, opened.threadId) ?? opened.subject)
+      : opened.subject;
   if (presented === null) {
     const members = threadOf(raw, openId);
+    const messages = members.length > 0 ? members : [opened];
     return {
       state: "letters",
       opened,
-      messages: members.length > 0 ? members : [opened],
+      messages,
+      subject: named(messages),
       presented: false,
       presentedIds: NONE,
     };
@@ -93,6 +107,7 @@ export function conversationShown(
       state: "letters",
       opened,
       messages,
+      subject: named(messages),
       presented: true,
       presentedIds: new Set(messages.map((m) => m.id)),
     };
@@ -104,10 +119,12 @@ export function conversationShown(
     ids.add(m.id);
     return row;
   });
+  const messages = members.length > 0 ? members : [opened];
   return {
     state: "letters",
     opened,
-    messages: members.length > 0 ? members : [opened],
+    messages,
+    subject: named(messages),
     presented: false,
     presentedIds: ids,
   };
@@ -119,6 +136,7 @@ const NOTHING_OPEN: ConversationShown = {
   state: "absent",
   opened: null,
   messages: [],
+  subject: "",
   presented: false,
   presentedIds: NONE,
 };

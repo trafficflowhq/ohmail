@@ -681,7 +681,7 @@ describe("the compose cancel asks for the withdrawal before it destroys anything
    * row and the buffer would go first and the withdrawal would race its own cleanup.
    */
   it("withdraws, and only then discards the row and clears the buffer", () => {
-    const body = sliceOfDeclaration(shell(), "cancelCompose");
+    const body = sliceOfDeclaration(shell(), "abandonCompose"); // the cancel is `abandonCompose(false)`
     const withdrawAt = body.indexOf("mailSend.withdraw(COMPOSE_SEND_KEY)");
     const discardAt = body.indexOf("autosave.discard()");
     const clearAt = body.indexOf("clearComposeDraft(scope)");
@@ -699,7 +699,7 @@ describe("the compose cancel asks for the withdrawal before it destroys anything
    * Mutation that reddens it: drop the `return` out of that arm.
    */
   it("says so and leaves the compose alone when the request has already left", () => {
-    const body = sliceOfDeclaration(shell(), "cancelCompose");
+    const body = sliceOfDeclaration(shell(), "abandonCompose"); // the cancel is `abandonCompose(false)`
     const arm = body.indexOf('=== "already_sent"');
     expect(arm, "the cancel no longer distinguishes a send it could not withdraw").toBeGreaterThan(-1);
     const after = body.slice(arm, body.indexOf("autosave.discard()"));

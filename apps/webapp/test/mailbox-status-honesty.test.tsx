@@ -175,7 +175,8 @@ describe("the derivation is a display rule, not a schema change", () => {
   });
 
   it("the row's rule is exactly `connected` + never synced", () => {
-    const src = read("apps/webapp/app/(product)/mailbox/MailboxSection.tsx");
+    // The rule moved beside the pane's other rules; the probe follows it there.
+    const src = read("packages/app-logic/src/mailboxes/pane/rows.ts");
     expect(src).toMatch(/lastSyncAt === null \? "status_connecting"/);
   });
 

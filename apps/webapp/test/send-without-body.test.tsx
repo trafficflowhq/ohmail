@@ -191,6 +191,8 @@ describe("a message with an attachment sends without text", () => {
   }, 20000);
 
   it("reply: an attachment and no words sends — the judged mutation carries the wire's files", async () => {
+    /* Today's reply box, opened from History: the place where today's reader still draws the letter. */
+    window.location.hash = "#/history";
     await mountShell();
     // The product's own keys: land on a message, open its reply editor.
     await pressKey("j");

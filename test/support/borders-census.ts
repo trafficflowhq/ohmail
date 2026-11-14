@@ -74,6 +74,21 @@ export async function readBorders(borders: Borders): Promise<{ inputs: string[];
   return { inputs, refused: refusedInputs(borders, inputs) };
 }
 
+/** The folders directly under the package's `src`, by name. */
+export function sourceFolders(borders: Borders): string[] {
+  return readdirSync(join(ROOT, borders.folder, "src"), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+}
+
+/** The same reading over one folder under the package's `src`, every file of it bundled: what that folder reaches. */
+export async function readFolder(borders: Borders, folder: string): Promise<{ inputs: string[]; refused: string[] }> {
+  const files = sourceFiles(join(ROOT, borders.folder, "src", folder)).map((file) => slashed(relative(ROOT, file)));
+  const inputs = await inputsOf(borders, { files });
+  return { inputs, refused: refusedInputs(borders, inputs) };
+}
+
 /** The same reading over one planted file, written as if it stood in the package's `src`. */
 export async function readPlanted(borders: Borders, planted: string): Promise<{ inputs: string[]; refused: string[] }> {
   const inputs = await inputsOf(borders, { planted });

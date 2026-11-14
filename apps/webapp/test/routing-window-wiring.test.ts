@@ -23,13 +23,21 @@ describe("the held press reaches the presentation", () => {
        `shell-derivations.ts` (ARCH-022), and the once-only count is only an answer when it is
        taken over every frame the shell composes. */
     const frames = shellFramePaths(process.cwd()).map((f) => readFileSync(f, "utf8"));
+    /* THE COMPOSITION IS WRITTEN ONCE, in `presentedOver` of app-logic's `reading/presented-mirror.ts`, since the
+       partition was cut out for the mail ground: the frame that held it calls that one function with the window's
+       own places, and the function is where `presentAt` stands over the held deletes. Both halves are asked. */
+    const written = readFileSync(`${process.cwd()}/packages/app-logic/src/reading/presented-mirror.ts`, "utf8");
+    expect(written, "the one composition no longer shows a held routing press over the held deletes")
+      .toMatch(/presentAt\(hideMessages\([\s\S]{0,240}?, places\)/);
     const carrying = frames.filter(
-      (src) => /presentAt\(\s*\n\s*hideMessages\([\s\S]{0,240}?routing\.places,/.test(src));
+      (src) => /presentedOver\([\s\S]{0,240}?routing\.places\)/.test(src));
     expect(carrying, "the presentation no longer carries a held routing press").toHaveLength(1);
     /* ONCE. A second composition somewhere else would be a second answer about where a held row
        is shown, and the two would drift. */
-    const composed = frames.reduce((n, src) => n + src.split("presentAt(").length - 1, 0);
+    const composed = [...frames, written].reduce((n, src) => n + src.split("presentAt(").length - 1, 0);
     expect(composed, "presentAt is composed more than once").toBe(1);
+    const called = frames.reduce((n, src) => n + src.split("presentedOver(").length - 1, 0);
+    expect(called, "the one composition is called more than once").toBe(1);
   });
 
   it("the press opens a window rather than dispatching the routing itself", () => {

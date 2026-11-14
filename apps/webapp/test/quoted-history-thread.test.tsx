@@ -26,7 +26,7 @@ beforeAll(async () => {
 beforeEach(() => {
   installShellEnv();
   layout = stubThreadLayout({ heights: { p1: 160, p2: 160, p3: 160, p4: 160 } });
-  window.location.hash = "#/ohbox";
+  window.location.hash = "#/history";
 });
 afterEach(async () => {
   layout.restore();
