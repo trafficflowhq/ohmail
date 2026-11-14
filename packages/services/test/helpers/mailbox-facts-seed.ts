@@ -27,9 +27,12 @@ export const organizer = id("1"), theirFirst = id("2"), inError = id("3"), their
 export const heldReader = id("5"), theirThird = id("6"), erasing = id("7"), erased = id("9"), gapReader = id("b");
 export const settled = id("d");
 
+export const LAST_CYCLE_AT = "2026-10-21T09:59:00.000Z";
+
 export const svc = makeMailboxService({
   installId: "install-here",
-  lastOrganizerCycleAt: async () => "2026-10-21T09:59:00.000Z",
+  // A deployment whose organizer finished its last pass a minute ago and has fallen behind since.
+  organizerStanding: async () => ({ lastCycleAt: LAST_CYCLE_AT, behind: true, since: LAST_CYCLE_AT }),
 });
 
 export const ctxFor = (db: Db, accountId: string, now: () => Date = () => NOW): ServiceContext =>

@@ -73,6 +73,7 @@ vi.mock("../src/engine/diagnostics", () => ({ writePhoneDiagnostics: async () =>
 vi.mock("../src/engine/diagnostics-native", () => ({ nativePhoneDiagnosticDeps: () => ({}), shareDiagnosticFile: async () => true }));
 
 import SettingsScreen from "../app/settings";
+import { Copy } from "../src/copy";
 import { forgetOrganizerSessionForTests, holdStandaloneDoor } from "../src/engine/organizer-session";
 import type { StandaloneEngine } from "../src/engine/standalone-door";
 
@@ -172,6 +173,51 @@ describe("Settings under a Cloud account while the phone's own engine still runs
     await settle();
     expect(view.el.textContent).toContain("own@phone.test");
     view.unmount();
+  });
+});
+
+/**
+ * A MAILBOX ITS SERVER IS NOT CHECKING SAYS SO ON ITS CARD. The card named who organizes the
+ * mailbox and nothing about whether its mail was being fetched. Watched red at the base; the
+ * mutation that reds the self-hosted case again is the note always naming Cloud.
+ */
+describe("a mailbox whose new mail is not being fetched, on its card", () => {
+  const SINCE = "2026-11-13T11:10:00.000Z";
+  const late = (fetching: PhoneMailbox["fetching"]): PhoneMailbox => ({ ...cloudBox, filing: undefined, fetching });
+  const card = async (flavor: string, row: PhoneMailbox): Promise<string> => {
+    cloudAccount([row]);
+    (scene.session as { profile: { flavor?: string } }).profile.flavor = flavor;
+    const view = mount(h(SettingsScreen));
+    await settle();
+    const text = view.el.textContent ?? "";
+    view.unmount();
+    return text;
+  };
+  /* The words up to the time: the time's own form is `late-lines`' and is held there. */
+  const upToTheTime = (who: "cloud" | "server"): string =>
+    (who === "cloud" ? Copy.notCheckedNoteCloud("<since>") : Copy.notCheckedNoteServer("<since>")).split("<since>")[0]!;
+
+  it("ohmail Cloud is named behind the managed service, with since when", async () => {
+    const text = await card("managed", late({ behind: true, since: SINCE }));
+    expect(text).toContain(upToTheTime("cloud"));
+    expect(await card("managed", late({ behind: true, since: null }))).toContain(Copy.notCheckedNoteCloudNoTime);
+  });
+
+  it("a server somebody runs is named your ohmail server, never ohmail Cloud", async () => {
+    const text = await card("selfhost", late({ behind: true, since: SINCE }));
+    expect(text).toContain(upToTheTime("server"));
+    expect(text).not.toContain(upToTheTime("cloud"));
+  });
+
+  it.each([
+    ["null: this server does not say", null],
+    ["absent: an older server", undefined],
+    ["not behind", { behind: false, since: SINCE }],
+  ] as Array<[string, PhoneMailbox["fetching"]]>)("CONTROL: %s adds no line", async (_what, fetching) => {
+    const text = await card("managed", late(fetching));
+    expect(text).toContain("cloud@example.test");
+    expect(text).not.toContain(upToTheTime("cloud"));
+    expect(text).not.toContain(Copy.notCheckedNoteCloudNoTime);
   });
 });
 

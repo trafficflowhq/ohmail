@@ -13,6 +13,7 @@
  */
 import type { AuthVerdict, ISODateTime, Page, UnsubscribeHeaderState } from "./base.js";
 import type { HelloAnswer } from "./client.js";
+import type { FetchingDTO } from "./mailboxes.js";
 import type { SnapshotResponse, SyncResponse } from "./records.js";
 import type { MessageDTO, MessageStateDTO, TrashRowDTO } from "./mail.js";
 import type { MessageBodyBatchItem, MessageBodyDTO } from "./bodies.js";
@@ -142,7 +143,11 @@ export interface Routes {
   "POST /sync/pull": {
     params: None;
     body: { mailboxIds?: string[] };
-    answer: { requested: number; requestedAt: ISODateTime; mailboxes: Array<{ id: string; requestedAt: ISODateTime }> };
+    answer: {
+      requested: number; requestedAt: ISODateTime; mailboxes: Array<{ id: string; requestedAt: ISODateTime }>;
+      /** Is anything fetching now (`MailboxDTO.fetching`, once). `null`: this server does not say; absent: an older one. */
+      fetching?: FetchingDTO | null;
+    };
   };
 
   // ── letters ─────────────────────────────────────────────────────────────────

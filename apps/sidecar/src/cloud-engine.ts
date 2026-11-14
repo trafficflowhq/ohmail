@@ -33,7 +33,7 @@ import {
   requestDesktopApproval,
   type CloudSignInRequest,
 } from "./cloud-signin.js";
-import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_MS, type CloudMirror, type HostedFiling, type HostedGap } from "./cloud-mirror.js";
+import { createCloudMirror, integrityLogFields, CLOUD_SYNC_TYPES, FOLLOW_UP_CAP_MS, type CloudMirror, type HostedFetching, type HostedFiling, type HostedGap } from "./cloud-mirror.js";
 import { startCloudWake, type CloudWake } from "./cloud-wake.js";
 import { matchReadRoute } from "./cloud-read.js";
 import { answerAccountFirst } from "./cloud-account-first.js";
@@ -369,6 +369,32 @@ async function decorateHostedSyncs(
     if (row === null || typeof row !== "object") return row;
     const id = (row as { id?: unknown }).id;
     return { ...(row as object), hostedLastSyncAt: typeof id === "string" ? syncs.get(id) ?? null : null };
+  });
+  return json({ ...(body as object), items: decorated }, res.status);
+}
+
+/**
+ * Put the server's word on fetching on a hosted-door `GET /mailboxes` answer
+ * (`CloudMirror.hostedFetching`): this store's own read answers `null` on every row (nothing here
+ * fetches), so without it the window showed a healthy account while its server fetched nothing,
+ * and only the pull's relayed answer said so. A row the map has nothing for is left as read.
+ */
+async function decorateHostedFetching(
+  res: Response,
+  fetching: ReadonlyMap<string, HostedFetching>,
+): Promise<Response> {
+  if (fetching.size === 0) return res;
+  let body: unknown;
+  try {
+    body = await res.clone().json();
+  } catch {
+    return res;
+  }
+  const items = (body as { items?: unknown })?.items;
+  if (!Array.isArray(items)) return res;
+  const decorated = items.map((row) => {
+    const id = (row as { id?: unknown })?.id;
+    return typeof id === "string" && fetching.has(id) ? { ...(row as object), fetching: fetching.get(id) ?? null } : row;
   });
   return json({ ...(body as object), items: decorated }, res.status);
 }
@@ -2357,9 +2383,9 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
           // its own cadence (`cloud-mirror.ts`), and it travels under a field whose name says so.
           // Absent when the map has nothing for a row — never 0, which would claim an empty account.
           if (req.method === "GET" && path === "/mailboxes") {
-            const counted = await decorateHostedFilings(await decorateHostedSyncs(await decorateHostedGaps(
+            const counted = await decorateHostedFetching(await decorateHostedFilings(await decorateHostedSyncs(await decorateHostedGaps(
               await decorateHostedImports(await decorateHostedCounts(answer, liveMirror.hostedCounts()), liveMirror.hostedImports()),
-              liveMirror.hostedGaps()), liveMirror.hostedSyncs()), liveMirror.hostedFilings());
+              liveMirror.hostedGaps()), liveMirror.hostedSyncs()), liveMirror.hostedFilings()), liveMirror.hostedFetching());
             // AFTER the counts: the overlay is the louder fact and must not be decorated away.
             return await decorateStoreStuck(counted, liveMirror.quarantined(), liveMirror.storeFault());
           }

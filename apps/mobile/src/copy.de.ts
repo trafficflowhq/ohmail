@@ -455,6 +455,21 @@ export const DE: Deck = {
   networkOffline: "Dieses Handy hat kein Netz. ohmail holt nach, sobald es wieder da ist.",
   networkOfflineHeld: "Dieses Handy hat kein Netz. Angezeigt werden die neueren Mails, die es hat.",
 
+  lateTitle: "Neue Mails haben Verspätung.",
+  lateTitleDays: (days: number) =>
+    (days === 1 ? "Neue Mails haben einen Tag Verspätung." : `Neue Mails haben ${days} Tage Verspätung.`),
+  lateLineCloud: (since: string) => `ohmail Cloud hat seit ${since} nicht mehr geprüft. Nichts geht verloren, und sie kommen an, sobald wieder geprüft wird.`,
+  lateLineCloudNoTime: "ohmail Cloud prüft gerade nicht. Nichts geht verloren, und sie kommen an, sobald wieder geprüft wird.",
+  lateLineCloudDay: (since: string) => `ohmail Cloud hat seit ${since} nicht mehr geprüft, und das liegt an uns. Nichts geht verloren, und sie kommen an, sobald wieder geprüft wird.`,
+  lateLineServer: (since: string) => `Dein ohmail-Server hat seit ${since} nicht mehr geprüft. Nichts geht verloren, und sie kommen an, sobald wieder geprüft wird.`,
+  lateLineServerNoTime: "Dein ohmail-Server prüft gerade nicht. Nichts geht verloren, und sie kommen an, sobald wieder geprüft wird.",
+  pullBehind: "Nicht geprüft. ohmail Cloud prüft gerade nicht, und neue Mails kommen von selbst an, sobald es wieder prüft.",
+  pullBehindServer: "Nicht geprüft. Dein ohmail-Server prüft gerade nicht, und neue Mails kommen von selbst an, sobald er wieder prüft.",
+  notCheckedNoteCloud: (since: string) => `ohmail Cloud hat dieses Postfach seit ${since} nicht mehr geprüft. Nichts geht verloren, und seine Mails kommen an, sobald wieder geprüft wird.`,
+  notCheckedNoteCloudNoTime: "ohmail Cloud prüft dieses Postfach gerade nicht. Nichts geht verloren, und seine Mails kommen an, sobald wieder geprüft wird.",
+  notCheckedNoteServer: (since: string) => `Dein ohmail-Server hat dieses Postfach seit ${since} nicht mehr geprüft. Nichts geht verloren, und seine Mails kommen an, sobald wieder geprüft wird.`,
+  notCheckedNoteServerNoTime: "Dein ohmail-Server prüft dieses Postfach gerade nicht. Nichts geht verloren, und seine Mails kommen an, sobald wieder geprüft wird.",
+
   firstSyncNothingReadable: "Aus diesem Postfach konnte noch nichts gelesen werden.",
   firstSyncReading: "Dein Postfach wird zum ersten Mal gelesen — der Rest deiner Mails kommt hier an, sobald er gelesen ist.",
   connectionSetAside: (n: number) => n === 1

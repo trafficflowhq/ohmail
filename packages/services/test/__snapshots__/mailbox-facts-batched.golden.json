@@ -33,6 +33,10 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
+      },
       "organizerRole": "organizer",
       "organizedBy": null,
       "organizerState": null,
@@ -112,6 +116,10 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
+      },
       "organizerRole": "organizer",
       "organizedBy": null,
       "organizerState": null,
@@ -170,6 +178,7 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": null,
       "organizerRole": "reader",
       "organizedBy": {
         "kind": "local",
@@ -241,6 +250,7 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": null,
       "organizerRole": "organizer",
       "organizedBy": null,
       "organizerState": null,
@@ -302,6 +312,10 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
+      },
       "organizerRole": "reader",
       "organizedBy": null,
       "organizerState": null,
@@ -359,6 +373,10 @@
         "stuckRefusalClass": null,
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
+      },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
       },
       "organizerRole": "organizer",
       "organizedBy": null,
@@ -419,6 +437,10 @@
         "stuckRefusalClass": "read_only",
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
+      },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
       },
       "organizerRole": "organizer",
       "organizedBy": null,
@@ -500,6 +522,10 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
+      },
       "organizerRole": "organizer",
       "organizedBy": null,
       "organizerState": null,
@@ -559,6 +585,7 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": null,
       "organizerRole": "reader",
       "organizedBy": {
         "kind": "local",
@@ -631,6 +658,7 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": null,
       "organizerRole": "organizer",
       "organizedBy": null,
       "organizerState": null,
@@ -693,6 +721,10 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
+      },
       "organizerRole": "reader",
       "organizedBy": null,
       "organizerState": null,
@@ -751,6 +783,10 @@
         "stuckRefusalClass": null,
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
+      },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
       },
       "organizerRole": "organizer",
       "organizedBy": null,
@@ -812,6 +848,10 @@
         "stuckRefusalClass": "refused",
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
+      },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
       },
       "organizerRole": "organizer",
       "organizedBy": null,
@@ -886,6 +926,10 @@
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
       },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
+      },
       "organizerRole": "organizer",
       "organizedBy": null,
       "organizerState": null,
@@ -958,6 +1002,10 @@
         "stuckRefusalClass": "refused",
         "asOf": "2026-10-21T10:00:00.000Z",
         "lastCycleAt": "2026-10-21T09:59:00.000Z"
+      },
+      "fetching": {
+        "behind": true,
+        "since": "2026-10-21T09:59:00.000Z"
       },
       "organizerRole": "organizer",
       "organizedBy": null,

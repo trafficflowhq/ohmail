@@ -323,6 +323,8 @@ const FILER_KEYS = {
   takeoverEffectLapsed: { cloud: "organizerEffectLapsed", server: "organizerEffectLapsedServer" },
   takeoverQueued: { cloud: "organizerQueued", server: "organizerQueuedServer" },
   takeoverAlready: { cloud: "organizerAlready", server: "organizerAlreadyServer" },
+  /* The service is not fetching this mailbox's new mail: it is named, never this computer. */
+  notChecked: { cloud: "notCheckedNoteCloud", server: "notCheckedNoteServer" },
 } as const satisfies Record<string, Partial<Record<FilerSelf, string>>>;
 
 /** One sentence about the install that files the mailbox. */
@@ -890,6 +892,13 @@ export interface MailboxFacts {
   /** The gap offer's stranger count (mail 0158), forwarded on the same rule as {@link gapLetters}. */
   gapStrangers?: number | null;
   /**
+   * Is new mail being fetched for this mailbox: `behind` when nothing is fetching or fetching has
+   * fallen behind, `since` the last finished pass. `null` when this server does not say (a mailbox
+   * it does not fetch, or a host that keeps no such record): silence, never "up to date".
+   * Absent on a server older than the field.
+   */
+  fetching?: { behind: boolean; since: string | null } | null;
+  /**
    * `false` while the local engine has not read the lease for this reader row, when its NULL
    * `organizerState` is "not looked" rather than "nobody". Absent is every other case and every
    * door that cannot say. Setup waits on it before offering Agree.
@@ -1058,6 +1067,27 @@ export interface MailboxFacts {
  */
 export function serverUnreachable(m: Pick<MailboxFacts, "status" | "errorCode" | "unreachableSince">): boolean {
   return typeof m.unreachableSince === "string" || (m.status === "error" && m.errorCode === "connect");
+}
+
+/**
+ * NEW MAIL IS LATE: the server says, on at least one row, that new mail is not being fetched.
+ * `null`, an absent field and `behind: false` say nothing, and no status or role is read here: the
+ * server already answers `null` for a row it does not fetch. `since` is the newest time the behind
+ * rows carry, the last instant the service checked anything, so the sentence never overstates;
+ * `null` when none is on record.
+ */
+export function fetchingLate(
+  rows: readonly Pick<MailboxFacts, "fetching">[] | null | undefined,
+): { since: string | null } | null {
+  const behind = (rows ?? []).filter((m) => m.fetching?.behind === true);
+  if (behind.length === 0) return null;
+  let newest: { iso: string; at: number } | null = null;
+  for (const m of behind) {
+    const iso = m.fetching?.since;
+    const at = typeof iso === "string" ? Date.parse(iso) : NaN;
+    if (!Number.isNaN(at) && (newest === null || at > newest.at)) newest = { iso: iso as string, at };
+  }
+  return { since: newest?.iso ?? null };
 }
 
 /**
@@ -1472,10 +1502,11 @@ export function importOver(
  * spinner); `importing` (the mirror is growing — an EPISODE, keyed on the client's own count rising, never a stamp);
  * `screenerCandidate` (mail landed, settled, nothing wrong — the Ohbox pane combines it with its own emptiness);
  * `blocked` (our infrastructure declining, mail 0029); `mailboxError` (the mailbox refused us); `noMailbox` (the
- * probe answered: none). `behind` is gone — {@link deviceHoldings} carries the argument; do not put it back without
- * the sidecar's "drained to the horizon and still short" verdict, which is on no wire today. `stopped`/`failing`
- * outrank all six (a frozen mirror count cannot speak); `failing` needs a SUSTAINED streak — a single unconfirmed
- * 401 falls through to the calm states. `quiet` is the rest.
+ * probe answered: none). A state for a mirror SHORT OF THE ACCOUNT is gone — {@link deviceHoldings} carries the
+ * argument; do not put it back without the sidecar's "drained to the horizon and still short" verdict, which is on
+ * no wire today. `behind` is another fact, the server's own word that new mail is not being fetched
+ * ({@link fetchingLate}). `stopped`/`failing` outrank all six (a frozen mirror count cannot speak); `failing` needs a
+ * SUSTAINED streak — a single unconfirmed 401 falls through to the calm states. `quiet` is the rest.
  */
 export type MailStateKey =
   | "stopped"
@@ -1483,6 +1514,7 @@ export type MailStateKey =
   | "failing"
   | "stale"
   | "catchingUp"
+  | "behind"
   | "blocked"
   | "mailboxError"
   | "filing"
@@ -1539,7 +1571,8 @@ export interface MailState {
    * `stale` only — the instant the mirror on screen was last known current, verbatim from the
    * freshness input (the engine's own completion stamp, or the desktop mirror's). It is the
    * time the label renders — "As of 14:32 · catching up" — and the arm never fires without it:
-   * a staleness claim with no time in it is not a sentence anyone can check.
+   * a staleness claim with no time in it is not a sentence anyone can check. `behind` carries the
+   * server's last finished pass here, and may carry none.
    */
   asOf: string | null;
   /** The mailbox the state is ABOUT, when it is about exactly one. */
@@ -2174,6 +2207,14 @@ function climb(input: MailStateInputs): MailState {
   if (mailboxes === null) return quietOrCatchingUp;
 
   const live = mailboxes.filter((m) => m.status !== "disabled");
+
+  // NEW MAIL IS LATE — the server reaches us and says it is not fetching. With the connection's own
+  // states above (a loop that cannot read the server cannot know this) and before a mailbox's own
+  // trouble: nothing below can move while nothing fetches, and "syncing" or "filing" over a
+  // service that is not running is the healthy look this state exists to end. `clock`: the
+  // sentence turns to its day form by time alone.
+  const late = fetchingLate(mailboxes);
+  if (late) return { ...QUIET, key: "behind", clock: true, count: mirrored, asOf: late.since };
 
   /* 4a. STOOD DOWN — the organizer lease is declining to serve it. The
    * `live` filter drops every `disabled` row, so an account whose only

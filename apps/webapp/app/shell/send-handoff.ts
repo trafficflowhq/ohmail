@@ -12,8 +12,11 @@ import type { SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
 import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 
-/** The mail states a healthy connection reads as: settled, filing our own decisions, or importing. */
-const HEALTHY_KEYS: ReadonlySet<MailStateKey> = new Set<MailStateKey>(["quiet", "filing", "importing"]);
+/**
+ * The mail states a healthy connection reads as: settled, filing our own decisions, importing, or
+ * new mail late (`behind`: the server answers and sends, only its fetching waits).
+ */
+const HEALTHY_KEYS: ReadonlySet<MailStateKey> = new Set<MailStateKey>(["quiet", "filing", "importing", "behind"]);
 
 export interface HandOffInputs {
   /** `MailState.key` — the ladder's verdict. On the desktop it reads the engine's freshness probe. */

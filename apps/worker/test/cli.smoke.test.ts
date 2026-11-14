@@ -9,6 +9,7 @@ import { isCliEntry } from "../src/entry.js";
 import { imapCfg } from "./_workerenv.js";
 import { prepareIsolatedDb, truncateAll } from "./_isolateddb.js";
 import { KEY_RING_V1 } from "../../../test/support/key-ring-env.js";
+import { DbDoor } from "./_dbdoor.js";
 
 const WORKER_DIR = fileURLToPath(new URL("..", import.meta.url));
 /** A real AES KEK of the production length: the CLI builds its KeyProvider from the ENV, like production. */
@@ -25,6 +26,101 @@ describe("the DEPLOYABLE CLI entry point", () => {
     if (child && child.exitCode === null) { child.kill("SIGKILL"); }
     child = null;
   });
+
+  /** The CLI as a host starts it (`entry`), with its output parsed as the JSON lines it is. */
+  function startCli(entry: string[], env: Record<string, string | undefined>) {
+    const proc = spawn(process.execPath, ["--conditions=ohmail-source", "--import", "tsx/esm", ...entry], {
+      cwd: WORKER_DIR,
+      env: {
+        ...process.env, [KEY_RING_V1]: KEK_HEX, TF_HEALTH_SECRET: "d".repeat(32), PORT: "0", POLL_INTERVAL_MS: "1000",
+        TF_ACCOUNT_ID: undefined, TF_MAILBOX_ID: undefined, IMAP_HOST: undefined, ...env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams;
+    child = proc;
+    let out = "";
+    proc.stdout.on("data", (d: Buffer) => { out += d.toString(); });
+    proc.stderr.on("data", (d: Buffer) => { out += d.toString(); });
+    const events = (): Array<Record<string, unknown>> => out.split("\n").flatMap((line) => {
+      try { return [JSON.parse(line) as Record<string, unknown>]; } catch { return []; }
+    });
+    const exited = new Promise<number>((resolve) => { proc.on("exit", (c) => resolve(c ?? -1)); });
+    /** The first line named `event`, or a rejection carrying what the process printed. */
+    const line = async (event: string, ms: number): Promise<Record<string, unknown>> => {
+      const start = Date.now();
+      while (Date.now() - start < ms) {
+        const found = events().find((e) => e.event === event);
+        if (found) return found;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      throw new Error(`the CLI never logged ${event} (exit code ${String(proc.exitCode)}). Output:\n${out}`);
+    };
+    return { proc, events, exited, line, out: () => out };
+  }
+
+  /**
+   * THE OUTAGE OF 12 NOVEMBER 2026, AS THE DEPLOYED PROCESS MEETS IT. Every start failed to connect
+   * and exited; after 81 exits in ten minutes the host stopped restarting, and the worker stayed down
+   * for 26 hours after the database was back. The process now stays up, says it is waiting, and leads
+   * when the database answers. Run as its own process because the exit is the thing under test.
+   */
+  it("a start against a database that refuses connections stays up, says so on /health, and leads when it is back", async () => {
+    await truncateAll(DB);
+    const door = await DbDoor.to(DB).reserve();
+    const cli = startCli(["src/index.ts"], { DATABASE_URL_SESSION: door.via(DB) });
+    try {
+      const up = await cli.line("worker_up", 45_000);
+      expect(up).toMatchObject({ state: "waiting", service: "worker" });
+      const port = Number(up.healthPort);
+
+      // Unauthenticated, as a platform's check and an outside watchdog read it.
+      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        ok: false, healthy: false, leader: false, standby: false,
+        unhealthyReason: "waiting_for_database", waitingForDatabaseCode: "ECONNREFUSED",
+      });
+      await new Promise((r) => setTimeout(r, 3_000));
+      expect(cli.proc.exitCode, cli.out()).toBeNull();
+      expect(cli.events().filter((e) => e.event === "worker_start_failed")).toHaveLength(0);
+      expect(cli.events().filter((e) => e.event === "waiting_for_database")).toHaveLength(1);
+
+      // The database is back. The same process leads; nothing started it again.
+      await door.up();
+      await cli.line("leader_acquired", 45_000);
+      const led = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(led.status).toBe(200);
+      expect(await led.json()).toMatchObject({ healthy: true, leader: true, waitingForDatabaseSeconds: null });
+      expect(cli.proc.exitCode).toBeNull();
+
+      cli.proc.kill("SIGTERM");
+      expect(await cli.exited).toBe(0);
+      // The connection string never reached the log, in an outage either.
+      expect(cli.out()).not.toContain(new URL(DB).password);
+    } finally {
+      door.down();
+    }
+  }, 120_000);
+
+  it("a cycle that stops moving ends the process with exit 1, for its host to start it again", async () => {
+    await truncateAll(DB);
+    const db = makeDb(DB);
+    const [mb] = await db.insert(mailboxes)
+      .values({ accountId: randomUUID(), provider: "imap", address: `${randomUUID()}@trafficflow.test` }).returning();
+    const enc = await KEK.encrypt(randomUUID());           // the fake adapter never dials with it
+    await db.insert(mailboxCredentials).values({
+      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
+    });
+
+    // The hook the supervisor calls is only a count in the in-process tests; here it is the CLI's own.
+    const cli = startCli(["test/_stuckchild.ts", mb!.id], { DATABASE_URL_SESSION: DB });
+    expect(await cli.exited, cli.out()).toBe(1);
+    const names = cli.events().map((e) => e.event);
+    expect(names).toContain("leader_acquired");
+    expect(names.indexOf("stuck_cycle_exiting")).toBeGreaterThan(names.indexOf("leader_acquired"));
+    expect(cli.events().find((e) => e.event === "fatal_after_takeover")).toMatchObject({ errorClass: "StuckCycleError" });
+  }, 120_000);
 
   it("matches a module path containing spaces (the template-string guard silently did not)", () => {
     const p = "/Volumes/Macintosh SSD/home/Sites/ohmail-monorepo/apps/worker/src/index.ts";

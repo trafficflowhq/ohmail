@@ -18,6 +18,12 @@ export interface MailboxFolderSummary {
   serverExists?: number | null;
 }
 
+/** Whether new mail is being fetched, and since when it has not been ({@link MailboxDTO.fetching}). */
+export interface FetchingDTO {
+  behind: boolean;
+  since: string | null;
+}
+
 export interface MailboxDTO {
   /**
    * Organizer or reader — what THIS install is to this mailbox (mail 0083). `'reader'` means
@@ -337,6 +343,16 @@ export interface MailboxDTO {
      */
     lastCycleAt: string | null;
   };
+  /**
+   * IS NEW MAIL BEING FETCHED FOR THIS MAILBOX — one fact about the server's organizer, for the rows
+   * it is on duty to fetch: every mailbox that is not disabled, also one it reads for another install's
+   * organizer, unless it left the row out (`syncBlockedReason` `account_closed` or `at_capacity`).
+   * `behind: true` means nothing is fetching, or fetching has fallen behind (`since`: the last pass
+   * that finished, or null when none is on record); a pull is kept and served when fetching resumes.
+   * `null` means this server does not say: a row off that duty, or a deployment that keeps no such
+   * record (every local tier). Render SILENCE on null, never "up to date". ABSENT is an older server.
+   */
+  fetching: FetchingDTO | null;
   /**
    * The biggest message this mailbox's submission server said it will accept, in bytes — its own
    * RFC 1870 `SIZE` announcement, recorded by the connect-time SMTP probe (mail 0055). The

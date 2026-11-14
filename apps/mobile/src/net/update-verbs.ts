@@ -3,8 +3,8 @@
  * build comes from, and the way into the web, which is there from the first day. Pure, so the node suite holds
  * every arm without a renderer, and a verb with nowhere to go is WITHHELD, never drawn dead.
  *
- *  · a store build goes to its store: Play on Android, the App Store on iOS once its listing's numeric id
- *    is known (`APP_STORE_ID`, empty until then, so the verb is withheld rather than a dead button);
+ *  · a store build goes to its store: Play on Android, the App Store on iOS by its listing's numeric id
+ *    (`APP_STORE_ID`; an id that is empty or not numeric withholds the verb rather than drawing a dead button);
  *  · a build from the release page (`sideload`) goes to the download page;
  *  · both, where the phone knows a page a browser can open for its server ({@link webAddressOf}), can
  *    open it in the browser.
@@ -18,8 +18,8 @@ export { DOWNLOAD_PAGE };
 /** `app.json`'s `android.package`, held equal by `test/update-verbs.test.ts`. */
 export const PLAY_PACKAGE = "app.ohmail";
 
-/** The App Store listing's numeric id, from the published listing. Empty until it is known: the verb is withheld. */
-export const APP_STORE_ID = "";
+/** The App Store listing's numeric id, from the published listing. An empty id withholds the verb. */
+export const APP_STORE_ID: string = "6810824816";
 
 /** What a numeric App Store id looks like. */
 export const APP_STORE_ID_SHAPE = /^\d{6,12}$/;
