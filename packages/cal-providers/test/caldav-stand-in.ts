@@ -103,6 +103,12 @@ export interface StandIn {
   forgetTokens(slug: string): void;
   /** The next request, whatever it is, is answered with this status (and this Retry-After, and this body). */
   answerNext(status: number, retryAfter?: string, body?: string): void;
+  /** Once the next write (a PUT or a DELETE) is carried out and before it is answered, `fn` runs: someone else's write between it and what follows. */
+  afterNextWrite(fn: () => void): void;
+  /** The next write (a PUT or a DELETE) that is carried out is answered with this status all the same: a server that did it and said it failed. `null` takes it back. */
+  doneThen(status: number | null): void;
+  /** Whether a status given to `doneThen` still waits for a write to be carried out. */
+  doneThenPending(): boolean;
   close(): Promise<void>;
 }
 
@@ -138,6 +144,14 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
   const calendars = new Map<string, Held>();
   const seen: Seen[] = [];
   let forced: { status: number; retryAfter: string | undefined; body: string } | null = null;
+  let afterWrite: (() => void) | null = null;
+  let doneThenStatus: number | null = null;
+  /** The status a write carried out is answered with, where `doneThen` asked for one, once. */
+  const doneAnswer = (): number | null => {
+    const status = doneThenStatus;
+    doneThenStatus = null;
+    return status;
+  };
 
   const held = (slug: string): Held => {
     const c = calendars.get(slug);
@@ -304,12 +318,17 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
         c.members.delete(name);
         c.rev += 1;
         c.removed.set(name, c.rev);
-        return send(204, "");
+        return send(doneAnswer() ?? 204, "");
       }
       c.rev += 1;
       c.removed.delete(name);
       const etag = `"${c.slug}-${name}-${c.rev}"`;
       c.members.set(name, { ics: body, etag, rev: c.rev });
+      const between = afterWrite;
+      afterWrite = null;
+      between?.();
+      const failedAfter = doneAnswer();
+      if (failedAfter !== null) return send(failedAfter, "");
       return send(member === undefined ? 201 : 204, "", { etag });
     }
     return send(405, "");
@@ -368,6 +387,13 @@ export async function startCalDavStandIn(given: StandInOptions = {}): Promise<St
     answerNext(status, retryAfter, body = "") {
       forced = { status, retryAfter, body };
     },
+    afterNextWrite(fn) {
+      afterWrite = fn;
+    },
+    doneThen(status) {
+      doneThenStatus = status;
+    },
+    doneThenPending: () => doneThenStatus !== null,
     close: () =>
       new Promise<void>((resolve, reject) => {
         server.closeAllConnections();

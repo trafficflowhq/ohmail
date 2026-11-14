@@ -44,7 +44,7 @@ function sources(dir: string): string[] {
   return out.sort();
 }
 
-const files = [...sources(APP), ...sources(new URL("../../../packages/app-logic/src/", import.meta.url).pathname)];
+const files = [...sources(APP), ...sources(new URL("../../../packages/app-logic/src/", import.meta.url).pathname), ...sources(new URL("../../../packages/letter-body/src/", import.meta.url).pathname)];
 const read = (p: string): string => readFileSync(p, "utf8");
 const name = (p: string): string => relative(APP, p);
 
@@ -62,7 +62,7 @@ const EXEMPT: Record<string, string> = {
   "views/ComposeView.tsx":
     "the composer's own send and schedule chords — a writing surface with no list and no cursor; "
     + "the digits are the picker's, and are declared `inWriting` for that reason",
-  "views/SearchView.tsx":
+  "../../../packages/app-logic/src/search/keys.ts":
     "`Enter` opens the hit under this view's OWN cursor, which exists whenever there are hits "
     + "(`cursor = shown.length === 0 ? -1 : min(at, …)`); it rests on an empty result set or on "
     + "focus being outside the list, neither of which a placement would answer",

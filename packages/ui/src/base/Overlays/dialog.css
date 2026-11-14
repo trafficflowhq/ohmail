@@ -21,6 +21,15 @@
     overflow: hidden auto;
     scrollbar-width: none;
   }
+  /* What a press inside it came to: one line over the answers, which stays while the body scrolls. */
+  .oh-dialog-said {
+    flex: none;
+    margin-top: var(--s4);
+    color: var(--ink2);
+  }
+  .oh-dialog-said > .oh-refusal[data-start] {
+    --oh-refusal-pad: 0;
+  }
   .oh-dialog-acts {
     display: flex;
     flex: none;

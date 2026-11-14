@@ -1,0 +1,60 @@
+{
+  "component": "StepDots",
+  "state": "rest",
+  "look": "ohmarchy-light-desktop",
+  "place": "block",
+  "target": [1138, 268, 72, 8],
+  "clip": [1138, 268, 72, 8],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    { "backgroundColor": "rgb(16, 15, 15)" },
+    { "backgroundColor": "rgb(32, 94, 166)" },
+    { "boxShadow": "rgb(56, 54, 53) 0px 0px 0px 2px inset" }
+  ],
+  "nodes": [
+    {
+      "role": "img",
+      "name": "Step 2 of 5, Mailbox, 1 of 3",
+      "box": [0, 0, 72, 8],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "surfaces": [
+        { "box": [0, 0, 8, 8], "paint": 0 },
+        { "box": [16, 0, 8, 8], "paint": 1 },
+        { "box": [32, 0, 8, 8], "paint": 2 },
+        { "box": [48, 0, 8, 8], "paint": 2 },
+        { "box": [64, 0, 8, 8], "paint": 2 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

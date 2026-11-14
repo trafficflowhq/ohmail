@@ -1,0 +1,42 @@
+{
+  "name": "@ohmail/letter-body",
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "ohmail-source": "./src/index.ts",
+      "node": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./links": {
+      "types": "./src/rendered-links.ts",
+      "ohmail-source": "./src/rendered-links.ts",
+      "node": "./dist/rendered-links.js",
+      "default": "./src/rendered-links.ts"
+    },
+    "./cache": {
+      "types": "./src/mail-doc-cache.ts",
+      "ohmail-source": "./src/mail-doc-cache.ts",
+      "node": "./dist/mail-doc-cache.js",
+      "default": "./src/mail-doc-cache.ts"
+    },
+    "./words": {
+      "types": "./src/words.ts",
+      "ohmail-source": "./src/words.ts",
+      "node": "./dist/words.js",
+      "default": "./src/words.ts"
+    }
+  },
+  "dependencies": {
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "dompurify": "3.4.13",
+    "@ohmail/app-logic": "*",
+    "@ohmail/client-engine": "*",
+    "@ohmail/tokens": "*",
+    "@ohmail/ui": "*",
+    "@trafficflow/core": "*"
+  }
+}

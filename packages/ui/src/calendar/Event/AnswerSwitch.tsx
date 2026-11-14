@@ -15,6 +15,11 @@ export interface AnswerSwitchProps {
     options: readonly { value: string; label: string; keyHint?: string }[];
     value: string | null;
     onChange?: (value: string) => void;
+    /**
+     * The person may only view the event: the answer is read, not given. Every part is off, and the given one
+     * still says that it is the answer. Never an answer that can be pressed and does nothing.
+     */
+    readOnly?: boolean;
   };
   /** What is no answer of three: Add and Dismiss on an event found in mail, Accept and Keep on a proposed time. */
   acts?: readonly {
@@ -54,6 +59,7 @@ export function AnswerSwitch({ label, answers, acts, propose, on = "soft", fit }
               type="button"
               className="oh-control oh-seg-item"
               aria-pressed={option.value === answers.value}
+              disabled={answers.readOnly}
               onClick={() => answers.onChange?.(option.value)}
             >
               {option.label}

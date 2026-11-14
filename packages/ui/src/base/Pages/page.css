@@ -99,11 +99,21 @@
     margin: var(--oh-page-icon-gap);
   }
   .oh-page-material {
-    --oh-soft: var(--soft-sheet);
-    --oh-field-ground: var(--soft-sheet);
     grid-area: mat;
     min-width: 0;
     margin-top: var(--s5);
+  }
+  /*
+   * What stands bare in the material (a form's fields, the tiles of a choice) stands on the page's ground, as the
+   * page's own buttons do. A sheet in the material brings a sheet's ground for what stands on it.
+   */
+  .oh-page-material .oh-sheet {
+    --oh-soft: var(--soft-sheet);
+    --oh-field-ground: var(--soft-sheet);
+  }
+  /* ohmarchy's page is a window in the sheet's tone: a field on it is boxed in the soft sheet's, as on a sheet. */
+  :root[data-face="ohmarchy"] .oh-page {
+    --oh-field-ground: var(--soft-sheet);
   }
   .oh-page-line {
     display: flex;

@@ -121,8 +121,9 @@ export class GoogleTestClient {
     return this.#pages(`/calendars/${encodeURIComponent(calendarId)}/events`, { timeMin, timeMax, singleEvents: "true", showDeleted: "false", maxResults: "250" });
   }
 
-  instances(calendarId: string, eventId: string): Promise<{ status: number; items: GoogleJson[] }> {
-    return this.#pages(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/instances`, { maxResults: "250" });
+  /** A series' days, every one Google lists, or those of a window (RFC 3339 times). */
+  instances(calendarId: string, eventId: string, window?: { readonly timeMin: string; readonly timeMax: string }): Promise<{ status: number; items: GoogleJson[] }> {
+    return this.#pages(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}/instances`, { maxResults: "250", ...(window ?? {}) });
   }
 
   #checked(sendUpdates: SendUpdates): SendUpdates {

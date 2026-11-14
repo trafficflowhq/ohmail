@@ -98,6 +98,9 @@ const BASE_MESSAGE_NAMESPACES = [
   // `@ohmail/app/text`). No shell hands the calendar in yet; listed for the reason `body` is: the guard compares what
   // the sources READ.
   "calendar", "event", "week", "day", "month", "year", "agenda", "calsearch",
+  // The calendar's invitations, From mail, setup, settings panes and its parts beside mail (the folders of the same
+  // names under `packages/app/src`), for the same reason.
+  "invitations", "frommail", "calsetup", "calsettings", "calmail",
   // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.
@@ -871,6 +874,7 @@ export default defineConfig({
       { find: "@ohmail/client-engine/calendar-writes", replacement: r("../../packages/client-engine/src/calendar-writes.ts") },
       { find: "@ohmail/client-engine", replacement: r("../../packages/client-engine/src/index.ts") },
       // The kit's doors and its squares window, ABOVE the old kit's bare name.
+      { find: "@ohmail/ui/body-parts", replacement: r("../../packages/ui/src/body-parts.ts") },
       { find: "@ohmail/ui/base", replacement: r("../../packages/ui/src/base/index.ts") },
       { find: "@ohmail/ui/mail", replacement: r("../../packages/ui/src/mail/index.ts") },
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
@@ -879,11 +883,19 @@ export default defineConfig({
          `paths` carries the same pair, and the host contract's line under it. */
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      // The letter's body: its three leaves ABOVE its door, each by its own file. `tsconfig.json`'s `paths` carries the same four.
+      { find: "@ohmail/letter-body/links", replacement: r("../../packages/letter-body/src/rendered-links.ts") },
+      { find: "@ohmail/letter-body/cache", replacement: r("../../packages/letter-body/src/mail-doc-cache.ts") },
+      { find: "@ohmail/letter-body/words", replacement: r("../../packages/letter-body/src/words.ts") },
+      { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
+      { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
          when the platform jobs build this window. */
       { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },

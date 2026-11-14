@@ -169,7 +169,7 @@ describe("the comparison", () => {
     expect(open.length).toBeGreaterThan(Object.keys(design.faces.paper.light).length);
     expect(open.some((r) => r.where === "faces.paper.light" && r.token === "ink" && r.kind === "product-only")).toBe(true);
     expect(said(open)).toEqual(expect.arrayContaining(["css :root * product-only", 'css :root[data-rm="1"] * product-only', 'css :root[data-product="cal"] * product-only']));
-    expect(open.filter((r) => r.where === "icons" && r.kind === "product-only")).toHaveLength(82);
+    expect(open.filter((r) => r.where === "icons" && r.kind === "product-only")).toHaveLength(85);
     expect(toTsv(rows).split("\n")[0]).toBe("where\ttoken\tkind\tproduct\tsheet\tdeclared");
   });
 

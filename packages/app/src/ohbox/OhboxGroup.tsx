@@ -8,8 +8,10 @@ import { useWalkedSquares, type OhboxListModel } from "@ohmail/app-logic/ohbox";
 import { Tag } from "@ohmail/ui/base";
 import { GroupHeading, ReadSquares, Row, Rows, type SquareKind } from "@ohmail/ui/mail";
 import { useLocale, useText } from "../text/index.js";
+import { useRowSwipe } from "../touch/index.js";
 import type { OhboxBeside } from "./beside.js";
 import { OhboxRowMenu } from "./OhboxRowMenu.js";
+import { ohboxRowSides } from "./row-sides.js";
 import { peopleOf, spokenOf, whoOf } from "./row-words.js";
 import { useSquaresRun } from "./squares-run.js";
 
@@ -134,6 +136,7 @@ function OhboxRowItem({
   const tag = w.tag(row.openTarget);
   const picked = model.pickState(row.members.every((m) => model.picked.has(m.id)));
   const open = model.rowOpen(row);
+  const swipe = useRowSwipe(row.openTarget.id, ohboxRowSides(model, row, t));
   return (
     <Row
       who={who.who}
@@ -175,6 +178,7 @@ function OhboxRowItem({
       }
       onOpen={() => model.pressRow(row)}
       onMenu={onMenu}
+      swipe={swipe}
       listing={{
         name: `${who.names}: ${subject}`,
         spoken: spokenOf({

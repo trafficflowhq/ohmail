@@ -1,0 +1,91 @@
+/**
+ * WHAT A SHELL HANDS THE READER, declared by what the reader calls of it and nothing more. The shell holds one
+ * instance of each and hands the same object every mount: the letter's body (the only part that loads the renderer),
+ * the files of its letters, and its pictures. `none` is a real answer: no tiles, no pictures, never a guess.
+ */
+import type { ComponentType } from "react";
+import type { EmbeddedPictureSeam, LetterPictureInputs, PictureSeam } from "@ohmail/app-logic/reader";
+
+/** What a control of the body is, as the body hands it out to stand in the head. */
+export interface LetterControl {
+  readonly id: "pictures" | "adapt" | "design" | "history";
+  readonly label: string;
+  readonly title?: string;
+  readonly pressed?: boolean;
+  readonly expanded?: boolean;
+  readonly controls?: string;
+  readonly at?: "leading" | "trailing";
+  readonly onPress: () => void;
+}
+
+/** What the body says it kept out of a letter: its two-word caption and its whole sentence. */
+export interface LetterNotice {
+  readonly caption: string;
+  readonly text: string;
+}
+
+/** One letter's body as the reader mounts it. `html` and `text` are the engine's, never built or edited here. */
+export interface LetterProps extends LetterPictureInputs {
+  readonly messageId: string;
+  readonly text: string;
+  readonly html: string | null;
+  readonly subject: string;
+  /** The app's scheme: an adaptable letter is drawn to it. */
+  readonly scheme: "light" | "dark";
+  /** Whose stored choices these are (a letter kept original): the session's scope. */
+  readonly owner: string | null;
+  readonly onNotice: (notice: LetterNotice | null) => void;
+  readonly onControls: (controls: readonly LetterControl[]) => void;
+}
+
+export type ReaderBody = ComponentType<LetterProps>;
+
+/** A file of a letter as the shell's file door lists it. */
+export interface ReaderFile {
+  readonly id: string;
+  readonly filename: string;
+  readonly mimeType: string;
+  readonly sizeBytes: number;
+  readonly state: "idle" | "loading" | "ready" | "failed" | "too_large";
+  readonly inline: boolean;
+  readonly calendarBody?: boolean;
+  readonly objectUrl?: string;
+  readonly code?: string | null;
+  readonly status?: number | null;
+  readonly retryable?: boolean;
+}
+
+export type ReaderFileList =
+  | { readonly state: "unavailable" }
+  | { readonly state: "loading"; readonly retrying?: boolean }
+  | { readonly state: "ready"; readonly items: readonly ReaderFile[] }
+  | {
+      readonly state: "failed";
+      readonly code: string | null;
+      readonly retryable: boolean;
+      readonly onRetry: () => void;
+    };
+
+/** The shell's one file door (structurally the web shell's `AttachmentsChrome`), and its pictures' half. */
+export interface ReaderFiles extends EmbeddedPictureSeam {
+  /**
+   * Hold one letter's list while it is drawn: the door asks for a list somebody holds, and nothing else. The return
+   * releases the hold.
+   */
+  hold(messageId: string): () => void;
+  itemsOf(messageId: string, opts?: { includeInlineParts?: boolean }): ReaderFileList;
+  /** Fetch if needed, and save. */
+  open(messageId: string, attachmentId: string): void;
+  /** Fetch and hold, no save; `retry` only on a person's press. */
+  ensure(messageId: string, attachmentId: string, opts?: { retry?: boolean }): void;
+  downloadAll(messageId: string, opts?: { includeInlineParts?: boolean }): void;
+  downloadingAll(messageId: string): boolean;
+}
+
+export interface ReaderParts {
+  readonly body: ReaderBody;
+  readonly files: ReaderFiles | "none";
+  readonly pictures: PictureSeam | "none";
+  /** The shell's one look at a file's bytes; `none`: a press saves. */
+  readonly look: ((messageId: string, attachmentId: string) => void) | "none";
+}

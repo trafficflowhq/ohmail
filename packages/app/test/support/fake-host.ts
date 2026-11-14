@@ -6,11 +6,13 @@
  */
 import type { OhmailEngine } from "@ohmail/client-engine";
 import {
+  OVER_IDS,
   PLACE_IDS,
   STAGE_IDS,
   type Appearance,
   type CalendarEntry,
   type FrameHost,
+  type FrameOvers,
   type FramePlaces,
   type FrameStages,
   type Recover,
@@ -23,9 +25,11 @@ import {
   type HostConnectionState,
   type FeatureEntry,
   type FeatureName,
+  type HostReads,
   type HostSession,
   type HostWires,
   type None,
+  type ReaderEntry,
   type Signal,
 } from "../../src/host/index.js";
 import {
@@ -62,6 +66,7 @@ const WIRES = [
 
 export const NO_PLACES: FramePlaces = Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])) as FramePlaces;
 export const NO_STAGES: FrameStages = Object.fromEntries(STAGE_IDS.map((id) => [id, NONE])) as FrameStages;
+export const NO_OVERS: FrameOvers = Object.fromEntries(OVER_IDS.map((id) => [id, NONE])) as FrameOvers;
 
 export interface FakeHostInput {
   readonly engine: OhmailEngine;
@@ -72,6 +77,7 @@ export interface FakeHostInput {
   readonly recover?: Recover;
   readonly places?: Partial<FramePlaces>;
   readonly stages?: Partial<FrameStages>;
+  readonly overs?: Partial<FrameOvers>;
   /** The calendar's entry; `none` unless given. The switch also needs `capabilities.products`. */
   readonly calendar?: CalendarEntry | None;
   readonly products?: HostCapabilities["products"];
@@ -82,6 +88,10 @@ export interface FakeHostInput {
   readonly appearance?: MovableSignal<Appearance>;
   readonly hostConnection?: Signal<HostConnectionState | null>;
   readonly features?: Partial<Record<FeatureName, FeatureEntry | None>>;
+  /** The reading column; absent, `none`. */
+  readonly reader?: ReaderEntry | None;
+  /** The account's mailbox facts; absent, `none`. */
+  readonly mailboxes?: HostReads["mailboxes"];
 }
 
 /** What the test holds besides the host: the window, the address and the look it can move. */
@@ -107,7 +117,7 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       signOut: NONE,
       recover: input.recover ?? NONE,
     },
-    reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
+    reads: { mailboxes: input.mailboxes ?? NONE, copyAge: NONE, access: NONE },
     wires: {
       ...(Object.fromEntries(WIRES.map((key) => [key, NONE])) as unknown as HostWires),
       ...input.wires,
@@ -118,6 +128,8 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       ...input.features,
       places: { ...NO_PLACES, ...input.places },
       stages: { ...NO_STAGES, ...input.stages },
+      overs: { ...NO_OVERS, ...input.overs },
+      reader: input.reader ?? NONE,
       calendar: input.calendar ?? NONE,
     },
     device: {

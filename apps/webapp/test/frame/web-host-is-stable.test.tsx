@@ -10,12 +10,12 @@ import { useWebHost, type WebWords } from "../../app/(product)/mailbox/web-suppl
 
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
-  places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
+  places: named("places"), stages: named("stages"), overs: named("overs"), address: named("address"), window: named("window"),
   appearance: named("appearance"), recover: NONE,
 } as FrameSupplies;
 const engine = named<HostContract["engine"]>("engine");
 const words: WebWords = {
-  server: { pairing: true, remoteImages: false }, invites: false, subscriptionPage: true, withdrawManage: () => undefined,
+  server: { pairing: true, remoteImages: false, searchPeople: false }, invites: false, subscriptionPage: true, withdrawManage: () => undefined,
   storageBlock: false, account: "acct-1", firstRun: undefined, mailboxFacts: async () => [],
   resolve: async () => ({ kind: "none" }) as never, confirmed: () => undefined,
 };

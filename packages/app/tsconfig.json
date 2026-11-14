@@ -7,5 +7,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src"],
-  "references": [{ "path": "../client-engine" }, { "path": "../app-logic" }, { "path": "../ui" }, { "path": "../tokens" }]
+  "references": [{ "path": "../client-engine" }, { "path": "../app-logic" }, { "path": "../letter-body" }, { "path": "../ui" }, { "path": "../tokens" }]
 }

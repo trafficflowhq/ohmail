@@ -17,6 +17,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 const ROOTS: Array<[string, URL]> = [
   ["apps/webapp/app", new URL("../../../apps/webapp/app/", import.meta.url)],
   ["packages/app-logic/src", new URL("../../app-logic/src/", import.meta.url)],
+  ["packages/letter-body/src", new URL("../../letter-body/src/", import.meta.url)],
   ["apps/mobile/src", new URL("../../../apps/mobile/src/", import.meta.url)],
   ["apps/mobile/app", new URL("../../../apps/mobile/app/", import.meta.url)],
 ];
@@ -24,7 +25,7 @@ const ROOTS: Array<[string, URL]> = [
 /** Every render bind the roots hold today, by file. A new one is named here on purpose. */
 const BINDS: Record<string, number> = {
   "packages/app-logic/src/session/store-timeline.ts": 1,
-  "apps/webapp/app/views/SearchView.tsx": 1,
+  "packages/app-logic/src/search/store-pass.ts": 1,
   "apps/mobile/src/state/store-views.ts": 2,
 };
 

@@ -71,7 +71,6 @@ import {
   useDemoMode, useResolvedDemoMode,
   useEngine,
   useDerivedVersion,
-  useSearchIndexRevision,
   useSyncStatus,
   type OwnerResolver,
   type ProvidedEngine,
@@ -416,22 +415,6 @@ export { DESKTOP_CTA_DISMISSED, DESKTOP_DOWNLOAD_URL, showDesktopCta } from "./t
  * guard still reads it from here.
  */
 export { CURSOR_HINT_MS };
-
-/**
- * SEARCH'S OWN SUBSCRIPTION — the mirror it derives from, and the index that answers.
- *
- * It took the GLOBAL version while the index read `message_body`. The index no longer reads
- * bodies (`search.ts` — the archive is the body search), so the global version would re-run the
- * local pass for writes it cannot see: an open writes three body records and the eager pass one
- * per message, each of them a rebuild on the keystroke path. {@link useDerivedVersion} is the
- * honest key, and {@link useSearchIndexRevision} the other half — the index lags the mirror by
- * design, so a build settling changes the answer with no record having moved.
- */
-function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version" | "indexRev">) {
-  const version = useDerivedVersion();
-  const indexRev = useSearchIndexRevision();
-  return <SearchView {...props} version={version} indexRev={indexRev} />;
-}
 
 /**
  * TODAY'S VIEWS IN THE FRAME'S WIDE PANE: the one body every place of today's shares, fed the inputs the adapter read
@@ -2191,7 +2174,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             ) : null}
 
             {effectiveView === "search" ? (
-              <SearchViewLive
+              <SearchView
                 engine={engine}
                 now={now}
                 query={searchQuery}

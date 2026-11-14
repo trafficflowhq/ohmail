@@ -184,7 +184,7 @@ export function hostFromTodaysInputs(
       foldersStorable: consent === NONE ? CANNOT.foldersStorable : consent.foldersStorable,
       firstRunDoor: props.firstRun?.door ?? CANNOT.firstRunDoor,
     },
-    features: { ...features, places: frame.places, stages: frame.stages } as HostContract["features"],
+    features: { ...features, places: frame.places, stages: frame.stages, overs: frame.overs, reader: NONE } as HostContract["features"],
     device: {
       build: support
         ? { surface: support.surface, version: support.version ?? null, commit: support.commit ?? null, mailtoLeaves: support.mailtoLeaves !== false }
@@ -198,6 +198,7 @@ export function hostFromTodaysInputs(
       hostConnection: props.hostConnection ? constant(props.hostConnection) : NONE,
       linkIn,
       sessionState: NONE, copyAge: NONE, access: NONE, updateOffer: NONE, droppedFiles: NONE,
+      posture: NONE, insets: NONE, keyboard: NONE, back: NONE, wake: NONE,
     },
   } as HostContract;
 }

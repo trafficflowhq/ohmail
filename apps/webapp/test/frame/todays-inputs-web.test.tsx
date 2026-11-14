@@ -19,17 +19,17 @@ vi.mock("../../app/hello", async () => {
 
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
-  places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
+  places: named("places"), stages: named("stages"), overs: named("overs"), address: named("address"), window: named("window"),
   appearance: named("appearance"), recover: NONE,
 } as FrameSupplies;
 const engine = named<HostContract["engine"]>("engine");
 
-async function inputsOf(selfHost: boolean, server = { pairing: true, remoteImages: false }) {
+async function inputsOf(selfHost: boolean, server = { pairing: true, remoteImages: false, searchPeople: false }) {
   return (await hostOf(selfHost, server)).read;
 }
 
 /** The web's host as the page builds it, and what the adapter reads back off it. */
-async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages: false }) {
+async function hostOf(selfHost: boolean, server = { pairing: true, remoteImages: false, searchPeople: false }) {
   flavor.selfHost = selfHost;
   vi.resetModules();
   const { useWebHost } = await import("../../app/(product)/mailbox/web-supplies");
@@ -103,7 +103,7 @@ describe("the web's host, read back as today's inputs", () => {
   });
 
   it("where the server pairs nothing, Settings has no Devices", async () => {
-    const { inputs } = await inputsOf(false, { pairing: false, remoteImages: false });
+    const { inputs } = await inputsOf(false, { pairing: false, remoteImages: false, searchPeople: false });
     expect(inputs.devicesSection).toBeUndefined();
   });
 

@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -216,6 +216,81 @@ describe("Recipients", () => {
     expect(screen.queryByRole("button", { name: "Remove Ben Arnold" })).toBeNull();
     expect((screen.getByRole("textbox", { name: "To" }) as HTMLInputElement).readOnly).toBe(true);
   });
+
+  it("offers the people a line can take while it is typed in: the name over the address, the first one on", () => {
+    const [onTake, onCommit] = [vi.fn(), vi.fn()];
+    const TIM = { id: "tim", name: "Tim Berger", address: "tim@gassenblatt.example", tag: "wrote to you" };
+    const PEOPLE = [{ id: "ben", name: "Ben Arnold", address: "ben@lichtgrat.example" }, TIM];
+    function Typing() {
+      const [typed, setTyped] = useState("");
+      return (
+        <Recipients
+          lines={[{ id: "to", label: "To", people: [], typed }, LINES[1]!]}
+          onType={(_line, value) => setTyped(value)}
+          onCommit={onCommit}
+          suggest={{
+            label: "Address suggestions",
+            people: (text, line) => (line === "to" && text ? PEOPLE : []),
+            onTake,
+          }}
+        />
+      );
+    }
+    render(<Typing />);
+    const to = screen.getByRole("combobox", { name: "To" });
+    const press = (key: string) => {
+      const event = createEvent.keyDown(to, { key });
+      fireEvent(to, event);
+      return event;
+    };
+    expect(screen.queryByRole("listbox")).toBeNull();
+    fireEvent.change(to, { target: { value: "be" } });
+    const list = screen.getByRole("listbox", { name: "Address suggestions" });
+    expect(to.getAttribute("aria-controls")).toBe(list.id);
+    const [ben, tim] = within(list).getAllByRole("option");
+    expect([ben!.getAttribute("aria-selected"), tim!.getAttribute("aria-selected")]).toEqual([
+      "true",
+      "false",
+    ]);
+    expect(to.getAttribute("aria-activedescendant")).toBe(ben!.id);
+    const says = ben!.textContent!;
+    expect(says.indexOf("Ben Arnold")).toBeGreaterThan(-1);
+    expect(says.indexOf("ben@lichtgrat.example")).toBeGreaterThan(says.indexOf("Ben Arnold"));
+    expect([...ben!.querySelectorAll("b")].map((b) => b.textContent)).toEqual(["Be", "be"]);
+    expect(within(tim!).getByText("wrote to you")).toBeTruthy();
+
+    press("Enter");
+    expect(onTake).toHaveBeenLastCalledWith("to", PEOPLE[0]);
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(screen.queryByRole("listbox")).toBeNull();
+
+    fireEvent.change(to, { target: { value: "ber" } });
+    press("ArrowDown");
+    expect(press("Tab").defaultPrevented).toBe(true);
+    expect(onTake).toHaveBeenLastCalledWith("to", TIM);
+
+    fireEvent.change(to, { target: { value: "b" } });
+    fireEvent.click(screen.getAllByRole("option")[1]!);
+    expect(onTake).toHaveBeenCalledTimes(3);
+
+    fireEvent.change(to, { target: { value: "be" } });
+    press("Escape");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    press("Enter");
+    expect(onCommit).toHaveBeenCalledWith("to", "be");
+    expect(onTake).toHaveBeenCalledTimes(3);
+  });
+
+  it("is a plain place to type where no people are offered, and offers none while the letter sends", () => {
+    const people = vi.fn(() => [{ id: "ben", name: "Ben Arnold", address: "ben@lichtgrat.example" }]);
+    const { rerender } = render(<Recipients lines={LINES} />);
+    expect(screen.getByRole("textbox", { name: "To" })).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    rerender(<Recipients lines={LINES} locked suggest={{ label: "Address suggestions", people }} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "To" }), { target: { value: "be" } });
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(people).not.toHaveBeenCalled();
+  });
 });
 
 describe("Composer", () => {
@@ -299,6 +374,156 @@ describe("Composer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove signature" }));
     expect(onOff).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("region", { name: "New message" }).getAttribute("aria-busy")).toBe("true");
+  });
+
+  it("draws the signature as words alone while the letter is held by an earlier send, as while it goes", () => {
+    const signature = { label: "Signature", text: "Mila Brunner" };
+    const { rerender } = render(<Composer {...frame({ signature: { ...signature, locked: true } })} />);
+    expect(screen.queryByRole("textbox", { name: "Signature" })).toBeNull();
+    expect(screen.getByText("Mila Brunner")).toBeTruthy();
+    rerender(<Composer {...frame({ signature })} />);
+    expect(screen.getByRole("textbox", { name: "Signature" }).textContent).toBe("Mila Brunner");
+  });
+
+  it("draws a formatted signature as it will be sent, with no field to type in: the way to its words is a press of its own", () => {
+    const [onText, onOff, onSigned] = [vi.fn(), vi.fn(), vi.fn()];
+    const signature = {
+      label: "Signature",
+      text: "Mila Brunner\nLichtgrat",
+      onChange: onSigned,
+      remove: { label: "Remove signature", onPress: onOff },
+    };
+    const formatted = (
+      <p>
+        <strong>Mila Brunner</strong>
+        <br />
+        Lichtgrat
+      </p>
+    );
+    const asText = { word: "Edit as text", label: "Edit as text: its formatting goes", onPress: onText };
+    const { rerender } = render(<Composer {...frame({ signature: { ...signature, formatted, asText } })} />);
+    /* Nothing here takes keys: no key can cost the formatting. */
+    expect(screen.queryByRole("textbox", { name: "Signature" })).toBeNull();
+    const signed = screen.getByRole("group", { name: "Signature" });
+    expect(within(signed).getByText("Mila Brunner")).toBeTruthy();
+    const way = screen.getByRole("button", { name: "Edit as text: its formatting goes" });
+    expect(way.textContent).toBe("Edit as text");
+    fireEvent.click(way);
+    expect(onText).toHaveBeenCalledTimes(1);
+    expect(onSigned).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Remove signature" }));
+    expect(onOff).toHaveBeenCalledTimes(1);
+    /* The app answers the press with the words alone: the field, as it was. */
+    rerender(<Composer {...frame({ signature })} />);
+    expect(screen.getByRole("textbox", { name: "Signature" }).textContent).toBe("Mila Brunner\nLichtgrat");
+    expect(screen.queryByRole("button", { name: /Edit as text/ })).toBeNull();
+    /* While the letter goes or is held, the formatted signature stands and its way to the words is not offered. */
+    for (const fixed of [{ going: true }, { signature: { ...signature, formatted, asText, locked: true } }]) {
+      rerender(<Composer {...frame({ signature: { ...signature, formatted, asText }, ...fixed })} />);
+      expect(within(screen.getByRole("group", { name: "Signature" })).getByText("Mila Brunner")).toBeTruthy();
+      expect(screen.queryByRole("button", { name: /Edit as text/ })).toBeNull();
+      expect(screen.queryByRole("textbox", { name: "Signature" })).toBeNull();
+    }
+  });
+
+  it("draws the words that stand for a text not yet written, unsaid, and only while they are handed", () => {
+    const { rerender } = render(
+      <Composer {...frame({ children: <div />, placeholder: "Write your message" })} />,
+    );
+    const words = screen.getByText("Write your message");
+    /* The editor names its own placeholder to a screen reader; the drawn words are not said a second time. */
+    expect(words.closest('[aria-hidden="true"]')).not.toBeNull();
+    rerender(<Composer {...frame({ children: "Buongiorno" })} />);
+    expect(screen.queryByText("Write your message")).toBeNull();
+  });
+
+  it("hands a pressed mark its own element, so that what the mark opens can come out of it", () => {
+    const onLink = vi.fn();
+    render(
+      <Composer
+        {...frame({
+          marks: {
+            label: "Formatting",
+            groups: [[{ id: "link", label: "Link", icon: "link", onPress: onLink }]],
+          },
+        })}
+      />,
+    );
+    const link = screen.getByRole("button", { name: "Link" });
+    fireEvent.click(link);
+    expect(onLink).toHaveBeenCalledTimes(1);
+    expect(onLink).toHaveBeenCalledWith(link);
+  });
+
+  it("hands the signature's words over while they are typed, not only when the field loses the keys", () => {
+    const onSigned = vi.fn();
+    function Signed() {
+      const [text, setText] = useState("Mila Brunner");
+      const kept = (words: string) => {
+        onSigned(words);
+        setText(words);
+      };
+      return <Composer {...frame({ signature: { label: "Signature", text, onChange: kept } })} />;
+    }
+    render(<Signed />);
+    const signed = screen.getByRole("textbox", { name: "Signature" });
+    signed.textContent = "Mila Brunner, on the road";
+    fireEvent.input(signed);
+    expect(onSigned).toHaveBeenLastCalledWith("Mila Brunner, on the road");
+    expect(signed.textContent).toBe("Mila Brunner, on the road");
+    /*
+     * What this holds: the words are handed over by the input itself, once, before any blur. That a send by the
+     * keyboard from inside the field then carries them is the form's own case: no key is pressed here.
+     */
+    expect(onSigned).toHaveBeenCalledTimes(1);
+    fireEvent.blur(signed);
+    expect(onSigned).toHaveBeenLastCalledWith("Mila Brunner, on the road");
+  });
+
+  it("hands over a signature typed down to nothing as it is typed, and the field stands for the next letter", () => {
+    const onSigned = vi.fn();
+    function Signed() {
+      const [text, setText] = useState("M");
+      const kept = (words: string) => {
+        onSigned(words);
+        setText(words);
+      };
+      return <Composer {...frame({ signature: { label: "Signature", text, onChange: kept } })} />;
+    }
+    render(<Signed />);
+    const signed = screen.getByRole("textbox", { name: "Signature" });
+    signed.textContent = "";
+    fireEvent.input(signed);
+    /* An empty field is words too: what a form makes of "typed down to nothing" is the form's to decide, and when. */
+    expect(onSigned.mock.calls).toEqual([[""]]);
+    expect(screen.getByRole("textbox", { name: "Signature" })).toBe(signed);
+    signed.textContent = "Mila";
+    fireEvent.input(signed);
+    expect(onSigned).toHaveBeenLastCalledWith("Mila");
+  });
+
+  it("writes the signature anew when it is changed from outside, and leaves the field alone while it holds the same words", () => {
+    const { rerender } = render(<Composer {...frame({ signature: { label: "Signature", text: "Mila" } })} />);
+    const signed = screen.getByRole("textbox", { name: "Signature" });
+    /* Whatever writes into the field moves the caret out of the person's hand: it is counted. */
+    const written = new MutationObserver(() => {});
+    written.observe(signed, { characterData: true, childList: true, subtree: true });
+    rerender(<Composer {...frame({ signature: { label: "Signature", text: "Mila" } })} />);
+    expect(written.takeRecords()).toEqual([]);
+    signed.textContent = "Mila B";
+    written.takeRecords();
+    rerender(<Composer {...frame({ signature: { label: "Signature", text: "Mila B" } })} />);
+    expect(written.takeRecords()).toEqual([]);
+    rerender(<Composer {...frame({ signature: { label: "Signature", text: "Lichtgrat" } })} />);
+    expect(signed.textContent).toBe("Lichtgrat");
+    rerender(<Composer {...frame({ signature: { label: "Signature", text: "Mila" } })} />);
+    expect(signed.textContent).toBe("Mila");
+    rerender(
+      <Composer {...frame({ going: true, signature: { label: "Signature", text: "Mila Brunner" } })} />,
+    );
+    expect(screen.queryByRole("textbox", { name: "Signature" })).toBeNull();
+    rerender(<Composer {...frame({ signature: { label: "Signature", text: "Mila Brunner" } })} />);
+    expect(screen.getByRole("textbox", { name: "Signature" }).textContent).toBe("Mila Brunner");
   });
 
   it("keeps a draft's files in its box: a way off each, a picture's small look, and a heading over what was forwarded", () => {

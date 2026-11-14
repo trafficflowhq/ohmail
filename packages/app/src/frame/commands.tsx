@@ -9,14 +9,16 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useRef,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import type { ToastFn } from "@ohmail/app-logic/press/report";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 import type { LinkedDraft } from "../host/index.js";
-import type { FrameApi, FrameNotice, RailModel } from "./contract.js";
-import type { Feed } from "./feeds.js";
+import type { FrameApi, FrameNotice, OfferFeed, OfferSource, PaletteOffer, RailModel } from "./contract.js";
+import { useSignal, type Feed } from "./feeds.js";
+import { shapeOf, type OfferStore } from "./offers.js";
 import type { NoticeStore } from "./notice-store.js";
 
 /** What the shell's views know of the connection that the contract does not carry. */
@@ -62,6 +64,8 @@ export interface FrameInner {
   readonly railOpen: readonly [boolean, Dispatch<SetStateAction<boolean>>];
   /** The parts whose selection's bar stands now, by their own id. */
   readonly bars: Feed<readonly string[]>;
+  /** The palette's offers, by the part that hands them. */
+  readonly offers: OfferStore;
 }
 
 export const FrameContext = createContext<FrameInner | null>(null);
@@ -127,6 +131,32 @@ export function useSelectionBar(shown: boolean): void {
 /** Whether the whole rail stands over the app: today's views read it as they read their own state. */
 export function useRailOpen(): readonly [boolean, Dispatch<SetStateAction<boolean>>] {
   return useInner().railOpen;
+}
+
+/**
+ * A product's commands for the palette while the caller is mounted; they go with it. `onScreen` says whether this
+ * product's place is the one on screen (its commands then come first). The feed changes only when the offers'
+ * shape does; `read()` hands the newest offers, so a press runs this render's `run`, never a kept one.
+ */
+export function usePaletteOffers(
+  source: OfferSource,
+  offers: readonly PaletteOffer[],
+  onScreen: boolean,
+): void {
+  const store = useInner().offers;
+  const part = useId();
+  const latest = useRef(offers);
+  latest.current = offers;
+  const shape = shapeOf(offers);
+  useLayoutEffect(() => {
+    store.post(part, { source, onScreen, shape, read: () => latest.current });
+  }, [store, part, source, onScreen, shape]);
+  useLayoutEffect(() => () => store.post(part, null), [store, part]);
+}
+
+/** Every product's offers now, the source on screen first, then `OFFER_SOURCES`' order. */
+export function usePaletteFeeds(): readonly OfferFeed[] {
+  return useSignal(useInner().offers.feeds);
 }
 
 /** The letter handed to `write`, once: a second call returns null. */

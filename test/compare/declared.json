@@ -1,5 +1,95 @@
 [
   {
+    "key": "ask=factor&err=code&how=code&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=locked&how=code&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=lost&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=mismatch&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=passkey&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=pendingout&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=recovery&how=recovery&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=refused&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=slowed&how=code&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&err=unchecked&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&for=password&screen=settings&sec=account&state=password",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&how=code&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&how=recovery&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&screen=settings&sec=invites",
+    "reason": "Invites says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint; the verb that makes an invite stands on its sheet until Settings' column has a foot for verbs. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "ask=factor&screen=settings&sec=security",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The second factor's dialog over the pane is the doors' (the kit's dialog, its words the catalogue's); its way and its refusal are reached by a person's presses on the page, and a refused code stays in its field. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "copy=failed&screen=settings&sec=devices&state=pair",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The link on show waits for the kit's part to scan a link and the layout around it; the link is printed for a device with no camera, as the shipped pane prints it; Revoke stands in the list of codes not used, Done on the sheet, and the shipped fine print under it, since a made link carries no time. A copy that did not go through is the sheet's own want, where the picture draws a warning note. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "copy=failed&screen=settings&sec=invites&state=made",
+    "reason": "Invites says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint; the verb that makes an invite stands on its sheet until Settings' column has a foot for verbs. The invite on show waits for the kit's part to scan a link and the layout around it; Revoke stands in the list of open invites and Done on the sheet; a made invite carries no day, so its days stand on its line in the list alone. A copy that did not go through is the sheet's own want, where the picture draws a warning note. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "device=fold&screen=approve",
     "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
     "since": "2026-11-15",
@@ -174,6 +264,11 @@
     "since": "2026-11-15"
   },
   {
+    "key": "device=phone&nat=hostsignout&screen=settings&sec=account",
+    "reason": "On the paired page the body is the sign-out alone, asked first with the paired page's shipped sentences, where the picture draws the whole pane behind the question. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "device=phone&screen=approve",
     "reason": "The small \"oh.\" a page opened cold carries where a way back would stand (decided by the inbox's recommendation); the reference has no picture of it yet and the studio is asked to draw it.",
     "since": "2026-11-15",
@@ -270,6 +365,46 @@
     "key": "device=phone&screen=wall",
     "reason": "At the phone's and the unfolded phone's sizes the reference draws the phone app's wall (its Servers), which is the phone screens' task; the web's wall at these sizes is compared there.",
     "since": "2026-11-15"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=account",
+    "reason": "The card is drawn as its picture draws it; whether its sentence is said as it appears is no picture's to show. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=devices",
+    "reason": "The card is drawn as its picture draws it; whether its sentence is said as it appears is no picture's to show. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=devices&state=nobrowser",
+    "reason": "The card is drawn as its picture draws it; whether its sentence is said as it appears is no picture's to show. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=security",
+    "reason": "The card is drawn as its picture draws it; whether its sentence is said as it appears is no picture's to show. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=subscription",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=subscription&state=managefailed",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=subscription&state=managelink",
+    "reason": "The window's own step, the made address shown as a link, is the desktop's; the page does not draw it. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "door=cloud&screen=settings&sec=subscription&state=managing",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The web keeps Manage, off, while the account page's address is made, where the window says it is asking. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
   },
   {
     "key": "face=ohmarchy&scheme=dark&screen=approve",
@@ -650,6 +785,71 @@
         "name": "Read the self-host guide"
       }
     ]
+  },
+  {
+    "key": "gate=blocked&screen=settings&sec=account",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. A sign-out that stayed says the shipped sentence on the pane's sheet, where the picture draws a dialog with reworded sentences. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "gate=refused&screen=settings&sec=account",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. On a server's refusal the shipped sign-out leaves and the sign-in page says so: no state of the pane says that sentence, so the sign-out is drawn on its way. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "gate=unverified&screen=settings&sec=account",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. A sign-out that stayed says the shipped sentence on the pane's sheet, where the picture draws a dialog with reworded sentences. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=avg&screen=settings&sec=storage",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=avgdefault&screen=settings&sec=storage",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=drop&screen=settings&sec=storage&state=held",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=droppaid&screen=settings&sec=storage&state=held",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=incomplete&screen=settings&sec=storage",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=keptsome&screen=settings&sec=storage&state=full",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=mailfailed&screen=settings&sec=storage",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "keeps=trialroom&screen=settings&sec=storage",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "note=nothing&screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. That nothing ran is the shipped sentence on the pane's sheet, where the picture draws a notice in the dock. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "note=window&screen=settings&sec=security",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. That the window closed is the shipped sentence on the pane's sheet, where the picture draws a notice in the dock. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
   },
   {
     "key": "scheme=dark&screen=approve",
@@ -1143,6 +1343,221 @@
         "name": ""
       }
     ]
+  },
+  {
+    "key": "screen=settings&sec=account",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=password",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwcancelled",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwconflict",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwdone",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwdone0",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwdone1",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwlocked",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwlong",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwrefused",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwsame",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwslowed",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwworking",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=pwwrong",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=account&state=refused",
+    "reason": "The head is the address the session answers, with its tag at its end and no line above it; Sign out stands on its sheet with what it does, until Settings' column has a foot for verbs. The form's answers stand on the form; its blanks are drawn empty, as every attempt empties them, where the picture keeps them filled; its sentences are the shipped ones where the picture rewords them; its Cancel is off while a change is on its way or its factor is asked. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=devices",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=devices&state=codes",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The code not used yet stands in its own list with its Revoke, as the shipped pane lists it. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=devices&state=dvfailed",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The sheet that adds a device stands above the list being read; a read that failed says its reason on that sheet, where the picture says only that the list could not be loaded. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=devices&state=dvloading",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The sheet that adds a device stands above the list being read; a read that failed says its reason on that sheet, where the picture says only that the list could not be loaded. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=devices&state=pair",
+    "reason": "Devices says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint, which the picture leaves out; the verb that adds stands on its sheet until Settings' column has a foot for verbs; this browser's tag is the shipped word; each device's kind and days stand in a note under its line, not as its value; a removal is asked in the kit's dialog. The link on show waits for the kit's part to scan a link and the layout around it; the link is printed for a device with no camera, as the shipped pane prints it; Revoke stands in the list of codes not used, Done on the sheet, and the shipped fine print under it, since a made link carries no time. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=invites",
+    "reason": "Invites says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint; the verb that makes an invite stands on its sheet until Settings' column has a foot for verbs. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=invites&state=made",
+    "reason": "Invites says what the shipped pane says: the name's blank is named by the shipped question and keeps its lead and its hint; the verb that makes an invite stands on its sheet until Settings' column has a foot for verbs. The invite on show waits for the kit's part to scan a link and the layout around it; Revoke stands in the list of open invites and Done on the sheet; a made invite carries no day, so its days stand on its line in the list alone. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=security",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=security&state=codes",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The new codes stand one a line until the kit has a grid of codes, with no Copy and no count; Done stands on the sheet, and the line's verb is away while they stand. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=security&state=nocodes",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=security&state=totp",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The new authenticator's key is a line to type from until the kit has a part to scan it and a line to copy it from; the line's verb is away while the key stands. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=security&state=totpkey",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The new authenticator's key is a line to type from until the kit has a part to scan it and a line to copy it from; the line's verb is away while the key stands. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=security&state=totpon",
+    "reason": "Security says whether unused recovery codes exist, not how many, where the picture counts them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=storage",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=storage&state=full",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=storage&state=info",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. No card stands behind the info mark until the kit has one. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=storage&state=near",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=storage&state=near&store=1",
+    "reason": "Storage draws its figures with the nearest parts until the kit has a figure line, a bar to scale, a table of figures and a plan's line; its verbs stand on the plans' sheet; it says letters where the design says messages, and the shipped sentences where the design's card of what counts and its plan lines reword them. Where the build may not link out, the shipped sentence names where the plan is managed, where the design says to open it in a browser. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=active",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=canceled",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=incomplete",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. A payment not completed is drawn as overdue, with no day. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=info",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. No card stands behind the info mark until the kit has one. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=managefailed",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=noplan",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=overdue",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=trialended",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "screen=settings&sec=subscription&state=unpaid",
+    "reason": "The trial's strip of days and the budget left are not drawn, and neither are the days a plan renews or a period ended: no answer of the server's says them; the press's line is the shipped Subscription line with Manage where the design names payment and invoices; Subscribe stands on the plans' sheet until Settings' column has a foot for verbs. The plans and their prices are the page's own read: the web's door answers none until the server's read of the plans is there. The menu beside the section is Settings' own, and so are its summaries; the calendar's group in it is the calendar's.",
+    "since": "2026-11-17"
   },
   {
     "key": "screen=signedout",
@@ -2794,6 +3209,21 @@
    {"role": "separator", "name": "List width"},
    {"role": "img", "name": "4 people: Reto Frei, you, Lea Brunner and Tim Berger"}
   ]
+ },
+ {
+  "key": "device=phone&screen=ohbox&show=swipe-read",
+  "reason": "the drawn travel: at the reference's 96 the phone draws 82.67 against its 80 (a third past 76, at most 88, the phone's own arithmetic), eased a second time by the kit's row until the kit stands the row at `pulled` with no easing of its own; the studio's simulation draws 0.2 up to 260 (core.js:2513), a row for the studio; the reading column is the reader's until the reader lands; every difference declared for device=phone&screen=ohbox stands here too",
+  "since": "2026-11-17"
+ },
+ {
+  "key": "device=phone&screen=ohbox&show=swipe-later",
+  "reason": "the drawn travel: at the reference's 96 the phone draws 82.67 against its 80 (a third past 76, at most 88, the phone's own arithmetic), eased a second time by the kit's row until the kit stands the row at `pulled` with no easing of its own; the studio's simulation draws 0.2 up to 260 (core.js:2513), a row for the studio; the reading column is the reader's until the reader lands; every difference declared for device=phone&screen=ohbox stands here too",
+  "since": "2026-11-17"
+ },
+ {
+  "key": "device=phone&screen=ohbox&show=pulldown",
+  "reason": "the pull's mark: the room opens but no mark is drawn in it until the kit has its pull mark (the reference's pull dot); the reading column is the reader's until the reader lands; every difference declared for device=phone&screen=ohbox stands here too",
+  "since": "2026-11-17"
  },
  {
   "key": "device=phone&screen=ohbox",

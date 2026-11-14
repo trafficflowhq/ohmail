@@ -128,7 +128,7 @@ export function useAccountNotices(): readonly FrameNotice[] {
 
 /** What the page has learned before it builds the record: its hooks' answers, held by `CloudShell`. */
 export interface WebWords {
-  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean };
+  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean; readonly searchPeople: boolean };
   readonly invites: boolean;
   readonly subscriptionPage: boolean;
   readonly withdrawManage: () => void;
@@ -194,7 +194,7 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
   }), [words.resolve, words.confirmed, words.mailboxFacts, firstRun, features, frame]);
   return useMemo(() => webHost(engine, {
     selfHost: SELF_HOST_BUILD,
-    server: { pairing: server.pairing, remoteImages: server.remoteImages },
+    server: { pairing: server.pairing, remoteImages: server.remoteImages, searchPeople: server.searchPeople },
     invites,
     subscriptionPage,
     storageBlock,
@@ -203,5 +203,5 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     scope,
     account: confirmed,
     build: { version: process.env.NEXT_PUBLIC_APP_VERSION ?? null, commit: process.env.NEXT_PUBLIC_BUILD ?? null },
-  }, supplies), [engine, server.pairing, server.remoteImages, invites, subscriptionPage, storageBlock, scope, confirmed, supplies]);
+  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, invites, subscriptionPage, storageBlock, scope, confirmed, supplies]);
 }

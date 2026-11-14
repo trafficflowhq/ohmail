@@ -4,12 +4,16 @@
  * refuses it before anything is sent. Nothing a person typed becomes an address, a header or an id
  * here: the writer is handed typed drafts and what a reading stored.
  */
-import { eventTimeOf, parseRRule, type EventTime } from "@ohmail/cal-core";
+import { eventTimeOf, formatRRule, parseRRule, storedTimeOf, type EventTime, type RRule, type StoredTime, type ZoneSource } from "@ohmail/cal-core";
 import {
-  repeatProven, type EventChange, type EventDraft, type ProviderRefusal, type ProviderWord, type RepeatShape, type WriteRefusal,
-  type WriteReply, type WriteTarget,
+  clockOf, continuedSeries, endedRule, movedRule, offItsClock, sameTime, seriesProven, untilSkipped, type EventChange, type EventDraft, type ProofPlace,
+  type ProvenRepeats, type ProviderRefusal, type WriteRefusal, type WriteReply, type WriteTarget,
 } from "@ohmail/cal-providers";
-import { isSeriesRow, type CalendarWritePayload } from "@trafficflow/db/calendar";
+import {
+  CONTINUED_FIELDS, someoneElses, writeActRefusal, writeRowOf, type CalendarWriteContinuation, type CalendarWritePayload, type CalendarWriteRowFacts,
+  type ContinuedField,
+} from "@trafficflow/db/calendar";
+import { timeOfKey } from "./map.js";
 
 type Act = CalendarWritePayload["act"];
 type Fields = Extract<Act, { kind: "calendar_event_create" }>["event"];
@@ -22,16 +26,28 @@ export type WriteWord = ProviderRefusal | WriteRefusal | "content_refused";
  * The stored event a write names, as the drain read it under the account's binding. Its version is
  * not here: a write is sent under the version it was recorded on, which its own row keeps.
  */
-export interface StoredEvent {
+export interface StoredEvent extends CalendarWriteRowFacts {
   readonly providerId: string;
   readonly original: string | null;
-  /** What makes it a series or one day of one (`isSeriesRow`). */
-  readonly repeatRule: string | null;
-  readonly recurrenceId: string;
-  readonly addedDates: unknown;
+  /** The version of the copy the store holds now: a write goes under its own recorded one. */
+  readonly versionTag: string | null;
+  /** The first day's end as the row keeps it. */
+  readonly endKind: string | null;
+  readonly endLocal: string | null;
+  readonly endZone: string | null;
+  /** The days of its series that are not as its rule makes them (`changedDaysOf`): its excluded days and its changed days' rows. */
+  readonly changedDays: number;
   /** The account's own address among the event's invitees, where it has one. */
   readonly ownInvitee: string | null;
 }
+
+/** The start as the row keeps it: a series' first day. */
+const startOf = (e: StoredEvent): EventTime | null =>
+  eventTimeOf((e.startZone === null ? { kind: e.startKind, value: e.startLocal } : { kind: e.startKind, value: e.startLocal, zone: e.startZone }) as StoredTime);
+/** The first day's end as the row keeps it. */
+const endOf = (e: StoredEvent): EventTime | null =>
+  e.endKind === null || e.endLocal === null ? null
+    : eventTimeOf((e.endZone === null ? { kind: e.endKind, value: e.endLocal } : { kind: e.endKind, value: e.endLocal, zone: e.endZone }) as StoredTime);
 
 export type WriteCall =
   | { readonly kind: "create"; readonly draft: EventDraft }
@@ -39,6 +55,12 @@ export type WriteCall =
   | { readonly kind: "remove"; readonly target: WriteTarget }
   | { readonly kind: "answer"; readonly target: WriteTarget; readonly as: string; readonly reply: WriteReply }
   | { readonly kind: "move"; readonly target: WriteTarget; readonly to: string }
+  | { readonly kind: "end"; readonly target: WriteTarget }
+  /** The days of the series `from` names from its day `from.occurrence` on, made from that series' own component. */
+  | {
+      readonly kind: "continue"; readonly from: WriteTarget; readonly start: EventTime; readonly end: EventTime; readonly rule: RRule;
+      readonly change: EventChange;
+    }
   | { readonly kind: "refuse"; readonly reason: WriteWord };
 
 const timeOf = (t: Time): EventTime | null =>
@@ -56,6 +78,21 @@ export function draftOf(f: Fields, organizer: string | null): EventDraft | null 
     attendees: f.invitees.map((p) => ({ email: p.address, name: p.name, optional: p.role === "optional" })),
     alarms: [...f.alarms],
   };
+}
+
+/** Of a draft, the fields the person named for the days a press gives a series of their own, as a writer's change. */
+function namedChange(d: EventDraft, named: readonly ContinuedField[]): EventChange {
+  const out: { -readonly [K in keyof EventDraft]?: EventDraft[K] } = {};
+  for (const f of named) {
+    if (f === "title") out.summary = d.summary;
+    if (f === "notes") out.description = d.description;
+    if (f === "place") out.location = d.location;
+    if (f === "callLink") out.url = d.url;
+    if (f === "busy") out.busy = d.busy;
+    if (f === "private") out.private = d.private;
+    if (f === "alarms") out.alarms = [...d.alarms];
+  }
+  return out;
 }
 
 /** A change's fields as a writer's change, or `null` for fields this version cannot turn into one. */
@@ -100,40 +137,177 @@ function targetOf(e: StoredEvent, base: string | null): WriteTarget | null {
 
 const REPLY = { accepted: "ACCEPTED", tentative: "TENTATIVE", declined: "DECLINED" } as const;
 
+const sameStored = (a: Time, t: EventTime): boolean => {
+  const b = storedTimeOf(t);
+  return a.kind === b.kind && a.value === b.value && (a.zone ?? null) === (b.zone ?? null);
+};
+
+/**
+ * Is this row one of the shapes a press is recorded in (the door's rows), so that no part of a press
+ * goes out of its press? A change of a day and the days after it only as the first of two parts
+ * (its own key the press's) with its second there; their removal only alone (the series' end, no
+ * part); a press's second part only as the new series after that press's own first (`firstKey`: the
+ * key of the row it waits for), under the press's key and `:2`, where that first ended the series at
+ * the very day the second goes on from (`firstEnded`: the day its applied row keeps); every other act
+ * as no part at all. A row of another shape is no door's, and nothing of it is sent.
+ */
+export function pressShaped(o: {
+  readonly act: Act; readonly part: CalendarWritePayload["part"]; readonly key: string; readonly firstKey: string | null; readonly second: boolean;
+  readonly firstEnded: string | null;
+}): boolean {
+  const { act, part } = o;
+  const following = "scope" in act && act.scope.kind === "following";
+  if (following && act.kind === "calendar_event_update") return part !== null && part.n === 1 && part.of === o.key && o.second;
+  if (following || part === null) return part === null;
+  return part.n === 2 && act.kind === "calendar_event_create" && part.from !== undefined && o.key === `${part.of}:2` && o.firstKey === part.of
+    && o.firstEnded === part.from.at;
+}
+
+/**
+ * Is the second part of a press on a day and the days after it the one this first part makes: from
+ * this very series, from that day, naming what the person named, as the person named it? Asked of
+ * every first part, whatever copy the store holds; a second part that is not is never sent, and
+ * neither is its first.
+ */
+export function secondPartIsThePress(first: Extract<Act, { kind: "calendar_event_update" }>, second: CalendarWritePayload): boolean {
+  const made = second.act;
+  const from = second.part?.from;
+  if (made.kind !== "calendar_event_create" || first.scope.kind !== "following" || from === undefined) return false;
+  const named = CONTINUED_FIELDS.filter((f) => first.change[f] !== undefined);
+  if (from.at !== first.scope.at || from.eventId !== first.eventId || [...from.named].sort().join() !== [...named].sort().join()) return false;
+  return !named.some((f) => JSON.stringify(made.event[f]) !== JSON.stringify(first.change[f]));
+}
+
+/**
+ * Is the second part of a press on a day and the days after it the series that press makes of the
+ * series as it stands (`continuedSeries`, the door's own reckoning): its start, its end and its
+ * repeat (a count going on with what is left, an end on a day moved with a new time)? A second part
+ * that is not is never sent, and neither is its first.
+ */
+export function secondPartHolds(
+  event: StoredEvent, first: Extract<Act, { kind: "calendar_event_update" }>, second: CalendarWritePayload, zones: ZoneSource,
+): boolean {
+  const made = second.act;
+  if (made.kind !== "calendar_event_create" || first.scope.kind !== "following" || !secondPartIsThePress(first, second)) return false;
+  const start = startOf(event);
+  const end = endOf(event);
+  const rule = event.repeatRule === null ? null : parseRRule(event.repeatRule);
+  const at = /^\d{1,16}$/.test(first.scope.at) ? Number(first.scope.at) : Number.NaN;
+  if (start === null || end === null || rule === null || !Number.isSafeInteger(at)) return false;
+  const c = first.change;
+  const times = {
+    ...(c.start === undefined ? {} : { start: timeOf(c.start) ?? undefined }),
+    ...(c.end === undefined ? {} : { end: timeOf(c.end) ?? undefined }),
+    ...(c.repeat === undefined || c.repeat === null ? {} : { rule: parseRRule(c.repeat) ?? undefined }),
+  };
+  const next = continuedSeries({ first: start, firstEnd: end, rule }, at, times, zones);
+  return next !== null && sameStored(made.event.start, next.start) && sameStored(made.event.end, next.end)
+    && made.event.repeat === formatRRule(next.rule);
+}
+
 /**
  * The call a recorded act makes, or the word that refuses it before anything leaves. `base` is the
  * row's `base_version_tag`; `organizer` the account's own address, where it has one; `to` the
- * destination calendar's provider id, for a move.
+ * destination calendar's provider id, for a move. A repeat is written only in a shape proven at the
+ * connection's place (`place`: its provider's word, or a CalDAV server's own host), from a start the
+ * rule names (`seriesProven`).
  */
 export function writeCallOf(o: {
-  readonly provider: ProviderWord;
+  readonly place: ProofPlace | null;
   readonly act: Act;
   readonly event: StoredEvent | null;
   readonly base: string | null;
   readonly organizer: string | null;
+  /** Whose an event is, lower case: the account's mailboxes by the one own set, and the connection's principal. */
+  readonly owners: ReadonlySet<string>;
   readonly to: string | null;
-  readonly proven?: Readonly<Record<ProviderWord, readonly RepeatShape[]>>;
+  readonly zones: ZoneSource;
+  /** Now, in epoch milliseconds: a series' days are held against the clock times its zone skips from today on. */
+  readonly now: number;
+  readonly proven?: ProvenRepeats;
+  /**
+   * The second half of a press on a day and the days after it: where it comes from, and that series
+   * as the store holds it (`null`: gone from the store). Its new series is made from that series'
+   * own component, never from the act's fields alone.
+   */
+  readonly continuation?: { readonly from: CalendarWriteContinuation; readonly source: StoredEvent | null };
 }): WriteCall {
   const { act } = o;
-  const unproven = (rule: EventDraft["rule"] | undefined): boolean => rule !== undefined && rule !== null && !repeatProven(o.provider, rule, o.proven);
+  const unproven = (rule: EventDraft["rule"] | undefined, start: EventTime | null): boolean =>
+    rule !== undefined && rule !== null && (start === null || !seriesProven(o.place, rule, start, o.zones, o.now, o.proven));
   if (act.kind === "calendar_event_create") {
     const draft = draftOf(act.event, o.organizer);
     if (draft === null) return { kind: "refuse", reason: "content_refused" };
-    if (unproven(draft.rule)) return { kind: "refuse", reason: "repeat_unsupported" };
-    return { kind: "create", draft };
+    if (unproven(draft.rule, draft.start)) return { kind: "refuse", reason: "repeat_unsupported" };
+    if (o.continuation === undefined) return { kind: "create", draft };
+    const { from, source } = o.continuation;
+    if (source === null) return { kind: "refuse", reason: "event_gone" };
+    // A new series goes out under the series' own organizer, so only a series of the account's own is carried on.
+    if (someoneElses(source, o.owners)) return { kind: "refuse", reason: "read_only" };
+    const cut = timeOfKey(from.at);
+    if (draft.rule === null || cut === null) return { kind: "refuse", reason: "content_refused" };
+    if (source.versionTag === null || source.versionTag === "") return { kind: "refuse", reason: "version_unknown" };
+    return {
+      kind: "continue", from: { id: source.providerId, version: source.versionTag, text: source.original, occurrence: cut },
+      start: draft.start, end: draft.end, rule: draft.rule, change: namedChange(draft, from.named),
+    };
   }
   if (o.event === null) return { kind: "refuse", reason: "event_gone" };
-  // A series, or one day of one, is written by no act of this version (no repeat is proven at a provider yet): a row recorded before the door refused such acts is not sent either.
-  if (isSeriesRow(o.event)) return { kind: "refuse", reason: "repeat_unsupported" };
-  // Only the record whole is written by this version: a day of a series waits for its own build.
-  if ("scope" in act && act.scope.kind !== "record") return { kind: "refuse", reason: "content_refused" };
-  const target = targetOf(o.event, o.base);
-  if (target === null) return { kind: "refuse", reason: "version_unknown" };
+  // What the door refuses on this row as it stands is not sent either: a row recorded before a check of the door's. Someone else's
+  // event takes the account's answer and nothing else, whatever the row says.
+  const why = writeActRefusal(o.event, act, o.event.changedDays, o.owners);
+  if (why !== null) return { kind: "refuse", reason: why.word };
+  // A series is written only where its own repeat, from its own start, is a shape the provider was proven to keep.
+  const stored = writeRowOf(o.event) === "series" ? parseRRule(o.event.repeatRule!) : null;
+  const first = startOf(o.event);
+  if (writeRowOf(o.event) === "series" && (stored === null || unproven(stored, first))) return { kind: "refuse", reason: "repeat_unsupported" };
+  // A day of the series whose clock time is not the series' own (the night its zone's clocks go forward over that time) is named by
+  // no write, one day or the days from it on, whatever today is: where it is written would be a guess. The door refuses the same.
+  const firstDayEnd = endOf(o.event);
+  const series = stored === null || first === null || firstDayEnd === null ? null : { first, firstEnd: firstDayEnd, rule: stored };
+  if ("scope" in act && act.scope.kind !== "record" && series !== null && offItsClock(series, act.scope.at, o.zones)) {
+    return { kind: "refuse", reason: "repeat_unsupported" };
+  }
+  // One day of the series, or the day the series ends before, is named by the time it was first at, as its key says it.
+  const day = "scope" in act && act.scope.kind !== "record" ? timeOfKey(act.scope.at) : null;
+  if ("scope" in act && act.scope.kind !== "record" && day === null) return { kind: "refuse", reason: "content_refused" };
+  const whole = targetOf(o.event, o.base);
+  if (whole === null) return { kind: "refuse", reason: "version_unknown" };
+  const target: WriteTarget = { ...whole, occurrence: day };
+  // A day and the days after it: the series ends before that day. Changed, those days are the second part of the press, a new series.
+  // The series as it stands after its end is a shape the place was proven to keep too: an end is a rule of its own.
+  // The series' end is made on the copy the press was made on: where the store holds another now, the writer reads the member and
+  // takes it as done only where it ends exactly as this press ends it.
+  if ("scope" in act && act.scope.kind === "following") {
+    const at = /^\d{1,16}$/.test(act.scope.at) ? Number(act.scope.at) : Number.NaN;
+    const ended = stored === null || first === null || !Number.isSafeInteger(at) ? null : endedRule(stored, first, at, o.zones);
+    if (ended === null || unproven(ended, first)) return { kind: "refuse", reason: "repeat_unsupported" };
+    // The days from that day on at a new time: their end moves with the time, which an end in the stretch the zone skips cannot
+    // (`untilSkipped`, the door's own reckoning through `continuedSeries`): nothing of the press is sent.
+    const cut = first === null ? null : clockOf(first, at, o.zones);
+    const moved = act.kind === "calendar_event_update" && act.change.start !== undefined ? timeOf(act.change.start) : null;
+    if (series !== null && cut !== null && moved !== null && !sameTime(cut, moved) && untilSkipped(series, o.zones)) {
+      return { kind: "refuse", reason: "repeat_unsupported" };
+    }
+    return { kind: "end", target: o.event.versionTag === o.base ? target : { ...target, text: null } };
+  }
   switch (act.kind) {
     case "calendar_event_update": {
-      const change = changeOf(act.change, o.organizer);
+      let change = changeOf(act.change, o.organizer);
       if (change === null) return { kind: "refuse", reason: "content_refused" };
-      if (unproven(change.rule)) return { kind: "refuse", reason: "repeat_unsupported" };
+      // A whole series' new start, with no repeat named, moves the series' end (UNTIL) with it, from the series as it stands
+      // now (behind a write of it that went first, too): its last day stays its last. Where it cannot be moved, nothing leaves.
+      if (target.occurrence === null && stored !== null && first !== null && change.start !== undefined && change.rule === undefined) {
+        const firstEnd = endOf(o.event);
+        const moved = firstEnd === null ? null : movedRule(stored, first, firstEnd, first, change.start, o.zones);
+        if (moved === null) return { kind: "refuse", reason: "repeat_unsupported" };
+        if (moved !== stored) change = { ...change, rule: moved };
+      }
+      // The series as it would stand after a change of the record: its repeat (the new one, or its own) from its start (the new
+      // one, or its own). One day's change moves that day alone; the series stands as it was, and was asked above.
+      if (target.occurrence === null && unproven(change.rule === undefined ? stored : change.rule, change.start ?? first)) {
+        return { kind: "refuse", reason: "repeat_unsupported" };
+      }
       return { kind: "change", target, change };
     }
     case "calendar_event_delete":

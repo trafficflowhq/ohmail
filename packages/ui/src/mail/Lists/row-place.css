@@ -199,7 +199,8 @@
   }
 
   :root[data-touch="1"] :is(.oh-row-place-word, .oh-row-place-more)::after {
-    --oh-row-place-reach: -12px -8px;
+    /* Further up than down: the cut at the row's foot takes some of the reach under it, and over it is the row's own room. */
+    --oh-row-place-reach: -16px -8px -12px;
 
     content: "";
     position: absolute;

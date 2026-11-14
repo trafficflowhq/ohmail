@@ -17,8 +17,10 @@ import type {
   Posture,
   WindowFacts,
 } from "../host/index.js";
+import type { OverId } from "./over-contract.js";
 
 export type { Appearance, Pointer, Posture, WindowFacts };
+export * from "./over-contract.js";
 
 export const PLACE_IDS = [
   "ohbox",
@@ -264,6 +266,8 @@ export interface FrameCommands {
   rail(open: boolean): void;
   /** A body that stands over the app (a stage not yet registered) holds the frame inert. */
   hold(held: boolean): void;
+  /** Stand one over (closing any other), or none. `go` closes it. */
+  over(id: OverId | null): void;
 }
 export interface FrameApi {
   readonly host: FrameHost;
@@ -271,6 +275,8 @@ export interface FrameApi {
   readonly plan: LayoutPlan;
   readonly commands: FrameCommands;
   readonly report: ToastFn;
+  /** The over that stands now, or null. */
+  readonly over: OverId | null;
 }
 
 /*

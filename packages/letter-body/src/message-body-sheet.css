@@ -1,0 +1,33 @@
+/* ───────────────────────────────────────────────────────────────────────────────────────
+   The body on the reader's sheet (`look="sheet"`): the sheet's measure, type and ground, from
+   the design's tokens. Every rule is scoped to `.mb[data-look="sheet"]`, so a body mounted
+   without the look is drawn exactly as `message-body.css` draws it.
+   ─────────────────────────────────────────────────────────────────────────────────────── */
+
+.mb[data-look="sheet"] {
+  gap: var(--s3);
+  color: var(--ink);
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+}
+
+/* A letter in the app's own type keeps the sheet's measure. */
+.mb[data-look="sheet"] > .msg-p,
+.mb[data-look="sheet"] > .msg-h,
+.mb[data-look="sheet"] > .msg-list,
+.mb[data-look="sheet"] > .msg-quote {
+  max-width: var(--measure);
+}
+
+/* A designed letter is its own paper from edge to edge of the sheet, as the kit draws one. */
+.mb[data-look="sheet"] .mb-sheet {
+  margin: 0 calc(var(--sheet-pad) * -1);
+  border-radius: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+/* The last thing on the sheet closes it: the paper takes the sheet's lower corners. */
+.mb[data-look="sheet"]:last-child .mb-sheet:last-child {
+  border-radius: 0 0 var(--r-sheet) var(--r-sheet);
+}

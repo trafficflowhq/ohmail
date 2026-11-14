@@ -10,11 +10,35 @@
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
     },
+    "./calendar/beside": {
+      "types": "./src/calendar/beside/index.ts",
+      "ohmail-source": "./src/calendar/beside/index.ts",
+      "node": "./dist/calendar/beside/index.js",
+      "default": "./src/calendar/beside/index.ts"
+    },
+    "./calendar/found": {
+      "types": "./src/calendar/found/index.ts",
+      "ohmail-source": "./src/calendar/found/index.ts",
+      "node": "./dist/calendar/found/index.js",
+      "default": "./src/calendar/found/index.ts"
+    },
+    "./calendar/invitations": {
+      "types": "./src/calendar/invitations/index.ts",
+      "ohmail-source": "./src/calendar/invitations/index.ts",
+      "node": "./dist/calendar/invitations/index.js",
+      "default": "./src/calendar/invitations/index.ts"
+    },
     "./calendar/port": {
       "types": "./src/calendar/port.ts",
       "ohmail-source": "./src/calendar/port.ts",
       "node": "./dist/calendar/port.js",
       "default": "./src/calendar/port.ts"
+    },
+    "./calendar/setup": {
+      "types": "./src/calendar/setup/index.ts",
+      "ohmail-source": "./src/calendar/setup/index.ts",
+      "node": "./dist/calendar/setup/index.js",
+      "default": "./src/calendar/setup/index.ts"
     },
     "./consent": {
       "types": "./src/consent/index.ts",
@@ -490,11 +514,23 @@
       "node": "./dist/press/undo-window.js",
       "default": "./src/press/undo-window.ts"
     },
+    "./reader": {
+      "types": "./src/reader/index.ts",
+      "ohmail-source": "./src/reader/index.ts",
+      "node": "./dist/reader/index.js",
+      "default": "./src/reader/index.ts"
+    },
     "./reading": {
       "types": "./src/reading/index.ts",
       "ohmail-source": "./src/reading/index.ts",
       "node": "./dist/reading/index.js",
       "default": "./src/reading/index.ts"
+    },
+    "./reading/body-arrival": {
+      "types": "./src/reading/body-arrival.ts",
+      "ohmail-source": "./src/reading/body-arrival.ts",
+      "node": "./dist/reading/body-arrival.js",
+      "default": "./src/reading/body-arrival.ts"
     },
     "./reading/conversation-on-screen": {
       "types": "./src/reading/conversation-on-screen.ts",
@@ -615,6 +651,12 @@
       "ohmail-source": "./src/screener/suggestion-overlay.ts",
       "node": "./dist/screener/suggestion-overlay.js",
       "default": "./src/screener/suggestion-overlay.ts"
+    },
+    "./search": {
+      "types": "./src/search/index.ts",
+      "ohmail-source": "./src/search/index.ts",
+      "node": "./dist/search/index.js",
+      "default": "./src/search/index.ts"
     },
     "./session": {
       "types": "./src/session/index.ts",
@@ -790,6 +832,12 @@
       "node": "./dist/text/idn.js",
       "default": "./src/text/idn.ts"
     },
+    "./text/live-copy": {
+      "types": "./src/text/live-copy.ts",
+      "ohmail-source": "./src/text/live-copy.ts",
+      "node": "./dist/text/live-copy.js",
+      "default": "./src/text/live-copy.ts"
+    },
     "./text/locale": {
       "types": "./src/text/locale.ts",
       "ohmail-source": "./src/text/locale.ts",
@@ -801,6 +849,18 @@
       "ohmail-source": "./src/text/translator.ts",
       "node": "./dist/text/translator.js",
       "default": "./src/text/translator.ts"
+    },
+    "./touch": {
+      "types": "./src/touch/index.ts",
+      "ohmail-source": "./src/touch/index.ts",
+      "node": "./dist/touch/index.js",
+      "default": "./src/touch/index.ts"
+    },
+    "./touch/row-swipe": {
+      "types": "./src/touch/row-swipe.ts",
+      "ohmail-source": "./src/touch/row-swipe.ts",
+      "node": "./dist/touch/row-swipe.js",
+      "default": "./src/touch/row-swipe.ts"
     },
     "./writing": {
       "types": "./src/writing/index.ts",

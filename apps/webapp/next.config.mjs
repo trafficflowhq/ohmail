@@ -695,7 +695,7 @@ const nextConfig = {
   //
   // The barrel and every other subpath stay node-only (mailparser, node:crypto) and must never be
   // imported from this app — `MessageBody.tsx` documents that boundary.
-  transpilePackages: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/testing", "@ohmail/client-engine", "@ohmail/app-logic", "@ohmail/app", "@trafficflow/core"],
+  transpilePackages: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/testing", "@ohmail/client-engine", "@ohmail/app-logic", "@ohmail/letter-body", "@ohmail/app", "@trafficflow/core"],
 
   // The one linter of this tree is `node tools/check.mjs`, with its baseline; the build checks the types only.
   eslint: { ignoreDuringBuilds: true },

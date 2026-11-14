@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -69,6 +70,23 @@ describe("the copy census — the scan itself", () => {
       expect(isProse(no), `${no} should not be prose`).toBe(false);
     }
   });
+
+  it("a string's own method called with a literal on a key is not a handed reader; a namespace's reader in a record is", () => {
+    const tree = fs.mkdtempSync(path.join(os.tmpdir(), "copy-census-"));
+    const write = (rel: string, text: string): void => {
+      fs.mkdirSync(path.dirname(path.join(tree, rel)), { recursive: true });
+      fs.writeFileSync(path.join(tree, rel), text);
+    };
+    write("apps/webapp/messages/en.json", JSON.stringify({ search: { title: "Search" } }));
+    const takes = 'import type { Translator } from "./text.js";\n';
+    write("src/route.ts", `${takes}export const route = (key: string): number => key.indexOf(".");\n`);
+    write("src/record.ts", `${takes}export const say = (text: Record<string, Translator>): string => text.search("title");\n`);
+    try {
+      expect(filesHandedAReader(tree, ["src"])).toEqual(["src/record.ts"]);
+    } finally {
+      fs.rmSync(tree, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("every user-visible string is either in the catalogue or dispositioned", () => {
@@ -124,7 +142,7 @@ describe("every key the code reads is in BOTH catalogues", () => {
    * so a key missing from `de.json` alone renders English rather than a raw key — quieter, and
    * exactly the half-English screen this lane exists to end.
    */
-  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/letter-body", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src"];
+  const KEY_ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src"];
   const cat = (lang: "en" | "de"): Record<string, unknown> =>
     JSON.parse(fs.readFileSync(path.join(REPO, `apps/webapp/messages/${lang}.json`), "utf8"));
   const EN = cat("en");

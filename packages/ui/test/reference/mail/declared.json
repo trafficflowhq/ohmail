@@ -471,6 +471,12 @@
     "plain": [".oh-settingssheet-title"]
   },
   {
+    "key": "SettingNote/warn",
+    "since": "2026-11-17",
+    "reason": "A note that warns is said when it appears: it is a status, as the account's panes asked of it. The reference prints the note as a plain paragraph. It is read without its role, so its words, its warning sign, its box and its drawing stand where the reference's stand and still bind.",
+    "plain": [".oh-settingnote"]
+  },
+  {
     "key": "SettingsSheet/look",
     "since": "2026-11-16",
     "reason": "A setting's line is a group named by its label (the settings ruling: every pane's line, and the journeys find About's build line as a group named by its label). The reference draws the line as a plain box. It is read without its role and name, so its words, its surfaces, its boxes, its drawing and the controls in it still bind.",

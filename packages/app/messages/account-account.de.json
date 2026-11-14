@@ -1,0 +1,11 @@
+{
+  "accountOwn": {
+    "signedIn": "Angemeldet",
+    "thisBrowser": "Dieser Browser",
+    "changeLabel": "Passwort",
+    "cancel": "Abbrechen",
+    "notRead": "Nicht gelesen",
+    "stillHere": "Noch da",
+    "notConfirmed": "Nicht bestätigt"
+  }
+}

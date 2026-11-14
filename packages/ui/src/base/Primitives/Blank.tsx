@@ -1,5 +1,6 @@
-import { useEffect, useRef, type Ref } from "react";
+import { useEffect, type Ref } from "react";
 import { animate } from "../../motion/motion.js";
+import { useBox } from "./secret.js";
 import "./sentence.css";
 
 /* A refused blank shakes its head once. The travel has no token yet. */
@@ -16,6 +17,10 @@ export interface BlankProps {
   label: string;
   /** What it wants, shown while it is empty. */
   placeholder: string;
+  /**
+   * What it holds. A password is written into no attribute of the page, whatever is handed here (`secret.ts`):
+   * a form may leave `value` out and take what was typed through `ref` at its press.
+   */
   value?: string;
   /** Its width in letters while it is empty. */
   size?: number;
@@ -52,22 +57,19 @@ export function Blank({
   onEscape,
   ref,
 }: BlankProps) {
-  const own = useRef<HTMLInputElement | null>(null);
+  const box = useBox(type === "password", value, ref);
+  const { own } = box;
   useEffect(() => {
     if (refused && own.current) animate(own.current, "shake", { ease: "--e-knock", keyframes: SHAKE });
-  }, [refused]);
+  }, [refused, own]);
   return (
     <input
-      ref={(el) => {
-        own.current = el;
-        if (typeof ref === "function") ref(el);
-        else if (ref) ref.current = el;
-      }}
+      ref={box.ref}
       className="oh-control oh-blank"
       type={type}
       name={name}
       inputMode={inputMode}
-      value={value}
+      value={box.value}
       size={size}
       placeholder={placeholder}
       aria-label={label}

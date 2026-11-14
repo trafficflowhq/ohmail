@@ -37,8 +37,8 @@ apps/desktop/src/DesktopScreeningWords.tsx	ohmail/package-borders:apps/webapp	1	
 apps/desktop/src/DesktopSettings.tsx	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/src/DesktopSettings.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/DesktopStorageNotice.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
-apps/desktop/src/DesktopSubscription.tsx	ohmail/declared-dependency	3	desktop-layer
-apps/desktop/src/DesktopSubscription.tsx	ohmail/package-borders:apps/webapp	5	desktop-layer
+apps/desktop/src/DesktopSubscription.tsx	ohmail/declared-dependency	4	desktop-layer
+apps/desktop/src/DesktopSubscription.tsx	ohmail/package-borders:apps/webapp	4	desktop-layer
 apps/desktop/src/DesktopUpdate.tsx	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/src/DesktopUpdate.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/DesktopWebSection.tsx	ohmail/declared-dependency	2	desktop-layer
@@ -48,8 +48,7 @@ apps/desktop/src/DoorChooser.tsx	ohmail/package-borders:apps/webapp	6	desktop-la
 apps/desktop/src/DoorProblem.tsx	ohmail/declared-dependency	2	desktop-layer
 apps/desktop/src/DoorProblem.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/src/GateNotice.tsx	ohmail/declared-dependency	1	desktop-layer
-apps/desktop/src/LinkAsk.tsx	ohmail/declared-dependency	2	desktop-layer
-apps/desktop/src/LinkAsk.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
+apps/desktop/src/LinkAsk.tsx	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/src/PreviewMark.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/src/boot-stamp.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/bridge-fetch.ts	ohmail/declared-dependency	5	desktop-layer
@@ -86,8 +85,8 @@ apps/desktop/src/local-suggest-run.ts	ohmail/package-borders:apps/webapp	2	deskt
 apps/desktop/src/local-suggest.tsx	ohmail/declared-dependency	2	desktop-layer
 apps/desktop/src/local-trash.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/mailbox-facts-wire.ts	ohmail/declared-dependency	1	desktop-layer
-apps/desktop/src/main.tsx	ohmail/declared-dependency	5	desktop-layer
-apps/desktop/src/main.tsx	ohmail/package-borders:apps/webapp	6	desktop-layer
+apps/desktop/src/main.tsx	ohmail/declared-dependency	6	desktop-layer
+apps/desktop/src/main.tsx	ohmail/package-borders:apps/webapp	5	desktop-layer
 apps/desktop/src/no-api-client.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/notify-host.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/src/omarchy-paint.ts	ohmail/declared-dependency	2	desktop-layer
@@ -114,7 +113,7 @@ apps/desktop/test/ai-provider-draft-disclosure.test.ts	ohmail/package-borders:ap
 apps/desktop/test/attachment-bytes-deadline.test.ts	ohmail/declared-dependency	2	desktop-layer
 apps/desktop/test/attachment-bytes-deadline.test.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/test/bridge-fetch.test.ts	ohmail/declared-dependency	3	desktop-layer
-apps/desktop/test/command-channel-egress.test.ts	ohmail/package-borders:apps/webapp	1	desktop-layer
+apps/desktop/test/command-channel-egress.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/desktop-access-lifecycle.test.tsx	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/test/desktop-access-lifecycle.test.tsx	ohmail/package-borders:apps/webapp	3	desktop-layer
 apps/desktop/test/desktop-access-state.test.tsx	ohmail/declared-dependency	3	desktop-layer
@@ -215,8 +214,8 @@ apps/desktop/test/desktop-language-install.test.tsx	ohmail/declared-dependency	4
 apps/desktop/test/desktop-language-install.test.tsx	ohmail/package-borders:apps/webapp	3	desktop-layer
 apps/desktop/test/desktop-lifecycle-owner.test.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/desktop-lifecycle-owner.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/test/desktop-link-refused.test.tsx	ohmail/declared-dependency	2	desktop-layer
-apps/desktop/test/desktop-link-refused.test.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
+apps/desktop/test/desktop-link-refused.test.tsx	ohmail/declared-dependency	3	desktop-layer
+apps/desktop/test/desktop-link-refused.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/test/desktop-link-routing.test.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/desktop-link-routing.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
 apps/desktop/test/desktop-mailboxes-who-files.test.ts	ohmail/declared-dependency	3	desktop-layer
@@ -254,9 +253,10 @@ apps/desktop/test/desktop-reader-copy.test.tsx	ohmail/declared-dependency	3	desk
 apps/desktop/test/desktop-reader-copy.test.tsx	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/test/desktop-reader-stopped-holder.test.tsx	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/test/desktop-reader-stopped-holder.test.tsx	ohmail/package-borders:apps/webapp	3	desktop-layer
-apps/desktop/test/desktop-remote-images.test.ts	ohmail/package-borders:apps/webapp	4	desktop-layer
-apps/desktop/test/desktop-rendered-links.test.tsx	ohmail/declared-dependency	3	desktop-layer
-apps/desktop/test/desktop-rendered-links.test.tsx	ohmail/package-borders:apps/webapp	8	desktop-layer
+apps/desktop/test/desktop-remote-images.test.ts	ohmail/declared-dependency	2	desktop-layer
+apps/desktop/test/desktop-remote-images.test.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
+apps/desktop/test/desktop-rendered-links.test.tsx	ohmail/declared-dependency	5	desktop-layer
+apps/desktop/test/desktop-rendered-links.test.tsx	ohmail/package-borders:apps/webapp	6	desktop-layer
 apps/desktop/test/desktop-renderer-reloaded.test.tsx	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/desktop-restart-required.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/desktop-revoked-doors.test.tsx	ohmail/declared-dependency	1	desktop-layer
@@ -371,8 +371,8 @@ apps/desktop/test/rigs/boot-frames-entry.tsx	ohmail/declared-dependency	1	deskto
 apps/desktop/test/rigs/boot-frames-entry.tsx	ohmail/package-borders:apps/webapp	3	desktop-layer
 apps/desktop/test/rigs/pdf-preview-entry.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/rigs/pdf-preview-entry.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
-apps/desktop/test/rigs/preview-memory-entry.ts	ohmail/declared-dependency	1	desktop-layer
-apps/desktop/test/rigs/preview-memory-entry.ts	ohmail/package-borders:apps/webapp	3	desktop-layer
+apps/desktop/test/rigs/preview-memory-entry.ts	ohmail/declared-dependency	2	desktop-layer
+apps/desktop/test/rigs/preview-memory-entry.ts	ohmail/package-borders:apps/webapp	2	desktop-layer
 apps/desktop/test/screener-reads-the-store.test.ts	ohmail/declared-dependency	3	desktop-layer
 apps/desktop/test/send-cancel-asks-the-server.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/send-cancel-asks-the-server.test.ts	ohmail/package-borders:apps/paired-page	1	ruling:frame-hosts
@@ -559,8 +559,6 @@ apps/webapp/app/(product)/verify-email/use-verify-door.ts	eslint:unused-directiv
 apps/webapp/app/components/AttachmentPreview.tsx	eslint:unused-directive	2	removals
 apps/webapp/app/components/ComposeAttach.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/error-report.ts	eslint:unused-directive	1	removals
-apps/webapp/app/letter-body/MessageBody.tsx	eslint:unused-directive	2	removals
-apps/webapp/app/letter-body/link-ask.ts	eslint:unused-directive	1	removals
 apps/webapp/app/shell/AppShell.tsx	eslint:unused-directive	4	removals
 apps/webapp/app/shell/AppShell.tsx	ohmail/package-borders:testing	1	removals
 apps/webapp/app/shell/FaceRow.tsx	ohmail/owner-lookup	1	ruling:scope-switch-settings
@@ -586,7 +584,7 @@ apps/webapp/app/views/HistoryView.tsx	eslint:unused-directive	2	removals
 apps/webapp/app/views/ReadsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/views/ReceiptsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/views/ScreenerView.tsx	eslint:unused-directive	3	removals
-apps/webapp/app/views/SearchView.tsx	eslint:unused-directive	5	removals
+apps/webapp/app/views/SearchView.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/views/SettingsView.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/views/TrashView.tsx	eslint:unused-directive	2	removals
 apps/webapp/test/api-rewrite.test.ts	ohmail/package-borders:apps/api-vercel	1	lift-a
@@ -1185,6 +1183,8 @@ packages/db/test/screener-decide-converges-the-key.test.ts	ohmail/package-border
 packages/db/test/staff-role.pg.test.ts	ohmail/package-borders:services	1	services-proof
 packages/db/test/stand-down-sends-census.test.ts	ohmail/package-borders:apps/worker	1	services-proof
 packages/db/test/twin-order-is-the-routers.test.ts	ohmail/package-borders:core	1	services-proof
+packages/letter-body/src/MessageBody.tsx	eslint:unused-directive	2	removals
+packages/letter-body/src/link-ask.ts	eslint:unused-directive	1	removals
 packages/organizer/src/act-admission-retire.ts	prettier	1	ruling:organizer-cut
 packages/organizer/src/ai-usage-line.ts	prettier	1	ruling:organizer-cut
 packages/organizer/src/blank-repair.ts	prettier	1	ruling:organizer-cut

@@ -48,9 +48,11 @@ function files(dir: string): string[] {
 
 /** The behaviour moved out of the shell: read with it, named `app-logic/…`. */
 const LOGIC = resolve(join(import.meta.dirname, "..", "..", "..", "packages", "app-logic", "src"));
+const BODY = resolve(join(import.meta.dirname, "..", "..", "..", "packages", "letter-body", "src"));
 const ALL = [
   ...files(APP).map((f) => ({ rel: f.slice(APP.length + 1), text: readFileSync(f, "utf8") })),
   ...files(LOGIC).map((f) => ({ rel: `app-logic/${f.slice(LOGIC.length + 1)}`, text: readFileSync(f, "utf8") })),
+  ...files(BODY).map((f) => ({ rel: `letter-body/${f.slice(BODY.length + 1)}`, text: readFileSync(f, "utf8") })),
 ];
 
 describe("a file's size is formatted in one place", () => {

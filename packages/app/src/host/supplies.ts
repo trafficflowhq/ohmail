@@ -1,4 +1,4 @@
-import type { CalendarEntry, FramePlaces, FrameStages } from "../frame/contract.js";
+import type { CalendarEntry, FrameOvers, FramePlaces, FrameStages } from "../frame/contract.js";
 import type { None } from "./contract.js";
 import type { Appearance, HostAddress, WindowFacts } from "./device.js";
 import type { FeatureEntry, FeatureName } from "./features.js";
@@ -24,6 +24,7 @@ export type Entries<K extends FeatureName = FeatureName> = Readonly<Record<K, Fe
 export interface FrameSupplies {
   readonly places: FramePlaces;
   readonly stages: FrameStages;
+  readonly overs: FrameOvers;
   /** The calendar's root export (`calendar` of `@ohmail/app/calendar`) where the shell mounts it, else `none`. */
   readonly calendar: CalendarEntry | None;
   readonly address: HostAddress;

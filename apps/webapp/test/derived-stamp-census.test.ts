@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { relative } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { NOT_DERIVED_FROM } from "../app/shell/engine";
 import { shellFramePaths } from "./source-anchor.js";
@@ -92,15 +92,16 @@ describe("the derived stamp ignores only what nothing derives from", () => {
     expect(search, "search.ts lists types — the census must have a subject").not.toHaveLength(0);
     expect(search, "search.ts reads bodies again — the instant index is back on the whole mail")
       .not.toContain("message_body");
-    const shell = code(read("../app/shell/AppShell.tsx"));
-    expect(shell, "the search view took the global version back — every body publish is a rebuild")
-      .not.toContain("useEngineVersion()");
-    expect(shell, "the search view is not on the derived stamp")
-      .toContain("useDerivedVersion()");
-    expect(shell, "the search view lost the index revision — a settled build will not reach it")
-      .toContain("useSearchIndexRevision()");
-    expect(shell, "the search mount stopped going through the wrapper that supplies it")
-      .toContain("<SearchViewLive");
+    /* The list's own pass keys on the stamps of the engine it is handed (`local-pass.ts`), the shell's formula. */
+    const pass = code(read("../../../packages/app-logic/src/search/local-pass.ts"));
+    expect(pass, "the search view took the global version back — every body publish is a rebuild")
+      .not.toMatch(/useEngineVersion\(\)|\.read\(\)\.version\(\)/);
+    expect(pass, "the search view is not on the derived stamp")
+      .toContain("stampExcept(NOT_DERIVED_FROM)");
+    expect(pass, "the search view lost the index revision — a settled build will not reach it")
+      .toContain("searchIndexRevision()");
+    expect(pass, "the local pass stopped keying on the stamps that supply it")
+      .toMatch(/useMemo\([\s\S]*engine\.search\(trimmed\)[\s\S]*\[engine, trimmed, key\]\)/);
   });
 });
 
@@ -155,6 +156,31 @@ describe("every surface that draws a body subscribes to one", () => {
     // The census must have a subject: four surfaces draw bodies today.
     expect(draws.length, "no file was found drawing a body — the census matched nothing")
       .toBeGreaterThanOrEqual(4);
+  });
+
+  /**
+   * The new tree's surfaces, WALKED rather than listed: the reader's views and its behaviour. A file there that
+   * calls `bodyOf` takes the body's arrival through the one door (`@ohmail/app-logic/reading`'s body-arrival),
+   * never a store of its own, so the old reader and the new one re-draw a landed body by the same rule.
+   */
+  it("pairs every bodyOf call of the new tree with the body's arrival", () => {
+    const roots = ["../../../packages/app/src", "../../../packages/app-logic/src/reader"]
+      .map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [join(dir, e.name)] : []);
+    const callers: string[] = [];
+    const unsubscribed: string[] = [];
+    for (const file of roots.flatMap(walk)) {
+      const src = code(readFileSync(file, "utf8"));
+      // A CALL, not a mention, as the case above reads it.
+      if (!/(?:^|[^\w.])bodyOf\s*\(|\.bodyOf\s*\(/m.test(src)) continue;
+      const where = relative(process.cwd(), file).split("\\").join("/");
+      callers.push(where);
+      if (!/useBodyArrival\s*\(|useBodyStamp\s*\(/.test(src)) unsubscribed.push(where);
+    }
+    expect(callers.length, "no file of the new tree was found calling bodyOf — the census matched nothing")
+      .toBeGreaterThanOrEqual(1);
+    expect(unsubscribed, "a surface of the new tree draws a body without the body's arrival").toEqual([]);
   });
 });
 

@@ -6,14 +6,14 @@ import { NextIntlClientProvider } from "next-intl";
 import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
-import { COPY, MessageBody, sanitizeMailHtml } from "../app/letter-body/MessageBody";
+import { COPY, MessageBody, sanitizeMailHtml } from "../../../packages/letter-body/src/MessageBody";
 import { AppShell } from "./_todays-shell.js";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
 import {
   DEFERRED_SHEET_ATTR, DEFERRED_SRC_ATTR, DEFERRED_STYLE_ATTR, DEFERRED_URLS_ATTR, PARK_FLAT_ATTR, PROXIED_IMAGES_IN_FLIGHT,
   createProxiedImageQueue,
-} from "../app/letter-body/proxied-images";
+} from "../../../packages/letter-body/src/proxied-images";
 import { PROXY_URL_MAX_CHARS as SERVER_URL_MAX } from "@trafficflow/services";
 import { PROXY_URL_MAX_CHARS, type RemoteImagesChrome, useRemoteImages } from "../app/shell/remote-images";
 import { RemoteImagesRow } from "../app/shell/RemoteImagesRow";
@@ -641,7 +641,7 @@ describe("a window that is not this account's loads no pictures for it", () => {
    */
   it("rewrites to the proxy while identity holds, and to nothing when it does not", async () => {
     const { imageProxyUrl } = await import("../app/shell/remote-images");
-    const { sanitizeMailHtml } = await import("../app/letter-body/MessageBody");
+    const { sanitizeMailHtml } = await import("../../../packages/letter-body/src/MessageBody");
 
     const ORIGIN = "https://mail.example";
     const REMOTE = "https://tracker.example/pixel.png";

@@ -18,8 +18,9 @@ import {
 import { Overlay } from "@ohmail/ui/base";
 import { EngineContext } from "@ohmail/app-logic/engine";
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
-import { NONE, type LinkedDraft } from "../host/index.js";
+import { NONE, type LinkedDraft, type None, type ReaderEntry } from "../host/index.js";
 import { Columns } from "./Columns.js";
+import { OVER_IDS } from "./contract.js";
 import { FrameContext, NO_CONNECTION, type ConnectionFeed, type FrameInner } from "./commands.js";
 import { useConnectionNotice } from "./connection.js";
 import type {
@@ -28,7 +29,9 @@ import type {
   FrameApi,
   FrameCommands,
   FrameHost,
+  FrameOvers,
   LayoutPlan,
+  OverId,
   PaneProps,
   PlaceEntry,
   RailModel,
@@ -40,9 +43,11 @@ import { FeatureNotices } from "./FeatureNotices.js";
 import { FrameRoot } from "./FrameRoot.js";
 import { layoutPlan } from "./layout-plan.js";
 import { createNoticeStore, type NoticeStore } from "./notice-store.js";
+import { createOfferStore } from "./offers.js";
 import { NoticeHost } from "./NoticeHost.js";
 import { DockRail, SideRail } from "./RailHost.js";
 import { ReportHost } from "./ReportHost.js";
+import { RoomGate } from "./room.js";
 import { useReportSlot } from "./report-slot.js";
 import { attributesOf } from "./root-attributes.js";
 import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
@@ -81,6 +86,7 @@ const HOME: Route = { place: MAIL_HOME, sub: null, open: null, stage: null, word
 function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraft | null }) {
   const [railOpen, setRailOpen] = useState(false);
   const [held, setHeld] = useState(false);
+  const [over, setOver] = useState<OverId | null>(null);
   const now = useRef(route);
   now.current = route;
   /* The place the calendar's side was last in: an event opened from mail goes there. Kept for the frame's life only. */
@@ -91,6 +97,7 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
       const next: Route = { sub: null, open: null, stage: null, words: {}, ...to };
       host.device.address.write(fragmentOf(next), "push");
       setRailOpen(false);
+      setOver(null);
     },
     [host],
   );
@@ -106,6 +113,7 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
       },
       rail: setRailOpen,
       hold: setHeld,
+      over: setOver,
       event: (ref: EventRef | null) => {
         if (calendarOf(host) === null) return;
         const here = now.current;
@@ -125,7 +133,7 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
     }),
     [go, host, draft],
   );
-  return { commands, railOpen, setRailOpen, held };
+  return { commands, railOpen, setRailOpen, held, over };
 }
 
 /** The connection, read off the host and today's views, said in the one slot. */
@@ -169,6 +177,7 @@ function panesOf(
   entry: PlaceEntry | null,
   pane: PaneProps,
   reading: boolean,
+  reader: ReaderEntry | None,
 ): { list: ReactNode; reading: ReactNode; wide: ReactNode | null } {
   if (!entry) return { list: null, reading: null, wide: null };
   const panes = entry.panes;
@@ -177,11 +186,21 @@ function panesOf(
   const Reading = panes.Reading;
   return {
     list: <panes.List key={entry.body} {...pane} keysHere={pane.route.open === null} />,
-    /* The reader's column mounts here once the reader's door lands (task `reader`). */
-    reading:
-      reading && Reading !== "reader" ? <Reading {...pane} keysHere={pane.route.open !== null} /> : null,
+    /* A place that names the reader gets the shell's reading column; with none handed, the column stays empty. */
+    reading: !reading ? null : Reading !== "reader" ? (
+      <Reading {...pane} keysHere={pane.route.open !== null} />
+    ) : reader === NONE ? null : (
+      <reader.Reading {...pane} keysHere={pane.route.open !== null} />
+    ),
     wide: null,
   };
+}
+
+/** The room's press seam runs only where the reader is drawn: never beside the old shell's own. */
+function drawsTheReader(entry: PlaceEntry | null, reader: ReaderEntry | None): boolean {
+  return (
+    reader !== NONE && entry !== null && entry.panes.kind === "columns" && entry.panes.Reading === "reader"
+  );
 }
 
 /**
@@ -198,6 +217,29 @@ function FootDock({
       <DockRail {...rails} upright={false} />
     </div>
   ) : null;
+}
+
+/** Every over handed stands mounted, open while the frame names it: one at a time, and going closes it. */
+function Overs({
+  overs,
+  over,
+  close,
+}: {
+  overs: FrameOvers;
+  over: OverId | null;
+  close: (to: null) => void;
+}) {
+  const onClose = useCallback(() => close(null), [close]);
+  return (
+    <>
+      {OVER_IDS.map((id) => {
+        const entry = overs[id];
+        if (entry === NONE) return null;
+        if (entry.id !== id) throw new Error(`an over handed as "${id}" names itself "${entry.id}"`);
+        return <entry.Body key={id} open={over === id} onClose={onClose} />;
+      })}
+    </>
+  );
 }
 
 function FrameBody({ host }: { host: FrameHost }) {
@@ -223,18 +265,18 @@ function FrameBody({ host }: { host: FrameHost }) {
     connection: createFeed<ConnectionFeed>(NO_CONNECTION, sameFeed),
     draft: { current: null as LinkedDraft | null },
     bars: createFeed<readonly string[]>([]),
+    offers: createOfferStore(),
   }));
-  const { commands, railOpen, setRailOpen, held } = useCommands(host, route, inner.draft);
+  const { commands, railOpen, setRailOpen, held, over } = useCommands(host, route, inner.draft);
   const api: FrameApi = useMemo(
-    () => ({ host, route, plan, commands, report: slot.report, product: productOf(route.place) }),
-    [host, route, plan, commands, slot.report],
+    () => ({ host, route, plan, commands, report: slot.report, over, product: productOf(route.place) }),
+    [host, route, plan, commands, slot.report, over],
   );
   const context: FrameInner = useMemo(
     () => ({ ...inner, api, railOpen: [railOpen, setRailOpen] as const }),
     [inner, api, railOpen, setRailOpen],
   );
   const places = host.features.places;
-
   const place = isCalendarPlace(route.place) ? (calendar?.places[route.place] ?? NONE) : places[route.place];
   const entry = place === NONE ? null : place;
   const stageEntry = !route.stage
@@ -244,7 +286,9 @@ function FrameBody({ host }: { host: FrameHost }) {
       : host.features.stages[route.stage.id];
   const staged = stageEntry !== NONE;
   const pane: PaneProps = { route, plan, keysHere: !staged };
-  const { list, reading, wide } = panesOf(entry, pane, plan.columns === 2 || route.open !== null);
+  const readingShown = plan.columns === 2 || route.open !== null;
+  const { list, reading, wide } = panesOf(entry, pane, readingShown, host.features.reader);
+  const room = drawsTheReader(entry, host.features.reader);
   /* The rail reads its feed itself: a new feed (a fold opened in it) draws the rail again, never the panes. */
   const rails = { feed: inner.rail, places, route, commands };
   /* On a phone's width a letter stands open over the list or the wide pane: no dock stands at the foot then. */
@@ -280,20 +324,22 @@ function FrameBody({ host }: { host: FrameHost }) {
           inert={held || staged || sheet || undefined}
         >
           {plan.rail === "dock" ? <div className="fr-noticebar">{slotNotice}</div> : null}
-          <Columns
-            plan={plan}
-            rail={sideRail}
-            list={[inColumn(plan.device !== "phone"), list]}
-            listKeys={!staged && route.open === null}
-            reading={reading}
-            wide={wide !== null ? [inColumn(false), wide] : null}
-            labels={{
-              list: t("landmark.list"),
-              reading: t("landmark.reading"),
-              railWidth: t("columns.railWidth"),
-              listWidth: t("columns.listWidth"),
-            }}
-          />
+          <RoomGate on={room}>
+            <Columns
+              plan={plan}
+              rail={sideRail}
+              list={[inColumn(plan.device !== "phone"), list]}
+              listKeys={!staged && route.open === null}
+              reading={reading}
+              wide={wide !== null ? [inColumn(false), wide] : null}
+              labels={{
+                list: t("landmark.list"),
+                reading: t("landmark.reading"),
+                railWidth: t("columns.railWidth"),
+                listWidth: t("columns.listWidth"),
+              }}
+            />
+          </RoomGate>
           {plan.rail === "dock" && !letterUp ? <FootDock bars={inner.bars} {...rails} /> : null}
           <div className="fr-report">
             <ReportHost slot={slot} />
@@ -311,6 +357,7 @@ function FrameBody({ host }: { host: FrameHost }) {
         <Stage open={staged} label={t("landmark.stage")}>
           {stageEntry !== NONE ? <stageEntry.Body {...pane} keysHere /> : null}
         </Stage>
+        <Overs overs={host.features.overs} over={over} close={commands.over} />
       </FrameRoot>
     </FrameContext.Provider>
   );

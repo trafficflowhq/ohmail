@@ -1,0 +1,31 @@
+/* Search's list: where its parts stand. Placement only; every look is the kit's. */
+.sr-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.sr-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sr-below {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  min-width: 0;
+}
+/* A row of filters folds onto a second line where its width ends: no control is cut. */
+.sr-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  min-width: 0;
+}
+/* A result's slot while its page is owed: the kit's row with no words holds the row's room, so the list does not jump
+   when the page lands (a stand-in until the kit draws a row as shape), and nothing in it is seen or reached. */
+.sr-owed {
+  visibility: hidden;
+}

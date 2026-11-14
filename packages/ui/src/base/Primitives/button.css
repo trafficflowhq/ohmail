@@ -85,8 +85,11 @@
   .oh-button[aria-pressed="true"] > .oh-button-mark {
     opacity: var(--oh-button-mark-on);
   }
+  /* Off: by the browser, or under way after its own press, which is said off and keeps the keys. */
   .oh-button:disabled,
-  .oh-button:disabled:hover {
+  .oh-button:disabled:hover,
+  .oh-button[aria-disabled="true"],
+  .oh-button[aria-disabled="true"]:hover {
     background: var(--off);
     color: var(--on-off);
     transform: none;

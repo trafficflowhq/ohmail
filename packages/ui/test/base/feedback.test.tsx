@@ -8,11 +8,13 @@ import {
   Notice,
   NoticeSlot,
   Opening,
+  RowsShape,
   Page,
   RefusalLine,
   Report,
   Sentence,
   slotOrder,
+  StepDots,
   WaitRow,
   type SlotNotice,
 } from "../../src/base/index.js";
@@ -45,6 +47,51 @@ describe("Notice", () => {
   it("stands calm, with no button, where nothing can be done", () => {
     render(<Notice place="bar" title="New mail is late" line="Not checked since 09:14." />);
     expect(within(screen.getByRole("status")).queryAllByRole("button")).toEqual([]);
+  });
+
+  it("a pressed answer that is under way stays where it is: off to a second press, said busy, the keys still on it", () => {
+    const pressed: string[] = [];
+    function Held() {
+      const [releasing, setReleasing] = useState(false);
+      return (
+        <Notice
+          place="rail"
+          title="3 letters are held"
+          hot
+          acts={[
+            {
+              label: "Release",
+              busy: releasing,
+              onPress: () => {
+                pressed.push("release");
+                setReleasing(true);
+              },
+            },
+            { label: "Not now", disabled: releasing, onPress: () => pressed.push("later") },
+          ]}
+        />
+      );
+    }
+    render(<Held />);
+    const release = screen.getByRole("button", { name: "Release" });
+    expect([release.getAttribute("aria-busy"), release.getAttribute("aria-disabled")]).toEqual([null, null]);
+    release.focus();
+    fireEvent.click(release);
+    /* The same button stands, and the keys never left it: a button the browser itself turns off can drop them. */
+    expect(screen.getByRole("button", { name: "Release" })).toBe(release);
+    expect(document.activeElement).toBe(release);
+    expect((release as HTMLButtonElement).disabled).toBe(false);
+    expect([release.getAttribute("aria-busy"), release.getAttribute("aria-disabled")]).toEqual([
+      "true",
+      "true",
+    ]);
+    fireEvent.click(release);
+    expect(pressed).toEqual(["release"]);
+    /* The other answer is off while the first is under way. */
+    const later = screen.getByRole("button", { name: "Not now" }) as HTMLButtonElement;
+    expect(later.disabled).toBe(true);
+    fireEvent.click(later);
+    expect(pressed).toEqual(["release"]);
   });
 });
 
@@ -207,6 +254,28 @@ describe("Empty, WaitRow, RefusalLine", () => {
     expect(again).toHaveBeenCalledTimes(1);
   });
 
+  it("a refusal that answers a press is said at once and can be handed the keys; one that reports stays a status", () => {
+    const at: { current: HTMLParagraphElement | null } = { current: null };
+    render(
+      <>
+        <RefusalLine alert ref={at}>
+          The mail server refused this password.
+        </RefusalLine>
+        <RefusalLine>No AI credits left.</RefusalLine>
+      </>,
+    );
+    const answered = screen.getByRole("alert");
+    expect(answered.textContent).toBe("The mail server refused this password.");
+    expect(at.current).toBe(answered);
+    /* The form puts the keys on it at the press: it can hold them, and Tab never stops on it by itself. */
+    answered.focus();
+    expect(document.activeElement).toBe(answered);
+    expect(answered.tabIndex).toBe(-1);
+    const reported = screen.getByRole("status");
+    expect(reported.textContent).toBe("No AI credits left.");
+    expect(reported.hasAttribute("tabindex")).toBe(false);
+  });
+
   it("a refusal line is a status with the one way on", () => {
     const plans = vi.fn();
     render(<RefusalLine way={{ label: "Plans", onPress: plans }}>No AI credits left.</RefusalLine>);
@@ -301,5 +370,36 @@ describe("Page and Opening", () => {
     expect(screen.queryByRole("status")).toBeNull();
     rerender(<Opening kind="phone" status={{ label: "Updating the mail store", count: "3 of 12" }} />);
     expect(screen.getByRole("status").textContent).toBe("Updating the mail store3 of 12");
+  });
+});
+
+describe("StepDots", () => {
+  it("is one mark that says how far a walk is, a dot a phase; the numeral beside it is drawn and not said twice", () => {
+    render(<StepDots label="Step 2 of 5, Mailbox, 2 of 3" steps={5} at={1} sub="2/3" />);
+    const mark = screen.getByRole("img", { name: "Step 2 of 5, Mailbox, 2 of 3" });
+    expect(mark.children).toHaveLength(5);
+    const numeral = screen.getByText("2/3");
+    expect(numeral.closest("[aria-hidden='true']")).not.toBeNull();
+    expect(mark.contains(numeral)).toBe(false);
+  });
+
+  it("draws no numeral where the phase is one screen", () => {
+    const { container } = render(<StepDots label="Step 1 of 3, Account" steps={3} at={0} />);
+    expect(container.textContent).toBe("");
+    expect(screen.getByRole("img", { name: "Step 1 of 3, Account" }).children).toHaveLength(3);
+  });
+});
+
+describe("RowsShape", () => {
+  it("stands as many rows as asked, holds no word and is nothing to a screen reader", () => {
+    const { container, rerender } = render(<RowsShape rows={3} />);
+    const shape = container.firstElementChild!;
+    expect(shape.getAttribute("aria-hidden")).toBe("true");
+    expect(shape.children).toHaveLength(3);
+    expect(shape.textContent).toBe("");
+    rerender(<RowsShape rows={14} />);
+    expect(container.firstElementChild!.children).toHaveLength(14);
+    rerender(<RowsShape />);
+    expect(container.firstElementChild!.children).toHaveLength(9);
   });
 });

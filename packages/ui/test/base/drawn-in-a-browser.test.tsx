@@ -11,32 +11,45 @@ import { launch } from "../../../../test/compare/render.mjs";
 import {
   Blank,
   Button,
+  ChoiceTiles,
   Dialog,
   Dot,
   Empty,
   Field,
+  FieldPair,
+  FieldStack,
   FindField,
   JumpBack,
+  Notice,
   Page,
+  RowsShape,
   Sentence,
   Seg,
   Slot,
+  StepDots,
 } from "../../src/base/index.js";
-import { MiniMonth } from "../../src/calendar/index.js";
+import { AgendaRow, MiniMonth } from "../../src/calendar/index.js";
 import {
   ActionPanel,
   ColumnHandle,
+  Composer,
   Dock,
+  FigureLine,
+  FigureTable,
+  FolderShelf,
   GroupHeading,
+  ListHead,
   ListLine,
   ListTail,
   LookPicture,
   Message,
   MessageHead,
+  MonthRail,
   MovePicker,
   Row,
   Rows,
   RuleLine,
+  ScaleBar,
   SettingArea,
   SettingFilter,
   SettingLine,
@@ -45,6 +58,7 @@ import {
   Sheet,
   TagLine,
   TextNotKept,
+  letterText,
   type RowProps,
 } from "../../src/mail/index.js";
 import { DEVICES, entryCss, fontsCss, type Device, type Entry } from "../compare/harness.js";
@@ -292,6 +306,361 @@ describe("a dialog's other ways", () => {
     expect([first[2], second[2]]).toEqual([32, 32]);
     expect(second[1]).toBeCloseTo(first[1]! + 32, 1);
   }, 60_000);
+});
+
+describe("what a press inside a dialog came to", () => {
+  it("stands in sight under the longest list: outside what scrolls, over the answers, its words in line with the dialog's", async () => {
+    const seen = await drawn(
+      <Dialog
+        open
+        onClose={() => {}}
+        title="40 changes wait"
+        cancel={{ label: "Close", keyHint: "Esc" }}
+        list
+        said={{ line: "Not put back. The mailbox did not answer.", refused: true }}
+      >
+        {Array.from({ length: 40 }, (_, at) => (
+          <div key={at} role="listitem" className="oh-text">
+            Archive, letter {at + 1}
+          </div>
+        ))}
+      </Dialog>,
+      () => {
+        const box = (el: Element) => el.getBoundingClientRect();
+        const dialog = document.querySelector("[role='dialog']")!;
+        const list = dialog.querySelector("[role='list']")!;
+        const line = dialog.querySelector("[role='status']")!;
+        const close = [...dialog.querySelectorAll("button")].find((b) => b.textContent?.startsWith("Close"))!;
+        const words = line.querySelector("span")!;
+        return {
+          scrolls: list.scrollHeight > list.clientHeight + 1,
+          inList: list.contains(line),
+          listBottom: box(list).bottom,
+          top: box(line).top,
+          bottom: box(line).bottom,
+          closeTop: box(close).top,
+          dialogBottom: box(dialog).bottom,
+          window: innerHeight,
+          sign: box(line.querySelector("svg")!).left,
+          content: box(dialog).left + parseFloat(getComputedStyle(dialog).paddingLeft),
+          wordsHigh: box(words).height,
+        };
+      },
+      { window: [900, 600] },
+    );
+    expect(seen.scrolls).toBe(true);
+    expect(seen.inList).toBe(false);
+    expect(seen.top).toBeGreaterThanOrEqual(seen.listBottom);
+    expect(seen.bottom).toBeLessThanOrEqual(seen.closeTop);
+    expect(seen.dialogBottom).toBeLessThanOrEqual(seen.window);
+    /* Its sign starts where the dialog's sentence starts. */
+    expect(seen.sign).toBeCloseTo(seen.content, 1);
+    expect(seen.wordsHigh).toBeGreaterThan(0);
+  }, 60_000);
+});
+
+describe("a notice's answer that is under way", () => {
+  it("is drawn off as a button that is off, still takes the keys, and is said unavailable", async () => {
+    const parts = (
+      <>
+        <Notice
+          place="rail"
+          title="3 letters are held"
+          hot
+          acts={[
+            { label: "Release", busy: true, onPress: () => {} },
+            { label: "Not now", disabled: true, onPress: () => {} },
+          ]}
+        />
+        <Button size="s" disabled>
+          Off
+        </Button>
+      </>
+    );
+    const seen = await drawn(parts, () => {
+      const [release, later, off] = [...document.querySelectorAll("button")] as HTMLButtonElement[];
+      const look = (el: Element) => {
+        const cs = getComputedStyle(el);
+        return [cs.backgroundColor, cs.color, cs.cursor];
+      };
+      release!.focus();
+      const keysOnRelease = document.activeElement === release;
+      later!.focus();
+      return {
+        release: look(release!),
+        off: look(off!),
+        keysOnRelease,
+        keysOnLater: document.activeElement === later,
+      };
+    });
+    expect(seen.release).toEqual(seen.off);
+    expect(seen.keysOnRelease).toBe(true);
+    expect(seen.keysOnLater).toBe(false);
+    /* The browser's own tree lists its nodes in no order a page has: each button is read by its name. */
+    const said = await spoken(parts);
+    const off = (name: string) => said.find((n) => n.role === "button" && n.name === name)?.disabled ?? false;
+    expect([off("Release"), off("Not now"), off("Off")]).toEqual([true, true, true]);
+  }, 60_000);
+});
+
+describe("how far a walk is, at a page's top", () => {
+  it.each([
+    ["paper", "desktop", 1],
+    ["ohmarchy", "desktop", 1],
+    ["paper", "phone", 1.5],
+  ] as const)(
+    "in %s on a %s at Text size %s: small dots a step apart, done in ink, the one it is in hot, those ahead hollow; the numeral before them",
+    async (face, device, zoom) => {
+      const seen = await drawn(
+        <div style={{ height: "100vh" }}>
+          <Page
+            back={<Button kind="quiet" icon="back" label="Zurück" />}
+            aside={<StepDots label="Schritt 2 von 5, Postfach, 2 von 3" steps={5} at={1} sub="2/3" />}
+            acts={<Button size="l">Weiter</Button>}
+          >
+            <Sentence size="xl">Meine Post liegt bei einem Anbieter</Sentence>
+          </Page>
+        </div>,
+        () => {
+          const zoomed = parseFloat(document.documentElement.style.zoom) || 1;
+          const mark = document.querySelector("[role='img']")!;
+          const dots = [...mark.children];
+          const boxes = dots.map((d) => d.getBoundingClientRect());
+          const token = (css: string) => {
+            const probe = document.createElement("i");
+            probe.style.cssText = css;
+            document.querySelector(".oh-root")!.append(probe);
+            const cs = getComputedStyle(probe);
+            return { colour: cs.backgroundColor, tall: probe.getBoundingClientRect().height };
+          };
+          const numeral = [...document.querySelectorAll("[aria-hidden='true']")].find(
+            (el) => el.textContent === "2/3",
+          )!;
+          return {
+            zoomed,
+            size: boxes.map((b) => [b.width / zoomed, b.height / zoomed]),
+            gaps: boxes.slice(1).map((b, i) => (b.left - boxes[i]!.right) / zoomed),
+            grounds: dots.map((d) => getComputedStyle(d).backgroundColor),
+            ink: token("background:var(--ink)").colour,
+            hot: token("background:var(--hot)").colour,
+            step: token("display:block;height:var(--s2)").tall / zoomed,
+            numeralBefore: numeral.getBoundingClientRect().right <= boxes[0]!.left,
+            numeralSize: getComputedStyle(numeral).fontSize,
+            meta: getComputedStyle(document.documentElement).getPropertyValue("--t-meta").trim(),
+            sideways: document.documentElement.scrollWidth - innerWidth,
+          };
+        },
+        { face, device, zoom, lang: "de" },
+      );
+      expect(seen.size).toHaveLength(5);
+      for (const side of seen.size.flat()) expect(side).toBeCloseTo(8, 1);
+      for (const gap of seen.gaps) expect(Math.abs(gap - seen.step)).toBeLessThan(0.1);
+      expect(seen.grounds).toEqual([
+        seen.ink,
+        seen.hot,
+        ...Array.from({ length: 3 }, () => "rgba(0, 0, 0, 0)"),
+      ]);
+      expect(seen.numeralBefore).toBe(true);
+      expect(seen.sideways).toBe(0);
+    },
+    60_000,
+  );
+});
+
+describe("what stands in a page's material", () => {
+  it.each([
+    ["paper", "light"],
+    ["paper", "dark"],
+    ["ohmarchy", "light"],
+  ] as const)(
+    "in %s %s: a field and a second button standing bare stand on the page's ground as the page's own do; on a sheet they stand on the sheet's",
+    async (face, scheme) => {
+      const seen = await drawn(
+        <div style={{ height: "100vh" }}>
+          <Page
+            columns={2}
+            material={
+              <>
+                <FieldStack>
+                  <Field label="Host" value="" onChange={() => {}} />
+                </FieldStack>
+                <Button kind="two">Other</Button>
+                <Sheet kind="plain">
+                  <Field label="On a sheet" value="" onChange={() => {}} />
+                  <Button kind="two">On a sheet</Button>
+                </Sheet>
+              </>
+            }
+            acts={<Button kind="two">Later</Button>}
+          >
+            <Sentence size="xl">My mail is with a host</Sentence>
+          </Page>
+        </div>,
+        () => {
+          const ground = (el: Element) => getComputedStyle(el).backgroundColor;
+          const token = (name: string) => {
+            const probe = document.createElement("i");
+            probe.style.background = `var(${name})`;
+            document.querySelector(".oh-root")!.append(probe);
+            return ground(probe);
+          };
+          const [bare, onSheet] = [...document.querySelectorAll("input")].map(ground);
+          const [other, sheetButton, later] = [...document.querySelectorAll("button")].map(ground);
+          return {
+            bare,
+            onSheet,
+            other,
+            sheetButton,
+            later,
+            soft: token("--soft"),
+            softSheet: token("--soft-sheet"),
+          };
+        },
+        { entry: "mail", face, scheme },
+      );
+      expect(seen.soft).not.toBe(seen.softSheet);
+      /* A second button stands on the page's ground in both faces. A field does on paper; ohmarchy's page is a
+         window in the sheet's own tone, and a field on it is boxed in the soft sheet's, as the design draws it. */
+      expect([seen.other, seen.later]).toEqual([seen.soft, seen.soft]);
+      expect(seen.bare).toBe(face === "ohmarchy" ? seen.softSheet : seen.soft);
+      expect([seen.onSheet, seen.sheetButton]).toEqual([seen.softSheet, seen.softSheet]);
+    },
+    60_000,
+  );
+});
+
+describe("a form's fields, one under the other", () => {
+  const form = (
+    <div style={{ padding: "0 20px" }}>
+      <FieldStack>
+        <FieldPair>
+          <Field label="IMAP-Server" value="imap.brennofen-zentrale.example" onChange={() => {}} />
+          <Field label="Port" value="993" onChange={() => {}} />
+        </FieldPair>
+        <FieldPair>
+          <Field label="SMTP-Server" value="smtp.brennofen-zentrale.example" onChange={() => {}} />
+          <Field label="Port" value="465" onChange={() => {}} />
+        </FieldPair>
+        <Field label="Benutzername" value="" placeholder="E-Mail-Adresse" onChange={() => {}} />
+      </FieldStack>
+    </div>
+  );
+  it.each([
+    ["desktop", 1],
+    ["phone", 1],
+    ["phone", 1.5],
+  ] as const)(
+    "on a %s at Text size %s: a step apart, a server with its port beside it, at most the design's measure wide, nothing outside the window",
+    async (device, zoom) => {
+      const seen = await drawn(
+        form,
+        () => {
+          const box = (el: Element) => el.getBoundingClientRect();
+          const stack = document.querySelector(".oh-root > div > div")!;
+          const fields = [...document.querySelectorAll("input")].map((el) => box(el.closest("div")!));
+          const probe = document.createElement("i");
+          probe.style.cssText = "display:block;height:var(--s3)";
+          document.querySelector(".oh-root")!.append(probe);
+          const [host, port, smtp, , user] = fields as [DOMRect, DOMRect, DOMRect, DOMRect, DOMRect];
+          return {
+            step: box(probe).height,
+            wide: box(stack).width,
+            beside: [port.left - host.right, Math.abs(port.top - host.top)],
+            portWide: port.width,
+            under: [smtp.top - host.bottom, user.top - smtp.bottom],
+            userWide: user.width,
+            sideways: document.documentElement.scrollWidth - innerWidth,
+          };
+        },
+        { device, zoom, lang: "de" },
+      );
+      const near = (a: number, b: number) => expect(Math.abs(a - b), `${a} for ${b}`).toBeLessThan(0.75);
+      near(seen.beside[0]!, seen.step);
+      near(seen.beside[1]!, 0);
+      near(seen.under[0]!, seen.step);
+      near(seen.under[1]!, seen.step);
+      /* The design's measures: the stack 480 at most, the port 96, both in the page's own px under a Text size. */
+      expect(seen.wide).toBeLessThanOrEqual(480 * zoom + 0.5);
+      near(seen.portWide, 96 * zoom);
+      near(seen.userWide, seen.wide);
+      expect(seen.sideways).toBe(0);
+    },
+    60_000,
+  );
+});
+
+describe("the tiles of a choice", () => {
+  const tiles = (
+    <div style={{ padding: "0 20px" }}>
+      <ChoiceTiles
+        label="E-Mail-Anbieter"
+        value="microsoft"
+        enter={{ value: "microsoft", keyHint: "↵" }}
+        options={[
+          { value: "gmail", label: "Gmail", dim: true },
+          { value: "microsoft", label: "Microsoft" },
+          { value: "icloud", label: "iCloud", dim: true },
+          { value: "yahoo", label: "Yahoo", dim: true },
+          { value: "fastmail", label: "Fastmail", dim: true },
+          { value: "gmx", label: "GMX", dim: true },
+          { value: "infomaniak", label: "Infomaniak", dim: true },
+          { value: "other", label: "Anderer Anbieter (IMAP)", dim: true },
+        ]}
+      />
+    </div>
+  );
+  /* The room is the page's material with its steps: 520 beside a sentence on a desktop, one page of 305 on the unfolded phone. */
+  it.each([
+    ["desktop", 1, 560, 4],
+    ["phone", 1, 560, 2],
+    ["phone", 1.5, 560, 2],
+    ["fold", 1.5, 345, 2],
+  ] as const)(
+    "on a %s at Text size %s, in a room of at most %s: %s in a row, every word inside its tile, one that does not fit stepped back",
+    async (device, zoom, room, across) => {
+      const seen = await drawn(
+        <div style={{ maxWidth: room }}>{tiles}</div>,
+        () => {
+          const buttons = [...document.querySelectorAll("button")];
+          const boxes = buttons.map((b) => b.getBoundingClientRect());
+          const inside = buttons.every((b) => {
+            const word = b.querySelector("span")!.getBoundingClientRect();
+            const own = b.getBoundingClientRect();
+            return (
+              word.left >= own.left - 0.5 &&
+              word.right <= own.right + 0.5 &&
+              b.scrollWidth <= b.clientWidth + 1
+            );
+          });
+          const look = (el: Element) => {
+            const cs = getComputedStyle(el);
+            return [cs.backgroundColor, cs.color];
+          };
+          const probe = document.createElement("i");
+          probe.style.cssText = "color:var(--ink2);height:var(--h-xl);display:block";
+          document.querySelector(".oh-root")!.append(probe);
+          return {
+            across: boxes.filter((b) => Math.abs(b.top - boxes[0]!.top) < 1).length,
+            widths: boxes.map((b) => Math.round(b.width)),
+            inside,
+            dim: look(buttons[0]!),
+            ink2: getComputedStyle(probe).color,
+            least: Math.min(...boxes.map((b) => b.height)),
+            xl: probe.getBoundingClientRect().height,
+            sideways: document.documentElement.scrollWidth - innerWidth,
+          };
+        },
+        { device, zoom, lang: "de" },
+      );
+      expect(seen.across).toBe(across);
+      expect(new Set(seen.widths).size).toBe(1);
+      expect(seen.inside).toBe(true);
+      expect(seen.dim).toEqual(["rgba(0, 0, 0, 0)", seen.ink2]);
+      expect(seen.least).toBeGreaterThanOrEqual(seen.xl - 0.5);
+      expect(seen.sideways).toBe(0);
+    },
+    60_000,
+  );
 });
 
 describe("a page before the app", () => {
@@ -1314,6 +1683,62 @@ describe("a rule, said as its sentence", () => {
   );
 });
 
+describe("a rule whose place has a long name, under a finger", () => {
+  const rule = (
+    <div style={{ padding: "0 16px" }}>
+      <RuleLine
+        who="rechnung@brennofen-zentrale.example"
+        goes={
+          <>
+            geht nach <Slot label="Ort wählen">Rechnungen und Belege des Brennofen-Zentrallagers</Slot>
+          </>
+        }
+        origin="Entscheid im Screener · 14 Nachrichten"
+        act={
+          <Button kind="quiet" size="s">
+            Aufheben
+          </Button>
+        }
+      />
+    </div>
+  );
+  it.each([
+    ["paper", 1],
+    ["paper", 1.5],
+    ["ohmarchy", 1.5],
+  ] as const)(
+    "in %s on a phone at Text size %s: the place's name folds inside the sentence's column and nothing leaves the window",
+    async (face, zoom) => {
+      const seen = await drawn(
+        rule,
+        () => {
+          const box = (sel: string) => document.querySelector(sel)!.getBoundingClientRect();
+          const [sentence, slot, act] = [
+            ".oh-ruleline-sentence",
+            "button[aria-label='Ort wählen']",
+            "button:not([aria-label])",
+          ].map(box);
+          const line = parseFloat(
+            getComputedStyle(document.querySelector(".oh-ruleline-sentence")!).lineHeight,
+          );
+          return {
+            sideways: document.documentElement.scrollWidth - innerWidth,
+            inColumn: slot!.left >= sentence!.left - 1 && slot!.right <= sentence!.right + 1,
+            beforeAct: slot!.right <= act!.left + 1,
+            lines: Math.round(slot!.height / line),
+          };
+        },
+        { entry: "mail", face, zoom, device: "phone", lang: "de" },
+      );
+      expect(seen.sideways).toBe(0);
+      expect([seen.inColumn, seen.beforeAct]).toEqual([true, true]);
+      /* It did fold: the name is longer than the column at either size. */
+      expect(seen.lines).toBeGreaterThanOrEqual(2);
+    },
+    60_000,
+  );
+});
+
 describe("a tag's line", () => {
   const quiet = (word: string) => (
     <Button kind="quiet" size="s">
@@ -1832,6 +2257,786 @@ const ASK_LOOKS = (["paper", "ohmarchy"] as const).flatMap((face) =>
   ),
 );
 
+describe("the reading column on one column", () => {
+  it("draws the way back on a phone as a capsule first in its bar, whole up to six tenths of the bar, then cut; on a desktop the bar is not drawn", async () => {
+    const column = (word: string) => (
+      <div style={{ display: "flex", flexDirection: "column", height: 300 }}>
+        <Sheet kind="reading" label="Conversation" back={{ word }} top={<i id="beside">beside</i>}>
+          <p>The first letter</p>
+        </Sheet>
+      </div>
+    );
+    const read = () => {
+      const button = document.querySelector<HTMLElement>('[role="region"] button')!;
+      const [b, bar] = [
+        button.getBoundingClientRect(),
+        button.parentElement!.parentElement!.getBoundingClientRect(),
+      ];
+      const word = [...button.children].find((el) => el.textContent)!;
+      return {
+        shown: b.width > 0,
+        height: b.height,
+        left: b.left - bar.left,
+        share: b.width / bar.width,
+        cut: word.scrollWidth > word.clientWidth,
+        first: document.getElementById("beside")!.getBoundingClientRect().left >= b.right,
+        hit: document.elementFromPoint(b.left + 10, b.top - 6) === button,
+      };
+    };
+    const short = await drawn(column("Ohbox"), read, { entry: "mail", device: "phone" });
+    expect(short).toMatchObject({ shown: true, height: 40, cut: false, first: true, hit: true });
+    expect(short.left).toBeGreaterThan(0);
+    for (const zoom of [1, 1.5]) {
+      const long = await drawn(column("Posteingang für Benachrichtigungen und Bestätigungen"), read, {
+        entry: "mail",
+        device: "phone",
+        lang: "de",
+        zoom,
+      });
+      expect(long).toMatchObject({ shown: true, cut: true, first: true });
+      expect(long.share).toBeLessThanOrEqual(0.6 + 0.005);
+    }
+    expect((await drawn(column("Ohbox"), read, { entry: "mail", device: "desktop" })).shown).toBe(false);
+  });
+});
+
+describe("a letter being written", () => {
+  const frame = { label: "New message", head: <p>head</p>, foot: { label: "Add to the message" } };
+  /** Where the line that starts with each of `starts` begins, and how wide the page had to scroll. */
+  const lines = (starts: readonly string[]) => {
+    const tops = new Map<string, DOMRect>();
+    const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+      const start = starts.find((w) => (node!.textContent ?? "").startsWith(w));
+      if (!start) continue;
+      const range = document.createRange();
+      range.setStart(node, 0);
+      range.setEnd(node, 1);
+      tops.set(start, range.getBoundingClientRect());
+    }
+    return starts.map((w) => {
+      const r = tops.get(w);
+      return r ? { top: r.top, left: r.left } : { top: Number.NaN, left: Number.NaN };
+    });
+  };
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a list stands on the text's own lines, one empty line from the text around it; a quote and code keep air of their own",
+    async (face, device, zoom) => {
+      const L = letterText;
+      const item = (words: string) => (
+        <li className={L.item}>
+          <p className={L.paragraph}>{words}</p>
+        </li>
+      );
+      /* What an editor holds after lines were pasted with two lists: an invented letter, each line short enough to
+         stay one line on a phone at the largest Text size. */
+      const letter = (
+        <Composer {...frame}>
+          <div className={L.text}>
+            <p className={L.paragraph}>
+              Hello all
+              <br />
+              <br />
+              Third quarter.
+              <br />
+              Could you look?
+              <br />
+              <br />
+            </p>
+            <ul className={L.bullets}>
+              {item("Entries numbered.")}
+              {item("Transfers booked.")}
+              {item("Bank agrees.")}
+            </ul>
+            <p className={L.paragraph}>
+              <br />
+              Figures:
+            </p>
+            <ol className={L.numbers}>
+              {item("L303: 100.00")}
+              {item("L400: 20.00")}
+            </ol>
+            <p className={L.paragraph}>
+              <br />
+              Question: in full?
+              <br />
+              Anna
+            </p>
+            <blockquote className={L.quote}>
+              <p className={L.paragraph}>Quoted line.</p>
+            </blockquote>
+            <p className={L.paragraph}>After it.</p>
+            <pre className={L.codeBlock}>
+              <code>code line</code>
+            </pre>
+            <p className={L.paragraph}>
+              Then <code className={L.code}>inline</code> and{" "}
+              <a className={L.link} href="https://lichtgrat.example">
+                a link
+              </a>
+              .
+            </p>
+          </div>
+        </Composer>
+      );
+      const starts = [
+        "Third",
+        "Could",
+        "Entries",
+        "Transfers",
+        "Bank",
+        "Figures",
+        "L303",
+        "L400",
+        "Question",
+        "Anna",
+        "Quoted",
+        "After it",
+        "code line",
+      ] as const;
+      const [
+        third,
+        could,
+        entries,
+        transfers,
+        bank,
+        figures,
+        l303,
+        l400,
+        question,
+        anna,
+        quoted,
+        after,
+        code,
+      ] = await opened(letter, { entry: "mail", face, device, zoom }, (tab) =>
+        tab.evaluate(lines, [...starts]),
+      );
+      const pitch = could!.top - third!.top;
+      const apart = (from: { top: number }, to: { top: number }) => (to.top - from.top) / pitch;
+      expect(pitch).toBeGreaterThan(10);
+      /* An empty line between: the next text starts two lines on. */
+      expect(apart(could!, entries!)).toBeCloseTo(2, 1);
+      expect(apart(bank!, figures!)).toBeCloseTo(2, 1);
+      expect(apart(l400!, question!)).toBeCloseTo(2, 1);
+      /* Items one line apart, and a list right after a line on the next line. */
+      expect(apart(entries!, transfers!)).toBeCloseTo(1, 1);
+      expect(apart(transfers!, bank!)).toBeCloseTo(1, 1);
+      expect(apart(l303!, l400!)).toBeCloseTo(1, 1);
+      expect(apart(figures!, l303!)).toBeCloseTo(1, 1);
+      /* A list is set in from the text; a quote too; each has its mark or its line. */
+      expect(entries!.left).toBeGreaterThan(third!.left + 8);
+      expect(quoted!.left).toBeGreaterThan(third!.left + 8);
+      /* A quote and a code block stand off the lines: more than a line from the text before them. */
+      expect(apart(anna!, quoted!)).toBeGreaterThan(1.2);
+      expect(apart(after!, code!)).toBeGreaterThan(1.2);
+    },
+  );
+
+  it("draws a list's marks, a quote's line, code on its own ground and a link underlined, from its names alone", async () => {
+    const L = letterText;
+    const read = () => {
+      const of = (id: string) => getComputedStyle(document.getElementById(id)!);
+      const ground = of("ground").backgroundColor;
+      return {
+        bullets: of("ul").listStyleType,
+        numbers: of("ol").listStyleType,
+        quote: of("quote").boxShadow !== "none" && of("quote").color !== of("text").color,
+        code: of("code").backgroundColor !== ground && of("code").fontFamily !== of("text").fontFamily,
+        block: of("pre").backgroundColor !== ground && of("pre").whiteSpace,
+        link: of("link").textDecorationLine,
+        plain: [
+          of("plain").borderTopWidth,
+          of("plain").backgroundColor,
+          of("plain").fontSize,
+          of("text").fontSize,
+        ],
+      };
+    };
+    for (const face of ["paper", "ohmarchy"] as const) {
+      const got = await drawn(
+        <Composer {...frame}>
+          <div className={L.text} id="text">
+            <i id="ground" />
+            <ul className={L.bullets} id="ul" />
+            <ol className={L.numbers} id="ol" />
+            <blockquote className={L.quote} id="quote" />
+            <code className={L.code} id="code" />
+            <pre className={L.codeBlock} id="pre" />
+            <a className={L.link} id="link" href="https://lichtgrat.example" />
+          </div>
+          <textarea className={L.plain} id="plain" defaultValue="Plain words" />
+        </Composer>,
+        read,
+        { entry: "mail", face },
+      );
+      expect(got).toMatchObject({
+        bullets: "disc",
+        numbers: "decimal",
+        quote: true,
+        code: true,
+        link: "underline",
+      });
+      expect(got.block).toBe("pre-wrap");
+      /* A plain text box wears the text's own type, with no line and no ground of its own. */
+      expect(got.plain[0]).toBe("0px");
+      expect(got.plain[1]).toBe("rgba(0, 0, 0, 0)");
+      expect(got.plain[2]).toBe(got.plain[3]);
+    }
+  });
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: the words for a text not yet written stand where its first line will stand, and a press there reaches the text",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <>
+          <Composer {...frame} placeholder="Schreib deine Nachricht an die Töpferwerkstatt">
+            <div id="empty" style={{ minHeight: 40 }} />
+          </Composer>
+          <Composer {...frame}>
+            <div>Schreib deine Nachricht an die Töpferwerkstatt</div>
+          </Composer>
+        </>,
+        () => {
+          const starts: { rect: DOMRect; box: DOMRect; hidden: Element | null }[] = [];
+          const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+            if (!(node.textContent ?? "").startsWith("Schreib")) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            starts.push({
+              rect: range.getBoundingClientRect(),
+              box: node.parentElement!.closest("section")!.getBoundingClientRect(),
+              hidden: node.parentElement!.closest("[aria-hidden]"),
+            });
+          }
+          const [ph, typed] = starts;
+          const at = document.elementFromPoint(ph!.rect.left + 4, ph!.rect.top + 4)!;
+          return {
+            count: starts.length,
+            dx: ph!.rect.left - ph!.box.left - (typed!.rect.left - typed!.box.left),
+            dy: ph!.rect.top - ph!.box.top - (typed!.rect.top - typed!.box.top),
+            inside: ph!.rect.right <= ph!.box.right && ph!.rect.left >= ph!.box.left,
+            hitsThePlaceholder: ph!.hidden !== null && ph!.hidden.contains(at),
+            scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      expect(got.count).toBe(2);
+      expect(Math.abs(got.dx)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(got.dy)).toBeLessThanOrEqual(0.5);
+      expect(got).toMatchObject({ inside: true, hitsThePlaceholder: false, scrolls: false });
+    },
+  );
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a formatted signature's two ways stand clear of its words and inside the letter",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <Composer
+          {...frame}
+          signature={{
+            label: "Signatur",
+            text: "Mila Brunner",
+            formatted: (
+              <p id="signed">
+                <strong>Mila Brunner</strong>, Töpferwerkstatt Lichtgrat an der Stadthausstrasse in Winterthur
+              </p>
+            ),
+            asText: { word: "Als Text bearbeiten", label: "Als Text bearbeiten: die Formatierung entfällt" },
+            remove: { label: "Signatur entfernen" },
+          }}
+        >
+          Guten Tag
+        </Composer>,
+        () => {
+          const box = document.querySelector("section")!.getBoundingClientRect();
+          const words = document.getElementById("signed")!.getBoundingClientRect();
+          const ways = [...document.querySelectorAll('[role="group"] ~ * button')].map((b) =>
+            b.getBoundingClientRect(),
+          );
+          const over = (a: DOMRect, b: DOMRect) =>
+            a.left < b.right - 0.5 &&
+            b.left < a.right - 0.5 &&
+            a.top < b.bottom - 0.5 &&
+            b.top < a.bottom - 0.5;
+          return {
+            ways: ways.length,
+            clear: ways.every((w) => !over(w, words)) && !over(ways[0]!, ways[1]!),
+            inside: ways.every((w) => w.right <= box.right + 0.5 && w.left >= box.left - 0.5),
+            wordsWide: words.width,
+            scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      expect(got).toMatchObject({ ways: 2, clear: true, inside: true, scrolls: false });
+      expect(got.wordsWide).toBeGreaterThan(120);
+    },
+  );
+});
+
+describe("the reading column's foot at a glass's edge", () => {
+  const column = (inset?: string) => (
+    <div
+      style={{ display: "flex", flexDirection: "column", height: 420, ["--oh-inset-foot" as string]: inset }}
+    >
+      <Sheet
+        kind="reading"
+        label="New message"
+        foot={
+          <ActionPanel label="Message" items={[{ id: "send", label: "Send", icon: "send", kind: "ink" }]} />
+        }
+      >
+        <p>Hello</p>
+      </Sheet>
+    </div>
+  );
+  const read = () => {
+    const region = document.querySelector('[role="region"]')!;
+    const bar = region.querySelector('[role="toolbar"]')!.getBoundingClientRect();
+    const scroll = region.querySelector<HTMLElement>('[tabindex="-1"]')!;
+    return {
+      over: Math.round((region.getBoundingClientRect().bottom - bar.bottom) * 10) / 10,
+      room: Number.parseFloat(getComputedStyle(scroll).paddingBottom),
+    };
+  };
+
+  it.each(["phone", "fold", "desktop"] as const)(
+    "on a %s: the panel keeps the larger of its own margin and the inset the system reports, never the two added, and the letter's run ends that much later",
+    async (device) => {
+      const at = { entry: "mail", device } as const;
+      const own = await drawn(column(), read, at);
+      /* No system bar, and a keyboard up (the host says the inset counts for nothing): its own margin. */
+      expect(own.over).toBeGreaterThanOrEqual(16);
+      expect(await drawn(column("0px"), read, at)).toEqual(own);
+      /* An inset no larger than the margin changes nothing. */
+      expect(await drawn(column("8px"), read, at)).toEqual(own);
+      expect(await drawn(column("16px"), read, at)).toEqual(own);
+      /* A system's bar of 34: the foot stands 34 over the edge where it stood 16, not 34 more. */
+      const bar = await drawn(column("34px"), read, at);
+      expect(bar.over - own.over).toBeCloseTo(18, 1);
+      expect(bar.room - own.room).toBeCloseTo(18, 1);
+    },
+  );
+});
+
+describe("the lists and streams of the other places", () => {
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a list's head says a quiet line under its name and how many it holds at the line's end, inside its column",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div style={{ width: device === "phone" ? undefined : 420 }}>
+          <ListHead
+            title="Petra Wyss"
+            meta="petra.wyss-veranstaltungen@makersfest-winterthur.example"
+            count="2 Nachrichten"
+            aside={<Button kind="quiet" size="s" icon="more" label="Mehr" />}
+            below={<p id="below">darunter</p>}
+          />
+        </div>,
+        () => {
+          const head = document.querySelector("header")!;
+          const box = head.getBoundingClientRect();
+          const text = (words: string) => {
+            const walk = document.createTreeWalker(head, NodeFilter.SHOW_TEXT);
+            for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+              if (!(node.textContent ?? "").startsWith(words)) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              return { rect: range.getBoundingClientRect(), style: getComputedStyle(node.parentElement!) };
+            }
+            throw new Error(words);
+          };
+          const [title, meta, count] = [text("Petra"), text("petra.wyss"), text("2 Nachrichten")];
+          const tool = head.querySelector("button")!.getBoundingClientRect();
+          const below = document.getElementById("below")!.getBoundingClientRect();
+          return {
+            metaUnderTitle: meta.rect.top >= title.rect.bottom - 4,
+            metaOverBelow: meta.rect.bottom <= below.top + 0.5,
+            metaStartsWithTitle: Math.abs(meta.rect.left - title.rect.left) <= 1,
+            metaQuiet:
+              meta.style.color !== title.style.color &&
+              parseFloat(meta.style.fontSize) < parseFloat(title.style.fontSize),
+            metaInside: meta.rect.right <= box.right + 0.5,
+            countOnTitleLine: count.rect.top < title.rect.bottom && count.rect.bottom > title.rect.top,
+            countWhole: count.rect.height < title.rect.height && count.rect.left >= box.left,
+            countBeforeTool: count.rect.right <= tool.left + 0.5,
+            countQuiet: count.style.color !== title.style.color,
+            toolInside: tool.right <= box.right + 0.5,
+            scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      /* Where the head is too narrow for its name, the count and the tools on one line, they go under the name. */
+      expect(got).toEqual({
+        metaUnderTitle: true,
+        metaOverBelow: true,
+        metaStartsWithTitle: true,
+        metaQuiet: true,
+        metaInside: true,
+        countOnTitleLine: !(device === "phone" && zoom === 1.5),
+        countWhole: true,
+        countBeforeTool: true,
+        countQuiet: true,
+        toolInside: true,
+        scrolls: false,
+      });
+    },
+  );
+
+  it.each(["desktop", "fold", "phone"] as const)(
+    "on a %s: the reading column fills the column it stands in, so its panel stands at the column's foot however short the letter",
+    async (device) => {
+      const got = await drawn(
+        <div id="cell" style={{ display: "flex", flexDirection: "column", height: 520 }}>
+          <Sheet
+            kind="reading"
+            label="Conversation"
+            foot={<ActionPanel label="Message" items={[{ id: "restore", label: "Restore", kind: "ink" }]} />}
+          >
+            <Message head={<p>head</p>}>A short letter.</Message>
+          </Sheet>
+        </div>,
+        () => {
+          const cell = document.getElementById("cell")!.getBoundingClientRect();
+          const column = document.querySelector('[role="region"]')!.getBoundingClientRect();
+          const bar = document.querySelector('[role="toolbar"]')!.getBoundingClientRect();
+          return {
+            fills: Math.round(column.height) === Math.round(cell.height),
+            over: cell.bottom - bar.bottom,
+          };
+        },
+        { entry: "mail", device },
+      );
+      expect(got.fills).toBe(true);
+      expect(got.over).toBeGreaterThanOrEqual(16);
+      expect(got.over).toBeLessThan(40);
+    },
+  );
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a stream's letter is cut after a few lines, its last line fading, and is whole once opened, its control inside the sheet",
+    async (face, device, zoom) => {
+      const long = Array.from({ length: 30 }, (_, i) => `Zeile ${i + 1} eines langen Briefes.`).join("\n");
+      const got = await opened(
+        <>
+          <Message head={<p>head</p>} clip={{ open: false, word: "Aufklappen" }}>
+            {long}
+          </Message>
+          <Message head={<p>head</p>} clip={{ open: true, word: "Zuklappen" }}>
+            {long}
+          </Message>
+        </>,
+        { entry: "mail", face, device, zoom, lang: "de" },
+        (tab) =>
+          tab.evaluate(() =>
+            [...document.querySelectorAll("article")].map((article) => {
+              const box = article.getBoundingClientRect();
+              const walk = document.createTreeWalker(article, NodeFilter.SHOW_TEXT);
+              let text: HTMLElement | null = null;
+              for (let node = walk.nextNode(); node; node = walk.nextNode())
+                if (/^Zeile 1 /.test(node.textContent ?? "")) text = node.parentElement;
+              const cut = text!.parentElement!;
+              const line = parseFloat(getComputedStyle(text!).lineHeight);
+              const c = article.querySelector("button")!.getBoundingClientRect();
+              return {
+                lines: Math.round((cut.clientHeight / line) * 10) / 10,
+                more: cut.scrollHeight > cut.clientHeight + 2,
+                fades: getComputedStyle(cut).maskImage !== "none",
+                control: article.querySelector("button")!.textContent ?? "",
+                inside: c.left >= box.left && c.right <= box.right && c.bottom <= box.bottom,
+              };
+            }),
+          ),
+      );
+      const [shut, open] = got;
+      expect(shut).toMatchObject({ more: true, fades: true, control: "Aufklappen", inside: true });
+      expect(shut!.lines).toBeLessThanOrEqual(6.2);
+      expect(shut!.lines).toBeGreaterThan(5);
+      expect(open).toMatchObject({ more: false, fades: false, control: "Zuklappen", inside: true });
+      expect(open!.lines).toBeGreaterThan(29);
+    },
+  );
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a month rail stands at its list's right edge while the rows run under it, the rows end before it, and each step takes a finger",
+    async (face, device, zoom) => {
+      const row = (n: number): RowProps => ({
+        who: `Absender ${n}`,
+        people: [{ name: `Absender ${n}`, address: `a${n}@lichtgrat.example` }],
+        subject: "Betreff einer Nachricht aus dem Archiv",
+        when: "12:00",
+      });
+      const got = await opened(
+        <div id="list" style={{ height: 360, overflow: "auto", width: device === "phone" ? undefined : 400 }}>
+          <MonthRail
+            label="Monat"
+            current="2026-10"
+            entries={[
+              { id: "2026", label: "2026", year: true },
+              { id: "2026-11", label: "Nov", title: "November 2026" },
+              { id: "2026-10", label: "Okt", title: "Oktober 2026" },
+              { id: "2025", label: "2025", year: true },
+            ]}
+          >
+            <Rows label="Verlauf">
+              {Array.from({ length: 14 }, (_, n) => (
+                <Row key={n} {...row(n)} />
+              ))}
+            </Rows>
+          </MonthRail>
+        </div>,
+        { entry: "mail", face, device, zoom, lang: "de" },
+        async (tab) => {
+          const read = () => {
+            const list = document.getElementById("list")!.getBoundingClientRect();
+            const rail = document.querySelector("nav")!.getBoundingClientRect();
+            const steps = [...document.querySelectorAll("nav button")].map((b) => b.getBoundingClientRect());
+            const rows = [...document.querySelectorAll('[role="list"] > *, [role="listbox"] > *')];
+            const current = document.querySelector('nav [aria-current="true"]')!;
+            const other = document.querySelector("nav button:not([aria-current])")!;
+            return {
+              top: rail.top - list.top,
+              atRightEdge: list.right - rail.right,
+              rowsClear: rows.every((r) => r.getBoundingClientRect().right <= rail.left + 0.5),
+              least: Math.min(...steps.map((s) => s.height)),
+              inside: steps.every((s) => s.left >= rail.left - 0.5 && s.right <= rail.right + 0.5),
+              marked: getComputedStyle(current).backgroundColor !== getComputedStyle(other).backgroundColor,
+              scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+            };
+          };
+          const rest = await tab.evaluate(read);
+          await tab.evaluate(() => (document.getElementById("list")!.scrollTop = 300));
+          return { rest, moved: await tab.evaluate(read) };
+        },
+      );
+      expect(got.rest.atRightEdge).toBeGreaterThanOrEqual(0);
+      expect(got.rest.atRightEdge).toBeLessThan(24);
+      expect(got.rest).toMatchObject({ rowsClear: true, inside: true, marked: true, scrolls: false });
+      /* It stays where it stood while the rows run under it. */
+      expect(Math.abs(got.moved.top - got.rest.top)).toBeLessThanOrEqual(1);
+      /* Under a finger a step is as tall as the smallest control a finger takes. */
+      if (device === "phone") expect(got.rest.least).toBeGreaterThanOrEqual(44 * 0.99);
+    },
+  );
+
+  it("draws the folder a dragged row is held over differently from one that only takes it, and that from one at rest", async () => {
+    const got = await drawn(
+      <FolderShelf
+        label="Folders"
+        expanded
+        folders={[
+          { id: "a", name: "Angebote" },
+          { id: "b", name: "Belege", drop: "ready" },
+          { id: "c", name: "Kunden", drop: "over" },
+        ]}
+      />,
+      () =>
+        [...document.querySelectorAll("button")].slice(1).map((b) => {
+          const style = getComputedStyle(b);
+          return `${style.backgroundColor} ${style.boxShadow} ${style.color}`;
+        }),
+      { entry: "mail" },
+    );
+    expect(new Set(got).size).toBe(3);
+  });
+});
+
+describe("a sheet that counts: storage", () => {
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: the figure leads its line, larger and in the ink, its word at the line's end; the bar's parts stand by their shares with the mark's label over the mark, inside the sheet",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div id="sheet" style={{ padding: 16 }}>
+          <FigureLine figure="12,4 GB" of="von 50 GB · Probezeit" tag="Dein Tarif" />
+          <ScaleBar
+            label="12,4 GB von 50 GB belegt"
+            parts={[{ share: 20 }, { share: 5, kind: "second" }, { share: 10, kind: "rest" }]}
+            marks={[
+              { at: 60, label: "30 GB" },
+              { at: 100, label: "50 GB, mit allen Nachrichten" },
+            ]}
+            scale={[{ label: "0" }, { label: "Noch auf dem Server", rest: true }, { label: "50 GB" }]}
+          />
+        </div>,
+        () => {
+          const sheet = document.getElementById("sheet")!.getBoundingClientRect();
+          const text = (words: string) => {
+            const walk = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+            for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+              if ((node.textContent ?? "") !== words) continue;
+              const range = document.createRange();
+              range.selectNodeContents(node);
+              return { rect: range.getBoundingClientRect(), style: getComputedStyle(node.parentElement!) };
+            }
+            throw new Error(words);
+          };
+          const [figure, of, tag] = [text("12,4 GB"), text("von 50 GB · Probezeit"), text("Dein Tarif")];
+          const bar = document.querySelector('[role="img"]')!;
+          const b = bar.getBoundingClientRect();
+          const parts = [...bar.children]
+            .filter((el) => (el.textContent ?? "") === "" && el.getBoundingClientRect().width > 3)
+            .map((el) => ({
+              r: el.getBoundingClientRect(),
+              hatch: getComputedStyle(el).backgroundImage !== "none",
+            }));
+          const [mid, end] = [text("30 GB"), text("50 GB, mit allen Nachrichten")];
+          const share = (r: DOMRect) => Math.round((r.width / b.width) * 100);
+          return {
+            /* It leads: before what it is of, or over it where the line is too short for both. */
+            figureLeads:
+              (figure.rect.left < of.rect.left || of.rect.top > figure.rect.top) &&
+              parseFloat(figure.style.fontSize) > parseFloat(of.style.fontSize),
+            figureInk: figure.style.color !== of.style.color,
+            tagAtEnd: tag.rect.left > of.rect.left || tag.rect.top > of.rect.top,
+            shares: parts.map((p) => share(p.r)),
+            follow: parts.every((p, i) => i === 0 || Math.abs(p.r.left - parts[i - 1]!.r.right) <= 1),
+            hatched: parts.map((p) => p.hatch),
+            midOverItsMark: Math.abs((mid.rect.left + mid.rect.right) / 2 - (b.left + b.width * 0.6)) <= 2,
+            labelsOverBar: mid.rect.bottom <= b.top + 1 && end.rect.bottom <= b.top + 1,
+            endInside: end.rect.right <= sheet.right + 0.5 && end.rect.left >= sheet.left - 0.5,
+            scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      expect(got).toEqual({
+        figureLeads: true,
+        figureInk: true,
+        tagAtEnd: true,
+        shares: [20, 5, 10],
+        follow: true,
+        hatched: [false, false, true],
+        midOverItsMark: true,
+        labelsOverBar: true,
+        endInside: true,
+        scrolls: false,
+      });
+    },
+  );
+
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: a table of figures keeps each column's figures on one edge under its head with a pointer, and under a finger every figure says its column",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div style={{ padding: 16 }}>
+          <FigureTable
+            label="Was Platz braucht"
+            columns={["Postfach", "Nachrichten", "Dateien", "Gesamt"]}
+            rows={[
+              {
+                id: "a",
+                name: "mila.brunner-werkstatt@lichtgrat-winterthur.example",
+                hue: 210,
+                figures: ["8,1 GB", "2,3 GB", "10,4 GB"],
+              },
+              { id: "b", name: "studio@lichtgrat.example", figures: ["1,5 GB", "0,5 GB", "2,0 GB"] },
+            ]}
+            sum={{ name: "Alle Postfächer", figures: ["9,6 GB", "2,8 GB", "12,4 GB"] }}
+          />
+        </div>,
+        () => {
+          const rows = [...document.querySelectorAll('[role="row"]')];
+          const cells = rows.slice(1).map((row) => [...row.querySelectorAll('[role="cell"]')].slice(1));
+          const heads = [...document.querySelectorAll('[role="columnheader"]')].map((h) =>
+            h.getBoundingClientRect(),
+          );
+          const said = cells.flat().map((c) => getComputedStyle(c, "::before").content);
+          const edges = [0, 1, 2].map((col) =>
+            cells.map((row) => Math.round(row[col]!.getBoundingClientRect().right)),
+          );
+          const table = document.querySelector('[role="table"]')!.getBoundingClientRect();
+          return {
+            headDrawn: heads.every((h) => h.width > 0 && h.height > 0),
+            saysColumn: said.every(
+              (content) => content !== "none" && content !== "normal" && content.length > 2,
+            ),
+            oneEdge: edges.every((col) => new Set(col).size === 1),
+            inside: [...document.querySelectorAll('[role="cell"]')].every((c) => {
+              const r = c.getBoundingClientRect();
+              return r.right <= table.right + 0.5 && r.left >= table.left - 0.5;
+            }),
+            scrolls: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+          };
+        },
+        { entry: "mail", face, device, zoom, lang: "de" },
+      );
+      const touch = device === "phone";
+      expect(got).toEqual({
+        headDrawn: !touch,
+        saysColumn: touch,
+        oneEdge: true,
+        inside: true,
+        scrolls: false,
+      });
+    },
+  );
+});
+
+describe("an agenda row the keys are on", () => {
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s it wears the ground a row under the pointer wears, and a row at rest does not",
+    async (face) => {
+      const row = { mark: { kind: "outlined" } as const, title: "Brennofen ausräumen", time: "10:00" };
+      const got = await drawn(
+        <>
+          <AgendaRow {...row} label="rest" />
+          <AgendaRow {...row} label="cursor" cursor />
+          <AgendaRow {...row} label="open" open cursor />
+        </>,
+        () =>
+          ["rest", "cursor", "open"].map(
+            (name) => getComputedStyle(document.querySelector(`[aria-label="${name}"]`)!).backgroundColor,
+          ),
+        { entry: "calendar", face },
+      );
+      expect(got[1]).not.toBe(got[0]);
+      /* The open row keeps its own ground: the cursor does not repaint it. */
+      expect(got[2]).not.toBe(got[1]);
+    },
+  );
+});
+
+describe("a row still owed, among a list's rows", () => {
+  it.each(ASK_LOOKS)(
+    "in %s on a %s at Text size %s: its shape keeps a row's room, so the list does not move when the row arrives",
+    async (face, device, zoom) => {
+      const got = await drawn(
+        <div style={{ width: device === "phone" ? undefined : 420 }}>
+          <Rows>
+            <Row
+              who="Petra Wyss"
+              people={[{ name: "Petra Wyss", address: "petra@makersfest.example" }]}
+              subject="Rechnung für den Brennofen"
+              preview="Im Anhang die Rechnung vom November."
+              when="08:47"
+            />
+            <RowsShape rows={1} within />
+          </Rows>
+        </div>,
+        () => {
+          const list = document.querySelector('[role="list"]')!;
+          const [row, shape] = [...list.children].map((el) => el.getBoundingClientRect());
+          const inner = list.lastElementChild!.firstElementChild!.getBoundingClientRect();
+          return {
+            row: row!.height,
+            shape: inner.height,
+            left: inner.left - row!.left,
+            right: row!.right - inner.right,
+          };
+        },
+        { entry: "mail", face, device, zoom },
+      );
+      expect(Math.abs(got.shape - got.row)).toBeLessThanOrEqual(1);
+      expect(Math.abs(got.left)).toBeLessThanOrEqual(1);
+      expect(Math.abs(got.right)).toBeLessThanOrEqual(1);
+    },
+  );
+});
+
 describe("a list's own line", () => {
   it.each(ASK_LOOKS)(
     "in %s on a %s at Text size %s: it starts where the list's last line starts, a refusal is bold in the ink with its sign on its first line, and longer German words wrap inside it with its press",
@@ -2049,6 +3254,78 @@ describe("a waiting sender's row", () => {
       );
       expect(seen).toHaveLength(8);
       for (const probe of seen) expect(probe.hit, JSON.stringify(probe)).toBe("its own row");
+    },
+    60_000,
+  );
+
+  it.each([
+    ["paper", "phone", 1],
+    ["ohmarchy", "phone", 1],
+    ["paper", "fold", 1],
+    ["ohmarchy", "fold", 1],
+    ["paper", "phone", 1.5],
+    ["ohmarchy", "phone", 1.5],
+  ] as const)(
+    "in %s on a %s at Text size %s: under a finger the place answers over at least the height a finger needs",
+    async (face, device, zoom) => {
+      const tall = await drawn(
+        <Rows label="Waiting">
+          <Row {...sender} place={{ ...place, accept: { label: "Row 1: accept" } }} />
+          <Row {...sender} who="Second Sender" place={{ ...place, accept: { label: "Row 2: accept" } }} />
+        </Rows>,
+        () =>
+          [1, 2].map((n) => {
+            const chip = document.querySelector(`button[aria-label="Row ${n}: accept"]`)!;
+            const r = chip.getBoundingClientRect();
+            let answered = 0;
+            /* Down the chip's middle, from well over it to well under it: every half pixel that is the chip's. */
+            for (let y = r.top - 40; y <= r.bottom + 40; y += 0.5)
+              if (document.elementFromPoint(r.left + r.width / 2, y)?.closest("button") === chip)
+                answered += 0.5;
+            return answered;
+          }),
+        { entry: "mail", face, device, zoom },
+      );
+      for (const height of tall) expect(height / zoom).toBeGreaterThanOrEqual(44);
+    },
+    60_000,
+  );
+
+  it.each(["paper", "ohmarchy"] as const)(
+    "in %s: under a finger a row with labels draws no address beside them, however wide; with a pointer it does where there is room",
+    async (face) => {
+      const wide = (
+        <div style={{ width: 700 }}>
+          <Rows>
+            <Row {...sender} labels={["Braucht dich"]} />
+            <Row {...sender} who="Ohne Marken" />
+          </Rows>
+        </div>
+      );
+      const read = () =>
+        [...document.querySelectorAll(".oh-row")].map((row) => {
+          const walk = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
+          for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+            if (!(node.textContent ?? "").startsWith("alerts@")) continue;
+            const range = document.createRange();
+            range.selectNodeContents(node);
+            const r = range.getBoundingClientRect();
+            return r.width > 1 && r.height > 1;
+          }
+          return false;
+        });
+      const window: [number, number] = [760, 600];
+      /* Under a finger: gone beside a label, and there on a row that has none. */
+      for (const device of ["phone", "fold"] as const)
+        expect(await drawn(wide, read, { entry: "mail", face, device, window })).toEqual([false, true]);
+      expect(await drawn(wide, read, { entry: "mail", face, device: "desktop" })).toEqual([true, true]);
+      /* What a screen reader is handed follows what is drawn. */
+      const said = await spoken(wide, { entry: "mail", face, device: "phone", window });
+      const rows = said.filter(
+        (n) => n.name.includes("Cinderlock Security") || n.name.includes("Ohne Marken"),
+      );
+      expect(rows.some((n) => n.name.includes("Braucht dich") && n.name.includes("alerts@"))).toBe(false);
+      expect(rows.some((n) => n.name.includes("Ohne Marken") && n.name.includes("alerts@"))).toBe(true);
     },
     60_000,
   );
@@ -2301,6 +3578,81 @@ describe("the parts a screen stands side by side, under a finger", () => {
       expect(menu.walked).toBe(6);
       expect([...stood.outside, ...menu.outside]).toEqual([]);
       expect([...stood.taken, ...menu.taken]).toEqual([]);
+    },
+    60_000,
+  );
+
+  /* The orders the first walk left out: a word that acts standing OVER a slot, two slots one under the other in
+     a line of settings, and two slots on neighbouring lines of one sentence. */
+  const stacked = (
+    <div style={{ padding: "0 16px" }}>
+      <SettingLine label="Endet am" narrow="under">
+        <Button kind="quiet" size="s">
+          Kein Enddatum festlegen
+        </Button>
+        <Slot label="Enddatum wählen">Freitag, 21. November 2026</Slot>
+      </SettingLine>
+      <SettingLine label="Ruhezeit" narrow="under">
+        <Slot label="Ruhe ab">22:00 Uhr am Abend des Vortags</Slot>
+        <Slot label="Ruhe bis">07:00 Uhr am Morgen danach</Slot>
+      </SettingLine>
+      <RuleLine
+        who="rechnung@brennofen-zentrale.example"
+        person={{
+          name: "rechnung@brennofen-zentrale.example",
+          address: "rechnung@brennofen-zentrale.example",
+          label: "Karte",
+          onContact: () => {},
+        }}
+        goes={
+          <>
+            <Slot label="Erster Ort">News</Slot> zuerst,
+            <br />
+            <Slot label="Zweiter Ort">Archiv</Slot> danach
+          </>
+        }
+        origin="Entscheid im Screener"
+      />
+    </div>
+  );
+
+  it.each([
+    ["paper", "phone", 1],
+    ["paper", "phone", 1.5],
+    ["ohmarchy", "phone", 1],
+    ["ohmarchy", "phone", 1.5],
+    ["paper", "fold", 1.5],
+    ["ohmarchy", "fold", 1.5],
+  ] as const)(
+    "in %s on a %s at Text size %s: a press inside a control's own box is that control's where a word that acts stands over a slot, and where two slots stand one under the other",
+    async (face, device, zoom) => {
+      const window: [number, number] = [DEVICES[device].window[0], 1600];
+      const stood = await drawn(stacked, walk, { entry: "mail", face, device, zoom, lang: "de", window });
+      /* The stand really holds what it is for: controls close enough under each other for a slot's room to reach
+         the other (the word over its slot and the sentence's two slots always; the line's two where it is narrow). */
+      const near = await drawn(
+        stacked,
+        () => {
+          const boxes = [...document.querySelectorAll("button")].map((b) => b.getBoundingClientRect());
+          let pairs = 0;
+          for (const a of boxes)
+            for (const b of boxes)
+              if (
+                a !== b &&
+                b.top >= a.bottom - 1 &&
+                b.top - a.bottom < 16 &&
+                a.left < b.right &&
+                b.left < a.right
+              )
+                pairs++;
+          return pairs;
+        },
+        { entry: "mail", face, device, zoom, lang: "de", window },
+      );
+      expect(near).toBeGreaterThanOrEqual(2);
+      expect(stood.walked).toBeGreaterThanOrEqual(6);
+      expect(stood.outside).toEqual([]);
+      expect(stood.taken).toEqual([]);
     },
     60_000,
   );

@@ -67,6 +67,8 @@ export function phoneFrameSupplies(
   return {
     places: mounted.places,
     stages: mounted.stages,
+    // A phone shell holds no keyboard registry, so it hands no over.
+    overs: { palette: NONE, keys: NONE },
     address: keptAddress(address, kept),
     window: browserWindowFacts(win),
     appearance: systemAppearance(win),

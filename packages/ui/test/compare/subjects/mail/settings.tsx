@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
 import type { ReactNode } from "react";
-import { Avatar, Button, Field, Seg, Slot, Tag } from "../../../../src/base/index.js";
+import { Avatar, Button, Field, InfoMark, RadioLines, Seg, Slot, Tag } from "../../../../src/base/index.js";
 import {
+  FigureLine,
+  FigureTable,
+  ScaleBar,
+  SettingActs,
   LookPicture,
   RuleLine,
   SettingArea,
@@ -162,6 +166,61 @@ const tags = (state: "rest" | "rename" | "taken") => (
 );
 
 export const settings: KitSubject[] = [
+  /* The three drawings of Storage and a sheet's own acts, each as it stands on its sheet. */
+  {
+    key: "FigureLine/rest",
+    place: "block",
+    on: "sheet",
+    target: ".oh-figureline",
+    render: () => (
+      <FigureLine figure="235 MB" of="of 5 GB · trial" info={<InfoMark label="About storage" />} />
+    ),
+  },
+  {
+    key: "ScaleBar/rest",
+    place: "block",
+    on: "sheet",
+    target: ".oh-scalebar-bar",
+    render: () => (
+      <ScaleBar
+        label="235 MB of 5 GB"
+        parts={[{ share: 3.96 }, { share: 0.74, kind: "second" }]}
+        marks={[{ at: 100 }]}
+      />
+    ),
+  },
+  {
+    key: "FigureTable/rest",
+    place: "block",
+    on: "sheet",
+    target: ".oh-figuretable",
+    render: () => (
+      <FigureTable
+        columns={["Mailbox", "Messages", "Kept now", "Expected"]}
+        rows={[
+          { id: "a", name: "mila@lichtgrat.example", hue: 28, figures: ["7,912", "198 MB", "198 MB"] },
+          { id: "b", name: "hello@milabrunner.example", hue: 210, figures: ["1,494", "37 MB", "37 MB"] },
+        ]}
+        sum={{ name: "Total", figures: ["9,406", "235 MB", "235 MB"] }}
+      />
+    ),
+  },
+  {
+    key: "SettingActs/rest",
+    place: "block",
+    on: "sheet",
+    target: ".oh-settingacts",
+    render: () => (
+      <SettingActs>
+        <Button kind="quiet" size="s" icon="copy">
+          Copy the link
+        </Button>
+        <Button kind="two" size="s">
+          Revoke
+        </Button>
+      </SettingActs>
+    ),
+  },
   head("SettingsHead/rest", <SettingsHead title="Notifications" />),
   head("SettingsHead/hot", <SettingsHead title="Notifications" hot />),
   head("SettingsHead/count", <SettingsHead title="Devices" count="2" />),
@@ -265,6 +324,39 @@ export const settings: KitSubject[] = [
       <SettingLine label="Platform" value="Linux" />
       <SettingLine label="Mailbox" value="IMAP" />
       <SettingLine label="Last sync error" value="Mailbox full" />
+    </SettingsSheet>,
+  ),
+  /* The plans with their prices: how they are billed is the sheet's own choice, at its head's end. */
+  sheet(
+    "SettingsSheet/aside-seg",
+    <SettingsSheet
+      title="Plans"
+      aside={
+        <Seg
+          label="Billing"
+          value="month"
+          options={[
+            { value: "month", label: "Monthly" },
+            { value: "year", label: "Yearly" },
+          ]}
+        />
+      }
+    >
+      <RadioLines
+        label="Plans"
+        value="plus"
+        options={[
+          { value: "solo", label: "Solo", note: "2 mailboxes · 1,000 credits · 2 GB", figure: "$9" },
+          {
+            value: "plus",
+            label: "Plus",
+            tag: "Your plan",
+            note: "5 mailboxes · 2,000 credits · 5 GB",
+            figure: "$15",
+          },
+          { value: "pro", label: "Pro", note: "10 mailboxes · 4,000 credits · 10 GB", figure: "$29" },
+        ]}
+      />
     </SettingsSheet>,
   ),
   sheet(

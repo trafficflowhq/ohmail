@@ -1,0 +1,21 @@
+/* A form's fields one under the other, and a field with the short one that belongs to it. */
+@layer oh {
+  .oh-fieldstack {
+    --oh-fieldstack-max: 480px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s3);
+    max-width: var(--oh-fieldstack-max);
+  }
+  .oh-fieldpair {
+    --oh-fieldpair-short: 96px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--oh-fieldpair-short);
+    gap: var(--s3);
+    align-items: start;
+  }
+  /* A switch with its name takes the stack's whole line: the name at its start, the switch at its end. */
+  .oh-fieldstack > .oh-switch-line {
+    justify-content: space-between;
+  }
+}

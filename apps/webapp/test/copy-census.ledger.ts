@@ -99,7 +99,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
    * tokens from functions, and the `return` pass reaches them for the first time. Every row here
    * is addressed to a parser rather than to a reader.
    */
-  "apps/webapp/app/letter-body/MessageBody.tsx": [
+  "packages/letter-body/src/MessageBody.tsx": [
     { text: "table table", why: "a CSS rule fragment for the sanitized mail frame's stylesheet" },
     { text: "default-src 'none'", why: "CSP directive — the mail frame's policy, parsed by the browser" },
     { text: "img-src data: blob:{}", why: "CSP directive — the image arm, with the proxy path spliced in" },
@@ -127,7 +127,7 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "if(l===\"zero\")try{document.documentElement.dataset.layout=\"zero\"}catch(e){}})()", why: "the same script, the layout stamp and its close" },
   ],
   "apps/webapp/app/views/SearchView.tsx": [
-    { text: ".view-search .search-box input", why: "a CSS selector — how the view reaches its own query box to select the kept text and to put the caret back after Escape" },
+    { text: ".search-box input", why: "a CSS selector — how the view reaches its own query box inside its root, where the list selects the kept text and puts the caret back after Escape" },
   ],
   "apps/webapp/app/shell/todays-feeds.tsx": [
     { text: "rail open", why: "machine text — the class names the frame's rail zone carries, which today's keys (`zone-nav`) find it by; no person reads it" },

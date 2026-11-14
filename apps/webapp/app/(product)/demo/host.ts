@@ -42,12 +42,16 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: CANNOT.language,
+      // The demo asks no server: no hello, so no person on the wire.
+      searchBy: CANNOT.searchBy,
       products: CANNOT.products,
     },
     features: {
       ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Record<(typeof FEATURE_NAMES)[number], typeof NONE>),
       places: frame.places,
       stages: frame.stages,
+      overs: frame.overs,
+      reader: NONE,
       calendar: frame.calendar,
     },
     device: {

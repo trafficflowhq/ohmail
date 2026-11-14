@@ -36,7 +36,7 @@ export interface WebFacts {
   /** The build serves a server its operator runs (`SELF_HOST_BUILD`). */
   readonly selfHost: boolean;
   /** The server pairs devices and fetches a letter's pictures (its handshake's words). */
-  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean };
+  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean; readonly searchPeople: boolean };
   /** People may be invited here: a self-host build, and the server's word. */
   readonly invites: boolean;
   /** The service serves a page for the subscription. */
@@ -123,6 +123,7 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       firstRunDoor: selfHost ? "selfhost" : "cloud",
       mailboxes: "here",
       language: "account",
+      searchBy: server.searchPeople ? "people" : "words",
       // The switch to the calendar is answered from the server's word at its seating.
       products: CANNOT.products,
     },
@@ -139,6 +140,8 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       stageCard: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      overs: has.frame.overs,
+      reader: NONE,
       calendar: has.frame.calendar,
     },
     device: {
