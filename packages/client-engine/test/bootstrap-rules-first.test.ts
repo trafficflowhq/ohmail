@@ -92,6 +92,9 @@ interface Recorder {
   snapshotCalls: number;
 }
 
+/** The rules pass names the rule kind alone; every other ask names the engine's whole list. */
+const rulesOnly = (types: string[] | null): boolean => types?.length === 1 && types[0] === "rule";
+
 /**
  * A feed whose seq order is the DEFECT's: the decided sender's mail (seqs 1–2) strictly before
  * the rule that decided them (seq 3). The snapshot route fails page 1, which is the live way
@@ -175,8 +178,8 @@ describe("the since=0 fallback drains rules before mail", () => {
 
     expect(rec.snapshotCalls).toBe(1); // page 1 failed and latched — the way onto this path
     expect(rec.syncAsks[0]).toEqual({ since: "0", types: ["rule"] });
-    // The first MIXED ask (no types filter) is still since=0: the rules pass wrote no cursor.
-    const firstMixed = rec.syncAsks.find((a) => a.types === null);
+    // The first MIXED ask (every kind named) is still since=0: the rules pass wrote no cursor.
+    const firstMixed = rec.syncAsks.find((a) => !rulesOnly(a.types));
     expect(firstMixed?.since).toBe("0");
   });
 
@@ -208,7 +211,7 @@ describe("the since=0 fallback drains rules before mail", () => {
     const store = await freshStore();
     await new OhmailEngine({ adapter, store, now: () => NOW }).start();
 
-    expect(rec.syncAsks.every((a) => a.types === null)).toBe(true);
+    expect(rec.syncAsks.every((a) => !rulesOnly(a.types))).toBe(true);
   });
 
   /**
@@ -265,6 +268,6 @@ describe("the since=0 fallback drains rules before mail", () => {
 
     await new OhmailEngine({ adapter: fallbackAdapter(rec), store, now: () => NOW }).syncOnce();
 
-    expect(rec.syncAsks.every((a) => a.types === null), "a warm poll paid a rules ask").toBe(true);
+    expect(rec.syncAsks.every((a) => !rulesOnly(a.types)), "a warm poll paid a rules ask").toBe(true);
   });
 });

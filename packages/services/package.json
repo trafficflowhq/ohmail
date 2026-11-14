@@ -21,6 +21,12 @@
       "ohmail-source": "./src/mail.ts",
       "node": "./dist/mail.js",
       "default": "./src/mail.ts"
+    },
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
     }
   },
   "dependencies": {
@@ -32,10 +38,12 @@
     "sanitize-html": "2.17.6",
     "tldts": "7.4.9",
     "@ohmail/wire": "*",
+    "@ohmail/cal-core": "*",
     "@trafficflow/core": "*",
     "@trafficflow/db": "*"
   },
   "devDependencies": {
+    "@ohmail/testing": "*",
     "postgres": "3.4.9"
   }
 }

@@ -288,6 +288,7 @@ export {
   type SensitivityFlags,
   type SyncChange,
   SYNC_ENTITY_TYPES,
+  NAMED_FEED_KINDS,
   type SyncEntityType,
   type SyncResponse,
   type SyncSnapshotPage,

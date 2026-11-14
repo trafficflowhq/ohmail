@@ -108,6 +108,12 @@ const BOUND = {
   messageId: { file: "packages/core/src/adapters/drizzle-repo.ts", code: /messageIdHeader: storedMessageId\(input\.canonical\.messageIdHeader\)/ },
   threadAnchor: { file: "packages/core/src/threading.ts", code: /if \(isStorableMessageId\(id\) && !seen\.has\(id\)\)/ },
   listId: { file: "packages/services/src/unsubscribe-service.ts", code: /Buffer\.byteLength\(identity, "utf8"\) <= MAX_LIST_ID_BYTES/ },
+  // The calendar's record tables, written by a desktop's copy of a Cloud account; the calendar's
+  // sync (on the server) bounds the same columns at its own door with the same function.
+  calendarUid: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(r\.uid, CALENDAR_UID_MAX_BYTES\)/ },
+  calendarOccurrence: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(r\.recurrenceId, CALENDAR_OCCURRENCE_KEY_MAX_BYTES\)/ },
+  calendarProviderId: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(r\.id, CALENDAR_PROVIDER_ID_MAX_BYTES\)/ },
+  calendarAddress: { file: "apps/sidecar/src/cloud-mirror-calendar.ts", code: /fitsCalendarBytes\(p\.address, CALENDAR_ADDRESS_MAX_BYTES\)/ },
 } as const;
 type Bound = keyof typeof BOUND;
 
@@ -236,11 +242,11 @@ const CLASSES: Record<string, { inbound: Bound } | { server: ServerBound } | { n
   // mail 0205, the calendar's tables (`_unwritten-tables.ts`). A provider's ids, an event's UID and
   // an attendee's address are another party's text; each is bounded in bytes where the calendar's
   // store writes it. A credential's kind and a write's idempotency key are the product's own.
-  "cal_calendars.provider_id": { unwritten: "a provider's id of a calendar, bounded where the calendar's sync stores it" },
-  "cal_events.provider_id": { unwritten: "a provider's id of an event, bounded where the calendar's sync stores it" },
-  "cal_events.uid": { unwritten: "an event's UID as its organizer wrote it, bounded where the calendar's sync stores it" },
-  "cal_events.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
-  "cal_attendees.address": { unwritten: "an attendee's address, bounded as a stored address is" },
+  "cal_calendars.provider_id": { inbound: "calendarProviderId" },
+  "cal_events.provider_id": { inbound: "calendarProviderId" },
+  "cal_events.uid": { inbound: "calendarUid" },
+  "cal_events.recurrence_id": { inbound: "calendarOccurrence" },
+  "cal_attendees.address": { inbound: "calendarAddress" },
   "cal_links.uid": { unwritten: "the UID a letter named, bounded where the link is written" },
   "cal_links.recurrence_id": { unwritten: "the instance's id, bounded with the UID" },
   "cal_credentials.kind": { unwritten: "a closed set of kinds the product writes; classed `not` by its writer" },

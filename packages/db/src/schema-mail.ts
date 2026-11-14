@@ -9,7 +9,7 @@
  * asymmetric on purpose — the mail half must stand alone; the reverse is legal.
  */
 
-import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check } from "drizzle-orm/pg-core";
+import { pgTable, uuid, text, timestamp, date, bigint, bigserial, boolean, jsonb, integer, real, unique, uniqueIndex, index, primaryKey, customType, check, foreignKey } from "drizzle-orm/pg-core";
 import { shapeCheck } from "./closed-set-shape.js";
 import { sql, desc } from "drizzle-orm";
 import { ruleMatchKeySql } from "./rule-match-sql.js";
@@ -2765,11 +2765,17 @@ export const accountSettings = pgTable("account_settings", {
 // `schema-mail-sqlite.ts`. Nothing writes them yet; the calendar's store is built on them, and
 // their columns may change in place until the 2.0 journal is frozen.
 //
-// Every one is born with `account_id NOT NULL`. Keys run inside the family only, and in the
-// journal they are composite, `(x, account_id)` onto the parent's `(id, account_id)`; the two
-// roots key to `accounts`. A mailbox or a letter is named by a plain column, with no key into the
-// mail tables. Closed lists carry no CHECK: they grow, and the write doors hold them.
+// Every one is born with `account_id NOT NULL`. Keys run inside the family only, composite,
+// `(x, account_id)` onto the parent's `(id, account_id)`; the two roots key to `accounts`. A
+// mailbox or a letter is named by a plain column, with no key into the mail tables. A list that
+// grows (a connection's provider, status, error code) is held to the one-word shape mail 0202
+// gave `mailboxes`; the four kinds of time never grow and are a CHECK. Every time is kept as
+// written — kind, the calendar core's text, a zone's name — and `starts_at`, `ends_at` and
+// `occurrence_at` are derived from it by one function (the services' `derivedRange`).
 // ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/** The four kinds of time, as the store's CHECK spells them. */
+const CALENDAR_TIME_KINDS_SQL = "('date', 'instant', 'zoned', 'floating')";
 
 /** One way an account reaches a calendar: a provider, and where its sign-in and sync stand. */
 export const calConnections = pgTable("cal_connections", {
@@ -2779,10 +2785,16 @@ export const calConnections = pgTable("cal_connections", {
   label: text("label").notNull().default(""),
   status: text("status").notNull().default("active"),
   errorCode: text("error_code"),
-  /** The mailbox whose sign-in this connection rides, where it rides one. A plain column. */
+  /** The mailbox whose sign-in this connection rides, where it rides one. A plain column, set once. */
   mailboxId: uuid("mailbox_id"),
+  /** CalDAV: the server's origin and path, never a user part, a query or a fragment. */
   serverUrl: text("server_url"),
   principal: text("principal"),
+  /**
+   * A subscription: its address's host and nothing else, lower case; the address is sealed. A
+   * desktop's copy of a Cloud account, which holds no address, keeps a CalDAV server's host here too.
+   */
+  sourceHost: text("source_host"),
   consentedAt: timestamp("consented_at", { withTimezone: true }),
   listToken: text("list_token"),
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
@@ -2792,12 +2804,19 @@ export const calConnections = pgTable("cal_connections", {
 }, (t) => ({
   uqAccount: uniqueIndex("cal_connections_id_account_uq").on(t.id, t.accountId),
   byAccount: index("cal_connections_account_idx").on(t.accountId, t.id),
+  ckProvider: check("cal_connections_provider_shape", sql.raw(shapeCheck("provider"))),
+  ckStatus: check("cal_connections_status_shape", sql.raw(shapeCheck("status"))),
+  ckErrorCode: check("cal_connections_error_code_shape", sql.raw(shapeCheck("error_code"))),
+  ckSubscription: check("cal_connections_subscription_names_no_server",
+    sql`${t.provider} <> 'ics' OR (${t.serverUrl} IS NULL AND ${t.principal} IS NULL)`),
+  ckSourceHost: check("cal_connections_source_host_bare",
+    sql`${t.sourceHost} IS NULL OR (strpos(${t.sourceHost}, '/') = 0 AND strpos(${t.sourceHost}, '?') = 0 AND strpos(${t.sourceHost}, '#') = 0 AND strpos(${t.sourceHost}, '@') = 0 AND strpos(${t.sourceHost}, ':') = 0 AND strpos(${t.sourceHost}, ' ') = 0)`),
 }));
 
 /** A connection's sealed secret, one row per kind. `secretEnc` is wrapped like a mailbox's. */
 export const calCredentials = pgTable("cal_credentials", {
   accountId: uuid("account_id").notNull(),
-  connectionId: uuid("connection_id").notNull().references(() => calConnections.id),
+  connectionId: uuid("connection_id").notNull(),
   kind: text("kind").notNull(),
   secretEnc: text("secret_enc").notNull(),
   keyVersion: integer("key_version").notNull(),
@@ -2805,13 +2824,17 @@ export const calCredentials = pgTable("cal_credentials", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   pk: primaryKey({ name: "cal_credentials_pk", columns: [t.accountId, t.connectionId, t.kind] }),
+  fkConnection: foreignKey({
+    name: "cal_credentials_connection_id_account_fk",
+    columns: [t.connectionId, t.accountId], foreignColumns: [calConnections.id, calConnections.accountId],
+  }),
 }));
 
 /** One calendar of a connection, and where its sync stands. */
 export const calCalendars = pgTable("cal_calendars", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
-  connectionId: uuid("connection_id").notNull().references(() => calConnections.id),
+  connectionId: uuid("connection_id").notNull(),
   providerId: text("provider_id").notNull(),
   name: text("name").notNull().default(""),
   color: text("color"),
@@ -2832,16 +2855,23 @@ export const calCalendars = pgTable("cal_calendars", {
 }, (t) => ({
   uqAccount: uniqueIndex("cal_calendars_id_account_uq").on(t.id, t.accountId),
   uqProvider: uniqueIndex("cal_calendars_provider_uq").on(t.accountId, t.connectionId, t.providerId),
+  fkConnection: foreignKey({
+    name: "cal_calendars_connection_id_account_fk",
+    columns: [t.connectionId, t.accountId], foreignColumns: [calConnections.id, calConnections.accountId],
+  }),
+  ckWindow: check("cal_calendars_window_whole",
+    sql`(${t.windowStart} IS NULL) = (${t.windowEnd} IS NULL) AND (${t.windowStart} IS NULL OR ${t.windowStart} <= ${t.windowEnd})`),
 }));
 
 /** An event: a series' master, an exception to one, or a single event. Expanded by the reader. */
 export const calEvents = pgTable("cal_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
-  calendarId: uuid("calendar_id").notNull().references(() => calCalendars.id),
+  calendarId: uuid("calendar_id").notNull(),
   providerId: text("provider_id").notNull(),
   versionTag: text("version_tag"),
   uid: text("uid").notNull(),
+  /** The calendar core's `recurrenceKeyString` of the occurrence this row replaces; `''` for none. */
   recurrenceId: text("recurrence_id").notNull().default(""),
   sequence: integer("sequence").notNull().default(0),
   status: text("status").notNull().default("confirmed"),
@@ -2849,36 +2879,63 @@ export const calEvents = pgTable("cal_events", {
   notes: text("notes"),
   place: text("place"),
   callLink: text("call_link"),
+  /** The start as written: `date | instant | zoned | floating`, the core's text, the zone's name. */
   startKind: text("start_kind").notNull(),
   startLocal: text("start_local").notNull(),
   startZone: text("start_zone"),
+  /** The end as written, the same three; all empty when the event gives a length or nothing. */
+  endKind: text("end_kind"),
   endLocal: text("end_local"),
   endZone: text("end_zone"),
-  startsAt: timestamp("starts_at", { withTimezone: true }),
+  /** A length as written (`PT1H`), never beside an end. */
+  duration: text("duration"),
+  thisAndFuture: boolean("this_and_future").notNull().default(false),
+  /** Derived (`derivedRange`): the first moment the event can touch. */
+  startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
+  /** Derived: the last moment it can touch; empty only for a series that does not end. */
   endsAt: timestamp("ends_at", { withTimezone: true }),
-  /** One grammar for every provider: iCalendar's. */
+  /** Derived: the moment of the occurrence this row replaces; empty when it replaces none. */
+  occurrenceAt: timestamp("occurrence_at", { withTimezone: true }),
+  /** One grammar for every provider: iCalendar's RRULE values, one per line. */
   repeatRule: text("repeat_rule"),
   excludedDates: jsonb("excluded_dates"),
   addedDates: jsonb("added_dates"),
   busy: boolean("busy").notNull().default(true),
   private: boolean("private").notNull().default(false),
   organizer: text("organizer"),
+  organizerName: text("organizer_name"),
   myAnswer: text("my_answer"),
   heldBack: boolean("held_back").notNull().default(false),
+  /** A desktop's copy received this event cut to fit the feed: no notes, no invitees. */
+  partial: boolean("partial").notNull().default(false),
   original: text("original"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
 }, (t) => ({
   uqAccount: uniqueIndex("cal_events_id_account_uq").on(t.id, t.accountId),
-  uqProvider: uniqueIndex("cal_events_provider_uq").on(t.accountId, t.calendarId, t.providerId),
+  uqProvider: uniqueIndex("cal_events_provider_uq").on(t.accountId, t.calendarId, t.providerId, t.recurrenceId),
   byRange: index("cal_events_account_range_idx").on(t.accountId, t.startsAt, t.endsAt),
   byUid: index("cal_events_account_uid_idx").on(t.accountId, t.uid, t.recurrenceId),
+  byOccurrence: index("cal_events_account_occurrence_idx").on(t.accountId, t.occurrenceAt)
+    .where(sql`${t.occurrenceAt} IS NOT NULL`),
+  fkCalendar: foreignKey({
+    name: "cal_events_calendar_id_account_fk",
+    columns: [t.calendarId, t.accountId], foreignColumns: [calCalendars.id, calCalendars.accountId],
+  }),
+  ckStartKind: check("cal_events_start_kind_closed", sql.raw(`"start_kind" in ${CALENDAR_TIME_KINDS_SQL}`)),
+  ckEndKind: check("cal_events_end_kind_closed", sql.raw(`"end_kind" IS NULL OR "end_kind" in ${CALENDAR_TIME_KINDS_SQL}`)),
+  ckStartZone: check("cal_events_start_zone_when_zoned", sql`(${t.startKind} = 'zoned') = (${t.startZone} IS NOT NULL)`),
+  ckEndZone: check("cal_events_end_zone_when_zoned", sql`coalesce(${t.endKind} = 'zoned', false) = (${t.endZone} IS NOT NULL)`),
+  ckEndWhole: check("cal_events_end_whole", sql`(${t.endKind} IS NULL) = (${t.endLocal} IS NULL)`),
+  ckEndOrDuration: check("cal_events_end_or_duration", sql`${t.endLocal} IS NULL OR ${t.duration} IS NULL`),
+  ckOccurrence: check("cal_events_occurrence_when_replacing", sql`(${t.recurrenceId} = '') = (${t.occurrenceAt} IS NULL)`),
+  ckEnds: check("cal_events_ends_unless_endless", sql`${t.endsAt} IS NOT NULL OR ${t.repeatRule} IS NOT NULL`),
 }));
 
 /** Who is invited to an event, and what each answered. */
 export const calAttendees = pgTable("cal_attendees", {
   accountId: uuid("account_id").notNull(),
-  eventId: uuid("event_id").notNull().references(() => calEvents.id),
+  eventId: uuid("event_id").notNull(),
   address: text("address").notNull(),
   name: text("name"),
   role: text("role").notNull().default("required"),
@@ -2886,26 +2943,40 @@ export const calAttendees = pgTable("cal_attendees", {
 }, (t) => ({
   pk: primaryKey({ name: "cal_attendees_pk", columns: [t.accountId, t.eventId, t.address] }),
   byAddress: index("cal_attendees_account_address_idx").on(t.accountId, t.address),
+  fkEvent: foreignKey({
+    name: "cal_attendees_event_id_account_fk",
+    columns: [t.eventId, t.accountId], foreignColumns: [calEvents.id, calEvents.accountId],
+  }),
 }));
 
 /** A reminder: of one event, or a calendar's default. Exactly one of the two owners. */
 export const calAlarms = pgTable("cal_alarms", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
-  eventId: uuid("event_id").references(() => calEvents.id),
-  calendarId: uuid("calendar_id").references(() => calCalendars.id),
+  eventId: uuid("event_id"),
+  calendarId: uuid("calendar_id"),
   minutesBefore: integer("minutes_before").notNull(),
   method: text("method").notNull().default("notice"),
 }, (t) => ({
   oneOwner: check("cal_alarms_one_owner", sql`(${t.eventId} IS NULL) <> (${t.calendarId} IS NULL)`),
   byEvent: index("cal_alarms_account_event_idx").on(t.accountId, t.eventId),
+  byCalendar: index("cal_alarms_account_calendar_idx").on(t.accountId, t.calendarId)
+    .where(sql`${t.calendarId} IS NOT NULL`),
+  fkEvent: foreignKey({
+    name: "cal_alarms_event_id_account_fk",
+    columns: [t.eventId, t.accountId], foreignColumns: [calEvents.id, calEvents.accountId],
+  }),
+  fkCalendar: foreignKey({
+    name: "cal_alarms_calendar_id_account_fk",
+    columns: [t.calendarId, t.accountId], foreignColumns: [calCalendars.id, calCalendars.accountId],
+  }),
 }));
 
 /** A change a person made, owed to the provider: the calendar's desired state. */
 export const calWrites = pgTable("cal_writes", {
   id: uuid("id").defaultRandom().primaryKey(),
   accountId: uuid("account_id").notNull(),
-  calendarId: uuid("calendar_id").notNull().references(() => calCalendars.id),
+  calendarId: uuid("calendar_id").notNull(),
   /** The event the write is about, where it has one yet. A plain column. */
   eventId: uuid("event_id"),
   op: text("op").notNull(),
@@ -2921,6 +2992,10 @@ export const calWrites = pgTable("cal_writes", {
 }, (t) => ({
   uqIdempotency: uniqueIndex("cal_writes_idempotency_uq").on(t.accountId, t.idempotencyKey),
   pending: index("cal_writes_pending_idx").on(t.accountId, t.nextAttemptAt, t.id).where(sql`${t.state} = 'pending'`),
+  fkCalendar: foreignKey({
+    name: "cal_writes_calendar_id_account_fk",
+    columns: [t.calendarId, t.accountId], foreignColumns: [calCalendars.id, calCalendars.accountId],
+  }),
 }));
 
 /** A letter that speaks of an event. The letter and its mailbox are named by plain columns. */

@@ -4,6 +4,7 @@
  * message's text, and a server never invents a word a client has no sentence for without it
  * being added here first.
  */
+import type { CalendarReason } from "./calendar.js";
 
 /**
  * EVERY WORD A SERVER REFUSES WITH — the `code` of the error envelope. The server's `ServiceError`
@@ -64,7 +65,9 @@ export type ServiceErrorCode =
   | "unsubscribe_record_vanished" | "unsubscribe_sender_identity_unverified"
   | "unsubscribe_unconfigured" | "unsupported_grant_type" | "unsupported_media_type"
   | "upstream_failed" | "upstream_unavailable" | "validation_failed" | "waitlist_unconfigured"
-  | "workflow_too_many_steps";
+  | "workflow_too_many_steps"
+  // The calendar's own words, declared in its file.
+  | CalendarReason;
 
 /**
  * The `ApiError` envelope: `{ error: { code, message, details?, retryable? } }`. `retryable` is

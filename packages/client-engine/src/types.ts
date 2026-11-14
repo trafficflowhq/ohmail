@@ -9,7 +9,7 @@
  */
 
 import type {
-  Assert, Complete, Cursor, EngineMutation, FeedView, Folder, MutationKind, OhmailView, ScreenerWaitingPageDTO,
+  Assert, Complete, Cursor, EngineMutation, FeedView, Folder, MutationKind, OhmailView, RecordKind, ScreenerWaitingPageDTO,
   SensitivityFlags, SyncChange as WireSyncChange, SyncEntityType, SyncResponse as WireSyncResponse,
   TriageState as WireTriageState, WithheldMarker,
 } from "@ohmail/wire";
@@ -76,8 +76,23 @@ export const SYNC_ENTITY_TYPES = [
    * keyed by the mailbox. A tombstone means the local rules decide that mailbox again.
    */
   "mailbox_profile",
+  /**
+   * The calendar's four kinds (`@ohmail/wire`, `calendar.ts`): a connection, a calendar, an event
+   * with its invitees and reminders inside it, and a suggestion read from a letter. The server
+   * sends them only to a request that names them, on an account whose calendar is on.
+   */
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const satisfies readonly SyncEntityType[];
 type _SyncEntityTypesComplete = Assert<Complete<SyncEntityType, typeof SYNC_ENTITY_TYPES>>;
+
+/**
+ * THE KINDS AN ENGINE NAMES ON EVERY FEED REQUEST unless its host names its own: the declared list
+ * and the settings record. Named, because the server sends the calendar's kinds only to a request
+ * that names one, and a request that names its kinds is sent the settings record, which carries the
+ * calendar's switch, only by naming it too. A server older than a kind drops its name unread.
+ */
+export const NAMED_FEED_KINDS = [...SYNC_ENTITY_TYPES, "settings"] as const satisfies readonly RecordKind[];
+type _NamedFeedKindsComplete = Assert<Complete<RecordKind, typeof NAMED_FEED_KINDS>>;
 
 /** The `mailbox_profile` entity's own name — the partition, the bounds table and the tests agree on it. */
 export const MAILBOX_PROFILE_TYPE = "mailbox_profile";

@@ -52,10 +52,11 @@ const PULL = [...new Set([...mirror.paths, ...wake.paths])].sort();
 
 describe("the paired desktop's pull set, read from its own call sites", () => {
   it("POSITIVE CONTROL: the scan finds the call sites the mirror, the wake and the refresh make", () => {
-    // Nine hosted reads in the mirror today (the away-reply repair's GET /messages/:id the ninth);
-    // a scan reading zero, or losing one, is the census measuring nothing, and a tenth is a read
-    // somebody must look at here before it ships.
-    expect(mirror.sites).toBe(9);
+    // Ten hosted reads in the mirror today (the away-reply repair's GET /messages/:id the ninth, the
+    // calendar's read when its switch went on, a GET /sync/snapshot, the tenth); a scan reading zero,
+    // or losing one, is the census measuring nothing, and an eleventh is a read somebody must look
+    // at here before it ships.
+    expect(mirror.sites).toBe(10);
     expect(wake.sites).toBe(1);
     expect(refreshSites).toBe(1);
     expect(PULL).toEqual(["/events", "/mailboxes", "/messages/:id", "/messages/bodies", "/sync", "/sync/snapshot"]);

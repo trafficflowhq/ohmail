@@ -8,7 +8,7 @@
  * intent. Both are refused to the person's face with the store's reason;
  * every other verb still goes — repeating a state change is a no-op.
  */
-import { EngineLifecycle } from "./engine/lifecycle.js";
+import { EngineCalendar } from "./engine/calendar.js";
 
 /**
  * The delta-sync engine (brief §4 — the load-bearing abstraction):
@@ -20,7 +20,7 @@ import { EngineLifecycle } from "./engine/lifecycle.js";
  *   next /sync drain), roll back only on a hard rejection;
  *   SSE/push are WAKE SIGNALS only — attachWakeSignal() nudges a syncOnce.
  */
-export class OhmailEngine extends EngineLifecycle {}
+export class OhmailEngine extends EngineCalendar {}
 
 export {
   type AppliedRuleRequest, type KeptAsNewDraft, type MutationResult, type MutationStatus, type OrganizerRequestView,

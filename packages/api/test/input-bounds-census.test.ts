@@ -1207,6 +1207,8 @@ const QUERY_PARAM_READS: Readonly<Record<string, number>> = {
   "routes/search.ts#limit": 2,
   "routes/snippets.ts#limit": 1,
   "routes/sync.ts#limit": 2,
+  // The delta filters by the kinds named; the snapshot reads them for the calendar's gate alone.
+  "routes/sync.ts#types": 2,
   "routes/triage.ts#cursor": 2,
   // Read twice in a ternary: once to test for presence, once to use.
   "routes/devices.ts#cursor": 2,
@@ -1383,11 +1385,16 @@ const QUERY_PARAMS: Readonly<Record<string, ParamBound>> = {
   "routes/snippets.ts#limit": "clamped",
   "routes/sync.ts#cursor": "length-capped",
   "routes/sync.ts#limit": "clamped",
-  // `=== "tail"` at the read is the whole comparison: one word opens the labeled tail, anything
-  // else is the ordinary bootstrap walk. Never parsed, never reaches a query.
+  // `=== "tail"` or `=== "calendar"` at the read is the whole comparison: one word opens the
+  // labeled tail, the other the calendar's phase, anything else is the ordinary bootstrap walk.
+  // Never parsed, never reaches a query.
   "routes/sync.ts#phase": "closed-set",
   "routes/sync.ts#since": "length-capped",
   "routes/sync.ts#types": "closed-set",
+  // The span the calendar's phase alone loads: two instants of at most 40 characters, each in the
+  // years 0001 to 9999 and at most a year apart (`namedCalendarSpan`), before any query.
+  "routes/sync.ts#from": "length-capped",
+  "routes/sync.ts#to": "length-capped",
   "routes/triage.ts#cursor": "identifier",
   "routes/triage.ts#limit": "clamped",
   "routes/triage.ts#state": "closed-set",
@@ -1551,6 +1558,22 @@ type ArrayOrigin =
  * its expression is one the file already uses.
  */
 const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>> = {
+  // The calendar's builders for the sync feed: the ids of one feed page's changes of one kind.
+  "calendar/feed.ts :: [...ids]": {
+    origin: { bounded: "one feed page's changes of one calendar kind — at most the page's own row limit (`MAX_LIMIT`, 2 000)" },
+    count: 5,
+  },
+  "calendar/feed.ts :: found": {
+    origin: { bounded: "the events the same page's select found, never more than the ids it was asked for" },
+    count: 1,
+  },
+  // The export's addresses: the mailboxes the account's own calendar connections ride.
+  "calendar/export.ts :: mailboxIds": {
+    origin: { bounded: "one per calendar connection of the account, each a sign-in the person made by hand" },
+    count: 1,
+  },
+  // The switch's check of the calendar new events go to: the two access words that take them.
+  "calendar/settings-service.ts :: [\"owner\", \"writer\"]": { origin: "constant", count: 1 },
   // ── CLOSED 2026-09-01. All four were `unbounded` and are now subqueries. ────────────────────
   // The messageIds entry was the critical one and its old disposition is worth keeping in view:
   // "EVERY message uuid the account holds, selected into memory and reused in three deletes. Past

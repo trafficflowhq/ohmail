@@ -109,6 +109,15 @@ const ACCOUNT_SURVIVORS: Record<string, string> = {
 const MAILBOX_SURVIVORS: Record<string, string> = {
   // As above: what a mailbox's removal does with a table is decided with the table's first writer.
   ...unwrittenByExport(),
+  // THE CALENDAR'S PART of a mailbox's erasure is a step of its own (`packages/db/src/calendar/
+  // erasure.ts`), which `sweepMailboxStep` runs on a Postgres store after the letters and before
+  // the finish: this file may not name the calendar's tables, because a phone's engine carries it
+  // and its store has none. Held by `packages/db/test/calendar-erasure.test.ts`.
+  calConnections:
+    "taken by the calendar's own step when it rides the erased mailbox, with its calendars, "
+    + "events, invitees, reminders, writes and sign-in; one that rides another mailbox stays",
+  calSuggestions:
+    "taken by the calendar's own step: an event the erased mailbox's letters proposed",
   mailboxes:
     "the tombstone — how a removal is REMEMBERED. The row stays, `status = 'disabled'` and "
     + "`erased_at` stamped in the sweep's own transaction, so the id keeps meaning something to "

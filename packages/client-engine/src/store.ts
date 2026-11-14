@@ -1,4 +1,5 @@
 import { applyToRecords, flattenResponse, maxSeqOf, recordKey, type MirrorRecord } from "./apply.js";
+import { cascadeCalendarRemoval } from "./calendar-cascade.js";
 import { beginDerive, noteMirrorMessages } from "./client-vitals.js";
 import { MAILBOX_TYPE, OUTBOX_ABANDONED_TYPE, OUTBOX_TYPE, isCarriedLocalType, isProtectedMessage } from "./types.js";
 import type { Cursor, EngineMessage, SyncChange, SyncResponse } from "./types.js";
@@ -771,6 +772,17 @@ export abstract class BaseMirrorStore implements MirrorStore {
     return out;
   }
 
+  /** A removed calendar connection or calendar takes what hangs on it (`calendar-cascade.ts`). */
+  private cascadeCalendarRemovals(applied: MirrorRecord[]): MirrorRecord[] {
+    const out: MirrorRecord[] = [];
+    cascadeCalendarRemoval(this.records, applied, (rec, seq) => {
+      const next: MirrorRecord = { type: rec.type, id: rec.id, seq: rec.seq === 0 ? 0 : Math.max(rec.seq, seq), entity: null };
+      this.records.set(recordKey(rec.type, rec.id), next);
+      out.push(next);
+    });
+    return out;
+  }
+
   /**
    * A MAILBOX THE SERVER NO LONGER HOLDS TAKES EVERYTHING KEYED BY IT — the receipt's cascade, on
    * ONE `mailbox` delete. STRUCTURAL, not a list of types: pass one takes every record naming the
@@ -928,6 +940,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+      ...this.cascadeCalendarRemovals(applied),
       ...this.cascadeEmptiedThreads(threads, applied), ...this.claimsOfGoneLetters(applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));
@@ -1115,6 +1128,7 @@ export abstract class BaseMirrorStore implements MirrorStore {
     const applied = applyToRecords(this.records, changes);
     const dirty = [
       ...applied, ...this.cascadeLocalDeletes(changes, applied), ...this.cascadeMailboxRemoval(applied),
+      ...this.cascadeCalendarRemovals(applied),
       ...this.cascadeEmptiedThreads(threads, applied), ...this.claimsOfGoneLetters(applied),
     ];
     this.highSeq = Math.max(this.highSeq, maxSeqOf(changes));

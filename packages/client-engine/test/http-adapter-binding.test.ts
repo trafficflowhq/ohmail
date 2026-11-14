@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { HttpAdapter, OhmailEngine } from "@ohmail/client-engine";
+import { HttpAdapter, NAMED_FEED_KINDS, OhmailEngine } from "@ohmail/client-engine";
 
 /**
  * THE DEFAULT `fetch` BRANCH, EXERCISED — because in production it was the ONLY branch, and
@@ -84,8 +84,10 @@ describe("HttpAdapter's default fetch", () => {
     // route. The degraded fallback opens with the rules-first pass (`types=rule` — decisions
     // land before the mail they govern; see `bootstrap-rules-first.test.ts`), then the mixed
     // replay. Asserting the exact list rather than "contains" is deliberate: a snapshot retried
-    // on every drain, or a `since=0` that never happened, both have to be visible here.
-    expect(calls).toEqual(["/api/sync/snapshot", "/api/sync?since=0&types=rule", "/api/sync?since=0"]);
+    // on every drain, or a `since=0` that never happened, both have to be visible here. The
+    // snapshot and the mixed replay name every kind the engine keeps.
+    const named = new URLSearchParams({ types: NAMED_FEED_KINDS.join(",") }).toString();
+    expect(calls).toEqual([`/api/sync/snapshot?${named}`, "/api/sync?since=0&types=rule", `/api/sync?since=0&${named}`]);
   });
 
   it("still prefers an injected fetch over the global", async () => {

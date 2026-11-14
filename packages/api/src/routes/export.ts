@@ -2,6 +2,7 @@ import { and, asc, eq, ne } from "drizzle-orm";
 import type { Tx } from "@trafficflow/db";
 import { accountSettings, mailboxes } from "@trafficflow/db";
 import { serializeOrganizerProfileCounted } from "@trafficflow/core/adapters/organizer-profile-store";
+import { calendarExport } from "@trafficflow/services/calendar";
 import { serviceContext } from "../context.js";
 import { json } from "./shared.js";
 import type { Route } from "../router.js";
@@ -63,11 +64,16 @@ export const exportRoutes: Route[] = [
         blockAutoUnsubscribe: (s?.blockAutoUnsubscribeAt ?? null) !== null,
       };
 
+      // The calendar, where the account holds one: what it says is held, so neither the server's
+      // word nor the account's switch gates it. Absent otherwise, and the document is as it was.
+      const calendar = await calendarExport(ctx.db, ctx.accountId);
+
       return json({
         v: 1,
         generatedAt: deps.now().toISOString(),
         settings,
         mailboxes: perMailbox,
+        ...(calendar !== null ? { calendar } : {}),
       }, 200);
     },
   },

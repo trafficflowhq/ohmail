@@ -1,4 +1,6 @@
+import type { CalendarWindow } from "@ohmail/wire";
 import { CASCADE_TYPES } from "../mirror-bounds.js";
+import { CALENDAR_WINDOW_DEFAULT, calendarSpanVictims, type CalendarSpan } from "./calendar-span.js";
 import { winningStates } from "../selectors.js";
 import type { EngineDraft, EngineMessage } from "../types.js";
 import { RENDERED_PINS } from "./ceilings.js";
@@ -48,7 +50,34 @@ export abstract class EngineWindowed extends EngineReads {
    */
   protected static readonly PRUNE_IGNORES: readonly string[] = ["message_body"];
 
+  /** The calendar's span: the window the server serves, and the spans loaded on purpose. */
+  protected calendarWindow: CalendarWindow = CALENDAR_WINDOW_DEFAULT;
+  protected calendarLoaded: CalendarSpan[] = [];
+  private calendarPrunedAtStamp = -1;
+
   protected async pruneToPolicy(graceAbove?: number): Promise<boolean> {
+    const calendar = await this.pruneCalendarSpan(graceAbove);
+    const mail = await this.pruneMailWindow(graceAbove);
+    // After both passes' own writes, which move the stamp themselves.
+    this.calendarPrunedAtStamp = this.store.stampExcept(OhmailEngine.PRUNE_IGNORES);
+    return mail || calendar;
+  }
+
+  /**
+   * The calendar's events are bounded by their span in every store mode (`calendar-span.ts`). Like
+   * the mail's pass, it reads nothing at a settle where nothing arrived: the span moving with the
+   * day only lets more go, which the next arrival or launch settles.
+   */
+  private async pruneCalendarSpan(graceAbove?: number): Promise<boolean> {
+    if (graceAbove === undefined && this.store.stampExcept(OhmailEngine.PRUNE_IGNORES) === this.calendarPrunedAtStamp) return false;
+    const victims = calendarSpanVictims(
+      this.store.entries("calendar_event"), this.now().getTime(), this.calendarWindow, this.calendarLoaded, graceAbove,
+    );
+    if (victims.length > 0) await this.store.prune(victims);
+    return victims.length > 0;
+  }
+
+  private async pruneMailWindow(graceAbove?: number): Promise<boolean> {
     const policy = this.storePolicy;
     if (policy.mode !== "windowed") return false; // `full` — the default. Nothing is ever evicted.
     if (graceAbove === undefined

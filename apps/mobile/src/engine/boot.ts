@@ -11,8 +11,8 @@
 import {
   HttpAdapter,
   MutationRejectedError,
+  NAMED_FEED_KINDS,
   OhmailEngine,
-  SYNC_ENTITY_TYPES,
   SqlMirrorStore,
   flattenResponse,
   mirrorDbName,
@@ -439,9 +439,11 @@ export const MOBILE_WINDOW: StorePolicy = { mode: "windowed", days: 90, minRows:
  * emits — a mailbox removed on the paired desktop kept its mail on the phone, and a reconnect
  * added it again. The engine could always sweep it (`store.ts#cascadeMailboxRemoval`); nothing
  * told it to. The bound the copy existed for is now structural: a server that grows a new type
- * has to join the declaration first, which is where the store's own handling is written.
+ * has to join the declaration first, which is where the store's own handling is written. The list
+ * every engine names (`NAMED_FEED_KINDS`), with the settings record: a server sends the calendar
+ * only to a device that hears its switch.
  */
-export const MOBILE_SYNC_TYPES: string[] = [...SYNC_ENTITY_TYPES];
+export const MOBILE_SYNC_TYPES: string[] = [...NAMED_FEED_KINDS];
 
 /**
  * Ask the server whose bearer this is, where the composition has a route to ask. The typed

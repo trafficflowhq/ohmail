@@ -33,6 +33,18 @@ const WRITES: Partial<Record<EntityType, readonly PgTable[]>> = {
   routing_decision: [mail.routingDecisions],
   screener_suggestion: [mail.routingDecisions],
   approval: [mail.approvals],
+  calendar_connection: [mail.calConnections],
+  calendar: [mail.calCalendars, mail.calAlarms],
+  calendar_event: [mail.calEvents, mail.calAttendees, mail.calAlarms],
+  calendar_suggestion: [mail.calSuggestions],
+};
+
+/**
+ * A key a type's rows always leave empty, so its holder need not come first: a calendar writes
+ * its own default reminders, which name the calendar and never an event.
+ */
+const EMPTY_KEYS: Partial<Record<EntityType, ReadonlyArray<{ referrer: string; holder: string }>>> = {
+  calendar: [{ referrer: "cal_alarms", holder: "cal_events" }],
 };
 
 interface Pair { referrer: string; holder: string }
@@ -52,6 +64,7 @@ function violations(order: readonly EntityType[], pairs: readonly Pair[]): strin
   for (const [at, a] of order.entries()) {
     for (const { referrer, holder } of pairs) {
       if (!writes(a).has(referrer) || writes(a).has(holder)) continue;
+      if ((EMPTY_KEYS[a] ?? []).some((k) => k.referrer === referrer && k.holder === holder)) continue;
       for (const b of order.slice(at + 1)) {
         if (writes(b).has(holder)) out.push(`${a} (${referrer}) is applied before ${b} (${holder})`);
       }
@@ -82,6 +95,17 @@ describe("the Cloud mirror applies holders before referrers", () => {
     // Not vacuous: 0118's own key is among the pairs read, so a schema read that found nothing fails here.
     expect(pairs).toContainEqual({ referrer: "approvals", holder: "routing_decisions" });
     expect(violations(APPLY_ORDER, pairs)).toEqual([]);
+  });
+
+  it("applies a calendar's family parents first, and refuses an event ahead of its calendar", () => {
+    // Not vacuous: the composite keys of the calendar's family are among the pairs read.
+    expect(pairs).toContainEqual({ referrer: "cal_events", holder: "cal_calendars" });
+    expect(pairs).toContainEqual({ referrer: "cal_calendars", holder: "cal_connections" });
+    const order = [...APPLY_ORDER];
+    const e = order.indexOf("calendar_event");
+    const c = order.indexOf("calendar");
+    [order[e], order[c]] = [order[c]!, order[e]!];
+    expect(violations(order, pairs)).toContain("calendar_event (cal_events) is applied before calendar (cal_calendars)");
   });
 
   it("the census refuses the 0.20.0 order: approvals ahead of the decisions they name", () => {

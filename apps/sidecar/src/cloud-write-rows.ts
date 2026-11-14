@@ -45,6 +45,7 @@ export const WRITE_ROWS: Readonly<Record<string, WriteRoute>> = {
   "PATCH /account/ai": none,
   "PATCH /account/screening": none,
   "PATCH /account/storage": none,
+  "PATCH /calendar/settings": direct,
   "PATCH /consent/settings": direct,
   "PATCH /contacts/:id": none,
   "PATCH /folders/:id": verbs("folder_rename"),

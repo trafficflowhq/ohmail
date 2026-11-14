@@ -33,6 +33,12 @@
       "ohmail-source": "./src/html-tree-budget.ts",
       "node": "./dist/html-tree-budget.js",
       "default": "./src/html-tree-budget.ts"
+    },
+    "./calendar-span": {
+      "types": "./src/engine/calendar-span.ts",
+      "ohmail-source": "./src/engine/calendar-span.ts",
+      "node": "./dist/engine/calendar-span.js",
+      "default": "./src/engine/calendar-span.ts"
     }
   },
   "dependencies": {
