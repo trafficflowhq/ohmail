@@ -44,7 +44,7 @@ import { SCREENER_INTENTS_PREFIX } from "@ohmail/app-logic/screener/screener-int
 import { DELETE_INTENTS_PREFIX } from "@ohmail/app-logic/press/delete-intents";
 import { ROUTING_INTENTS_PREFIX, type OhmailEngine } from "@ohmail/client-engine";
 import { SEND_LOCKS_PREFIX } from "@ohmail/app-logic/writing/send-lock";
-import { setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { scopeMayMount, setStorageOwner } from "@ohmail/app-logic/storage";
 import { BearerManager, type SignOutOutcome } from "./bearer.js";
 import { HostAccountPane } from "./HostAccountPane.js";
 import { createHostClientEngine } from "./host-engine.js";
@@ -260,9 +260,13 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
    */
   setStorageOwner(paired ? scope : null);
 
-  if (onPairPath || !paired || engine === null) {
+  if (onPairPath || !paired || engine === null || !scopeMayMount(scope)) {
+    /* A pairing with no scope stands at a mail view's address and nobody scanned a code: its landing reads none. */
+    const scans = onPairPath || !paired;
     return (
       <PairScreen
+        key={scans ? "scan" : "no-scope"}
+        readsCode={scans}
         bearer={bearer}
         ended={ended?.kind ?? null}
         signedOut={ended?.kind === "signed-out" ? ended.outcome : null}
@@ -300,7 +304,7 @@ export function HostGate({ bearer }: { bearer: BearerManager }) {
      * while the storage owner beneath it has already become the new one. On the outermost element, so scope B's frame
      * never mounts for one commit over scope A's engine.
      */
-    <EngineProvider key={scope ?? "unpaired"} demo={false} engine={engine}>
+    <EngineProvider key={scope} demo={false} engine={engine}>
       <PairedFrame engine={engine} scope={scope} has={has} />
     </EngineProvider>
   );
@@ -315,7 +319,7 @@ function PairedFrame({
   has,
 }: {
   engine: HostContract["engine"];
-  scope: string | null;
+  scope: string;
   has: PairedHas;
 }) {
   /* What every browser shell hands the frame: made where the frame mounts, under the page's theme. */

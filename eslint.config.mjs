@@ -9,7 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
-import ohmail, { readDoors } from "./tools/eslint-plugin-ohmail/index.mjs";
+import ohmail, { readDoors, readOwnerReaders } from "./tools/eslint-plugin-ohmail/index.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}";
@@ -22,6 +22,17 @@ const newTree = readFileSync(path.join(root, "tools/new-tree.txt"), "utf8")
 const under = (entries, pattern = SOURCE) =>
   entries.map((entry) => (path.extname(entry) ? entry : `${entry}/${pattern}`));
 const inNewTree = (...folders) => under(folders.filter((folder) => newTree.includes(folder)));
+
+// Product code: what ships, tests aside, the phone's page (`apps/mobile/web/src`) and the web app's root files and words
+// (`apps/webapp/i18n`) with it. Only a host's file reads whose storage this is (tools/owner-readers.json).
+const PRODUCT = under([
+  "apps/*/app",
+  "apps/*/src",
+  "apps/*/web/src",
+  "packages/*/src",
+  "apps/webapp/i18n",
+  "apps/webapp/*.{ts,mts,mjs}",
+]);
 
 // Interface code: where a file has at most 400 lines and a function at most 120.
 const INTERFACE = inNewTree(
@@ -70,6 +81,11 @@ export default [
     },
   },
   ...block(
+    PRODUCT,
+    { "ohmail/owner-lookup": ["error", { root, ...readOwnerReaders(root) }] },
+    { ignores: TESTS },
+  ),
+  ...block(
     ["packages/wire/**"],
     { "ohmail/wire-exports-no-value": "error" },
     { ignores: [...TESTS, "**/*.config.*"] },
@@ -92,6 +108,16 @@ export default [
         "error",
         ...SHELL_ONLY_GLOBALS.map((name) => ({
           name,
+          message: "Only a shell touches this; shared code asks the host contract.",
+        })),
+      ],
+      // The same names by the global object's own name, which the rule above does not read. A cast of the global
+      // object (`(globalThis as unknown as Window).document`) and a second name for it are not read here either.
+      "no-restricted-properties": [
+        "error",
+        ...SHELL_ONLY_GLOBALS.map((property) => ({
+          object: "globalThis",
+          property,
           message: "Only a shell touches this; shared code asks the host contract.",
         })),
       ],

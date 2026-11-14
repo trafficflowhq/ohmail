@@ -4,6 +4,7 @@ import { OhmailEngine } from "@ohmail/client-engine";
 import { act, installShellEnv, teardownShellEnv, tick } from "./fixtures/live-walk-shell.js";
 import { arriveLater, click, key, keyAsBrowser, mountThread, msg, patches, settle, toastText } from "./fixtures/thread-read-shell.js";
 import { AFTER_VERB_STORAGE_KEY } from "@ohmail/app-logic/press/after-verb";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { stubThreadLayout, type ThreadLayout } from "./fixtures/thread-layout.js";
 
 /**
@@ -46,12 +47,15 @@ beforeAll(async () => {
 let layout: ThreadLayout;
 beforeEach(() => {
   installShellEnv();
+  /* The account the shell is mounted for: its views read the after-verb choice kept beside it. */
+  setStorageOwner("acc-dwell");
   layout = stubThreadLayout();
   window.location.hash = "#/ohbox";
 });
 afterEach(async () => {
   layout.restore();
   await teardownShellEnv();
+  resetStorageOwnerForTest();
 });
 
 /** j onto "first", then Delete: the advance lands on "old". */

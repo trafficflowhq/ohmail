@@ -9,7 +9,7 @@
  * in today's key registry. The reading column is today's, whole, the resting arm included: the reader replaces it
  * once the Ohbox is a place of the frame with its own reading column.
  */
-import { useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { NONE } from "@ohmail/app/host";
@@ -20,6 +20,8 @@ import { Sheet } from "@ohmail/ui/mail";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
 import { useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
+import { DEFAULT_AFTER_VERB, readAfterVerb } from "@ohmail/app-logic/press/after-verb";
+import { useTodaysScope } from "./todays-scope";
 import { useMailState } from "./MailStateProvider";
 import { MessageGone, MessagePane, type MessageGoneProps } from "./MessagePane";
 import { useSentLabel } from "./row-copy";
@@ -55,7 +57,7 @@ const hueDegrees = (name: string): number =>
   Math.max(0, TAG_HUES.indexOf(name as (typeof TAG_HUES)[number])) * (360 / TAG_HUES.length);
 
 type Fed = Omit<OhboxListInput,
-  "t" | "columnHidden" | "rowSelector" | "avatarSelector" | "anchors" | "readColRef" | "senderName" | "sentLabelOf">;
+  "t" | "columnHidden" | "afterVerb" | "rowSelector" | "avatarSelector" | "anchors" | "readColRef" | "senderName" | "sentLabelOf">;
 
 export interface TodaysOhboxProps extends Fed {
   /** The header's tenant (the ohmarchy offer): drawn over the list as it is given. */
@@ -80,11 +82,16 @@ export function TodaysOhbox(props: TodaysOhboxProps) {
   const readColRef = useRef<HTMLDivElement>(null);
   const { route, plan } = useFrame();
   const { state: mail, mailboxes } = useMailState();
+  /* The after-verb choice, read when a verb has taken the open row: the stored choice of the shell's scope, or the
+     default where this list is drawn in no shell. One function for the mount. */
+  const scope = useTodaysScope();
+  const afterVerb = useCallback(() => (scope === null ? DEFAULT_AFTER_VERB : readAfterVerb(scope)), [scope]);
 
   const model = useOhboxList({
     ...fed,
     t,
     columnHidden: readColumnHidden,
+    afterVerb,
     rowSelector: "[data-id]",
     avatarSelector: ".oh-row-face",
     anchors: {

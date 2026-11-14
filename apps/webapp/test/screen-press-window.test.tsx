@@ -61,7 +61,7 @@ async function windowOver(read: EntityReader) {
       send: async (m) => { out.push(m); return { status: "confirmed" as const }; },
       toast: (s) => { toasts.push(s); },
       copy: { gone: "gone", expired: () => "expired", correction: () => "correction" },
-      owner: OWNER, windowMs: 1_000, now: () => Date.now(),
+      scope: OWNER, windowMs: 1_000, now: () => Date.now(),
     });
     return null;
   }

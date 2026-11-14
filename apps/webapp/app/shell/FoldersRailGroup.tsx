@@ -48,7 +48,7 @@ import {
 } from "@ohmail/app-logic/lists/folders";
 import { UI_KEYS, foldersOpenedKey, usePersistedFlag, usePersistedIdSet } from "@ohmail/app-logic/storage/persisted-ui";
 import { useRowMenuFit } from "./row-menu-fit";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import type { StorageScope } from "@ohmail/app-logic/storage/scope";
 
 const branchKey = (mailboxId: string, path: string): string => `${mailboxId}|${path}`;
 
@@ -70,6 +70,7 @@ export interface FolderVerbs {
 type ConfirmState = { counts: { folders: number; messages: number } | null; loading: boolean };
 
 export function FoldersRailGroup({
+  scope,
   folders,
   unread,
   mailboxCount,
@@ -81,6 +82,11 @@ export function FoldersRailGroup({
   junkSaid = null,
   junkReadable = false,
 }: {
+  /**
+   * WHOSE opened branches these are: the scope of the shell that draws the rail, handed in because the rail draws
+   * this group outside the shell's own subtree.
+   */
+  scope: StorageScope;
   /** The mirror's `folder` entities — already post-exclusion, already flag-gated. */
   folders: FolderEntity[];
   /**
@@ -135,7 +141,8 @@ export function FoldersRailGroup({
      translation, read by both surfaces that carry the note (`join.mailboxConnected`'s rule). */
   const ts = useTranslations("screener");
   const [open, setOpen] = usePersistedFlag(UI_KEYS.foldersOpen, true);
-  const opened = usePersistedIdSet(foldersOpenedKey(storageOwner()));
+  /* The opened branches are kept under the scope the shell hands in; with none, they live for the mount alone. */
+  const opened = usePersistedIdSet(scope === null ? null : foldersOpenedKey(scope));
   /** Transient chrome: the per-mailbox filter text and the per-mailbox "Show all" expansion. */
   const [filter, setFilter] = useState<Record<string, string>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});

@@ -25,8 +25,10 @@ import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell } from "./_draft-shell.js";
 import { composeLine, composeSend, composeSubject, composerOn, letter, navigate, rounds, toasts } from "./_handoff-steps.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-mail-link";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -143,10 +145,11 @@ describe("a mail link over a letter being written", () => {
   }
   beforeEach(() => {
     try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+    setStorageOwner(OWNER);
     stubDom();
     Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
   });
-  afterEach(async () => { await unmountAll(); resetComposerForTest(); });
+  afterEach(async () => { await unmountAll(); resetComposerForTest(); resetStorageOwnerForTest(); });
 
   it("words typed inside the pause are saved as a draft before the link's letter opens", async () => {
     const s = await mountShell("#/ohbox", [message("m1")], []);
@@ -268,10 +271,11 @@ describe("a mail link with no mailbox connected", () => {
   const AT_ONCE = RESTART_FLUSH_MS / 25 / 4;
   beforeEach(() => {
     try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
+    setStorageOwner(OWNER);
     stubDom();
     Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => true });
   });
-  afterEach(async () => { await unmountAll(); resetComposerForTest(); });
+  afterEach(async () => { await unmountAll(); resetComposerForTest(); resetStorageOwnerForTest(); });
 
   it("over words no row can hold, says at once that they stay, and keeps them", async () => {
     const s = await mountShell("#/ohbox", [], [], { noMailbox: true });

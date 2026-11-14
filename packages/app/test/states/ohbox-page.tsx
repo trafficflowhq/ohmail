@@ -10,6 +10,7 @@ import { useEffect, useRef } from "react";
 import { createRoot } from "react-dom/client";
 import type { EngineMessage, ResurfacedThreadRow, ThreadMark } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
+import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import { Frame } from "../../src/frame/Frame.js";
 import { useRailModel } from "../../src/frame/commands.js";
 import type { PaneProps, PlaceEntry, RailModel } from "../../src/frame/contract.js";
@@ -522,6 +523,8 @@ function Page() {
     },
     t: (k) => k,
     columnHidden: () => device === "phone",
+    /* A registered state keeps no choice: the after-verb choice is the default, as for a list drawn in no shell. */
+    afterVerb: () => DEFAULT_AFTER_VERB,
     rowSelector: "[data-id]",
     avatarSelector: null,
     anchors: { pickTag: () => null, row: () => null },

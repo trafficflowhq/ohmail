@@ -13,11 +13,13 @@
  * build left. A crash resolves TOWARD the delete: the intent lands synchronously before the timer, Undo removes it,
  * the commit removes it once `engine.mutate` settles, `pagehide` commits what it can, survivors replay at launch — a
  * delete thirty seconds late is a delete; one that evaporates is a lie. `localStorage` because it is synchronous,
- * owner-keyed for `screener-intents.ts`'s reason; a refusing jar leaves the request exactly as durable as the tab.
+ * keyed by the scope the window's mount hands in, for `screener-intents.ts`'s reason, at every call: the press, Undo,
+ * the settle that runs after the mount is gone and the boot replay name the journal they were handed, never the
+ * storage owner of that moment. A refusing jar leaves the request exactly as durable as the tab.
  */
 
 import { durableRemove, durableSet, type DurableWrite } from "../storage/durable.js";
-import { storageOwner } from "../storage/storage-owner.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 /**
  * ONE PRESS, and every message it asked to delete.
@@ -66,8 +68,10 @@ export const DELETE_INTENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 export const DELETE_INTENTS_PREFIX = "ohmail.delete.intents.";
 
-export function deleteIntentsKey(owner: string | null = storageOwner()): string {
-  return `${DELETE_INTENTS_PREFIX}${owner ?? "anon"}`;
+/** The journal of one scope. No scope keeps the key it always had, `anon`; a scope nobody handed in is refused. */
+export function deleteIntentsKey(scope: StorageScope): string {
+  scopeSuffix(scope);
+  return `${DELETE_INTENTS_PREFIX}${scope ?? "anon"}`;
 }
 
 /**
@@ -88,9 +92,10 @@ export const DELETE_INTENTS_MAX = 200;
  * but is not either shape names no message this build can act on, and inventing one would be a delete nobody asked
  * for.
  */
-function read(): DeleteIntent[] {
+function read(scope: StorageScope): DeleteIntent[] {
+  const key = deleteIntentsKey(scope);
   try {
-    const raw = window.localStorage.getItem(deleteIntentsKey());
+    const raw = window.localStorage.getItem(key);
     if (!raw) return [];
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
@@ -132,8 +137,8 @@ function read(): DeleteIntent[] {
  * It never throws at the press; what changed is that a refusal is no longer silent. `remove`
  * deletes at once on a `lost` write instead of opening an undo window it cannot honour.
  */
-function write(rows: DeleteIntent[]): DurableWrite {
-  const key = deleteIntentsKey();
+function write(rows: DeleteIntent[], scope: StorageScope): DurableWrite {
+  const key = deleteIntentsKey(scope);
   return rows.length === 0
     ? durableRemove(key, "delete.intents")
     : durableSet(key, JSON.stringify(rows.slice(-DELETE_INTENTS_MAX)), "delete.intents");
@@ -147,15 +152,15 @@ function write(rows: DeleteIntent[]): DurableWrite {
  * and the second would fail against a row that is already gone. A press left holding nothing
  * after that is removed with it.
  */
-export function armDeleteIntent(intent: DeleteIntent): DurableWrite {
+export function armDeleteIntent(intent: DeleteIntent, scope: StorageScope): DurableWrite {
   const claimed = new Set(intent.messageIds);
   const kept: DeleteIntent[] = [];
-  for (const r of read()) {
+  for (const r of read(scope)) {
     if (r.id === intent.id) continue;
     const ids = r.messageIds.filter((id) => !claimed.has(id));
     if (ids.length > 0) kept.push(ids.length === r.messageIds.length ? r : { ...r, messageIds: ids });
   }
-  return write([...kept, intent]);
+  return write([...kept, intent], scope);
 }
 
 /**
@@ -165,10 +170,10 @@ export function armDeleteIntent(intent: DeleteIntent): DurableWrite {
  * engine persists the verb to its outbox ahead of the wire, so between the press and that write
  * this journal is the only durable copy and dropping it early reopens the hole one step along.
  */
-export function disarmDeleteIntent(pressId: string): void {
-  const rows = read();
+export function disarmDeleteIntent(pressId: string, scope: StorageScope): void {
+  const rows = read(scope);
   const kept = rows.filter((r) => r.id !== pressId);
-  if (kept.length !== rows.length) write(kept);
+  if (kept.length !== rows.length) write(kept, scope);
 }
 
 /**
@@ -178,10 +183,10 @@ export function disarmDeleteIntent(pressId: string): void {
  * ever, which is a journal that only grows — a second defect wearing the first one's clothes.
  * `nowMs` is injected so the TTL is testable without a fake clock over the whole suite.
  */
-export function takeDeleteIntents(nowMs: number): DeleteIntent[] {
-  const rows = read();
+export function takeDeleteIntents(nowMs: number, scope: StorageScope): DeleteIntent[] {
+  const rows = read(scope);
   if (rows.length === 0) return [];
   const live = rows.filter((r) => nowMs - r.at <= DELETE_INTENT_TTL_MS);
-  if (live.length !== rows.length) write(live);
+  if (live.length !== rows.length) write(live, scope);
   return live.slice().sort((a, b) => a.at - b.at);
 }

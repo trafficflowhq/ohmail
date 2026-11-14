@@ -4,9 +4,31 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { act } from "react";
 
-import { scopeSuffix, usePinnedScope, type StorageScope } from "@ohmail/app-logic/storage";
+import {
+  DEMO_STORAGE_OWNER,
+  scopeMayMount,
+  scopeSuffix,
+  usePinnedScope,
+  type StorageScope,
+} from "@ohmail/app-logic/storage";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+describe("a place mounts only under a scope that names somebody", () => {
+  it("refuses no scope, an empty one, the two words keys spell for nobody and a shape no id has", () => {
+    const refused = [null, undefined, "", "local", "anon", "a:b", "has space", "x".repeat(129)];
+    expect(refused.filter((s) => scopeMayMount(s as StorageScope))).toEqual([]);
+  });
+
+  it("admits an account's or a mailbox's id, and the demo's own word", () => {
+    const admitted = ["acc-1", "acct_confirm_1", "mbx-2", "x".repeat(128), DEMO_STORAGE_OWNER];
+    expect(admitted.filter((s) => !scopeMayMount(s))).toEqual([]);
+  });
+
+  it("admits a dot, as the session's marker's own shape does", () => {
+    expect(scopeMayMount("mbx.1")).toBe(true);
+  });
+});
 
 describe("a stored key's scope is handed in, never looked up", () => {
   it("spells a scope as itself and no scope as local", () => {

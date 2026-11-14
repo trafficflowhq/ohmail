@@ -13,6 +13,7 @@ import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
 import { filingElsewhereKey, phoneHolder, phoneHolderKey } from "@ohmail/app-logic/reading/reader-holder";
 import { readingAlong } from "@ohmail/app-logic/reading/reading-along";
+import type { StorageScope } from "@ohmail/app-logic/storage/scope";
 import { clock } from "@ohmail/client-engine";
 import { displayAddress } from "@ohmail/app-logic/text/idn";
 import { waterlineStamp } from "./format";
@@ -41,9 +42,12 @@ const joined = (...parts: Array<string | null | undefined>): string => parts.fil
 
 /**
  * Today's sentence for the states the frame's set names but does not word. `t` reads the `sync` namespace, `tm` the
- * `mailboxes` one; `managed` says whether a server's claim is ohmail Cloud's.
+ * `mailboxes` one; `managed` says whether a server's claim is ohmail Cloud's; `scope` is whose choice to read along
+ * is asked, the shell's own.
  */
-export function todaysReason(state: MailState | null, t: Translate, tm: Translate, managed: boolean): ConnectionReason | null {
+export function todaysReason(
+  state: MailState | null, t: Translate, tm: Translate, managed: boolean, scope: StorageScope,
+): ConnectionReason | null {
   if (state === null) return null;
   switch (state.key) {
     case "behind": {
@@ -77,20 +81,20 @@ export function todaysReason(state: MailState | null, t: Translate, tm: Translat
         ...(state.slow ? { title: t("awaitingSlow"), href: MAILBOXES } : {}),
       };
     case "filing":
-      return filingReason(state, t, tm, managed);
+      return filingReason(state, t, tm, managed, scope);
     default:
       return null;
   }
 }
 
-function filingReason(state: MailState, t: Translate, tm: Translate, managed: boolean): ConnectionReason | null {
+function filingReason(state: MailState, t: Translate, tm: Translate, managed: boolean, scope: StorageScope): ConnectionReason | null {
   const f = state.filing ?? null;
   /* An older server says no more than the count: today's sentence for it, and the mailbox where known. */
   if (f === null) {
     return { title: t("filing", { count: state.pending }), ...(state.address ? { line: t("filingWhere", { address: displayAddress(state.address) }) } : {}) };
   }
   /* Somebody who chose to read along here is not told again who files it; the strip fell through to our own side. */
-  const along = Boolean(f.who && readingAlong(f.who.mailboxId, { kind: f.who.kind, name: f.who.name, stopped: f.who.stopped, since: f.who.since }));
+  const along = Boolean(f.who && readingAlong(f.who.mailboxId, { kind: f.who.kind, name: f.who.name, stopped: f.who.stopped, since: f.who.since }, scope));
   if (f.arm === "elsewhere" && !along) {
     const name = f.who?.name ?? "";
     const phone = phoneHolder(f.who, f.who?.stopped === true);
@@ -134,10 +138,12 @@ function filingReason(state: MailState, t: Translate, tm: Translate, managed: bo
 const follow = (href: string): void => window.location.assign(href);
 
 /** Today's reading of the connection, fed to the frame: the ladder's state, the network, and today's why. */
-export function useTodaysConnection(mail: MailState | null, setupHref: string | null, copyAsOf: string | null = null): void {
+export function useTodaysConnection(
+  mail: MailState | null, setupHref: string | null, copyAsOf: string | null, scope: StorageScope,
+): void {
   const t = useTranslations("sync");
   const tm = useTranslations("mailboxes");
   const managed = useManagedService();
   const online = useBrowserOnline();
-  useConnectionFeed({ mail, online, setupHref, copyAsOf, follow, reason: todaysReason(mail, t as unknown as Translate, tm as unknown as Translate, managed) });
+  useConnectionFeed({ mail, online, setupHref, copyAsOf, follow, reason: todaysReason(mail, t as unknown as Translate, tm as unknown as Translate, managed, scope) });
 }

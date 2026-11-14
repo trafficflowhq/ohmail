@@ -264,6 +264,8 @@ const queuedNote = (name: string): string =>
   (messages as unknown as { mailboxes: Record<string, string> })
     .mailboxes.organizeHereQueued!.replace("{name}", name);
 
+/** The mounted mailbox the pane keeps its choices for, as the window's frame hands it. */
+const PANE_SCOPE = "mbx-1";
 const MAILBOX: MailboxFacts = {
   id: "mbx-1",
   address: "someone@example.test",
@@ -307,6 +309,7 @@ async function render(
           { storageKey: "ohmail.theme" },
           h(ToastHost, null, h(DesktopMailboxes, {
             door,
+            scope: PANE_SCOPE,
             ...extra,
             /* The gate's own sink. Withheld by the ONE case that drives a shell which cannot be
                told — see "a shell that cannot be told". */
@@ -1863,6 +1866,7 @@ describe("a standing stop request is on the row, and the pane's notes end when t
             { storageKey: "ohmail.theme" } as never,
             h(ToastHost, null, h(DesktopMailboxes, {
               door,
+              scope: PANE_SCOPE,
               onShellStatus: (next: { state: string; mode?: string | null }) => {
                 published.push(next);
               },
@@ -2458,6 +2462,7 @@ describe("the pane tells the truth about the outage, the holder and the standing
             { storageKey: "ohmail.theme" } as never,
             h(ToastHost, null, h(DesktopMailboxes, {
               door,
+              scope: PANE_SCOPE,
               onShellStatus: (next: { state: string; mode?: string | null }) => {
                 published.push(next);
               },
@@ -3770,7 +3775,7 @@ describe("the compact card — the role chip, its description, the quiet verb an
           h(
             ThemeProvider,
             { storageKey: "ohmail.theme" } as never,
-            h(ToastHost, null, h(DesktopMailboxes, { door })),
+            h(ToastHost, null, h(DesktopMailboxes, { door, scope: PANE_SCOPE })),
           ),
         ),
       );
@@ -4066,7 +4071,7 @@ describe("a reader row says who organizes the mailbox and what to press", () => 
           h(
             ThemeProvider,
             { storageKey: "ohmail.theme" } as never,
-            h(ToastHost, null, h(DesktopMailboxes, { door } as never)),
+            h(ToastHost, null, h(DesktopMailboxes, { door, scope: PANE_SCOPE } as never)),
           ),
         ),
       );

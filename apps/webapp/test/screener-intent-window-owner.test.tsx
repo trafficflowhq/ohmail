@@ -350,11 +350,11 @@ describe("the coordinator itself", () => {
       await import("@ohmail/app-logic/storage/storage-owner");
     try {
       setStorageOwner("acct-a");
-      const a = createIntentWindows({ askMs: 1 });
+      const a = createIntentWindows({ askMs: 1, channel: intentWindowsChannel("acct-a") });
       a.serve(() => [{ id: "shared-id", at: 1_000 }]);
       a.claim([{ id: "shared-id", at: 1_000 }]);
       setStorageOwner("acct-b");
-      const b = createIntentWindows({ askMs: 1 });
+      const b = createIntentWindows({ askMs: 1, channel: intentWindowsChannel("acct-b") });
       try {
         const settled = b.ask();
         await vi.advanceTimersByTimeAsync(400);

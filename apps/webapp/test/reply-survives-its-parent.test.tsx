@@ -17,6 +17,12 @@ import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
+import { replyDraftKey, replyMetaKey } from "@ohmail/app-logic/writing/mail-send";
+import { resetStorageOwnerForTest, setStorageOwner } from "@ohmail/app-logic/storage/storage-owner";
+
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. The cases under a
+ *  storage owner of their own (below) name theirs. */
+const LANES_OWNER = "acc-reply-lanes";
 
 /**
  * ═══ A PERSON'S UNSENT WORDS SURVIVE THEIR PARENT'S DELETE ══════════════════════════════════
@@ -67,6 +73,7 @@ const serverGone = new Set<string>();
 beforeEach(() => {
   window.location.hash = "#/ohbox";
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
+  setStorageOwner(LANES_OWNER);
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -108,6 +115,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
+  resetStorageOwnerForTest();
 });
 
 /* ── the account this shell is mounted over ─────────────────────────────────────────────── */
@@ -302,8 +310,8 @@ async function openRow(el: HTMLElement, id: string): Promise<void> {
 const editorSurface = (el: HTMLElement): HTMLElement | null =>
   el.querySelector<HTMLElement>(".read-col .msg .rte-surface, .reader .msg .rte-surface");
 
-const laneBody = (): string | null => window.localStorage.getItem("ohmail.ui.reply:m1");
-const laneMeta = (): string | null => window.localStorage.getItem("ohmail.ui.replymeta:m1");
+const laneBody = (): string | null => window.localStorage.getItem(replyDraftKey("m1", LANES_OWNER));
+const laneMeta = (): string | null => window.localStorage.getItem(replyMetaKey("m1", LANES_OWNER));
 
 /** Open the reader on m1, open the reply, and type `text` into it. */
 async function replyInProgress(text: string): Promise<HTMLElement> {
@@ -378,7 +386,7 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
     await replyInProgress("the half-written answer");
     // What the editor writes when somebody retitles a reply and strikes the signature block.
     window.localStorage.setItem(
-      "ohmail.ui.replymeta:m1",
+      replyMetaKey("m1", LANES_OWNER),
       JSON.stringify({ subject: "a title I chose", sig: { kind: "removed" } }),
     );
 
@@ -387,7 +395,7 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
     const rowId = draftSaves().length > 0 ? store!.list<{ id: string }>("draft")[0]?.id : undefined;
     expect(rowId, "no row to carry the meta onto").toBeDefined();
     expect(laneMeta(), "the old meta lane outlived the row").toBeNull();
-    const carried = window.localStorage.getItem(`ohmail.ui.replymeta:draft:${rowId}`);
+    const carried = window.localStorage.getItem(replyMetaKey(`draft:${rowId}`, LANES_OWNER));
     expect(carried, "the block state was dropped with the lane").not.toBeNull();
     expect(JSON.parse(carried!)).toEqual({ subject: "a title I chose", sig: { kind: "removed" } });
     // …and the subject the person chose is what the row carries, not the derived `Re:`.
@@ -398,7 +406,7 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
     const container = await shell(["m1", "m2"]);
     await openRow(container, "m1");
     // The forward dock writes under `fwd:<id>`, the same door the reply's body goes through.
-    window.localStorage.setItem("ohmail.ui.reply:fwd:m1", "passing this on because");
+    window.localStorage.setItem(replyDraftKey("fwd:m1", LANES_OWNER), "passing this on because");
 
     await tombstoneParent();
     await waitFor(() => draftSaves().length > 0, "the forward note promoted");
@@ -410,14 +418,14 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
     // …and it is saved as a FORWARD of the original, never as a reply to it.
     expect(draftSaves()[0].forwardOfMessageId, "the promoted forward names no original").toBe("m1");
     expect(draftSaves()[0].inReplyToMessageId ?? null, "the forward note was saved as a reply").toBeNull();
-    expect(window.localStorage.getItem("ohmail.ui.reply:fwd:m1")).toBeNull();
+    expect(window.localStorage.getItem(replyDraftKey("fwd:m1", LANES_OWNER))).toBeNull();
   });
 
   it("A LANE WHOSE SEND IS ALREADY OUT IS NOT PROMOTED — the double-send bait", async () => {
     const { OUTBOX_TYPE } = await import("@ohmail/client-engine");
     const container = await shell(["m1", "m2"]);
     await openRow(container, "m1");
-    window.localStorage.setItem("ohmail.ui.reply:m1", "the answer, already sent");
+    window.localStorage.setItem(replyDraftKey("m1", LANES_OWNER), "the answer, already sent");
     // The durable outbox still holds this lane's `mail_send` — the send may already have been
     // delivered, so a row created for it now is a second copy of a message that went.
     await store!.putLocal(OUTBOX_TYPE, "o1", {
@@ -470,7 +478,7 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
   it("a lane with NO envelope (written before it) whose parent died while CLOSED is promoted on mount", async () => {
     // The lane is on disk and the mirror already holds the tombstone — a second tab, or
     // tomorrow's reload. Nothing in this session ever saw the delete change.
-    window.localStorage.setItem("ohmail.ui.reply:m1", "yesterday's unsent answer");
+    window.localStorage.setItem(replyDraftKey("m1", LANES_OWNER), "yesterday's unsent answer");
     await shell(["m1", "m2"], async (s) => {
       await s.applyChanges([{
         type: "message", op: "delete", id: "m1", seq: 9000,
@@ -546,12 +554,12 @@ describe("a reply survives its parent's delete — PROMOTE, never drop", () => {
   it("a lane whose parent is merely OUTSIDE the window is left alone", async () => {
     // The negative arm of the scan, and the reason it asks for a tombstone: `prune` deletes
     // rather than tombstones, so an absent record is ordinary mail this device does not hold.
-    window.localStorage.setItem("ohmail.ui.reply:never-mirrored", "an answer to older mail");
+    window.localStorage.setItem(replyDraftKey("never-mirrored", LANES_OWNER), "an answer to older mail");
     await shell(["m1"]);
     await act(async () => { await engine!.syncOnce(); });
 
     expect(draftSaves(), "absence was read as a delete").toHaveLength(0);
-    expect(window.localStorage.getItem("ohmail.ui.reply:never-mirrored"))
+    expect(window.localStorage.getItem(replyDraftKey("never-mirrored", LANES_OWNER)))
       .toBe("an answer to older mail");
   });
 
@@ -624,8 +632,8 @@ describe("a reply whose draft was deleted elsewhere is not saved again when its 
   const sig = async (text: string): Promise<string> => (await import("@ohmail/app-logic/writing/compose-autosave")).sigOf(text);
   /** A lane left by an earlier session: its words, and the row it last wrote. */
   const laneLeft = (words: string, row: Record<string, unknown>): void => {
-    window.localStorage.setItem("ohmail.ui.reply:m1", words);
-    window.localStorage.setItem("ohmail.ui.replymeta:m1", JSON.stringify({ row: { at: NOW.toISOString(), ...row } }));
+    window.localStorage.setItem(replyDraftKey("m1", LANES_OWNER), words);
+    window.localStorage.setItem(replyMetaKey("m1", LANES_OWNER), JSON.stringify({ row: { at: NOW.toISOString(), ...row } }));
   };
 
   async function typedSavedCancelled(text: string): Promise<{ container: HTMLElement; rowId: string }> {

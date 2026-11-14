@@ -17,11 +17,13 @@ export interface HostSession {
   /** Replaces `sessionRefused`. `none`: no hosted session stands behind this shell. */
   readonly state: "live" | "refused" | None;
   /**
-   * The partition of everything the shell keeps in the browser, or null while nobody is known
-   * and nothing may be kept. No input today: each mount sets the storage's owner itself.
+   * The partition of everything the shell keeps in the browser: the value the host's engine was
+   * built by, never a second read of anything. The web hands the account its engine's mirror is
+   * named for, the desktop the mailbox it mounts, the paired page its pairing, the demo its own
+   * word. Null while nobody is known: the frame then mounts nothing.
    *
-   * It is fixed for the life of a mounted frame. A shell whose scope changes mounts the frame
-   * again, keyed by the scope, and sets the scope before the frame's first effect runs.
+   * It is fixed for the life of a mounted frame. A host whose scope changes mounts the frame
+   * again, keyed by the scope; today's views read it once, as they mount, and keep it.
    */
   readonly scope: string | null;
   /**

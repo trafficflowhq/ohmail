@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 import { Linter } from "eslint";
 import tseslint from "typescript-eslint";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
-import ohmail, { isDoorFile } from "../../tools/eslint-plugin-ohmail/index.mjs";
+import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie";
+import ohmail, { isDoorFile, OWNER_MARKER_NAME } from "../../tools/eslint-plugin-ohmail/index.mjs";
 import {
   borderVerdict,
   declaredVerdict,
@@ -278,6 +279,230 @@ describe("the lint rules, run on source text", () => {
     expect(lint("no-inline-config", "/* eslint no-empty: off */\nexport const a = 1;")).toHaveLength(1);
     expect(lint("no-inline-config", "// eslint is not switched off here\nexport const a = 1;")).toEqual([]);
   });
+
+  describe("the storage owner and the session's marker, read by a host alone", () => {
+    const readers = {
+      root: "/repo",
+      readers: [
+        "apps/web/app/session.ts",
+        "apps/webapp/app/(product)/approve/settle-owner.ts",
+        "apps/webapp/app/api-client.ts",
+        "packages/app-logic/src/storage/storage-owner.ts",
+      ],
+      todaysScopeReaders: ["apps/webapp/app/views/search.ts"],
+    };
+    const at = "/repo/packages/app-logic/src/press/a.ts";
+    const lookup = (code: string, filename = at, options: unknown[] = [readers]) =>
+      lint("owner-lookup", code, options, filename);
+
+    it("refuses each of the nine names, under any local name, by every specifier that reaches them", () => {
+      for (const code of [
+        'import { OWNER_COOKIE } from "@ohmail/app-logic/storage/owner-cookie"; export const a = OWNER_COOKIE;',
+        'import { OWNER_COOKIE as marker } from "@ohmail/app-logic/storage"; export const a = marker;',
+        'import { resetStorageOwnerForTest } from "../storage/storage-owner.js"; export const a = resetStorageOwnerForTest;',
+        'import { storageOwner } from "@ohmail/app-logic/storage/storage-owner"; export const a = storageOwner;',
+        'import { storageOwner as whose } from "@ohmail/app-logic/storage"; export const a = whose;',
+        'import { storageOwnerState } from "../storage/storage-owner.js"; export const a = storageOwnerState;',
+        'import { setStorageOwner } from "../storage/index.js"; export const a = setStorageOwner;',
+        'import { setDemoStorage } from "../storage"; export const a = setDemoStorage;',
+        'import { storageOwner } from "../storage/"; export const a = storageOwner;',
+        'import { storageOwner } from "@ohmail/app-logic/storage/"; export const a = storageOwner;',
+        'import { storageOwner } from "@ohmail/app-logic/storage/index"; export const a = storageOwner;',
+        'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export const a = readOwner;',
+        'import { readOwnerMarker as marker } from "../storage/owner-cookie"; export const a = marker;',
+        'import { readOwnerCookie } from "@ohmail/app-logic/storage"; export const a = readOwnerCookie;',
+        'export { storageOwner } from "@ohmail/app-logic/storage/storage-owner";',
+        'export { readOwner as who } from "../storage/owner-cookie.js";',
+      ]) {
+        expect(lookup(code), code).toEqual([
+          expect.stringMatching(/^\w+ reads the storage owner or the session's marker/),
+        ]);
+      }
+    });
+
+    it("refuses a namespace of either module or of the door, and a whole re-export, a dynamic import or a require of one", () => {
+      for (const code of [
+        'import * as owner from "@ohmail/app-logic/storage/storage-owner"; export const a = owner;',
+        'import * as storage from "@ohmail/app-logic/storage"; export const a = storage;',
+        'export * from "../storage/owner-cookie.js";',
+        'export * as owner from "@ohmail/app-logic/storage/storage-owner";',
+        'export const load = () => import("@ohmail/app-logic/storage/storage-owner");',
+        'export const owner = require("../storage/owner-cookie.js");',
+      ]) {
+        expect(lookup(code), code).toHaveLength(1);
+      }
+    });
+
+    it("refuses the web session client's answers of whose session it speaks for, by every specifier and in every form", () => {
+      const part = "/repo/apps/webapp/app/shell/a.ts";
+      for (const code of [
+        'import { boundApiOwner } from "../api-client"; export const key = (): string => `ohmail.ui.readingAlong.${boundApiOwner() ?? "local"}`;',
+        'import { apiOwnerBinding as binding } from "../api-client.ts"; export const a = binding;',
+        'import { boundApiOwner } from "../api-client.js"; export const a = boundApiOwner;',
+        'import { boundApiOwner } from "../../app/api-client/"; export const a = boundApiOwner;',
+        'import { boundApiOwner } from "@/app/api-client"; export const a = boundApiOwner;',
+        'export { apiOwnerBinding } from "../api-client";',
+      ]) {
+        expect(lookup(code, part), code).toEqual([
+          expect.stringMatching(/^\w+ reads the storage owner or the session's marker/),
+        ]);
+      }
+      for (const code of [
+        'export * from "../api-client";',
+        'import * as client from "@/app/api-client.ts"; export const a = client;',
+        'export const load = () => import("../api-client");',
+        'export const client = require("../api-client.js");',
+      ]) {
+        expect(lookup(code, part), code).toEqual([
+          expect.stringMatching(/ of \S*api-client\S* reaches the storage owner's/),
+        ]);
+      }
+      // The client's other answers are any part's, and a listed host's file reads the getters itself.
+      expect(
+        lookup(
+          'import { api, ApiError, type MailboxDTO } from "../api-client"; export const a = [api, ApiError];',
+          part,
+        ),
+      ).toEqual([]);
+      expect(
+        lookup(
+          'import { apiOwnerBinding } from "../../api-client"; export const blocked = (): boolean => apiOwnerBinding().kind === "blocked";',
+          "/repo/apps/webapp/app/(product)/approve/settle-owner.ts",
+        ),
+      ).toEqual([]);
+    });
+
+    it("passes the free names, a type, another module of the door, and a listed host's file", () => {
+      for (const code of [
+        'import { isDemoOwned, DEMO_STORAGE_OWNER, namesOwner } from "@ohmail/app-logic/storage/storage-owner"; export const a = [isDemoOwned, DEMO_STORAGE_OWNER, namesOwner];',
+        'import { isOwnerShaped, OWNER_SIGNED_OUT } from "@ohmail/app-logic/storage/owner-cookie"; export const a = [isOwnerShaped, OWNER_SIGNED_OUT];',
+        'import type { StorageOwnerState } from "@ohmail/app-logic/storage/storage-owner"; export type A = StorageOwnerState;',
+        'import { type OwnerMarker } from "../storage/owner-cookie.js"; export type A = OwnerMarker;',
+        'import { scopeSuffix } from "@ohmail/app-logic/storage/scope"; export const a = scopeSuffix;',
+        'import { storageOwner } from "./storage-owner-of-something-else.js"; export const a = storageOwner;',
+      ]) {
+        expect(lookup(code), code).toEqual([]);
+      }
+      expect(
+        lookup(
+          'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export const a = (): boolean => readOwner() !== null;',
+          "/repo/apps/web/app/session.ts",
+        ),
+      ).toEqual([]);
+    });
+
+    it("spells the marker's cookie name as the marker's own module does", () => {
+      expect(OWNER_MARKER_NAME).toBe(OWNER_COOKIE);
+    });
+
+    it("refuses the marker's cookie name spelled in a string, a template or a regular expression, outside the list", () => {
+      for (const code of [
+        'import { cookieFromJar } from "@ohmail/app-logic/storage/cookie-jar"; export const a = (jar: string) => cookieFromJar(jar, "tf_owner");',
+        "export const a = (jar: string) => jar.includes(`tf_owner=`);",
+        "export const a = (id: string) => `tf_owner=${id}`;",
+        "export const a = (jar: string) => /(?:^|;\\s*)tf_owner=([^;]*)/.exec(jar);",
+      ]) {
+        expect(lookup(code), code).toEqual([
+          expect.stringMatching(/^tf_owner is the session's marker's cookie name/),
+        ]);
+      }
+      // A comment that names it, and another cookie's name, are nobody's lookup.
+      expect(lookup('// reads tf_owner on the server\nexport const a = "tf_session";')).toEqual([]);
+      // A listed host's file spells it, and is no stale entry for that alone.
+      expect(lookup('export const OWNER_COOKIE = "tf_owner";', "/repo/apps/web/app/session.ts")).toEqual([]);
+    });
+
+    it("refuses a listed host's file that hands a lookup on by exporting it, under any name", () => {
+      const host = "/repo/apps/web/app/session.ts";
+      for (const code of [
+        'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export { readOwner as marker };',
+        'import { storageOwner as whose } from "@ohmail/app-logic/storage"; export const a = whose(); export { whose };',
+        'export { whose }; import { storageOwner as whose } from "../../../packages/app-logic/src/storage/storage-owner.js";',
+        'import * as owner from "@ohmail/app-logic/storage/storage-owner"; export { owner };',
+        'export { readOwner as who } from "@ohmail/app-logic/storage/owner-cookie";',
+        'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export default readOwner;',
+        'import { readOwner as whose } from "@ohmail/app-logic/storage/owner-cookie"; export const marker = whose;',
+        'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export const whose = (): string | null => readOwner();',
+        'import { storageOwner } from "@ohmail/app-logic/storage"; export function whose() { return storageOwner(); }',
+        'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export default () => readOwner();',
+        'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; const whose = function () { return readOwner(); }; export { whose };',
+        'import * as owner from "@ohmail/app-logic/storage/storage-owner"; export const whose = () => owner.storageOwner();',
+      ]) {
+        expect(lookup(code, host), code).toEqual([expect.stringMatching(/an export hands it to every file/)]);
+      }
+      expect(
+        lookup(
+          'import { apiOwnerBinding } from "../../api-client"; export const binding = () => apiOwnerBinding();',
+          "/repo/apps/webapp/app/(product)/approve/settle-owner.ts",
+        ),
+      ).toEqual([expect.stringMatching(/^apiOwnerBinding is a host's own lookup, and an export hands it/)]);
+      // A free name it imported beside a lookup is its own to export, and so is what it read or handed down.
+      expect(
+        lookup(
+          'import { readOwner, isOwnerShaped } from "@ohmail/app-logic/storage/owner-cookie"; export const a = readOwner(); export { isOwnerShaped };',
+          host,
+        ),
+      ).toEqual([]);
+      expect(
+        lookup(
+          'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export function mount(draw: (scope: string | null) => void): void { draw(readOwner()); }',
+          host,
+        ),
+      ).toEqual([]);
+      // The session client's own answers stand in the plugin's table: every other file is refused their import.
+      expect(
+        lookup(
+          'import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie"; export const boundApiOwner = (): string | null => readOwnerMarker();',
+          "/repo/apps/webapp/app/api-client.ts",
+        ),
+      ).toEqual([]);
+    });
+
+    it("lets a file listed to spell the marker's cookie name spell it, and import none of the lookups", () => {
+      const options = [{ ...readers, markerNameSpellers: ["packages/api/src/cookies.ts"] }];
+      const speller = "/repo/packages/api/src/cookies.ts";
+      expect(lookup('export const OWNER_COOKIE = "tf_owner";', speller, options)).toEqual([]);
+      expect(
+        lookup(
+          'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie"; export const a = [readOwner, "tf_owner"];',
+          speller,
+          options,
+        ),
+      ).toEqual([expect.stringMatching(/^readOwner reads the storage owner or the session's marker/)]);
+      expect(lookup("export const a = 1;", speller, options)).toEqual([
+        expect.stringMatching(/is listed .* to spell the marker's cookie name and spells it nowhere/),
+      ]);
+    });
+
+    it("refuses a listed file that reads none of them: the list only shrinks", () => {
+      expect(lookup("export const a = 1;", "/repo/apps/web/app/session.ts")).toEqual([
+        expect.stringMatching(/is listed .* and imports none of them/),
+      ]);
+    });
+
+    it("refuses every file when it has no list of readers", () => {
+      for (const options of [
+        [],
+        [{ root: "/repo" }],
+        [{ root: "/repo", readers: [], todaysScopeReaders: ["x.ts"] }],
+      ]) {
+        expect(lookup("export const a = 1;", at, options)).toEqual([
+          expect.stringMatching(/so every file is refused/),
+        ]);
+      }
+    });
+
+    it("lets the closed list read the shell's scope and refuses every other file", () => {
+      const code = 'import { useTodaysScope } from "../shell/todays-scope"; export const a = useTodaysScope;';
+      expect(lookup(code, "/repo/apps/webapp/app/views/search.ts")).toEqual([]);
+      expect(lookup(code, "/repo/apps/webapp/app/views/other.ts")).toEqual([
+        expect.stringMatching(/^useTodaysScope is read by the closed list/),
+      ]);
+      expect(lookup("export const a = 1;", "/repo/apps/webapp/app/views/search.ts")).toEqual([
+        expect.stringMatching(/is listed .* and imports none of them/),
+      ]);
+    });
+  });
 });
 
 describe("the linter as the check runs it", () => {
@@ -420,5 +645,28 @@ describe("the one linter", () => {
       "1 ohmail/package-borders",
       "2 directive",
     ]);
+  });
+
+  it("binds the web app's root files and its words to the hosts' list, and shared code to every shell-only global by globalThis", async () => {
+    const root = path.resolve(".");
+    const { ESLint } = await import("eslint");
+    const eslint = new ESLint({ cwd: root, overrideConfigFile: linterConfig(root), warnIgnored: false });
+    const rulesAt = async (code: string, rel: string) =>
+      (await eslint.lintText(code, { filePath: path.join(root, rel) }))[0]?.messages.map(
+        (m) => `${m.line} ${m.ruleId}`,
+      );
+    const reader =
+      'import { readOwner } from "@ohmail/app-logic/storage/owner-cookie";\nexport const whose = (): string | null => readOwner();\n';
+    expect(await rulesAt(reader, "apps/webapp/planted.ts")).toEqual(["1 ohmail/owner-lookup"]);
+    expect(await rulesAt(reader, "apps/webapp/i18n/planted.ts")).toEqual(["1 ohmail/owner-lookup"]);
+    for (const name of ["localStorage", "sessionStorage", "location", "navigator", "fetch"]) {
+      expect(
+        await rulesAt(
+          `export const reach = () => globalThis.${name};\n`,
+          "packages/app-logic/src/planted.ts",
+        ),
+        name,
+      ).toEqual(["1 no-restricted-properties"]);
+    }
   });
 });

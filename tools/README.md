@@ -20,6 +20,7 @@ CI runs the first two in the `typecheck` job, the baseline read against the run'
 | `ohmail/package-borders`: a file imports only what its folder's row names; an app is never imported                                   | every file                                               | `borders.json`                                      |
 | `ohmail/declared-dependency`: a file imports only what its `package.json` declares                                                    | every file                                               | the manifests                                       |
 | `ohmail/platform-name`: a hosting platform's package or environment name stands only in a door file                                   | every file                                               | `doors.json`                                        |
+| `ohmail/owner-lookup`: only a host's file reads whose storage this is; only the listed parts read the shell's scope                   | product code, tests aside                                | `owner-readers.json`                                |
 | `ohmail/no-config-comment`: no comment sets a lint rule (`/* eslint rule: off */`)                                                    | every file                                               |                                                     |
 | `ohmail/wire-exports-no-value`                                                                                                        | `packages/wire`                                          |                                                     |
 | size (400 lines a file, 120 a function), hook dependencies, browser globals, no web framework, no empty `catch`, no switched-off rule | the new tree, per folder (`eslint.config.mjs`)           | `new-tree.txt`                                      |
@@ -35,6 +36,26 @@ a new package brings its row in the pull request that creates it.
 names) and the short list of files that may name one, each with its platform and its reason. Without either list
 every file is refused. A listed file that names no platform is refused, so the list only shrinks. A new door is
 a row with a reason, in a pull request that says what replaces the platform's feature on a plain server.
+
+`owner-readers.json` lists the files that may import the storage owner's readers and setters (`storageOwner`,
+`storageOwnerState`, `setStorageOwner`, `setDemoStorage`, `resetStorageOwnerForTest`), the session's marker's readers
+and its cookie's name (`readOwner`, `readOwnerMarker`, `readOwnerCookie`, `OWNER_COOKIE`) or the web session client's
+answers of the account it speaks for (`boundApiOwner`, `apiOwnerBinding`; on the desktop a stub answers nobody), each
+group with an id and its reason: a host names the storage owner for its window and reads back what it named, and
+everything a frame draws takes its scope from its mount. The rule reads the import, so a renamed one, a namespace, a
+whole re-export, a dynamic import and a require are refused alike, by any specifier that reaches the three modules or
+the storage door (a folder's path with a slash at its end, the door's index and the web app's `@/` among them). The
+rule binds product code, the web app's root files and its `i18n` folder among it. A listed file reads them itself: an
+export that hands one it imported straight on (the lookup under any name, as the default too, or a function whose
+whole body returns one call of it) is refused, unless that export stands in the rule's own table of lookups. Helpers
+are not followed: an unexported function that calls a lookup for an export is intent, which a review reads. The
+marker's cookie name spelled in a string, a template or a regular expression is a lookup too, so the marker is not
+read by hand out of the jar; it stands only in a listed file, or in a file of its own list (`markerNameSpellers`) that
+spells it and imports none of the lookups. Shared code does not reach any of the shell's own globals by the global
+object's name either (`no-restricted-properties`; a cast of the global object is not read). A further list closes
+the parts of today's views that read the shell's scope (`useTodaysScope`). Without the hosts' list or that closed one
+every file is refused, and a listed file that imports or spells none of what its list is for is refused, so the lists
+only shrink.
 
 `new-tree.txt` lists the folders written for the next major version. Code that came over from 1.0 is not
 reformatted or relinted here; its turn comes after the released line has ended.

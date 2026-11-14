@@ -16,8 +16,11 @@ import { settleEditor } from "./_first-paint.js";
 import {
   act, DraftServer, message, mountShell, NOW, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 
+/** Whose keys the shell keeps and this file reads: one account, named before the shell mounts. */
+const OWNER = "acc-sent-elsewhere";
 const compose = messages.compose as unknown as Record<string, string>;
 const D = "d-elsewhere";
 
@@ -66,8 +69,8 @@ async function openThenSentElsewhere(): Promise<void> {
   await waitFor(() => (shell.engine.read().get<{ status?: string }>("draft", D)?.status) === "sent", "the delta applied");
 }
 
-beforeEach(() => { window.localStorage.clear(); window.sessionStorage.clear(); stubDom(); });
-afterEach(async () => { await unmountAll(); });
+beforeEach(() => { window.localStorage.clear(); window.sessionStorage.clear(); setStorageOwner(OWNER); stubDom(); });
+afterEach(async () => { await unmountAll(); resetStorageOwnerForTest(); });
 
 describe("a draft sent from another device while it is open here", () => {
   it("says so at once, and stops promising to save", async () => {
@@ -456,7 +459,7 @@ describe("Compose after the letter went from another device", () => {
     const row = await replied("Thursday works for me");
     await closeReply();
     // A tab that died inside the pause leaves its words in the scratch only.
-    window.localStorage.setItem("ohmail.ui.reply:m1", "Thursday works for me, at ten");
+    window.localStorage.setItem(replyDraftKey("m1", OWNER), "Thursday works for me, at ten");
     await sentOnB(row);
     await drain();
     await replyAgain();

@@ -72,6 +72,7 @@ function restoreWindow(opts: { rollback?: boolean; unavailable?: boolean } = {})
   let actions: Array<() => void> = [];
   let fire: Array<() => void> = [];
   const queue = createDeleteUndo({
+    scope: null,
     verb: "restore",
     mutate: restoreDispatch(
       async (id, o) => {
@@ -175,6 +176,7 @@ describe("the held restore", () => {
     const sent: string[] = [];
     const said: string[] = [];
     const queue = createDeleteUndo({
+      scope: null,
       verb: "restore",
       mutate: async (id) => { sent.push(id); return { status: "applied" }; },
       toast: (m) => said.push(m),
@@ -191,6 +193,7 @@ describe("the held restore", () => {
   it("the window duration is UNDO_MS — one number for the toast and the timer", () => {
     let ms = -1;
     const queue = createDeleteUndo({
+      scope: null,
       verb: "restore",
       mutate: async () => ({ status: "applied" }),
       toast: () => {},
@@ -242,7 +245,7 @@ describe("the intents journal carries which verb it holds", () => {
   it("a restore press writes kind:restore; a delete press writes kind:delete", () => {
     const w = restoreWindow();
     w.queue.remove({ id: "m1", mailboxId: "mb1" });
-    const rows = takeDeleteIntents(1_000_001);
+    const rows = takeDeleteIntents(1_000_001, null);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.kind).toBe("restore");
     expect(rows[0]!.messageIds).toEqual(["m1"]);
@@ -250,19 +253,19 @@ describe("the intents journal carries which verb it holds", () => {
 
   it("a row a PREVIOUS build wrote — no kind at all — reads as a delete", () => {
     window.localStorage.setItem(
-      deleteIntentsKey(),
+      deleteIntentsKey(null),
       JSON.stringify([{ id: "old", messageIds: ["m9"], at: 1_000_000 }]),
     );
-    const rows = takeDeleteIntents(1_000_001);
+    const rows = takeDeleteIntents(1_000_001, null);
     expect(rows[0]!.kind, "the legacy shape, not dropped").toBe("delete");
   });
 
   it("a row naming a verb this build does not know is DROPPED, never approximated", () => {
     window.localStorage.setItem(
-      deleteIntentsKey(),
+      deleteIntentsKey(null),
       JSON.stringify([{ id: "future", messageIds: ["m9"], at: 1_000_000, kind: "shred" }]),
     );
-    expect(takeDeleteIntents(1_000_001), "replaying it as a delete would delete on a guess").toEqual([]);
+    expect(takeDeleteIntents(1_000_001, null), "replaying it as a delete would delete on a guess").toEqual([]);
   });
 
   it("a stranded RESTORE with no restore dispatch is DROPPED and is NEVER sent to mutate", () => {
@@ -271,23 +274,23 @@ describe("the intents journal carries which verb it holds", () => {
        DELETE, and sending a held restore there would delete the message somebody asked to put
        back. Mutation watched: with the `fn === undefined` arm removed, `mutate` is called with
        "m9". */
-    armDeleteIntent({ id: "p1", messageIds: ["m9"], at: 1_000_000, kind: "restore" });
+    armDeleteIntent({ id: "p1", messageIds: ["m9"], at: 1_000_000, kind: "restore" }, null);
     const mutate = vi.fn(async (_id: string) => ({ status: "applied" }));
-    const count = replayDeleteIntents(mutate, 1_000_001);
+    const count = replayDeleteIntents(mutate, 1_000_001, null);
     expect(count).toBe(1);
     expect(mutate, "the delete dispatch was not called").not.toHaveBeenCalled();
-    expect(takeDeleteIntents(1_000_002), "and the row is gone rather than retried for ever").toEqual([]);
+    expect(takeDeleteIntents(1_000_002, null), "and the row is gone rather than retried for ever").toEqual([]);
   });
 
   it("a stranded RESTORE with a restore dispatch is replayed AS A RESTORE", () => {
-    armDeleteIntent({ id: "p1", messageIds: ["m9"], at: 1_000_000, kind: "restore" });
-    armDeleteIntent({ id: "p2", messageIds: ["m8"], at: 1_000_000, kind: "delete" });
+    armDeleteIntent({ id: "p1", messageIds: ["m9"], at: 1_000_000, kind: "restore" }, null);
+    armDeleteIntent({ id: "p2", messageIds: ["m8"], at: 1_000_000, kind: "delete" }, null);
     /* TYPED spies. `vi.fn(async () => …)` has no parameters, so `calls[n][0]` is an element of
        an empty tuple and the file does not compile — which the webapp's typecheck catches and
        almost nothing else in this repository would. */
     const mutate = vi.fn(async (_id: string, _p: string) => ({ status: "applied" }));
     const restore = vi.fn(async (_id: string, _p: string) => ({ status: "applied" }));
-    replayDeleteIntents(mutate, 1_000_001, restore);
+    replayDeleteIntents(mutate, 1_000_001, null, restore);
     expect(restore.mock.calls.map((c) => c[0])).toEqual(["m9"]);
     expect(mutate.mock.calls.map((c) => c[0])).toEqual(["m8"]);
     /* AND UNDER THE PRESS'S OWN ID. The restore route is `idempotent`-marked, and this replay is
@@ -618,6 +621,7 @@ describe("a restored letter leaves Trash for good", () => {
     const said: string[] = [];
     function Bin() {
       const restoring = useDeleteUndo({
+        scope: null,
         verb: "restore",
         mutate: restoreDispatch(answer as never, () => said.push("place"), () => said.push(en.trash.toastRestoreGone)),
         toast: (m) => { said.push(m); },

@@ -38,8 +38,16 @@ import { TodaysFrame } from "../app/shell/TodaysFrame";
 import type { ScreenerSuggestCtx, TodaysNodes } from "../app/shell/todays-inputs";
 import { useTodaysSupplies } from "../app/shell/todays-supplies";
 
+/** The scope this harness hands where a test names none: an account of its own, never a key's word for nobody. */
+export const HARNESS_SCOPE = "acc-harness";
+
 /** The old door's inputs, by their old names. */
 export interface TodaysShellProps {
+  /**
+   * The scope the host hands; absent: the storage owner the test named, else the harness's own; null: a host with no
+   * scope. The harness never sets the storage owner itself.
+   */
+  scope?: string | null;
   demo?: boolean;
   engine?: ProvidedEngine;
   resolveOwner?: OwnerResolver;
@@ -134,8 +142,10 @@ export function hostFromTodaysInputs(
     engine,
     session: {
       resolve: NONE, confirmed: NONE, state: props.sessionRefused === true ? "refused" : NONE,
-      /* Whose partition the views write in, as the entries name it: the demo's own, an account's, or none. */
-      scope: storageOwner(), account: support?.accountId ?? null, signOut: NONE, recover: frame.recover,
+      /* Whose partition the views write in: the scope the test hands, else the storage owner it named (the demo's own
+         where it mounts the demo), else the harness's own account. */
+      scope: props.scope !== undefined ? props.scope : storageOwner() ?? HARNESS_SCOPE,
+      account: support?.accountId ?? null, signOut: NONE, recover: frame.recover,
     },
     reads: { mailboxes: orNone(props.mailboxFacts), copyAge: orNone(props.mirrorFreshness), access: NONE },
     wires: {

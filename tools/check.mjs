@@ -172,6 +172,30 @@ async function staleDoors(root) {
   return refusals;
 }
 
+/** A file `ohmail/owner-lookup` lists stands in the tree; one that is gone leaves the list (the rule never reads it). */
+function staleReaders(root) {
+  const {
+    readers = [],
+    todaysScopeReaders = { files: [] },
+    markerNameSpellers = { files: [] },
+  } = JSON.parse(read(root, "tools/owner-readers.json"));
+  const refusals = [];
+  for (const entry of readers) {
+    if (!entry.id || !entry.reason || !entry.files?.length)
+      refusals.push(`owner readers: ${entry.id ?? "an entry"} needs an id, a reason and its files`);
+  }
+  const listed = [
+    ...readers.flatMap((entry) => entry.files ?? []),
+    ...todaysScopeReaders.files,
+    ...markerNameSpellers.files,
+  ];
+  for (const file of listed) {
+    if (!existsSync(path.join(root, file)))
+      refusals.push(`owner readers: ${file} is not in the tree; a file that is gone leaves the list`);
+  }
+  return refusals;
+}
+
 function references(root) {
   const folders = ["apps", "packages"].flatMap((parent) =>
     readdirSync(path.join(root, parent), { withFileTypes: true })
@@ -257,7 +281,12 @@ async function everything(root, flags) {
   ]);
   const baseline = parseBaseline(read(root, "tools/baseline.tsv"));
 
-  const refusals = [...baseline.refusals, ...compareWithTree(baseline.rows, findings), ...doors];
+  const refusals = [
+    ...baseline.refusals,
+    ...compareWithTree(baseline.rows, findings),
+    ...doors,
+    ...staleReaders(root),
+  ];
   refusals.push(...otherLinterConfigs(readdirSync(root)));
   refusals.push(...covered.unreached.map(unreachedRefusal));
   if (readIf(root, ".prettierignore") !== renderPrettierIgnore(newTree)) {

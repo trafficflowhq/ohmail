@@ -288,11 +288,12 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 async function pressPark(engine: OhmailEngine): Promise<void> {
   const { useShellDispatch } = await import("@ohmail/app-logic/press/shell-dispatch");
   const { placeLabel } = await import("../app/shell/format.js");
+  const { storageOwner } = await import("@ohmail/app-logic/storage/storage-owner");
   let press: (() => void) | null = null;
   function Seam(): null {
     const t = useTranslations();
     const toast = useToast();
-    const d = useShellDispatch({ engine, reader: engine.read(), toast, t, placeLabel, demo: true, refreshFacts: () => {} });
+    const d = useShellDispatch({ engine, reader: engine.read(), toast, t, placeLabel, demo: true, refreshFacts: () => {}, scope: storageOwner() });
     press = () => { void d.mutateAndReport(PARK, t("ohbox.toastAside")); };
     return null;
   }

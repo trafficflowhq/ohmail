@@ -502,7 +502,7 @@ const RESTING: ConsentState = {
  * enough (`storage-owner.ts`); without it the paired desktop partitioned rules-only for as long
  * as its consent read failed. One resolver for the read and both writes.
  */
-export function consentCacheOwner(): string | null {
+function consentCacheOwner(): string | null {
   const cookie = readOwner();
   if (cookie !== null) return cookie;
   const s = storageOwnerState();

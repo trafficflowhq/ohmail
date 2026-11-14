@@ -23,7 +23,7 @@
 /**
  * The dial, in the row it acts on — one value per account. It edits the account's own preference,
  * the SAME value Settings → General edits through the same two functions; the key is per account
- * (`imageQualityKeyFor`, `storageOwner`'s id) because the old account-less key silently rewrote the
+ * (`imageQualityKeyFor`, the scope of the shell the dial is drawn in) because the old account-less key silently rewrote the
  * preference for everyone who signs in on the machine. A move re-encodes the pictures already
  * attached — owner ruling — from the pristine SOURCE bytes ({@link ATTACHMENT_SOURCES}), never from
  * the previous encode: re-compressing an encode is generational loss, and a move back to Original
@@ -67,7 +67,7 @@ import {
   type DroppedSource,
 } from "../shell/dropped-files";
 import { activeFormatLocale } from "../shell/locale";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { useTodaysScope } from "../shell/todays-scope";
 import { AttachThumb, ComposeAttachPreview, useImageUrls, type ComposeLookEntry } from "./compose-attach-look";
 
 /**
@@ -335,14 +335,15 @@ export function ComposeAttach({
    */
   const [level, setLevel] = useState<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
   const levelRef = useRef<ImageQualityLevel>(DEFAULT_IMAGE_QUALITY_LEVEL);
-  /** Whose preference the dial edits — `storageOwner`'s id, `null` where there is none. */
-  const owner = useRef<string | null>(null);
+  /* Whose preference the dial edits: the scope of the shell it is drawn in. Drawn in none, the dial shows the default
+     and stores nothing. */
+  const scope = useTodaysScope();
   useEffect(() => {
-    owner.current = storageOwner();
-    const stored = readImageQualityLevel(owner.current);
+    if (scope === null) return;
+    const stored = readImageQualityLevel(scope);
     setLevel(stored);
     levelRef.current = stored;
-  }, []);
+  }, [scope]);
   /**
    * WHAT THE COMPRESSION SAVED on the most recent pick — `null` when nothing was re-encoded, which
    * is every pick containing no picture and every pick at quality Original. Held as the two totals
@@ -893,7 +894,7 @@ export function ComposeAttach({
               if (!isImageQualityLevel(next) || next === level) return;
               // Storage first, then the control — the Settings row's own pairing, so the next
               // pick (which reads the ref) and the next mount (which reads the store) agree.
-              writeImageQualityLevel(next, owner.current);
+              if (scope !== null) writeImageQualityLevel(next, scope);
               levelRef.current = next;
               setLevel(next);
               if (attachments.length > 0) {

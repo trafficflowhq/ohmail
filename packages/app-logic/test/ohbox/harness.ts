@@ -6,6 +6,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { EngineMessage, ResurfacedThreadRow } from "@ohmail/client-engine";
 import { useOhboxList, type OhboxListInput, type OhboxListModel } from "../../src/ohbox/index.js";
+import { DEFAULT_AFTER_VERB } from "../../src/press/after-verb.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 export const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -146,6 +147,8 @@ export async function mount(
     },
     t: words,
     columnHidden: () => false,
+    /* No shell stands over the probe: the after-verb choice is the default, as for a list drawn in no shell. */
+    afterVerb: () => DEFAULT_AFTER_VERB,
     rowSelector: "[data-id]",
     avatarSelector: null,
     anchors: { pickTag: () => null, row: () => null },

@@ -208,7 +208,7 @@ async function paneNode(door: string | null): Promise<React.ReactElement> {
     h(
       ThemeProvider,
       { storageKey: "ohmail.theme" },
-      h(ToastHost, null, h(DesktopMailboxes, { door })),
+      h(ToastHost, null, h(DesktopMailboxes, { door, scope: "mbx-1" })),
     ),
   ) as React.ReactElement;
 }

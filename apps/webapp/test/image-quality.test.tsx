@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { ComposeAttach } from "../app/components/ComposeAttach";
+import { TodaysScopeProvider } from "../app/shell/todays-scope";
 import { setActiveCatalog } from "../app/shell/locale";
 import {
   DEFAULT_IMAGE_QUALITY_LEVEL,
@@ -724,12 +725,12 @@ describe("a browser that cannot do it sends the original — never an error", ()
 
 describe("the stored level", () => {
   it("defaults to medium, round-trips, and refuses a value that is not a level", () => {
-    expect(readImageQualityLevel()).toBe("medium");
-    writeImageQualityLevel("medium");
+    expect(readImageQualityLevel(null)).toBe("medium");
+    writeImageQualityLevel("medium", null);
     expect(window.localStorage.getItem(IMAGE_QUALITY_STORAGE_KEY)).toBe("medium");
-    expect(readImageQualityLevel()).toBe("medium");
+    expect(readImageQualityLevel(null)).toBe("medium");
     window.localStorage.setItem(IMAGE_QUALITY_STORAGE_KEY, "enormous");
-    expect(readImageQualityLevel()).toBe(DEFAULT_IMAGE_QUALITY_LEVEL);
+    expect(readImageQualityLevel(null)).toBe(DEFAULT_IMAGE_QUALITY_LEVEL);
   });
 });
 
@@ -760,15 +761,15 @@ describe("a level chosen before the rename", () => {
     for (const [legacy, expected] of cases) {
       window.localStorage.clear();
       window.localStorage.setItem(LEGACY_IMAGE_SHRINK_STORAGE_KEY, legacy);
-      expect(readImageQualityLevel(), `legacy "${legacy}"`).toBe(expected);
+      expect(readImageQualityLevel(null), `legacy "${legacy}"`).toBe(expected);
     }
   });
 
   it("is overridden the moment the new key holds anything", () => {
     window.localStorage.setItem(LEGACY_IMAGE_SHRINK_STORAGE_KEY, "none");
-    expect(readImageQualityLevel()).toBe("original");
-    writeImageQualityLevel("low");
-    expect(readImageQualityLevel()).toBe("low");
+    expect(readImageQualityLevel(null)).toBe("original");
+    writeImageQualityLevel("low", null);
+    expect(readImageQualityLevel(null)).toBe("low");
     // …and the write went to the NEW key only. The legacy value is never rewritten.
     expect(window.localStorage.getItem(IMAGE_QUALITY_STORAGE_KEY)).toBe("low");
     expect(window.localStorage.getItem(LEGACY_IMAGE_SHRINK_STORAGE_KEY)).toBe("none");
@@ -784,7 +785,7 @@ describe("a level chosen before the rename", () => {
 
   it("a garbage legacy value is the default, not a crash and not a level", () => {
     window.localStorage.setItem(LEGACY_IMAGE_SHRINK_STORAGE_KEY, "enormous");
-    expect(readImageQualityLevel()).toBe(DEFAULT_IMAGE_QUALITY_LEVEL);
+    expect(readImageQualityLevel(null)).toBe(DEFAULT_IMAGE_QUALITY_LEVEL);
   });
 
   it("the new account-scoped key still wins over everything older", () => {
@@ -806,13 +807,14 @@ let handed: ComposeAttachment[] = [];
 
 async function mount(maxTotalBytes: number, locale: "en" | "de" = "en"): Promise<void> {
   handed = [];
-  const view = h(ComposeAttach as never, {
+  /* Drawn in a shell, as the composer always is: the level is read under the shell's scope. */
+  const view = h(TodaysScopeProvider, { value: "acc-quality" }, h(ComposeAttach as never, {
     attachments: [],
     onChange: (next: ComposeAttachment[]) => {
       handed = next;
     },
     maxTotalBytes,
-  } as never);
+  } as never));
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -912,7 +914,7 @@ describe("the compression runs BEFORE the cap check", () => {
   });
 
   it("at quality Original the same photo is refused — the setting reaches the attach control", async () => {
-    writeImageQualityLevel("original");
+    writeImageQualityLevel("original", null);
     await mount(ONE_MB);
     await pickFiles([photo()]);
     expect(handed).toHaveLength(0);

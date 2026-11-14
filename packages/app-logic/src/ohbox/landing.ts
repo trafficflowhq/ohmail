@@ -1,8 +1,7 @@
 /** After a verb: when my verb takes the open row out of the list, the cursor lands where the after-verb choice says. */
 import { useEffect, useRef, type MutableRefObject } from "react";
 import type { EngineMessage, OhboxRow as OhboxRowGroup } from "@ohmail/client-engine";
-import { ACTED_FRESH_MS, nextRowAfter, readAfterVerb } from "../press/after-verb.js";
-import { storageOwner } from "../storage/storage-owner.js";
+import { ACTED_FRESH_MS, nextRowAfter } from "../press/after-verb.js";
 import type { OhboxListInput } from "./types.js";
 
 /** The row a verb took, and where the verb's own advance put the cursor: the Undo's record reads both. */
@@ -18,7 +17,7 @@ export function useAfterVerbLanding(
   suspend: (id: string) => void,
   setLandedOn: (id: string | null) => void,
 ): AfterVerbLanding {
-  const { selectedId, lastActed, onSelect, columnHidden } = input;
+  const { selectedId, lastActed, onSelect, columnHidden, afterVerb } = input;
   /**
    * AFTER A VERB: when MY verb takes the open row out of the list, apply the after-verb
    * choice instead of always resting on "Nothing open." The order the list held while the row
@@ -63,7 +62,7 @@ export function useAfterVerbLanding(
     if (Date.now() - acted.at > ACTED_FRESH_MS) return;
     if (columnHidden()) return;
     lastActed.current = null;
-    const choice = readAfterVerb(storageOwner());
+    const choice = afterVerb();
     if (choice === "stay") return;
     if (choice === "close") {
       onSelect(null);
@@ -81,6 +80,6 @@ export function useAfterVerbLanding(
     }
     /* Keyed on what it reads: a render that changes none of these can neither take the open row out of the list nor
        land anywhere, and the previous render's ids, rows and selection it keeps are the ones it already holds. */
-  }, [all, navRows, selectedId, lastActed, columnHidden, suspend, onSelect, setLandedOn]);
+  }, [all, navRows, selectedId, lastActed, columnHidden, afterVerb, suspend, onSelect, setLandedOn]);
   return { verbTook, verbAdvance };
 }

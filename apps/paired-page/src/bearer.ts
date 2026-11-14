@@ -422,7 +422,10 @@ export class BearerManager {
    */
   pairScope(): string | null {
     if (this.refresh === null) return null;
-    return this.door.get(PAIR_SCOPE_STORAGE_KEY);
+    /* The pairing this manager's pair belongs to, and only while the jar still holds it: another tab's new pairing
+       is not this page's, and its scope is never handed to a page that still presents the old pair. */
+    const stored = this.door.get(PAIR_SCOPE_STORAGE_KEY);
+    return stored === this.scopeAtStart ? stored : null;
   }
 
   /** The extra-headers seam's value — `HttpAdapterOptions.headers` calls this per request. */

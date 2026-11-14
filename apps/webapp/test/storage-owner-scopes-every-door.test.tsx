@@ -17,7 +17,7 @@ import {
   COMPOSE_SEND_KEY, clearLaneScratch, composeBufferFingerprint, clearReplyLane, readReplyDraft, readReplyMeta, replyDraftKey, replyMetaKey,
   sentCopyNotesKey, writeReplyDraft, writeReplyMeta,
 } from "@ohmail/app-logic/writing/mail-send";
-import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
+import { foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import {
   armScreenerIntent,
   screenerIntentsKey,
@@ -26,6 +26,16 @@ import {
 } from "@ohmail/app-logic/screener/screener-intents";
 import { claimSendLock, readSendLock, releaseSendLock, sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
 import { resetStorageOwnerForTest, setStorageOwner, storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { routingIntentsKey } from "@ohmail/client-engine";
+import { armDeleteIntent, deleteIntentsKey, disarmDeleteIntent, takeDeleteIntents } from "@ohmail/app-logic/press/delete-intents";
+import { createDeleteUndo, replayDeleteIntents } from "@ohmail/app-logic/press/delete-undo";
+import { intentWindowsChannel } from "@ohmail/app-logic/press/intent-windows";
+import { readAfterVerb, writeAfterVerb } from "@ohmail/app-logic/press/after-verb";
+import { clearReadingAlong, readingAlong, readingAlongKey, setReadingAlong } from "@ohmail/app-logic/reading/reading-along";
+import {
+  imageQualityKeyFor, legacyImageShrinkKeyFor, readImageQualityLevel, writeImageQualityLevel,
+} from "../app/components/image-quality";
+import { seedNotNowKey } from "../app/shell/seed-offer";
 /** No send is owed an ending in these jar-only cases — the shape every deletion had before keys could be owed. */
 const NONE_OWED = (): boolean => false;
 /** The claims below are sends still in flight: owed, the one state a record resumes in. */
@@ -306,6 +316,26 @@ describe("the reply buffers are partitioned by the storage owner", () => {
   });
 });
 
+/**
+ * The keys and the channel today's views and their press windows keep, for one scope: the delete and routing
+ * journals, the undo windows' channel, reading along, the search order, the opened folders, the original look, the
+ * review put off, and the two choices kept beside an account (the after-verb choice, written through its own door,
+ * and the picture quality).
+ */
+function viewsTable(s: string | null): Record<string, string> {
+  const afterVerb = (): string => {
+    window.localStorage.clear();
+    writeAfterVerb("stay", s);
+    return Object.keys(window.localStorage).join(" ");
+  };
+  return {
+    deleteIntents: deleteIntentsKey(s), routingIntents: routingIntentsKey(s), undoWindows: intentWindowsChannel(s),
+    readingAlong: readingAlongKey(s), searchOrder: searchSortKey(s), foldersOpened: foldersOpenedKey(s),
+    originalLook: mailOriginalKey(s), reviewPutOff: seedNotNowKey(s),
+    afterVerb: afterVerb(), pictureQuality: imageQualityKeyFor(s),
+  };
+}
+
 describe("a stored key's name does not change with the scope being handed in", () => {
   it("one table of every family's key, for a scope and for none", async () => {
     const { composerId, composeSessionKey, composeRowKey } = await import("@ohmail/app-logic/writing/compose");
@@ -317,18 +347,29 @@ describe("a stored key's name does not change with the scope being handed in", (
       reply: replyDraftKey("m-1", s), replyMeta: replyMetaKey("m-1", s),
       locks: sendLocksKey(s), notes: sentCopyNotesKey(s),
       intents: screenerIntentsKey(s), impersonationSeen: impersonationSeenKey(s),
+      ...viewsTable(s),
     });
     expect(table("acc-1")).toEqual({
       compose: `ohmail.ui.compose.acc-1.${c}`, session: `ohmail.compose.session.acc-1.${c}`, row: `ohmail.compose.row.acc-1.${c}`,
       reply: "ohmail.ui.reply.acc-1:m-1", replyMeta: "ohmail.ui.replymeta.acc-1:m-1",
       locks: "ohmail.send.locks.acc-1", notes: "ohmail.send.notes.acc-1",
       intents: "ohmail.screener.intents.acc-1", impersonationSeen: "ohmail.screener.impersonationSeen.acc-1",
+      deleteIntents: "ohmail.delete.intents.acc-1", routingIntents: "ohmail.routing.intents.acc-1",
+      undoWindows: "ohmail.intent-windows.acc-1", readingAlong: "ohmail.ui.readingAlong.acc-1",
+      searchOrder: "ohmail.ui.search.sort.acc-1", foldersOpened: "ohmail.ui.rail.foldersOpened.acc-1",
+      originalLook: "ohmail.ui.mail.original.acc-1", reviewPutOff: "ohmail.ui.seed.notNow.acc-1",
+      afterVerb: "ohmail.ui.reader.afterVerb:acc-1", pictureQuality: "ohmail.ui.compose.imageQuality:acc-1",
     });
     expect(table(null)).toEqual({
       compose: `ohmail.ui.compose.local.${c}`, session: `ohmail.compose.session.local.${c}`, row: `ohmail.compose.row.local.${c}`,
       reply: "ohmail.ui.reply:m-1", replyMeta: "ohmail.ui.replymeta:m-1",
       locks: "ohmail.send.locks.local", notes: "ohmail.send.notes.local",
       intents: "ohmail.screener.intents.local", impersonationSeen: "ohmail.screener.impersonationSeen.local",
+      deleteIntents: "ohmail.delete.intents.anon", routingIntents: "ohmail.routing.intents.local",
+      undoWindows: "ohmail.intent-windows.local", readingAlong: "ohmail.ui.readingAlong.local",
+      searchOrder: "ohmail.ui.search.sort.local", foldersOpened: "ohmail.ui.rail.foldersOpened.local",
+      originalLook: "ohmail.ui.mail.original.local", reviewPutOff: "ohmail.ui.seed.notNow.local",
+      afterVerb: "ohmail.ui.reader.afterVerb", pictureQuality: "ohmail.ui.compose.imageQuality",
     });
   });
 
@@ -342,6 +383,47 @@ describe("a stored key's name does not change with the scope being handed in", (
       () => replyDraftKey("m-1", missing), () => replyMetaKey("m-1", missing), () => sendLocksKey(missing),
       () => sentCopyNotesKey(missing), () => screenerIntentsKey(missing), () => impersonationSeenKey(missing),
     ]) expect(build, String(build)).toThrow(/no storage scope/);
+  });
+
+  it("a scope nobody handed in is refused by every key and channel today's views and their windows keep", () => {
+    const missing = undefined as unknown as string | null;
+    const refuses = (build: () => unknown): boolean => {
+      try {
+        build();
+        return false;
+      } catch (e) {
+        return /no storage scope/.test(String(e));
+      }
+    };
+    const press = { id: "p-1", messageIds: ["m-1"], at: 1 };
+    const builders: Record<string, () => unknown> = {
+      deleteIntentsKey: () => deleteIntentsKey(missing),
+      armDeleteIntent: () => armDeleteIntent(press, missing),
+      disarmDeleteIntent: () => disarmDeleteIntent("p-1", missing),
+      takeDeleteIntents: () => takeDeleteIntents(1, missing),
+      replayDeleteIntents: () => replayDeleteIntents(async () => ({ status: "confirmed" }), 1, missing),
+      createDeleteUndo: () => createDeleteUndo({
+        scope: missing, mutate: async () => ({ status: "confirmed" }), toast: () => {}, onHeld: () => {},
+        copy: { deleted: "", undo: "", undone: "", failed: "", noUndo: "" }, refusal: () => null,
+      }),
+      intentWindowsChannel: () => intentWindowsChannel(missing),
+      readingAlongKey: () => readingAlongKey(missing),
+      readingAlong: () => readingAlong("mbx-1", { kind: "local", name: "x", since: null }, missing),
+      setReadingAlong: () => setReadingAlong("mbx-1", { kind: "local", name: "x", since: null }, missing),
+      clearReadingAlong: () => clearReadingAlong("mbx-1", missing),
+      searchSortKey: () => searchSortKey(missing),
+      foldersOpenedKey: () => foldersOpenedKey(missing),
+      mailOriginalKey: () => mailOriginalKey(missing),
+      seedNotNowKey: () => seedNotNowKey(missing),
+      readAfterVerb: () => readAfterVerb(missing),
+      writeAfterVerb: () => writeAfterVerb("stay", missing),
+      imageQualityKeyFor: () => imageQualityKeyFor(missing),
+      legacyImageShrinkKeyFor: () => legacyImageShrinkKeyFor(missing),
+      readImageQualityLevel: () => readImageQualityLevel(missing),
+      writeImageQualityLevel: () => writeImageQualityLevel("low", missing),
+    };
+    expect(Object.keys(builders).filter((name) => !refuses(builders[name]!))).toEqual([]);
+    expect(window.localStorage.length, "a refused builder named no key").toBe(0);
   });
 });
 
@@ -679,42 +761,5 @@ describe("every door that mounts the shared shell names its storage owner", () =
     ).toBe(2);
     expect(/onSessionDead\([\s\S]{0,600}?dropLocalStorageKeys/.test(src), "the death path sweeps").toBe(true);
     expect(/onPaired=\{\(\) => \{[\s\S]{0,600}?dropLocalStorageKeys/.test(src), "the re-pair path sweeps").toBe(true);
-  });
-
-  it("no owner-keyed key builder resolves through the cookie alone", () => {
-    /** Builders handed their scope by the mount: they look nothing up, the cookie least of all. */
-    const handedIn = [
-      "packages/app-logic/src/screener/impersonation-filed.ts",
-      "packages/app-logic/src/screener/screener-intents.ts",
-      "packages/app-logic/src/writing/compose.ts",
-      "packages/app-logic/src/writing/mail-send.ts",
-      "packages/app-logic/src/writing/send-lock.ts",
-    ];
-    /**
-     * The three surfaces that pass the storage owner IN rather than defaulting it. They were missing from
-     * this list, and the behavioural case above cannot see them because it supplies the storage owner to
-     * `searchSortKey` itself instead of rendering `SearchView` — so all three could regress to
-     * `readOwner()` and go back to one shared key on both cookie-less doors with nothing red.
-     */
-    for (const file of [
-      "apps/webapp/app/views/SearchView.tsx",
-      "apps/webapp/app/components/ComposeAttach.tsx",
-      "apps/webapp/app/shell/ImageQualityRow.tsx",
-      "apps/webapp/app/shell/AppShell.tsx",
-    ]) {
-      const src = readFileSync(resolve(ROOT, file), "utf8");
-      expect(
-        /\breadOwner\(\)/.test(src),
-        `${file} resolves its owner from the cookie alone, which is null on both cookie-less doors`,
-      ).toBe(false);
-      expect(src.includes("storageOwner()"), `${file} does not resolve through the seam`).toBe(true);
-    }
-    for (const file of handedIn) {
-      const src = readFileSync(resolve(ROOT, file), "utf8");
-      expect(
-        /\b(readOwner|storageOwner)\(/.test(src),
-        `${file} looks its key owner up instead of taking the scope its mount hands in`,
-      ).toBe(false);
-    }
   });
 });

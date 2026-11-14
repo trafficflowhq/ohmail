@@ -35,7 +35,7 @@ import { addressHref } from "../shell/address-view";
 import { useKeyBindings, type KeyBinding } from "@ohmail/app-logic/keys/keymap";
 import { useZoneIs, useZoneNav } from "@ohmail/app-logic/keys/zone-nav";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
-import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { useTodaysScope } from "../shell/todays-scope";
 import { searchSortKey, usePersistedChoice } from "@ohmail/app-logic/storage/persisted-ui";
 import { useListWindow } from "@ohmail/app-logic/lists/list-window";
 
@@ -227,15 +227,16 @@ export function SearchView({
   const [filter, setFilter] = useState<Filter | null>(null);
 
   /**
-   * The order, remembered per account and per device. `storageOwner()` in a deps-less `useMemo`,
-   * not module scope: it reads a cookie, so it must not run during server evaluation, and the
-   * account cannot change without a remount. On a door with no cookie the host supplies the
-   * identity (`storage-owner.ts`), so the desktop keeps one order per MAILBOX; a surface with no
-   * account gets the `local` key (`searchSortKey`). Deliberately NOT a server setting: chrome,
-   * legitimately per-machine, and the alternative costs a column, a migration and a request per
-   * dropdown change.
+   * The order, remembered per account and per device: under the scope of the shell this view is drawn in
+   * (`useTodaysScope`), so the desktop keeps one order per MAILBOX and the paired page one per pairing. Drawn in no
+   * shell, the order holds for the mount and is stored nowhere. Deliberately NOT a server setting: chrome,
+   * legitimately per-machine, and the alternative costs a column, a migration and a request per dropdown change.
    */
-  const sortStorageKey = useMemo(() => searchSortKey(storageOwner()), []);
+  const storageScope = useTodaysScope();
+  const sortStorageKey = useMemo(
+    () => (storageScope === null ? null : searchSortKey(storageScope)),
+    [storageScope],
+  );
   const [sort, setSort] = usePersistedChoice<ServerSearchSort>(
     sortStorageKey,
     SERVER_SEARCH_SORTS,

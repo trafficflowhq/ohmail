@@ -10,7 +10,7 @@
  * caller passes its own length), which keeps a tab that died mid-window from withholding for ever.
  */
 
-import { storageOwner } from "../storage/storage-owner.js";
+import { scopeSuffix, type StorageScope } from "../storage/scope.js";
 
 /** One open window: the row it holds, and the press it was opened by. */
 export interface OpenWindow {
@@ -50,15 +50,16 @@ export const INTENT_ASK_MS = 150;
 const CHANNEL = "ohmail.intent-windows";
 
 /**
- * ONE CHANNEL PER ACCOUNT, in the shape the journal keys already use.
+ * ONE CHANNEL PER SCOPE, in the shape the journal keys already use.
  *
  * A `BroadcastChannel` is per ORIGIN, exactly as `localStorage` is, so two tabs signed into
  * different accounts would otherwise trade claims about each other's rows — and the journal this
- * guards is owner-keyed for that very reason (`storage-owner.ts`). The `"local"` fallback is the
- * same one the four key builders spell: a surface with genuinely no account.
+ * guards is keyed by the scope for that very reason. The scope is the one the window's mount hands
+ * in; no scope keeps the `local` spelling the key builders use, and a scope nobody handed in is
+ * refused.
  */
-export function intentWindowsChannel(owner: string | null = storageOwner()): string {
-  return `${CHANNEL}.${owner ?? "local"}`;
+export function intentWindowsChannel(scope: StorageScope): string {
+  return `${CHANNEL}.${scopeSuffix(scope)}`;
 }
 
 /**
@@ -69,10 +70,11 @@ export function intentWindowsChannel(owner: string | null = storageOwner()): str
  * test has to drive. One per hook instance is also what a tab is.
  */
 export function createIntentWindows(opts: {
+  /** The scope's channel (`intentWindowsChannel`), named by the window that holds the journal. */
+  channel: string;
   onChange?: () => void;
   askMs?: number;
-  channel?: string;
-} = {}): IntentWindows {
+}): IntentWindows {
   const askMs = opts.askMs ?? INTENT_ASK_MS;
   const open = new Map<string, number>();
   const done = new Set<string>();
@@ -81,7 +83,7 @@ export function createIntentWindows(opts: {
 
   const bus: BroadcastChannel | null = typeof BroadcastChannel === "undefined"
     ? null
-    : new BroadcastChannel(opts.channel ?? intentWindowsChannel());
+    : new BroadcastChannel(opts.channel);
 
   const post = (m: Wire): void => { if (bus && !closed) bus.postMessage(m); };
   const changed = (): void => { opts.onChange?.(); };

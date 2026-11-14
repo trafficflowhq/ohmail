@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { Frame } from "../../src/frame/Frame.js";
 import { useFrame } from "../../src/frame/commands.js";
-import type { PaneProps, PlaceEntry } from "../../src/frame/contract.js";
+import type { PaneProps, PlaceEntry, StageEntry } from "../../src/frame/contract.js";
 import { TextProvider } from "../../src/text/index.js";
 import { fakeHost } from "../support/fake-host.js";
 import { fakeAddress, fakeWindow } from "../support/fake-window.js";
@@ -145,5 +145,72 @@ describe("a change of scope mounts the frame again", () => {
     view.unmount();
     expect(store.get("A")?.letter).toBe("Dear Lena");
     expect(store.get("B")?.letter ?? "").toBe("");
+  });
+});
+
+describe("a scope that names nobody mounts nothing", () => {
+  let bodies = 0;
+  function Body(_: PaneProps) {
+    bodies += 1;
+    return <p>the place&apos;s body</p>;
+  }
+  const ohbox: PlaceEntry = {
+    id: "ohbox",
+    body: "ohbox",
+    rail: { group: "main", icon: "ohbox", label: "title" },
+    panes: { kind: "wide", Wide: Body },
+  };
+  const firstRun: StageEntry = { id: "firstRun", Body: () => <p>the stage</p> };
+  /** The frame under a scope, at an address: what of a place it draws. */
+  function under(scope: string | null, at: string) {
+    bodies = 0;
+    const host = fakeHost({
+      engine: engineOf() as unknown as OhmailEngine,
+      service: "self",
+      scope,
+      places: { ohbox },
+      stages: { firstRun },
+      window,
+      address: fakeAddress(at),
+    }).host;
+    const view = render(
+      <TextProvider
+        locale="en"
+        messages={{ ...FRAME_WORDS.en, ohbox: { title: "Ohbox" } }}
+        timeZone="Europe/Zurich"
+      >
+        <Frame host={host} />
+      </TextProvider>,
+    );
+    const drawn = {
+      body: bodies,
+      railEntries: view.container.querySelectorAll("[data-rail-id]").length,
+      stage: (view.container.textContent ?? "").includes("the stage"),
+      frame: view.container.querySelector(".fr-frame") !== null,
+    };
+    cleanup();
+    return drawn;
+  }
+  const NOTHING = { body: 0, railEntries: 0, stage: false, frame: false };
+
+  it("refuses no scope, an empty one, the two words keys spell for nobody, and a shape no id has", () => {
+    for (const scope of [null, "", "local", "anon", "a:b"]) {
+      expect({ place: under(scope, "#/ohbox"), staged: under(scope, "#/first-run") }, String(scope)).toEqual({
+        place: NOTHING,
+        staged: NOTHING,
+      });
+    }
+  });
+
+  it("mounts under an account's id and under the demo's own word", () => {
+    for (const scope of ["acct-1", "demo:fixtures"]) {
+      const place = under(scope, "#/ohbox");
+      expect({ body: place.body > 0, railEntries: place.railEntries, frame: place.frame }, scope).toEqual({
+        body: true,
+        railEntries: 1,
+        frame: true,
+      });
+      expect(under(scope, "#/first-run").stage, scope).toBe(true);
+    }
   });
 });

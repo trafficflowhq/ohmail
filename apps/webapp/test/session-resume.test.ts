@@ -733,7 +733,7 @@ describe("the resume route is internal, exactly like /mailbox", () => {
     // Guard 2 (guard 1 is the server clearing the jar). Without it, a refresh that neither
     // succeeds nor cleanly fails — a 5xx, an offline tab — loops `/` → resume → `/`.
     const src = read("../app/(product)/resume/ResumeScreen.tsx");
-    expect(src).toMatch(/sessionStorage\.getItem\(resumeOnceKey\(\)\)/);
+    expect(src).toMatch(/sessionStorage\.getItem\(resumeOnceKey\(storageOwner\(\)\)\)/);
     // A TIMESTAMP, not a boolean. Cleared-on-success cannot see a loop at all (each pass
     // erases the evidence of the last); left-set breaks the honest case of a long-open tab
     // lapsing a second time. The window distinguishes the two.
@@ -741,7 +741,7 @@ describe("the resume route is internal, exactly like /mailbox", () => {
     // Written through the durable door rather than the jar directly, so a browser that refuses
     // the stamp says so instead of leaving guard 1 as the silent only defence. The value is
     // still what is pinned here: a timestamp beside the answer it follows, never a flag.
-    expect(src).toMatch(/durableSessionSet\(resumeOnceKey\(\), JSON\.stringify\(\{ at: Date\.now\(\), answer, reloads \}\)/);
+    expect(src).toMatch(/durableSessionSet\(resumeOnceKey\(storageOwner\(\)\), JSON\.stringify\(\{ at: Date\.now\(\), answer, reloads \}\)/);
     expect(src).toMatch(/Date\.now\(\) - prev\.at < LOOP_WINDOW_MS/);
     // A loop after a MINT reloads a bounded number of times, then says the server is busy.
     expect(src).toMatch(/prev\.reloads >= GATE_RELOADS/);

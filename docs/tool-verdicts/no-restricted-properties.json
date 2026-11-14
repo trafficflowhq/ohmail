@@ -1,0 +1,20 @@
+{
+  "id": "no-restricted-properties",
+  "base": "774377fdb29db20ce5ab28342ec874cb1e812a1f",
+  "recorded": "2026-11-16",
+  "command": "node tools/check.mjs --controls",
+  "arms": [
+    {
+      "control": "the document by the global object's name in shared behaviour",
+      "file": "packages/app-logic/src/planted/global-this.ts",
+      "line": 1,
+      "refused": "'globalThis.document' is restricted from being used. Only a shell touches this; shared code asks the host contract."
+    }
+  ],
+  "green": [
+    {
+      "control": "a clean file of shared behaviour",
+      "file": "packages/app-logic/src/planted/clean.ts"
+    }
+  ]
+}

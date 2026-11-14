@@ -332,6 +332,8 @@ export function mayReadIdentity(state: SyncIdentity): boolean {
 }
 
 export interface SyncGate {
+  /** The account this gate's mirror is named for; null for an un-named, in-memory engine. */
+  readonly owner: string | null;
   /** Wrap the engine's transport. Call once, at construction, on the adapter you pass in. */
   guard(adapter: GatedAdapter): GatedAdapter;
   /** May this engine merge right now? Read before every request and at every page boundary. */
@@ -566,6 +568,7 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
   };
 
   return {
+    owner: mirrorOwner,
     identity,
     confirm(accountId) {
       confirmedFor = accountId;
@@ -1069,6 +1072,11 @@ export function confirmSyncOwner(engine: OhmailEngine, accountId: string): void 
 export function syncIdentityOf(engine: OhmailEngine | null | undefined): SyncIdentity {
   if (!engine) return "holds";
   return GATES.get(engine)?.identity() ?? "holds";
+}
+
+/** The account this engine's mirror is named for; null for an engine with no named mirror (the demo's, a host-built one). */
+export function mirrorOwnerOf(engine: OhmailEngine): string | null {
+  return GATES.get(engine)?.owner ?? null;
 }
 
 /**

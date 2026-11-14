@@ -4,6 +4,7 @@
  */
 import { render, type RenderResult } from "@testing-library/react";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
+import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import type { EngineMessage } from "@ohmail/client-engine";
 import type { LayoutPlan, PaneProps, Route } from "../../src/frame/contract.js";
 import { NONE } from "../../src/host/index.js";
@@ -195,6 +196,8 @@ export function ohbox(
     },
     t: (key) => key,
     columnHidden: () => false,
+    /* No shell stands over this world: the after-verb choice is the default, as for a list drawn in no shell. */
+    afterVerb: () => DEFAULT_AFTER_VERB,
     rowSelector: "[data-id]",
     avatarSelector: null,
     anchors: { pickTag: () => null, row: () => null },

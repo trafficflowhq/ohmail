@@ -60,6 +60,7 @@ import type { ShellVerbs } from "./shell-verbs";
 import { degradeSentence } from "./screening-degrade";
 import { isKeptPile } from "./kept-piles";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import type { StorageScope } from "@ohmail/app-logic/storage/scope";
 import { useSwitchEnd } from "@ohmail/app-logic/session/ui-vitals";
 import { currentZone, leaveRailAfterGoTo, setRailSummon } from "@ohmail/app-logic/keys/zone-nav";
 import { settingsPanes, type WiredPanes } from "../views/settings-panes";
@@ -116,6 +117,8 @@ const PILE_CHORD_LABEL: Record<string, "shortcuts.goOhbox" | "shortcuts.goReads"
 
 export interface ShellKeysInput {
   engine: OhmailEngine;
+  /** The shell's scope, handed to the parts the rail draws outside the shell's own subtree (the folder tree). */
+  scope: StorageScope;
   /** The mirror as it is — `engine.read()` from the render, never re-read here. */
   reader: EntityReader;
   demo: boolean;
@@ -240,7 +243,7 @@ export interface ShellKeysInput {
 export type ShellKeys = ReturnType<typeof useShellKeys>;
 
 export function useShellKeys({
-  engine, reader, demo, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
+  engine, reader, demo, scope, t, theme, route, palette, pullBinding, consent, syncStatus, mailState,
   facts, seedOwed, folderVerbs, screener, junkSaid, junkReadable, awaySupported, readsNew,
   receiptsNew,
   accountSection, mailboxSection, aiSection, billingSection, storageSection, invitesSection, securitySection,
@@ -1184,6 +1187,7 @@ export function useShellKeys({
             items: [],
             custom: (
               <FoldersRailGroup
+                scope={scope}
                 folders={folders}
                 unread={folderUnread}
                 verbs={demo ? undefined : folderVerbs}
@@ -1286,7 +1290,7 @@ export function useShellKeys({
       t, ohboxUnread, ohboxRows, readsNew, receiptsNew, mayCount, screener.waitingCount, railDegrade, piles,
       tagGroups, tags, createTagAlone, consent.foldersEnabled, consent.known, folders,
       folderUnread, folderVerbs, folderMailboxes, demo, syncStatus.bootstrapping, route.view,
-      route.folderId, facts,
+      route.folderId, facts, scope,
       /* The junk note at the folders group's foot — `facts` above is its SOURCE, not its value:
          the derivation collapses many rows to one answer, so the memo must watch the answer. */
       junkSaid, junkReadable,

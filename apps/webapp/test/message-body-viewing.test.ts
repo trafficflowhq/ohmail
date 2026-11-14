@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ThemeProvider } from "@ohmail/ui";
+import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
+import { TodaysScopeProvider } from "../app/shell/todays-scope";
 import { parseCssColor, relativeLuminance } from "@ohmail/client-engine";
 import { GRAY_WRAPPER_HTML, GRAY_WRAPPER_TEXT, TINTED_WRAPPER_HTML } from "./fixtures/gray-wrapper-letter";
 import { CORPUS_WIDTHS, LETTER_PAPER_CORPUS } from "../../../packages/client-engine/test/fixtures/letter-paper-corpus";
@@ -71,7 +73,8 @@ async function renderIn(
       h(ThemeProvider, {
         defaultPreference: preference,
         storageKey: null,
-        children: h(MessageBody, props),
+        /* Drawn in a shell, as the reader always is: the account the case names, else an account of its own. */
+        children: h(TodaysScopeProvider, { value: storageOwner() ?? "acc-viewing" }, h(MessageBody, props)),
       }),
     );
   });
