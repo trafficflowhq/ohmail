@@ -7,7 +7,7 @@ import { useSuggestText } from "../app/shell/suggest-text";
 import de from "../messages/de.json";
 import en from "../messages/en.json";
 import { ApiError } from "../app/api-client";
-import { aiRefusalKey, clearedByAccess } from "../app/shell/ai-refusal-copy";
+import { aiRefusalKey, clearedByAccess } from "@ohmail/app-logic/text/ai-refusal-copy";
 import type { SuggestBatchControl, SuggestWire } from "../app/shell/screener-suggest";
 
 /**

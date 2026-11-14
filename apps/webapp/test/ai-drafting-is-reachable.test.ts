@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { DRAFT_REPLY_COST_CREDITS } from "../app/shell/draft-reply";
+import { DRAFT_REPLY_COST_CREDITS } from "@ohmail/app-logic/writing/draft-reply";
 
 /**
  * ═══ AI DRAFTING IS SHIPPED, WIRED AND REACHABLE — pinned, because a claim now rests on it ═══
@@ -62,7 +62,7 @@ describe("the premise that drafting is disabled, checked in the four places it w
        `onMessageAction`'s own declaration, from whichever frame the manifest says holds it. */
     const arm = shellSliceOf("onMessageAction");
     expect(/case "draft":[\s\S]{0,1600}?draftReply\.open\(/.test(arm)).toBe(true);
-    expect(read("apps/webapp/app/shell/draft-reply.ts")).toContain("/messages/${id}/draft");
+    expect(read("apps/webapp/app/(product)/mailbox/draft-reply-wire.ts")).toContain("/messages/${id}/draft");
   });
 
   it("the route exists, is classed as a paid model call, and is metered", () => {

@@ -23,11 +23,11 @@ import type { AttachmentsChrome } from "./attachments";
 import type { SendState, ShowSend } from "@ohmail/app-logic/writing/mail-send";
 import { EMPTY_RICH, type RichValue } from "@ohmail/app-logic/writing/rich-text";
 import type { DraftReplyChrome } from "./InlineReply";
-import { SIG_FOLLOWING, type SignatureState } from "./signature";
-import type { ReplyEnvelopeEdit } from "./compose-from";
+import { SIG_FOLLOWING, type SignatureState } from "@ohmail/app-logic/writing/signature";
+import type { ReplyEnvelopeEdit } from "@ohmail/app-logic/writing/compose-from";
 import type { RemoteImagesChrome } from "./remote-images";
 import type { WithheldCopyKey } from "./format";
-import type { ForwardFilesPlan } from "./forward-files";
+import type { ForwardFilesPlan } from "@ohmail/app-logic/writing/forward-files";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 
 /**

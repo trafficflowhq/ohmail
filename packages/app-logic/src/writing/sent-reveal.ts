@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import { isOwnOutbound, type EngineMessage } from "@ohmail/client-engine";
-import { SCROLL_KEYS, cssRect } from "@ohmail/ui";
-import { scrollProgrammatically } from "@ohmail/app-logic/session/programmatic-scroll";
-import { viewOf } from "@ohmail/app-logic/reading/reader-seen";
+import { cssRect } from "../geometry/index.js";
+import { SCROLL_KEYS } from "../keys/index.js";
+import { scrollProgrammatically } from "../session/programmatic-scroll.js";
+import { viewOf } from "../reading/reader-seen.js";
 
 /**
  * THE REPLY YOU SENT, BROUGHT INTO VIEW. A send pressed in the reader's editor arms it; once the

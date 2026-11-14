@@ -8,7 +8,7 @@ import type { AbandonedMutation, MutationResult, OhmailEngine, QueuedChange } fr
 /** What a retry answers — the engine's own result, carried to the row that asked for it. */
 type RetryOutcome = MutationResult;
 import { useEngine, useAbandoned } from "./engine";
-import { useSendRelease } from "./send-release";
+import { useSendRelease } from "@ohmail/app-logic/writing/send-release";
 import { discardUnsavedChange } from "@ohmail/app-logic/writing/mail-send";
 import { copyRefused, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 

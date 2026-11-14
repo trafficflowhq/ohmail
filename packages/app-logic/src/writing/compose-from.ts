@@ -10,7 +10,7 @@
  */
 
 import { defaultFrom, type EmailAddress, type FromOption } from "@ohmail/client-engine";
-import { parseRecipients } from "@ohmail/app-logic/writing/compose";
+import { parseRecipients } from "./compose.js";
 
 /* The options and the default are shared with the phone's composer. */
 export { defaultFrom, optionsFromFacts, type FromOption } from "@ohmail/client-engine";
@@ -106,7 +106,7 @@ function resting(options: readonly FromOption[], chosen: FromOption | null): Res
 /**
  * An address folded to the one form this module compares in: trimmed and lowercased, whole. The
  * same normalisation as the server's `awayNormalizeAddress`, written out rather than imported
- * (`app/shell/**` depends on no server package); one function because three places ask whether an
+ * (`app-logic` depends on no server package); one function because three places ask whether an
  * address belongs to the account, and three inline folds drift. Folding the LOCAL PART departs from
  * the RFC, which lets a provider tell `Dana@` from `dana@` — the costs differ: folding too much
  * only declines an auto-switch; folding too little moves the sender of a message the user addressed

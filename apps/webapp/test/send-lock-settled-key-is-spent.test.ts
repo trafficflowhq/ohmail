@@ -78,7 +78,7 @@ describe("a send record is owed per key, and a settled key is spent", () => {
 describe("Cancel's sentence is the server's", () => {
   const read = (rel: string): string => readFileSync(join(__dirname, "..", rel), "utf8");
   it("both docks say the unreachable Cancel in the one new sentence, in both catalogues", () => {
-    const shell = read("app/shell/shell-compose.ts");
+    const shell = read("../../packages/app-logic/src/writing/shell-compose.ts");
     const en = JSON.parse(read("messages/en.json")) as { compose: Record<string, string> };
     const de = JSON.parse(read("messages/de.json")) as { compose: Record<string, string> };
     expect({

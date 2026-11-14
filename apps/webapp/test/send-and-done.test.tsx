@@ -373,7 +373,7 @@ describe("the offer reads the Ohbox ON SCREEN", () => {
        refusal, not a zero. */
     const rels = [
       "apps/webapp/app/shell/AppShell.tsx",
-      "apps/webapp/app/shell/shell-compose.ts",
+      "packages/app-logic/src/writing/shell-compose.ts",
       "apps/webapp/app/shell/shell-keys.tsx",
     ];
     const read = (rel: string): string => {

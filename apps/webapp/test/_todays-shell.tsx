@@ -33,7 +33,7 @@ import { apiConfigured } from "../app/api-client";
 import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "../app/(product)/mailbox/consent-over-api";
 import { WEB_IMAGES } from "../app/(product)/mailbox/image-wire";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
-import type { DraftReplyWire } from "../app/shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";
 import { EngineProvider, useEngine, type OwnerResolver, type ProvidedEngine } from "../app/shell/engine";
 import type { GapLettersTransport } from "../app/shell/GapLettersNotice";

@@ -22,7 +22,7 @@ const SITES: Record<string, ReadonlyArray<"refusal-only" | "says-done" | "via-pr
     "refusal-only",     // allowScreened — said at the press, refused after
     "refusal-only",     // not spam — said at the press, refused after
   ],
-  "app/shell/shell-compose.ts": [
+  "../../packages/app-logic/src/writing/shell-compose.ts": [
     "says-done",        // schedule cancel
     "says-done",        // resolve
     "says-done",        // resolve before a send again

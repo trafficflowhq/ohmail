@@ -57,7 +57,7 @@ const REMAINDER: ReadonlyArray<readonly [string, number, string]> = [
   ["shell/shell-verbs.ts", 1,
    "the subject rule's move half, whose sentence comes from the awaited RULE — the same one, "
    + "moved out of `AppShell.tsx` with the screening and tag verbs (ARCH-022)"],
-  ["shell/shell-compose.ts", 6,
+  ["app-logic/writing/shell-compose.ts", 6,
    "the six draft verbs, five of which read `res.status` and speak from it — the five moved out of "
    + "`AppShell.tsx` with the compose and draft verbs (ARCH-022), and `sendAgain`, whose answer is "
    + "the message opening with Send live on `confirmed` and a named toast on anything else; it "

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, useTranslations } from "next-intl";
 import messages from "../messages/en.json";
 
 /**
@@ -30,11 +30,14 @@ vi.mock("../app/api-client", async () => {
   return { ...actual, apiConfigured: () => true, api: (...a: unknown[]) => fetchMock(...a) };
 });
 
-const { useDraftReply, DRAFT_REPLY_COST_CREDITS, CLOUD_WIRE } = await import("../app/shell/draft-reply");
+const { useDraftReply, DRAFT_REPLY_COST_CREDITS } = await import("@ohmail/app-logic/writing/draft-reply");
+/* The wire the web's host hands, over the server client mocked above: the mount hands it as that host does. */
+const { CLOUD_WIRE } = await import("../app/(product)/mailbox/draft-reply-wire");
 const { ApiError } = await import("../app/api-client");
-type Control = ReturnType<typeof useDraftReply>;
+type Control = NonNullable<ReturnType<typeof useDraftReply>>;
 
-function mount(wire?: Parameters<typeof useDraftReply>[0]["wire"]) {
+/** Mounted over the wire a host hands: the web's unless a case names another. No wire at all is the last describe's. */
+function mount(wire: Exclude<Parameters<typeof useDraftReply>[0]["wire"], "none"> = CLOUD_WIRE) {
   host = document.createElement("div");
   document.body.appendChild(host);
   const drafts: Array<{ draft: { text: string; html: string }; messageId: string }> = [];
@@ -42,9 +45,8 @@ function mount(wire?: Parameters<typeof useDraftReply>[0]["wire"]) {
 
   function Harness() {
     control = useDraftReply({
-      onDraft: (draft, messageId) => drafts.push({ draft, messageId }),
-      ...(wire !== undefined ? { wire } : {}),
-    });
+      onDraft: (draft, messageId) => drafts.push({ draft, messageId }), wire, t: useTranslations(),
+    })!;
     return <p>{control.phase}</p>;
   }
 
@@ -354,11 +356,8 @@ describe("draft from your text: one press, one purchase", () => {
     expect(h.control.own.size).toBe(0);
   });
 
-  it("a host that hands no draft wire (the demo) is offered nothing: no control, and no Draft from your text", () => {
-    const none = mount();
-    expect(none.control.offered).toBe(false);
-    expect(none.control.fromText).toBe("none");
-    act(() => { root?.unmount(); });
+  /* A host that hands no draft wire is answered no control at all (the file's last describe): nothing is offered. */
+  it("the web's wire is offered the control and Draft from your text, and nothing is asked before a press", () => {
     const web = mount(CLOUD_WIRE);
     expect(web.control.offered).toBe(true);
     expect(web.control.fromText).not.toBe("none");
@@ -470,5 +469,29 @@ describe("a generated draft is not a sent reply", () => {
     expect(h.drafts[0]).toEqual({
       draft: { text: "generated", html: "<p>generated</p>" }, messageId: "m9",
     });
+  });
+});
+
+describe("a host that hands no draft wire", () => {
+  it("is answered no control at all, and the server client is never asked", () => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    let control: Control | null | undefined;
+    function Harness() {
+      control = useDraftReply({ onDraft: () => { /* nothing can be drafted */ }, wire: "none", t: useTranslations() });
+      return <p>{control === null ? "no control" : "a control"}</p>;
+    }
+    root = createRoot(host);
+    act(() => {
+      root!.render(
+        <NextIntlClientProvider locale="en" messages={messages as never}>
+          <Harness />
+        </NextIntlClientProvider>,
+      );
+    });
+    // No control: nothing can open an offer, so nothing can be confirmed and nothing bought.
+    expect(control, "a host that named no drafter was answered a control").toBeNull();
+    expect(host.textContent).toBe("no control");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

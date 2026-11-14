@@ -15,7 +15,7 @@ import { PROVIDERS } from "../../webapp/app/shell/providers";
 import { RichEditor } from "../../webapp/app/shell/RichEditor";
 import type { RichValue } from "@ohmail/app-logic/writing/rich-text";
 import { SignatureBlock } from "../../webapp/app/shell/SignatureBlock";
-import { SIG_FOLLOWING } from "../../webapp/app/shell/signature";
+import { SIG_FOLLOWING } from "@ohmail/app-logic/writing/signature";
 import { HeldUnsubscribe } from "../../webapp/app/views/ScreenerView";
 import messages from "../../webapp/messages/en.json";
 import { DesktopSubscription, MANAGE_LINK_PATH } from "../src/DesktopSubscription.js";

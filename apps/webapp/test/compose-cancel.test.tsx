@@ -773,7 +773,7 @@ describe("the shell is the consumer, not just the harness", () => {
       readSource("app/shell/AppShell.tsx"),
       "ComposeView is rendered without a cancel — the button has nothing behind it",
     ).toMatch(/onCancel=\{cancelCompose\}/);
-    const shell = readSource("app/shell/shell-compose.ts");
+    const shell = readSource("../../packages/app-logic/src/writing/shell-compose.ts");
 
     /* The cancel's body is the discard's shared one (`abandonCompose`), which the cancel calls with no Undo. */
     expect(shell, "the cancel is not the shared discard without its Undo").toMatch(
@@ -796,7 +796,7 @@ describe("the shell is the consumer, not just the harness", () => {
    * production repro exactly as it was. Same blind spot this describe exists for.
    */
   it("AppShell routes the settle through the draft bookkeeping, compose and reply alike", () => {
-    const shell = readSource("app/shell/shell-compose.ts");
+    const shell = readSource("../../packages/app-logic/src/writing/shell-compose.ts");
     /*
      * ── THE ROUTE MOVED AND THE CLAIM DID NOT ──────────────────────────────────────────────
      *

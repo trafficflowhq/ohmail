@@ -40,13 +40,13 @@ import {
 import { activeFormatLocale, activeFormatZone } from "../shell/locale";
 import type { ComposeFields, ComposePlan } from "@ohmail/app-logic/writing/compose";
 import { draftNoteKey, worthSaving, type ComposeElsewhere } from "@ohmail/app-logic/writing/compose-autosave";
-import { formatRecipientChips, type ResolvedFrom } from "../shell/compose-from";
+import { formatRecipientChips, type ResolvedFrom } from "@ohmail/app-logic/writing/compose-from";
 import { SignatureBlock } from "../shell/SignatureBlock";
 import { SupportDiagnostics } from "../shell/SupportDiagnostics";
-import { SIG_FOLLOWING } from "../shell/signature";
+import { SIG_FOLLOWING } from "@ohmail/app-logic/writing/signature";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { ForwardFiles } from "../shell/ForwardFiles";
-import type { ForwardFilesPlan } from "../shell/forward-files";
+import type { ForwardFilesPlan } from "@ohmail/app-logic/writing/forward-files";
 import { useScheduleFiles } from "../shell/schedule-files";
 
 /**

@@ -254,7 +254,7 @@ describe("a send record leaves the jar by one door", () => {
       .filter((f) => { let hit = false; walk(parse(f.src, f.path), (n) => { if (ts.isCallExpression(n) && OWED_AT.has(calleeName(n))) hit = true; }); return hit; })
       .map((f) => f.path).sort();
     expect(reached, "the callers this census reads").toEqual([
-      "apps/webapp/app/shell/shell-compose.ts", "packages/app-logic/src/writing/compose-autosave.ts", "packages/app-logic/src/writing/mail-send.ts",
+      "packages/app-logic/src/writing/compose-autosave.ts", "packages/app-logic/src/writing/mail-send.ts", "packages/app-logic/src/writing/shell-compose.ts",
     ]);
     expect(censusOfCallers(files)).toEqual([]);
   });

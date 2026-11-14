@@ -21,9 +21,8 @@ import {
   replyEnvelopeOnWire,
   type ReplyEnvelopeEdit,
   type ReplyEnvelopePlan,
-} from "./compose-from";
-import type { MailSend } from "@ohmail/app-logic/writing/compose";
-import { activeFormatLocale, activeFormatZone } from "./locale";
+} from "./compose-from.js";
+import type { MailSend } from "./compose.js";
 
 /** The forward's audience: the user's edit, or the refusable empty set — never a derivation. */
 export function forwardEnvelopePlan(
@@ -45,6 +44,12 @@ export function forwardEnvelopePlan(
 export function forwardSend(
   parent: Pick<EngineMessage, "id" | "subject">,
   input: {
+    /**
+     * The reader's clock at the press, as the host's text reader says it: the quoted header names the original's
+     * date on it. The press hands it; a caller that only judges the mutation (an editor's lock) hands none, and the
+     * key stays off the wire as every optional key here does.
+     */
+    clock?: { zone: string; locale: string };
     body: string;
     html?: string | null;
     mailboxId?: string;
@@ -63,7 +68,7 @@ export function forwardSend(
     ...(input.confirmed === true ? { forwardConfirmed: true } : {}),
     ...(input.forwardParts !== undefined ? { forwardParts: [...input.forwardParts] } : {}),
     // The quoted header names the original's date on the reader's clock, as the rows read it.
-    forwardClock: { zone: activeFormatZone(), locale: activeFormatLocale() },
+    ...(input.clock !== undefined ? { forwardClock: { zone: input.clock.zone, locale: input.clock.locale } } : {}),
     subject: forwardSubject(parent.subject),
     body: input.body,
     ...(input.html !== undefined ? { html: input.html } : {}),

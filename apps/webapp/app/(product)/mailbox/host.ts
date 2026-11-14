@@ -13,7 +13,7 @@ import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { AwayTransport } from "../../shell/AwayResponderRow";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
-import type { DraftReplyWire } from "../../shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import type { OwnerResolver } from "../../shell/engine";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { GapLettersTransport } from "../../shell/GapLettersNotice";

@@ -14,7 +14,7 @@ import {
 import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { UnsavedChangesList } from "../app/shell/UnsavedChanges";
-import { releaseSendAndDone, SendReleaseProvider, type SendRelease } from "../app/shell/send-release";
+import { releaseSendAndDone, SendReleaseProvider, type SendRelease } from "@ohmail/app-logic/writing/send-release";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 
 /**
@@ -372,7 +372,7 @@ describe("Try again on the strip", () => {
     const mounts = [...feeds.matchAll(/<UnsavedChanges variant=/g)].map((m) => m.index!);
     expect(mounts).toHaveLength(1);
     expect(mounts[0]!).toBeGreaterThan(feeds.indexOf("function TodaysShown("));
-    const compose = withoutComments(readFileSync(`${ROOT}/apps/webapp/app/shell/shell-compose.ts`, "utf8"));
+    const compose = withoutComments(readFileSync(`${ROOT}/packages/app-logic/src/writing/shell-compose.ts`, "utf8"));
     expect(compose).toContain("return releaseSendAndDone({");
     expect(compose).toContain("onSendOutcome(res.key,");
   });
@@ -394,6 +394,6 @@ describe("one door on the web", () => {
       for (const m of text.matchAll(/\bapplySendAndDone\(|(?<![A-Za-z.])sendAndDone\(/g)) calls.push(`${f.slice(ROOT.length)}:${m.index}`);
     }
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toContain("app/shell/send-release.tsx");
+    expect(calls[0]).toContain("app-logic/src/writing/send-release.ts");
   });
 });

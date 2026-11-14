@@ -99,6 +99,7 @@ export const SHELL_FRAMES: readonly string[] = [
 /** A frame that left the shell's folder for app-logic, by where it is now. It stays a frame: the shell composes it. */
 const FRAME_HOMES: Readonly<Record<string, string>> = {
   "shell-dispatch.ts": "packages/app-logic/src/press/shell-dispatch.ts",
+  "shell-compose.ts": "packages/app-logic/src/writing/shell-compose.ts",
   "consent-row.ts": "packages/app-logic/src/consent/consent-row.ts",
   "partition.ts": "packages/app-logic/src/consent/partition.ts",
 };

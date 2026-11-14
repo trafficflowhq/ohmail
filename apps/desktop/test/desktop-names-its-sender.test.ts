@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   optionsFromFacts, resolveComposeFrom,
-} from "../../webapp/app/shell/compose-from";
+} from "@ohmail/app-logic/writing/compose-from";
 
 /**
  * ═══ THE WINDOW NAMES THE MAILBOX IT WILL SEND FROM — on the STANDALONE door too ═══════════

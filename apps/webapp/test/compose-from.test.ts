@@ -16,7 +16,7 @@ import {
   replyRecipients,
   resolveComposeFrom,
   resolveReplyFrom,
-} from "../app/shell/compose-from";
+} from "@ohmail/app-logic/writing/compose-from";
 import { composeDraftKey } from "@ohmail/app-logic/writing/compose";
 import { settleFirstPaint } from "./_first-paint.js";
 import { storageOwner } from "@ohmail/app-logic/storage/storage-owner";

@@ -20,7 +20,7 @@ import {
   type RecipientRow,
 } from "../app/shell/RecipientField";
 import { composePlan, parseRecipients } from "@ohmail/app-logic/writing/compose";
-import { formatRecipientChips } from "../app/shell/compose-from";
+import { formatRecipientChips } from "@ohmail/app-logic/writing/compose-from";
 
 /**
  * THE RECIPIENT FIELD — chips over one wire string.
@@ -191,7 +191,7 @@ describe("a field seeded from stored addresses is ALL chips — CMP-F3", () => {
    * (`ComposeView.takeDraft`), and the reply head opening for edit (`InlineReply.expand`).
    */
   it("every address-seeding surface goes through formatRecipientChips", () => {
-    const shell = readSource("app/shell/shell-compose.ts");
+    const shell = readSource("../../packages/app-logic/src/writing/shell-compose.ts");
     expect(shell, "openDraft seeds To without the chips form — the last recipient un-chips")
       .toMatch(/to: formatRecipientChips\(d\.to\)/);
     expect(shell).toMatch(/cc: formatRecipientChips\(d\.cc\)/);

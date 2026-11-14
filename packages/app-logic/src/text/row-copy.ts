@@ -64,16 +64,17 @@ export interface SentLabel {
  * To recipient's name (their address where there is none), "+N" for the rest, and the circle is
  * the recipient's. `null` keeps the ordinary sender display: a received row, or a sent row whose
  * mirror predates recipients on the wire (empty `to`) — never "Me →" with nothing after the arrow.
- * The Ohbox's rows and a reading stream's answered letter read it alike. `t` is the `ohbox`
- * namespace's translator the caller reads.
+ * The Ohbox's rows and a reading stream's answered letter read it alike. `tOhbox` is the `ohbox`
+ * namespace's translator the caller reads (named apart from the badges' `message` reader above: one name, one
+ * namespace in this file, which is how the catalogue's census reads a reader that is handed in).
  */
-export function useSentLabel(t: Translator): (m: EngineMessage) => SentLabel | null {
+export function useSentLabel(tOhbox: Translator): (m: EngineMessage) => SentLabel | null {
   return useCallback((m: EngineMessage) => {
     const r = sentRowRecipient(m);
     if (!r) return null;
     const label = r.extra > 0
-      ? t("rowSentToMore", { name: r.name, count: r.extra })
-      : t("rowSentTo", { name: r.name });
+      ? tOhbox("rowSentToMore", { name: r.name, count: r.extra })
+      : tOhbox("rowSentTo", { name: r.name });
     return { label, avatar: sentAvatarOf(r) };
-  }, [t]);
+  }, [tOhbox]);
 }

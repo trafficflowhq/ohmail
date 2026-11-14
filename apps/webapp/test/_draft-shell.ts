@@ -30,7 +30,7 @@ import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ReaderEntry } from "@ohmail/app/host";
 import { announceUpdate, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
-import type { DraftReplyWire } from "../app/shell/draft-reply";
+import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
 import { settleEditor, settleFirstPaint } from "./_first-paint.js";
 import { typeInto } from "./fixtures/rich-editor-driver";

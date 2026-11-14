@@ -6,7 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { OhmailEngine } from "@ohmail/client-engine";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
-import { noteReplyPress } from "../app/shell/sent-reveal";
+import { noteReplyPress } from "@ohmail/app-logic/writing/sent-reveal";
 
 /**
  * A THREAD OPENS AT THE OPENED MESSAGE, AND STAYS THERE WHILE THE BODIES LAND.

@@ -195,7 +195,9 @@ describe("refusals are the server's sentence, never a client copy of it", () => 
    * one place the grep could not see. Copy files are exactly where a duplicated server
    * sentence ends up, because that is where copy is written.
    */
-  const WEBAPP_SOURCE = walkSources(`${HERE}../app`).concat(walkSources(`${HERE}../../../packages/letter-body/src`), [`${HERE}../messages/en.json`]);
+  const WEBAPP_SOURCE = walkSources(`${HERE}../app`).concat(walkSources(`${HERE}../../../packages/letter-body/src`), [`${HERE}../messages/en.json`])
+    /* The composer and its helpers left this app for app-logic's writing folder; the AI refusals' words its text folder. */
+    .concat(walkSources(`${HERE}../../../packages/app-logic/src/writing`), [`${HERE}../../../packages/app-logic/src/text/ai-refusal-copy.ts`]);
 
   it("the client passes `error.message` through verbatim", async () => {
     // The server's own sentence first; the fallback is this client's, in the reader's language.

@@ -1366,11 +1366,47 @@
       "node": "./dist/writing/compose-autosave.js",
       "default": "./src/writing/compose-autosave.ts"
     },
+    "./writing/compose-door": {
+      "types": "./src/writing/compose-door.ts",
+      "ohmail-source": "./src/writing/compose-door.ts",
+      "node": "./dist/writing/compose-door.js",
+      "default": "./src/writing/compose-door.ts"
+    },
+    "./writing/compose-from": {
+      "types": "./src/writing/compose-from.ts",
+      "ohmail-source": "./src/writing/compose-from.ts",
+      "node": "./dist/writing/compose-from.js",
+      "default": "./src/writing/compose-from.ts"
+    },
+    "./writing/composer-types": {
+      "types": "./src/writing/composer-types.ts",
+      "ohmail-source": "./src/writing/composer-types.ts",
+      "node": "./dist/writing/composer-types.js",
+      "default": "./src/writing/composer-types.ts"
+    },
     "./writing/draft-creates": {
       "types": "./src/writing/draft-creates.ts",
       "ohmail-source": "./src/writing/draft-creates.ts",
       "node": "./dist/writing/draft-creates.js",
       "default": "./src/writing/draft-creates.ts"
+    },
+    "./writing/draft-reply": {
+      "types": "./src/writing/draft-reply.ts",
+      "ohmail-source": "./src/writing/draft-reply.ts",
+      "node": "./dist/writing/draft-reply.js",
+      "default": "./src/writing/draft-reply.ts"
+    },
+    "./writing/forward-files": {
+      "types": "./src/writing/forward-files.ts",
+      "ohmail-source": "./src/writing/forward-files.ts",
+      "node": "./dist/writing/forward-files.js",
+      "default": "./src/writing/forward-files.ts"
+    },
+    "./writing/forward-send": {
+      "types": "./src/writing/forward-send.ts",
+      "ohmail-source": "./src/writing/forward-send.ts",
+      "node": "./dist/writing/forward-send.js",
+      "default": "./src/writing/forward-send.ts"
     },
     "./writing/mail-send": {
       "types": "./src/writing/mail-send.ts",
@@ -1378,17 +1414,59 @@
       "node": "./dist/writing/mail-send.js",
       "default": "./src/writing/mail-send.ts"
     },
+    "./writing/mail-send-text": {
+      "types": "./src/writing/mail-send-text.ts",
+      "ohmail-source": "./src/writing/mail-send-text.ts",
+      "node": "./dist/writing/mail-send-text.js",
+      "default": "./src/writing/mail-send-text.ts"
+    },
     "./writing/reply-autosave": {
       "types": "./src/writing/reply-autosave.ts",
       "ohmail-source": "./src/writing/reply-autosave.ts",
       "node": "./dist/writing/reply-autosave.js",
       "default": "./src/writing/reply-autosave.ts"
     },
+    "./writing/reply-done": {
+      "types": "./src/writing/reply-done.ts",
+      "ohmail-source": "./src/writing/reply-done.ts",
+      "node": "./dist/writing/reply-done.js",
+      "default": "./src/writing/reply-done.ts"
+    },
     "./writing/rich-text": {
       "types": "./src/writing/rich-text.ts",
       "ohmail-source": "./src/writing/rich-text.ts",
       "node": "./dist/writing/rich-text.js",
       "default": "./src/writing/rich-text.ts"
+    },
+    "./writing/send-line": {
+      "types": "./src/writing/send-line.ts",
+      "ohmail-source": "./src/writing/send-line.ts",
+      "node": "./dist/writing/send-line.js",
+      "default": "./src/writing/send-line.ts"
+    },
+    "./writing/send-release": {
+      "types": "./src/writing/send-release.ts",
+      "ohmail-source": "./src/writing/send-release.ts",
+      "node": "./dist/writing/send-release.js",
+      "default": "./src/writing/send-release.ts"
+    },
+    "./writing/sent-reveal": {
+      "types": "./src/writing/sent-reveal.ts",
+      "ohmail-source": "./src/writing/sent-reveal.ts",
+      "node": "./dist/writing/sent-reveal.js",
+      "default": "./src/writing/sent-reveal.ts"
+    },
+    "./writing/shell-compose": {
+      "types": "./src/writing/shell-compose.ts",
+      "ohmail-source": "./src/writing/shell-compose.ts",
+      "node": "./dist/writing/shell-compose.js",
+      "default": "./src/writing/shell-compose.ts"
+    },
+    "./writing/signature": {
+      "types": "./src/writing/signature.ts",
+      "ohmail-source": "./src/writing/signature.ts",
+      "node": "./dist/writing/signature.js",
+      "default": "./src/writing/signature.ts"
     },
     "./writing/send-lock": {
       "types": "./src/writing/send-lock.ts",

@@ -44,7 +44,7 @@ import {
 } from "@ohmail/client-engine";
 import { type ToastFn } from "@ohmail/ui";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
-import { replyAllRecipients } from "./compose-from";
+import { replyAllRecipients } from "@ohmail/app-logic/writing/compose-from";
 import type { ConsentState } from "@ohmail/app-logic/consent/consent-state";
 import { dayStamp, PLACE_LABEL, placeLabel, resurfaceLabel, tomorrowAt } from "./format";
 import { displayAddress, displayDomain } from "@ohmail/app-logic/text/idn";
@@ -83,7 +83,7 @@ import {
   type ScreeningToastKey,
   type SenderScreening,
 } from "@ohmail/app-logic/press/sender-screening";
-import type { ShellCompose } from "./shell-compose";
+import type { ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import type { ShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 import type { ShellOpenState } from "./shell-open-state";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";
@@ -210,7 +210,7 @@ export interface ShellVerbsInput {
   openForward: ShellCompose["openForward"];
   openReply: ShellCompose["openReply"];
   /** The drafter, opened over the editor the `draft` verb has just raised. */
-  draftReply: Pick<ShellCompose["draftReply"], "open">;
+  draftReply: Pick<NonNullable<ShellCompose["draftReply"]>, "open"> | null;
   /** Whether the open editor already answers everyone — a drafted text may not narrow it. */
   replyAll: boolean;
   /** The inline reply's id, the shell's own state, read only to keep that audience. */
@@ -1144,7 +1144,8 @@ export function useShellVerbs({
           // The open KEEPS the audience an editor already holds on this message — a drafted
           // text bought for a reply-all must not silently narrow the envelope to the sender.
           openReply(m.id, replyTo === m.id && replyAll);
-          draftReply.open(m.id);
+          // A host with no drafter has no control: the editor opens and nothing is offered.
+          if (draftReply !== null) draftReply.open(m.id);
           break;
         /**
          * THE THREE HORIZONS ARE TOGGLES — the way OUT of a pile: The wire has carried `state:"none"` since the

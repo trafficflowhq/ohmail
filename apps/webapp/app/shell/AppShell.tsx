@@ -165,8 +165,8 @@ import { appendRich, EMPTY_RICH, isRichEmpty, type RichValue } from "@ohmail/app
 import {
   SIG_FOLLOWING, effectiveSignature, effectiveSignatureHtml, withSignature,
   type SignatureState,
-} from "./signature";
-import { useDraftReply, type DraftedReply, type DraftReplyWire } from "./draft-reply";
+} from "@ohmail/app-logic/writing/signature";
+import { useDraftReply, type DraftedReply, type DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { RichEditor, preloadRichEditor } from "./RichEditorLazy";
 import { TagPicker, placePicker } from "./TagPicker";
 
@@ -194,8 +194,8 @@ import { useShellDispatch } from "@ohmail/app-logic/press/shell-dispatch";
 /* The consent partition, the projection over it and every pile. See the module. */
 import { useShellDerivations } from "./shell-derivations";
 /* Selection, the reader, the route↔open mirror and what a visit has seen. See the module. */
-import { useShellCompose } from "./shell-compose";
-export { openDraftDecision } from "./shell-compose";
+import { useShellCompose } from "@ohmail/app-logic/writing/shell-compose";
+export { openDraftDecision } from "@ohmail/app-logic/writing/shell-compose";
 import { useShellOpenState } from "./shell-open-state";
 /* Screening, tags and every message and bulk verb. See the module. */
 import { useShellVerbs } from "./shell-verbs";
@@ -223,7 +223,7 @@ import {
   resolveComposeFrom,
   resolveReplyFrom,
   type ReplyEnvelopeEdit,
-} from "./compose-from";
+} from "@ohmail/app-logic/writing/compose-from";
 import { MessageChromeProvider, type BodyTarget } from "./message-chrome";
 import { useInPlaceHost } from "./stream-in-place";
 import { SenderMenu, type SenderMenuState } from "./SenderMenu";
@@ -248,13 +248,13 @@ import { screeningShown } from "@ohmail/app-logic/press/press-verdict";
 import { SubjectRuleSheet } from "./SubjectRuleSheet";
 import { planSubjectRule, subjectRuleContext, subjectRuleToast, type TermField } from "@ohmail/app-logic/press/subject-rule";
 import { senderHitOf } from "./sender-hit";
-import { forwardEnvelopePlan, forwardSend } from "./forward-send";
+import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
 import {
   canonicalHash, go, goFirstRun, goFolder, goScreener, goSettings, goTag, goTriage, nameFirstRunMailbox,
   useHashRoute,
   type Route,
 } from "./routing";
-import { goCompose } from "./compose-door";
+import { goCompose } from "@ohmail/app-logic/writing/compose-door";
 import { beginSearch, markStartup, useUiVitals } from "@ohmail/app-logic/session/ui-vitals";
 import { HistoryView } from "../views/HistoryView";
 import { SeedReviewView } from "../views/SeedReviewView";
@@ -282,8 +282,9 @@ import { useShellSetup } from "@ohmail/app-logic/doors/setup-resume";
 import { durableSessionSet } from "@ohmail/app-logic/storage/durable";
 import { usePinnedScope } from "@ohmail/app-logic/storage/scope";
 import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
-import { SendReleaseProvider } from "./send-release";
+import { SendReleaseProvider } from "@ohmail/app-logic/writing/send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
+import { TODAYS_COMPOSER_WORDS } from "./mail-send-text";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
 import { isCalendarPlace, routeOf, useFrame, useKeptPane, useRoomHandOver, type PaneProps } from "@ohmail/app/frame";
 import { useTodaysFixed } from "./TodaysFrame";
@@ -1338,7 +1339,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo, writeSupport,
     composeForwardFiles, replyForwardFiles,
   } = useShellCompose({
-    engine, reader, t, toast, draftReplyWire, route, consent, facts, mailboxes, drafts, ownAddresses,
+    engine, reader, t, words: TODAYS_COMPOSER_WORDS, toast, draftReplyWire: draftReplyWire ?? NONE, route, go, consent, facts, mailboxes, drafts, ownAddresses,
     fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues, inPlaceHost,
     setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor, scope,
   });
@@ -1558,7 +1559,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
       // same reason: `MessagePane` is mounted TWICE while the reader is open, and an offer
       // held per-pane would be two offers, each able to spend an AI action the other one
       // knew nothing about.
-      draftReply: draftNoCredits ? { ...draftReplyChrome, noCredits: true } : draftReplyChrome,
+      draftReply: draftReplyChrome === null ? undefined : draftNoCredits ? { ...draftReplyChrome, noCredits: true } : draftReplyChrome,
       openSenderMenu, senderSheetFor: senderMenu?.messageId ?? null,
       // The "me" chip's identity and the contact popover's two verbs (viewer redesign). Write seeds
       // a compose; the Screener entry is the WIDENED openSenderMenu — the chip's address rides
@@ -1647,7 +1648,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const todaysShown = useTodaysFeeds({
     demo, scope, t, facts, mailState, copyAsOf: freshness.asOf, setupHref: setupHref ?? null, mailSend, desktopSection: desktopSection != null,
     railGroups: railGroupsWithHints, activeRailId, routeView: route.view, activeTagId: route.tagId ?? null,
-    compose: () => goCompose(), pull: pullBinding, account: account?.email ?? null, mailboxes,
+    compose: () => goCompose(() => go("compose")), pull: pullBinding, account: account?.email ?? null, mailboxes,
     organizer: { changes: organizerChanges, acknowledge: acknowledgeOrganizerNotice, on: noticeOn },
     gap: { offers: gapOfferList, answer: answerGapLetters, on: gapOn },
     openNotSent: (i) => openNotSent(i.key, i.left, i.m, i.state !== "ended"),

@@ -1,6 +1,6 @@
 /**
  * WHICH ADDRESS A NEW MAIL LEAVES FROM — the options and the default every compose surface reads
- * (the web's `app/shell/compose-from.ts` re-exports these; the phone's composer imports them). A
+ * (app-logic's `writing/compose-from.ts` re-exports these; the phone's composer imports them). A
  * fresh compose defaults to the OLDEST CONNECTED mailbox, derived every time, nothing stored.
  * Sendable is `!== "disabled"` (the server's own rule); the default still prefers `connected`.
  */

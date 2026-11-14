@@ -226,7 +226,7 @@ describe("the drafted-reply button's failure sentence", () => {
    * string.
    */
   it("passes a server refusal through verbatim, and never quotes an unhandled fault", async () => {
-    const { messageFor } = await import("../app/shell/draft-reply");
+    const { messageFor } = await import("@ohmail/app-logic/writing/draft-reply");
     const FALLBACK = "That did not work.";
     const OPAQUE = "opaque sentence";
 

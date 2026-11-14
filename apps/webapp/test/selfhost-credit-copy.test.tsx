@@ -10,7 +10,7 @@ import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { DraftReplyCard } from "../app/shell/InlineReply";
 import { AutoSuggestRow } from "../app/shell/AutoSuggestRow";
 import { SuggestControl } from "../app/views/ScreenerView";
-import { DRAFT_REPLY_COST_CREDITS, type DraftReplyControl } from "../app/shell/draft-reply";
+import { DRAFT_REPLY_COST_CREDITS, type DraftReplyControl } from "@ohmail/app-logic/writing/draft-reply";
 import type { AutoOptInControl, SuggestBatchControl } from "../app/shell/screener-suggest";
 
 /**

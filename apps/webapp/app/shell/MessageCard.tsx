@@ -18,7 +18,7 @@ import { AwayMark } from "./AwayMark";
 import { MessageBody } from "../letter-body/MessageBody";
 import { BlockNoticeGloss, type BlockNotice } from "@ohmail/letter-body";
 import { MessageFiles } from "./MessageFiles";
-import { replyAllRecipients } from "./compose-from";
+import { replyAllRecipients } from "@ohmail/app-logic/writing/compose-from";
 import {
   avatarHue,
   displayTime,

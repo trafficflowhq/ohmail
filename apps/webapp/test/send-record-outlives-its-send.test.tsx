@@ -279,7 +279,7 @@ describe("RESTORED-DOCK-CLEAR: a restored reply's dock is held while its send wa
   it("the shell hands the dock its state through replyDockState", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/shell-compose.ts"), "utf8");
+    const shell = readFileSync(resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8");
     expect(shell).toContain("const state = replyDockState(engine, mailSend.stateOf(lane), lane);");
   });
 });

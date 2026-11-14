@@ -103,7 +103,7 @@ describe("the order the shell registers them in", () => {
   /* MAILTO-PARSER-HAS-THREE-HOMES: the one parser's draft reaches the composer whole — every
      surface carries to, cc, bcc, subject and body (the desktop's and the phone's halves are theirs). */
   it("seeds all five fields of the parsed draft", () => {
-    const src = read("shell-compose.ts");
+    const src = read("../../../../packages/app-logic/src/writing/shell-compose.ts");
     for (const f of ["to: chips(mailtoDraft.to)", "cc: chips(mailtoDraft.cc)", "bcc: chips(mailtoDraft.bcc)", "subject: mailtoDraft.subject", "body: mailtoDraft.body"]) {
       expect(src, `the seeder drops ${f}`).toContain(f);
     }
@@ -112,7 +112,7 @@ describe("the order the shell registers them in", () => {
   it("holds the mailto effect in shell-compose.ts and the mirror write in shell-open-state.ts", () => {
     /* The effect's own BODY, not the file: `writeTo` navigates to the composer too, so a file-wide
        `toContain` would read its copy and pass over a mailto effect that had stopped navigating. */
-    const compose = read("shell-compose.ts");
+    const compose = read("../../../../packages/app-logic/src/writing/shell-compose.ts");
     const deps = "[mailtoDraft, autosave, go, onMailtoDraftSeeded]";
     const end = compose.indexOf(deps);
     expect(end, "the mailto effect's dependency array is not in shell-compose.ts").toBeGreaterThan(0);
