@@ -3,6 +3,56 @@
     "metaCount": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
     "emptyTitle": "Nichts in diesem Ordner",
     "emptyHint": "Er enthält keine Mail. Die Ordnerliste folgt deinem Mailserver: Ein dort gelöschter Ordner verschwindet auch hier.",
-    "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr."
+    "gone": "„{name}“ gibt es auf deinem Mailserver nicht mehr.",
+    "loading": "Dieser Ordner wird geladen",
+    "group": {
+      "new": "Neu",
+      "earlier": "Früher"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "row": {
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "title": "Ordner",
+    "way": {
+      "all": "Ordner"
+    },
+    "rail": {
+      "label": "Ordner",
+      "all": "Alle Ordner",
+      "allUnread": "Alle Ordner, {count} ungelesen",
+      "unread": "{name}, {count} ungelesen",
+      "find": "Ordner suchen",
+      "none": "Kein Ordner passt.",
+      "expand": "{name} aufklappen",
+      "collapse": "{name} zuklappen",
+      "menu": "Ordnermenü für {name}",
+      "pin": "Anheften",
+      "unpin": "Lösen"
+    },
+    "list": {
+      "menu": "Liste"
+    },
+    "move": {
+      "moved": "Nach {name} verschoben.",
+      "outdated": "{by} organisiert dieses Postfach mit einer älteren ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
+      "outdatedUnknown": "Die Installation, die dieses Postfach organisiert, hat eine ältere ohmail-Version, die nicht in Ordner verschieben kann. Aktualisiere ohmail dort.",
+      "nobody": "Nichts organisiert dieses Postfach, deshalb bleibt die Nachricht, wo sie ist.",
+      "elsewhere": "Nichts verschoben — {by} organisiert dieses Postfach, deshalb wird dort in Ordner verschoben, wo es läuft.",
+      "elsewhereUnknown": "Nichts verschoben — in Ordner wird dort verschoben, wo die Installation läuft, die dieses Postfach organisiert.",
+      "busy": "„{name}“ wird gerade geändert. Versuch es gleich noch einmal.",
+      "cannot": "Diese Nachricht kann nicht nach „{name}“ verschoben werden.",
+      "refused": "Das Verschieben hat nicht geklappt.",
+      "queued": "Wartet auf {by}, das dieses Postfach organisiert.",
+      "queuedUnknown": "Wartet auf die Installation, die dieses Postfach organisiert.",
+      "waitingGone": "Nichts verschoben — dieses Postfach hat keinen Ordner „{name}“ mehr.",
+      "waitingLetterGone": "Nichts verschoben — die Nachricht liegt nicht mehr im Postfach.",
+      "waitingUnreadable": "Nichts verschoben — die Installation, die dieses Postfach organisiert, konnte die Anfrage nicht lesen."
+    }
   }
 }

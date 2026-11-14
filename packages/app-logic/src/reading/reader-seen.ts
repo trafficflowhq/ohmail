@@ -70,6 +70,8 @@ export interface ThreadDomNames {
   readonly body: string;
   readonly stops: string;
   readonly stopsRoot?: string;
+  /** What stays over the scroller's top while it scrolls (a column's head), where a column has one. */
+  readonly head?: string;
 }
 
 /** Today's reader's classes. */

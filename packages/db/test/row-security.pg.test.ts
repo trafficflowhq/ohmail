@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { getTableColumns } from "drizzle-orm";
 import { MIGRATED_DB_SETUP_BUDGET_MS, MIGRATOR_ROLE, PG_MAJORS, ownServersAvailable, startLockGround, type LockGround } from "../src/testing.js";
+import { messageSearch, messages } from "../src/schema-mail.js";
 import {
   expectedPolicies, lockCensus, pinSpelling, policyComment, policyDifferences, readLockFacts, viewComment, type LockFacts,
 } from "../src/row-security/census.js";
@@ -224,6 +226,18 @@ for (const major of PG_MAJORS) {
       const a = "00000000-0000-4000-8000-0000000000a1";
       expect({ api: await readerByName("ground", "ohmail_api", a), worker: await readerByName("ground", "ohmail_worker", a), nothing: await readerByName("ground", "ohmail_api", "") })
         .toEqual({ api: a, worker: a, nothing: "null" });
+    }, CASE_MS);
+
+    it("a whole-row read through each view answers: every column the schema declares for its table is one the view holds", async () => {
+      const a = "00000000-0000-4000-8000-0000000000a1";
+      const tables = { messages, message_search: messageSearch };
+      for (const v of ACCOUNT_VIEWS) {
+        // What a read of the whole row names: each column of the table's schema, by name (never `*`).
+        const declared = Object.values(getTableColumns(tables[v.table])).map((c) => `"${c.name}"`).join(", ");
+        const rows = await boundCount("ground", "ohmail_api", a, `select count(*)::int as n from ${viewName(v)}`);
+        const whole = await boundCount("ground", "ohmail_api", a, `select count(*)::int as n from (select ${declared} from ${viewName(v)}) as whole`);
+        expect({ view: v.name, answers: typeof rows, whole }).toEqual({ view: v.name, answers: "number", whole: rows });
+      }
     }, CASE_MS);
 
     /**
@@ -623,6 +637,12 @@ for (const major of PG_MAJORS) {
       { arm: "policies.roles, a listed policy moved to PUBLIC", plant: () => ["alter policy lock_account on public.messages to public"],
         lines: () => [drift("policies.roles", "messages.lock_account", "to public"), drift("policies.altered", "messages.lock_account", "its expression is not what was made")],
         setup: { repaired: ["policy messages.lock_account is not as it was made: made again"] } },
+      // One role whose name is the two logins' names joined by a comma is not the two logins: the roles are compared as a list.
+      { arm: "policies.roles, a listed policy moved to one role named as the two logins joined", asSuper: true,
+        plant: () => ["create role \"ohmail_api,ohmail_worker\"", "alter policy lock_account on public.messages to \"ohmail_api,ohmail_worker\""],
+        lines: () => [drift("policies.roles", "messages.lock_account", "to ohmail_api,ohmail_worker"), drift("policies.altered", "messages.lock_account", "its expression is not what was made")],
+        setup: { repaired: ["policy messages.lock_account is not as it was made: made again"] },
+        undo: ["alter policy lock_account on public.messages to ohmail_api, ohmail_worker", "drop role \"ohmail_api,ohmail_worker\""] },
       { arm: "policies.unrecorded", plant: () => ["comment on policy lock_account on public.messages is null"],
         lines: () => [drift("policies.unrecorded", "messages.lock_account", "no record of how it was made")],
         setup: { repaired: ["policy messages.lock_account is not as it was made: made again"] } },
@@ -926,6 +946,19 @@ for (const major of PG_MAJORS) {
       { name: "a default on one of its columns", plant: ["alter view ohmail.messages alter column snippet set default 'by hand'"],
         ...viewDiffers("messages", "code (the default of snippet)"),
         setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.messages: code \(the default of snippet\)[^\n]*; nothing was written/ } },
+      // A SECURITY LABEL, on a view and on a column of one, as the catalog holds one a provider wrote. No provider is loaded on
+      // these images and the statement is refused (below), so the superuser writes the catalog's row, which is what a provider's is.
+      { name: "a security label on it", asSuper: true,
+        plant: ["insert into pg_catalog.pg_seclabel (objoid, classoid, objsubid, provider, label) "
+          + "values ('ohmail.messages'::regclass, 'pg_catalog.pg_class'::regclass, 0, 'riso', 'on the view')"],
+        ...viewDiffers("messages", "label"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.messages: label; by hand, take the label away; nothing was written/ } },
+      { name: "a security label on one of its columns", asSuper: true,
+        plant: ["insert into pg_catalog.pg_seclabel (objoid, classoid, objsubid, provider, label) "
+          + "select 'ohmail.message_search_words'::regclass, 'pg_catalog.pg_class'::regclass, a.attnum, 'riso', 'on a column' "
+          + "from pg_catalog.pg_attribute a where a.attrelid = 'ohmail.message_search_words'::regclass and a.attname = 'terms'"],
+        ...viewDiffers("message_search_words", "label"),
+        setup: { refused: /lock: LOCK_DRIFT views\.differ ohmail\.message_search_words: label; by hand, take the label away; nothing was written/ } },
     ];
 
     for (const [i, c] of VIEW_PLANTS.entries()) {
@@ -958,8 +991,8 @@ for (const major of PG_MAJORS) {
      * EVERYTHING ELSE POSTGRES LETS HANG ON A VIEW, OR WOULD CHANGE HOW IT ANSWERS (the class of the code above: something on a
      * listed view the census did not read). Read as drift, each above: a rule beside `_RETURN`, a trigger (INSTEAD OF or for each
      * statement), a default on a column, its owner, options, columns and text, and every right beyond the two logins' SELECT
-     * (another verb, the grant option, a column grant, any other role). Read as drift and not made here, its case in the list
-     * test: a security label (no provider is loaded on these images, so the statement is refused). Refused by Postgres on a view,
+     * (another verb, the grant option, a column grant, any other role), and a security label, by its row in the catalog (no
+     * provider is loaded on these images, so the statement is refused here). Refused by Postgres on a view,
      * as the view's owner: what follows. Taken and harmless: a comment on one of its columns, and USAGE on its row type (PUBLIC's
      * already): neither gives a row or a write, the census is equal and both logins read locked.
      */
@@ -1517,11 +1550,13 @@ for (const major of PG_MAJORS) {
       const differs = ["the view ohmail.messages differs: columns, text"];
       expect({ statements, retyped, renamed: { census: renameCensus, api: await judged(renamed, "ohmail_api"), worker: await judged(renamed, "ohmail_worker"),
         refused: renameSetup.includes("lock: LOCK_DRIFT views.columns ohmail.messages: public.messages holds no column snippet; nothing was written"),
+        // The table cannot answer the view: dropping the view first would mend nothing (the step could not make it again), so the refusal does not say it.
+        saysDropItFirst: renameSetup.includes("drop it first"),
         unchanged: await catalogOf(renamed) === before }, added: { census: addCensus, api: await judged(added, "ohmail_api") } }).toEqual({
         statements: { dropListed: "2BP01", retypeListed: "0A000", dropAfterTheViews: "passes", retypeAfterTheView: "passes" },
         retyped: { repaired: ["view ohmail.messages was missing: made"], views: 3, census: ungrantedLines(["messages"], false), writes: 2, after: [] },
         renamed: { census: [drift("views.columns", "ohmail.messages", "public.messages holds no column snippet"), drift("views.differ", "ohmail.messages", "columns, text")].sort(),
-          api: { verdict: "broken", why: differs }, worker: { verdict: "broken", why: differs }, refused: true, unchanged: true },
+          api: { verdict: "broken", why: differs }, worker: { verdict: "broken", why: differs }, refused: true, saysDropItFirst: false, unchanged: true },
         added: { census: [], api: { verdict: "locked", why: [] } },
       });
     }, CASE_MS);

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { engineUnitFiles } from "../../../test/support/engine-unit.js";
 
 /**
  * THE STRUCTURAL CENSUS — Cloud mode cannot reach the organizer.
@@ -315,6 +316,6 @@ describe("cloud-engine.ts cannot reach the organizer — the structural safety o
   it("does not reach the local organizer engine either — the module that legitimately holds all three", () => {
     // `engine.ts` is where the IMAP adapter, the lease and the sync loop are imported for real.
     // If cloud-engine ever imported it, the three would arrive together; this pins the seam.
-    expect(result.visited.has(resolve(HERE, "../src/engine.ts"))).toBe(false);
+    for (const unit of engineUnitFiles()) expect(result.visited.has(unit), unit).toBe(false);
   });
 });

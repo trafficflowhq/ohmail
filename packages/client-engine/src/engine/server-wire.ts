@@ -57,11 +57,39 @@ export interface ServerSearchFacets {
   unread: { true: number; false: number };
 }
 
-/** A facet pressed: the store answers the narrowed question, never a filter over one page. */
+/**
+ * A facet pressed, or a filter the question carries: the store answers the narrowed question, never a filter over
+ * one page. `to` and `party` are an exact To or Cc address and an exact address on either side; the dates are
+ * instants, both ends inclusive. A server older than these reads none of the newer five: they are sent only to one
+ * that said it takes them, and a request with none set is the one this build always sent.
+ */
 export interface ServerSearchFilters {
   folder?: string;
   sender?: string;
   hasAttachments?: boolean;
+  to?: string;
+  party?: string;
+  unread?: boolean;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+/** Every filter in one fixed order, for the keys a question is told apart by (a flight, a cached page). */
+export function filterKey(f: ServerSearchFilters | undefined): readonly unknown[] | null {
+  return f
+    ? [f.folder ?? null, f.sender ?? null, f.hasAttachments ?? null, f.to ?? null, f.party ?? null, f.unread ?? null,
+      f.dateFrom ?? null, f.dateTo ?? null]
+    : null;
+}
+
+/**
+ * The question carries a filter: a search with no words is asked only then. Set as the wire carries it: a string
+ * that is not empty, a boolean that is given.
+ */
+export function filtersSet(f: ServerSearchFilters | undefined): boolean {
+  if (!f) return false;
+  return Boolean(f.folder || f.sender || f.to || f.party || f.dateFrom || f.dateTo)
+    || f.hasAttachments !== undefined || f.unread !== undefined;
 }
 
 /**

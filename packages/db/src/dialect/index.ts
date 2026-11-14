@@ -909,8 +909,9 @@ export interface Dialect {
     letterTerms(q: string): SQL[] | null;
     /**
      * `address` among message `m`'s To or Cc, an EQUALITY folded by `lower()` in SQL, within
-     * `accountId` (mail 0154). The server's is the expression index's own call over `m` with the
-     * account in the key; the device's reads its trigger-kept side table. Never a substring.
+     * `accountId` (mail 0154). The server's reads the stored key with the account in it (mail 0208,
+     * `messages.recipient_keys`, by its GIN); the device's reads its trigger-kept side table. Never a
+     * substring.
      */
     recipient(args: { accountId: string; address: string }): SQL;
     /**

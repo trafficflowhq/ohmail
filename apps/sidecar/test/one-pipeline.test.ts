@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * ONE PIPELINE IMPLEMENTATION — the ruling this whole package exists to obey, asserted.
@@ -41,7 +42,7 @@ function sources(dir: string, into: string[] = []): string[] {
   return into;
 }
 
-const FILES = sources(SRC).map((p) => ({ path: p.slice(REPO.length + 1), text: readFileSync(p, "utf8") }));
+const FILES = sources(SRC).filter((p) => !isEnginePart(p)).map((p) => ({ path: p.slice(REPO.length + 1), text: readAsUnit(p) }));
 /**
  * Comments say what the code should do; only the code decides what it does — read through the
  * repo's one scanner. A block-first pair of regexes reads a block-comment OPENER quoted inside a

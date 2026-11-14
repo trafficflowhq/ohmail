@@ -1703,6 +1703,8 @@ export class OrganizerProfileSync {
         ...(leavingGap === null ? {} : { gap: leavingGap }),
         // Rides every write, never causes one: a new id or removal alone leaves the dirty check closed.
         ...books,
+        // Nothing is stated yet: the account's row that holds a preference comes with its setting.
+        preferences: {},
       });
       /* ONE WRITE, and a second one only from the never-owned `foreign` arm, which holds the
          document it met and then publishes this install's own settings beside it. */
@@ -2255,6 +2257,7 @@ export class OrganizerProfileSync {
     const now = (deps.now ?? ((): Date => new Date()))();
     const doc = makeProfileDoc(local, {
       updatedAt: now, producer: { kind: deps.self.kind, version: deps.producerVersion }, screening, ...books,
+      preferences: {},
     });
     const keep = this.retained();
     const found = this.found();

@@ -64,6 +64,7 @@ interface Opts { mode: "auto" | "manual"; loadPixels?: boolean; withNotice?: boo
 function Harness({ messageId, html, mode, loadPixels = false, withNotice = false }: Opts & { messageId: string; html: string }) {
   const chrome = useRemoteImages({ onFailed: () => {}, mode, loadPixels });
   return h(MessageBody, {
+    owner: null,
     text: "plain",
     html,
     remoteLoaded: (chrome?.auto ?? false) || (chrome?.consented(messageId) ?? false),

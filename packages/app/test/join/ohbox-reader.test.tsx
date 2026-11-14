@@ -94,7 +94,14 @@ function join(o: Joined) {
     service: "self",
     scope: "acct-1",
     places: { ohbox: ohboxPlace },
-    reader: readerEntry({ body: bodyDouble().body, files: "none", pictures: "none", look: "none" }),
+    reader: readerEntry({
+      body: bodyDouble().body,
+      files: "none",
+      pictures: "none",
+      look: "none",
+      sentCopy: "none",
+      reply: "none",
+    }),
     window: fakeWindow("desktop"),
     address,
   });

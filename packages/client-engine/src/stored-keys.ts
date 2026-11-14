@@ -290,7 +290,7 @@ export const STORED_KEYS = [
   },
   {
     key: "ohmail.ui.seed.notNow.", family: true, store: "localStorage", owner: "web",
-    at: ["apps/webapp/app/shell/seed-offer.ts"],
+    at: ["packages/app-logic/src/mailboxes/first-run/seed-offer.ts"],
     holds: "that the seed offer was put off, per account",
     words: false, erased: "account-erase", mark: "kept",
   },
@@ -1073,6 +1073,12 @@ export const STORED_KEYS = [
     ],
     holds: "the one pending challenge's verifier of a handoff between the two apps (on the iPhone with the digest and the place it was asked for), for at most two minutes, taken once, kept out of backups",
     words: false, erased: "never", mark: "kept",
+  },
+  {
+    key: "ohcal-snapshot.json", store: "file", owner: "phone",
+    at: ["packages/client-engine/src/notices/snapshot.ts"],
+    holds: "the calendar's coming days, read by the phone's own alerts and widgets: for each event its time, its id and its label (a title only where the person's title switch shows titles, `Busy` for a private one, `Event` otherwise), never a letter's words, never an address, never an attendee. Written by the phone's native side, atomically, in the phone app's own files folder (the shared group's folder once one exists), kept outside backups, and also removed when the calendar is switched off on the device. No build writes it yet: the writer comes with those alerts and widgets",
+    words: true, erased: "sign-out", mark: "kept",
   },
   {
     key: "ohmail-shell", store: "identifier", owner: "phone",

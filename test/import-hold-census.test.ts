@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { isEnginePart, readAsUnit } from "./support/engine-unit.js";
 
 /**
  * THE IMPORT HOLD REACHES ROUTING ONLY AS `importHoldNow()` ANSWERED IT. `{ kind: "unreadable" }`
@@ -22,7 +23,9 @@ function sourceFiles(): string[] {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.isDirectory()) {
         if (!["node_modules", "dist", "build"].includes(entry.name)) walk(path.join(dir, entry.name));
-      } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts")) out.push(path.join(dir, entry.name));
+      } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts") && !isEnginePart(path.join(dir, entry.name))) {
+        out.push(path.join(dir, entry.name));
+      }
     }
   };
   for (const group of ["apps", "packages"]) {
@@ -84,7 +87,7 @@ function classify(rel: string, text: string): Reading {
   return r;
 }
 
-const read = (rel: string): string => readFileSync(path.join(REPO, rel), "utf8");
+const read = (rel: string): string => readAsUnit(path.join(REPO, rel));
 
 describe("the import hold reaches routing only as importHoldNow answered it", () => {
   it("the tree: every importHold is a pass-through or importHoldNow, and only the producer builds unreadable", () => {
@@ -93,7 +96,7 @@ describe("the import hold reaches routing only as importHoldNow answered it", ()
     const refusals: string[] = [];
     for (const file of sourceFiles()) {
       const rel = path.relative(REPO, file).split(path.sep).join("/");
-      const r = classify(rel, readFileSync(file, "utf8"));
+      const r = classify(rel, readAsUnit(file));
       sites += r.sites;
       if (rel === PRODUCER) produced = r.unreadable;
       refusals.push(...r.refusals);

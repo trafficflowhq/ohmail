@@ -1,6 +1,7 @@
 import { expect } from "vitest";
 import { openPane } from "../bench/panes.js";
-import { WEB, journey, journeysOf, type Bench, type DoorFault, type Guard, type Person } from "../bench/web.js";
+import type { Bench, Person } from "../bench/seam.js";
+import { WEB, journey, journeysOf, type DoorFault, type Guard } from "../bench/web.js";
 
 /**
  * Where a signed-out person stands differs by setting: a self-hosted server shows its sign-in
@@ -49,7 +50,7 @@ journeysOf("sign-out", () => {
     const { person } = await openPane(b, "settings-account", "sign-out");
     await person.act("press", "sign-out");
     await out(b, person);
-    await person.page.goto(`${b.origin}/`, { waitUntil: "commit" });
+    await person.front();
     await person.here("gate");
   });
   journey(GUARDS[2]!, async (b) => {
@@ -70,7 +71,7 @@ journeysOf("sign-out", () => {
     await person.act("press", "sign-out");
     await out(b, person);
     await person.until(async () => !(await b.sessionLive(account!)), "the sign-in page to end the session at the server", 60_000);
-    await person.page.goto(`${b.origin}/`, { waitUntil: "commit" });
+    await person.front();
     await person.here("gate");
     await person.see("login-continue");
   });

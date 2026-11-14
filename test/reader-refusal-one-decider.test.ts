@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { bracketSpan, withoutComments, withoutCommentsAndLiterals } from "../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "./support/engine-unit.js";
 
 /**
  * ONE DECIDER FOR WHY A READER'S PRESS HAS NOWHERE TO GO. Six server sites and the client's
@@ -24,7 +25,9 @@ function sources(): { file: string; raw: string }[] {
       if (SKIP.has(e) || e.startsWith(".")) continue;
       const p = join(dir, e);
       if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|tsx|mts)$/.test(e) && !/\.(test|spec)\.tsx?$/.test(e)) out.push({ file: relative(REPO, p), raw: readFileSync(p, "utf8") });
+      else if (/\.(ts|tsx|mts)$/.test(e) && !/\.(test|spec)\.tsx?$/.test(e) && !isEnginePart(p)) {
+        out.push({ file: relative(REPO, p), raw: readAsUnit(p) });
+      }
     }
   };
   for (const r of ROOTS) walk(join(REPO, r));
@@ -316,7 +319,7 @@ function holderSentenceViolations(files: SourceFile[], sites: Site[]): string[] 
 
 describe("every sentence that names who organizes a mailbox asks the same decider", () => {
   const all = sources();
-  const read = (file: string) => readFileSync(join(REPO, file), "utf8");
+  const read = (file: string) => readAsUnit(join(REPO, file));
 
   it("every door the sentences are chosen from calls the decider in its own body", () => {
     expect(doorViolations(all, DOORS)).toEqual([]);

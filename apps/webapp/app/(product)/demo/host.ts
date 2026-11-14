@@ -12,7 +12,7 @@ import { browserNotificationHost } from "../../shell/notification-settings";
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
   "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary",
-  "ownModelAutoSuggest", "mailboxes", "calendar",
+  "ownModelAutoSuggest", "connect", "mailboxes", "calendar",
 ] as const;
 
 /** What the demo's page says of itself: which service it shows, and what a send from it may carry. */
@@ -42,13 +42,17 @@ export function demoHost(engine: HostContract["engine"], frame: FrameSupplies, s
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: CANNOT.language,
+      // The demo asks no server: no hello, so no person on the wire.
+      searchBy: CANNOT.searchBy,
       products: CANNOT.products,
     },
     features: {
       ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Record<(typeof FEATURE_NAMES)[number], typeof NONE>),
       places: frame.places,
       stages: frame.stages,
+      overs: frame.overs,
       reader: NONE,
+      above: frame.above,
       calendar: frame.calendar,
     },
     device: {

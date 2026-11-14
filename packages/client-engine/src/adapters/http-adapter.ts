@@ -1193,6 +1193,12 @@ export class HttpAdapter implements EngineAdapter {
     if (opts.filters?.folder) q.set("folder", opts.filters.folder);
     if (opts.filters?.sender) q.set("sender", opts.filters.sender);
     if (opts.filters?.hasAttachments !== undefined) q.set("hasAttachments", String(opts.filters.hasAttachments));
+    /* The newer five, each only when set: with none, an older server is asked what it always was. */
+    if (opts.filters?.to) q.set("to", opts.filters.to);
+    if (opts.filters?.party) q.set("party", opts.filters.party);
+    if (opts.filters?.unread !== undefined) q.set("unread", String(opts.filters.unread));
+    if (opts.filters?.dateFrom) q.set("dateFrom", opts.filters.dateFrom);
+    if (opts.filters?.dateTo) q.set("dateTo", opts.filters.dateTo);
     const res = await this.call("GET /search",
       { query: q, ...(opts.lane ? { urgent: true, searchLane: `${opts.lane.id}.${opts.lane.generation}` } : { urgent: true }) });
     if (!res.ok) throw await this.rejectionOf(res);

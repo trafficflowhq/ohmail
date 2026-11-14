@@ -76,6 +76,7 @@ public final class ShellModule: Module {
     View(ShellView.self) {
       Events("onMessage", "onEpoch", "onLinkAsk", "onMailto", "onRefused")
       Prop("scope") { (view: ShellView, scope: String?) in view.setScope(scope) }
+      Prop("door") { (view: ShellView, door: Bool?) in view.setDoor(door == true) }
       AsyncFunction("post") { (view: ShellView, epoch: String, json: String) in view.post(epoch, json) }
       AsyncFunction("openHeld") { (view: ShellView, token: String) -> Bool in view.openHeld(token) }.runOnQueue(.main)
     }

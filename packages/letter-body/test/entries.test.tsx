@@ -30,6 +30,7 @@ describe("the body's entries", () => {
     const root = createRoot(host);
     await act(async () => {
       root.render(React.createElement(MessageBody, {
+        owner: null,
         text: "fallback",
         html: `<p>Read <a href="https://example.net/help">our help pages</a>.</p>`,
       }));

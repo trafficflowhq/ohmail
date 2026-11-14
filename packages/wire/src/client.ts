@@ -113,6 +113,11 @@ export interface HelloAnswer {
      * fact of the build; absent on an older server, which is the negotiation.
      */
     invitationAnswer?: true;
+    /**
+     * `GET /search` takes `to`, `party`, `unread`, `dateFrom` and `dateTo`, and answers a blank `q` with a filter. A
+     * fact of the build; absent on an older server, which ignores those parameters and answers a blank `q` empty.
+     */
+    searchPeople?: true;
   };
 }
 

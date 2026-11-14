@@ -264,13 +264,13 @@ describe("the account's views of the lock", () => {
       "date", "native_locator", "no_ai", "no_forward", "no_kb", "priority", "created_at", "thread_id", "unread", "last_read_at",
       "deleted_at", "snippet", "to_addresses", "cc_addresses", "has_attachments", "attachment_count", "sensitivity_category",
       "auth_verdict", "updated_at", "arrived_at", "open_read_at", "sender_check", "sender_check_brand", "sender_check_by",
-      "server_missing_at", "unconfirmed_hold",
+      "server_missing_at", "unconfirmed_hold", "recipient_keys",
     ],
     message_search: ["message_id", "account_id", "head_tsv", "text_tsv", "terms", "source", "built_at"],
   };
 
   it("each view's list begins with the columns a store may already hold, in their order: a list grows at its end only", () => {
-    expect({ messages: HELD.messages!.length, message_search: HELD.message_search!.length }).toEqual({ messages: 35, message_search: 7 });
+    expect({ messages: HELD.messages!.length, message_search: HELD.message_search!.length }).toEqual({ messages: 36, message_search: 7 });
     for (const v of ACCOUNT_VIEWS) expect(v.columns.slice(0, HELD[v.table]!.length), v.name).toEqual(HELD[v.table]);
   });
 
@@ -329,7 +329,7 @@ describe("how each index the lock could take from a read is read", () => {
     expect(rows.filter(([, r]) => r.read === "view").map(([n]) => n).sort()).toEqual([
       "message_search_head_terms_trgm_idx", "message_search_head_tsv_idx", "message_search_names_trgm_idx", "message_search_terms_trgm_idx",
       "message_search_text_tsv_idx", "message_search_words_idx", "messages_account_arrival_key_idx", "messages_account_from_addr_idx",
-      "messages_account_from_domain_idx", "messages_account_sender_date_idx", "messages_recipient_keys_idx",
+      "messages_account_from_domain_idx", "messages_account_sender_date_idx", "messages_recipient_keys_column_idx",
     ]);
     for (const [name, r] of rows) {
       expect(locked.has(r.table), `${name} is on ${r.table}, a locked table`).toBe(true);
@@ -726,7 +726,7 @@ describe("the check's verdict over the catalog's facts", () => {
 
   it("asked to serve as a role: the connected role must be it, may not bypass, owns nothing, and its policies are the list's", () => {
     expect(lockVerdict(factsOf(), { role: API_ROLE })).toMatchObject({ verdict: "locked", role: { policies: "equal" } });
-    const owner = { name: "ohmail_migrator", bypass: true, super: false, owns: 300, member: 0, views: 0, definers: 0 };
+    const owner = { name: "ohmail_migrator", bypass: true, super: false, owns: 300, member: 0, views: 0, definers: 0, ohmail: 0 };
     expect(lockVerdict(factsOf({ extra: { connected: owner } }), { role: API_ROLE }).why)
       .toEqual(["connected as ohmail_migrator, not ohmail_api", "ohmail_migrator may bypass row security", "ohmail_migrator owns objects"]);
     const bypass = { ...factsOf().connected, bypass: true };
@@ -804,6 +804,11 @@ describe("the check's verdict over the catalog's facts", () => {
     expect(lockVerdict(both(API_ROLE), { role: API_ROLE }).why).toEqual([
       "the policy accounts.lock_worker_wide naming ohmail_api is not as listed: to ohmail_api,ohmail_worker; its expression is not what was made",
       "the policies naming ohmail_api are not the list's",
+    ]);
+    // One role whose name is the two logins' names joined by a comma is not the two logins: the roles are compared as a list.
+    expect(lockDrift(changed("messages", "lock_account", { roles: [`${API_ROLE},${WORKER_ROLE}`] }))).toEqual([
+      "LOCK_DRIFT policies.roles messages.lock_account: to ohmail_api,ohmail_worker",
+      "LOCK_DRIFT policies.altered messages.lock_account: its expression is not what was made",
     ]);
     // Untouched, every policy is as listed for both logins.
     for (const role of [API_ROLE, WORKER_ROLE]) {

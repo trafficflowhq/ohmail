@@ -46,6 +46,13 @@
     "filesNotKeptNote": "{count, plural, one {Its file was not kept. Attach it again before you send.} other {Its # files were not kept. Attach them again before you send.}}",
     "scheduleCancelled": "Scheduled send cancelled. The message is in Drafts.",
     "scheduleCancelTooLate": "Too late to cancel — this message is already being sent.",
-    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does."
+    "scheduleCancelQueued": "No connection — the cancel hasn't reached the server yet. The message is still scheduled until it does.",
+    "rowTo": "To {name}",
+    "listLoading": "Loading your drafts",
+    "heldActs": "A send not confirmed",
+    "heldItWasSent": "It was sent",
+    "reportDiscarded": "Discarded",
+    "reportUndo": "Undo",
+    "listMenu": "List"
   }
 }

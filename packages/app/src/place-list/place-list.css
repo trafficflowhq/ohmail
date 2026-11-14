@@ -1,0 +1,28 @@
+/* A list place's column: where its parts stand. Placement only; every look is the kit's. */
+.pl-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.pl-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* On a phone the rows lie on one sheet, and the sheet reaches the column's foot however few rows lie on it. */
+.pl-page {
+  display: grid;
+  grid-template-rows: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 100%;
+}
+/* A column of its own under the head (a stream on a phone) takes the height the head leaves. */
+.pl-fill {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+}

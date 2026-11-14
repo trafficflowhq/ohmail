@@ -1,0 +1,34 @@
+{
+  "address": {
+    "title": "Alle Mails",
+    "loading": "Ihre Mails werden geladen",
+    "count": "{count, plural, one {1 Nachricht} other {# Nachrichten}}",
+    "side": {
+      "label": "Richtung",
+      "all": "Alle",
+      "from": "Von ihnen",
+      "to": "An sie"
+    },
+    "sideCount": {
+      "all": "Alle {count}",
+      "from": "Von ihnen {count}",
+      "to": "An sie {count}"
+    },
+    "empty": {
+      "all": "Nichts mit ihnen",
+      "from": "Nichts von ihnen",
+      "to": "Nichts an sie"
+    },
+    "row": {
+      "to": "An {name}",
+      "unread": "ungelesen",
+      "read": "gelesen",
+      "file": "Hat einen Anhang"
+    },
+    "step": {
+      "up": "Neuer",
+      "down": "Älter"
+    },
+    "close": "Schliessen"
+  }
+}

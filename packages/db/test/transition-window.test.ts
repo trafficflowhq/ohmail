@@ -7,7 +7,7 @@ import { OLD_HEADS, TRANSITION_WINDOW } from "../src/journal-heads.js";
 import { WINDOW_LENGTH, WindowMalformed, namesOfWindow, readWindow, type EntryName } from "../src/transition/index.js";
 
 /**
- * THE WINDOW THE TRANSITION APPLIES: six entries of each journal, read from the journal's own
+ * THE WINDOW THE TRANSITION APPLIES: eight mail entries and six Cloud ones, read from the journal's own
  * files, and what their statements need to find and need to be free. The reader of names is held
  * by a fixture written from the entries as they stand: an entry edited, or a statement of a kind
  * the reader does not know, is red here until the fixture has been read again.
@@ -31,10 +31,12 @@ const said = (n: EntryName): string => `${n.journal} ${n.entry.slice(0, 4)} ${n.
 const shipped = () => namesOfWindow([...readWindow("mail"), ...readWindow("cloud")]);
 
 describe("the window", () => {
-  it("is six entries of each journal, numbered on from the line's start, stamped above the old head and rising", () => {
+  it("is its journal's entries numbered on from the line's start, stamped above the old head and rising", () => {
+    expect(WINDOW_LENGTH).toEqual({ mail: 8, cloud: 6 });
+    expect(readWindow("mail").map((e) => e.tag.slice(0, 4))).toEqual(["0200", "0201", "0202", "0203", "0204", "0205", "0207", "0208"]);
     for (const [journal, first] of [["mail", "0200_"], ["cloud", "0100_"]] as const) {
       const window = readWindow(journal);
-      expect(window).toHaveLength(WINDOW_LENGTH);
+      expect(window).toHaveLength(WINDOW_LENGTH[journal]);
       expect(window[0]!.tag.startsWith(first)).toBe(true);
       expect(window.at(-1)!.tag).toBe(TRANSITION_WINDOW[journal].last);
       expect(window[0]!.when).toBeGreaterThan(OLD_HEADS[journal].when);
@@ -56,10 +58,19 @@ describe("the window", () => {
     // An entry numbered past the window is an ordinary migration again, and is not the window's.
     const later = withEntries(MAIL_JOURNAL, (j, dir) => {
       const last = j.entries.at(-1)!;
-      j.entries.push({ ...last, idx: last.idx + 1, when: last.when + 1, tag: "0206_later" });
-      writeFileSync(join(dir, "0206_later.sql"), `CREATE TABLE "later" (id int);`);
+      j.entries.push({ ...last, idx: last.idx + 1, when: last.when + 1, tag: "0209_later" });
+      writeFileSync(join(dir, "0209_later.sql"), `CREATE TABLE "later" (id int);`);
     });
     expect(readWindow("mail", later).map((e) => e.tag)).toEqual(readWindow("mail").map((e) => e.tag));
+    // The number the mail journal skipped, filled and stamped inside the window: once the window is
+    // recorded the ordinary migrator would skip it for ever, so the window is refused.
+    const filled = withEntries(MAIL_JOURNAL, (j, dir) => {
+      const at = j.entries.findIndex((e) => e.tag.startsWith("0207_"));
+      const between = Math.floor((j.entries[at - 1]!.when + j.entries[at]!.when) / 2);
+      j.entries.splice(at, 0, { ...j.entries[at]!, when: between, tag: "0206_filled" });
+      writeFileSync(join(dir, "0206_filled.sql"), `CREATE TABLE "filled" (id int);`);
+    });
+    expect(() => readWindow("mail", filled)).toThrow(/0206_filled is stamped inside the window and is none of its entries/);
   });
 });
 

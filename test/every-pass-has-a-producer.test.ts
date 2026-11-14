@@ -2,7 +2,11 @@ import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { basename, join, relative, sep } from "node:path";
-import { readSource } from "../apps/worker/test/_start-function.js";
+import { readSource as readStartFunction } from "../apps/worker/test/_start-function.js";
+import { isEnginePart, readingTheUnit } from "./support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * EVERY EXPORTED PASS HAS A PRODUCER, AND EVERY STATUS A PASS WRITES HAS A READER.
@@ -143,7 +147,7 @@ function tsFiles(dir: string): string[] {
     if (SKIP_DIRS.has(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) out.push(...tsFiles(full));
-    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(full);
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && !isEnginePart(full)) out.push(full);
   }
   return out;
 }

@@ -7,7 +7,11 @@ import { describe, expect, it } from "vitest";
 // comment can satisfy certifies a host by prose, which is worse than having no census: a file
 // mentioning `runSyncCycle(` in a doc line was read as a fifth host the day one was written.
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
-import { readSource } from "./_start-function.js";
+import { readSource as readStartFunction } from "./_start-function.js";
+import { isEnginePart, readingTheUnit } from "../../../test/support/engine-unit.js";
+
+/** The worker's start function and the desktop's engine each read as one text. */
+const readSource = readingTheUnit(readStartFunction);
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -104,7 +108,8 @@ const RETIRED_NEEDLE = /(?:applyMetaRequests|driveOutstandingRequests)Unguarded\
 function tsFilesIn(dir: string): string[] {
   return readdirSync(dir)
     .filter((name) => (name.endsWith(".ts") || name.endsWith(".tsx")) && !name.endsWith(".test.ts") && !name.endsWith(".test.tsx"))
-    .map((name) => join(dir, name));
+    .map((name) => join(dir, name))
+    .filter((p) => !isEnginePart(p));
 }
 
 function organizerCycleHosts(): string[] {

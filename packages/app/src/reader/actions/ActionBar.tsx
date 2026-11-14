@@ -2,7 +2,7 @@
  * THE ACTION PANEL of the open letter, at the foot of the column, and its More menu. Its buttons carry the names a
  * person and the journeys find them by. The stop of the read rule: what runs under it is not on screen.
  */
-import { useRef, useState, type RefObject } from "react";
+import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { Menu, MenuItem } from "@ohmail/ui/base";
 import { ActionPanel, MovePicker, type PanelVerb } from "@ohmail/ui/mail";
 import { useMirror } from "@ohmail/app-logic/reader";
@@ -38,14 +38,16 @@ function panelVerbs(
   toggle: (which: Exclude<Open, null>) => (at: HTMLElement) => void,
   room: PanelRoom,
 ): Placed[] {
-  const { act, readSlot } = verbs;
+  const { act, readSlot, filed } = verbs;
   const compact = room === "phone" || room === "fold";
+  /* The three that file the letter are toggles: each says whether the letter is in its pile, as today's bar does. */
   const file = (id: "later" | "aside", icon: "later" | "parked", rank: number): Placed => ({
     id,
     label: t(`verb.${id}`),
     icon,
     segment: "file",
     rank,
+    pressed: filed === (id === "later" ? "reply_later" : "set_aside"),
     onPress: () => act(id),
   });
   return [
@@ -87,6 +89,7 @@ function panelVerbs(
       icon: "resurface",
       segment: "file",
       rank: 4,
+      pressed: filed === "bubbled_up",
       onPress: toggle("resurface"),
     },
     ...(tagged
@@ -119,7 +122,16 @@ function panelVerbs(
   ];
 }
 
-export function ActionBar({ verbs, room = "desktop" }: { verbs: Verbs; room?: PanelRoom }) {
+export function ActionBar({
+  verbs,
+  room = "desktop",
+  reply,
+}: {
+  verbs: Verbs;
+  room?: PanelRoom;
+  /** An open reply's verbs (`write`'s), shown in the letter's place: one panel for the column. Null: the letter's. */
+  reply: readonly PanelVerb[] | null;
+}) {
   const t = useText("reader");
   const tm = useText("message");
   const tp = useText("place");
@@ -145,15 +157,20 @@ export function ActionBar({ verbs, room = "desktop" }: { verbs: Verbs; room?: Pa
   const behind = all.filter((v) => v.behind || folded.includes(v.id));
   const beforeRead = behind.filter((v) => v.id !== "read");
   const read = behind.filter((v) => v.id === "read");
+  useKeyboardBack(reply !== null, stop);
   return (
     <div className="rd-stop" data-read-stop="" ref={stop}>
-      <ActionPanel
-        label={t("panel")}
-        items={items}
-        folded={folded}
-        onFold={setFolded}
-        more={{ label: t("verb.more"), behind: true, expanded: more || undefined, onPress: toggle("more") }}
-      />
+      {reply !== null ? (
+        <ActionPanel label={t("panel")} items={reply} />
+      ) : (
+        <ActionPanel
+          label={t("panel")}
+          items={items}
+          folded={folded}
+          onFold={setFolded}
+          more={{ label: t("verb.more"), behind: true, expanded: more || undefined, onPress: toggle("more") }}
+        />
+      )}
       <ResurfaceMenu open={menu === "resurface"} onClose={close} anchor={pressed} act={act} />
       <Menu open={menu === "tag"} onClose={close} anchor={pressed} label={t("verb.tag")} up right>
         {tags.map((tag) => {
@@ -241,5 +258,26 @@ export function LetterActions({ messageId }: { messageId: string }) {
   const visit = useListVisit(messageId);
   const verbs = useVerbs(message, visit, null);
   if (message === null || verbs.idle) return null;
-  return <ActionBar verbs={verbs} />;
+  return <ActionBar verbs={verbs} reply={null} />;
+}
+
+/**
+ * When a reply's verbs give the panel back (it was sent, discarded or closed) and the press that did it took the
+ * keyboard with it, the keyboard goes to the letter's Reply: the verb that opened it, standing where it stood.
+ */
+function useKeyboardBack(replying: boolean, stop: RefObject<HTMLDivElement | null>): void {
+  const was = useRef(replying);
+  useLayoutEffect(() => {
+    const back = was.current && !replying;
+    was.current = replying;
+    const panel = stop.current;
+    if (!back || panel === null) return;
+    const page = panel.ownerDocument;
+    const at = page.activeElement;
+    if (at !== null && at !== page.body && at.isConnected) return;
+    const verb =
+      panel.querySelector<HTMLButtonElement>('button[data-id="reply"]:not([hidden])') ??
+      panel.querySelector<HTMLButtonElement>("button:not([hidden])");
+    verb?.focus();
+  }, [replying, stop]);
 }

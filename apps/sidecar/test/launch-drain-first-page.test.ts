@@ -3,6 +3,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openLocalDb } from "../src/db.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 import type {
   ChangeBatch, FetchedPart, ImapCapabilities, ImapConfig, MailboxAdapter, NativeLocator,
   OutboundMessage, SendResult,
@@ -204,7 +205,7 @@ describe("the launch drain and the window's first page", () => {
     await first.start();
     await first.stop();
     const store = await openLocalDb(dataDir);
-    const c = (store.db as unknown as { $client: PGlite }).$client;
+    const c = pgliteOf(store.db);
     const mb = (await c.query<{ id: string; account_id: string }>("select id, account_id from mailboxes")).rows[0]!;
     const m = (await c.query<{ id: string }>(`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, to_addresses, cc_addresses, native_locator)
       values ('${mb.account_id}', '${mb.id}', 'h', 'stats:1', 's', 'x@mail.example', now(), '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb) returning id`)).rows[0]!.id;
@@ -271,7 +272,7 @@ describe("the launch drain and the window's first page", () => {
     expect(seen.some(isPage), "the launch drain never read the known set").toBe(true);
     serve = 30;
     await sidecar.syncUntilQuiet();
-    const held = Number((await (sidecar.db as unknown as { $client: PGlite }).$client
+    const held = Number((await pgliteOf(sidecar.db)
       .query<{ n: number }>("select count(*)::int as n from message_instances")).rows[0]!.n);
     expect(held, "the import wrote no locators").toBeGreaterThan(0);
     const from = seen.length;

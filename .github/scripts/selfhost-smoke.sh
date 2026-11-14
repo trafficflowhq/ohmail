@@ -5,29 +5,35 @@
 #       builds web, api and organizer from this tree under the run-scoped tag (selfhost-smoke.yml)
 #   selfhost-smoke.sh --staged --dir <deploy/selfhost> --tag stage-<id> --commit <40-hex>
 #       the images a release run staged, already on this runner; builds nothing (ghcr-images.yml gate-boot)
+#   ... --journeys
+#       after every check, the journeys of test/journeys on this stack (TF_JOURNEYS=stack): boot-smoke hands
+#       them a file (0600) with invites the first account made; this script adds the compose's argv, its env file and
+#       the commit to it, and removes it when the run ends. Run from the repository's root (journeys.yml).
 #
 # A service with both `build:` and `image:` runs whatever image of that name is local, and pulls it first
 # when none is. The overlay names the published images, so a plain `up -d` boots the last release and the
 # smoke reads green on any tree. Hence the tag that exists only in this run, `--no-build --pull never`, and
 # two identity reads: each running container's image against its ref, and /health's commit.
 #
-# The run's env file is minted under umask 077 into $RUNNER_TEMP and never printed. DOCKER, NODE and CURL
+# The run's env file is minted under umask 077 into $RUNNER_TEMP and never printed. DOCKER, NODE, CURL and NPX
 # name the tools (the tests stub them). Exit 0 green, 1 red, 2 usage.
 set -euo pipefail
 
 DOCKER=${DOCKER:-docker}
 NODE=${NODE:-node}
 CURL=${CURL:-curl}
+NPX=${NPX:-npx}
 ORIGIN=http://localhost:3080
 OURS="web api organizer"
 
 die() { echo "selfhost-smoke: $*" >&2; exit 1; }
-usage() { echo "usage: selfhost-smoke.sh (--build|--staged) --dir <deploy/selfhost> --tag <tag> --commit <40-hex>" >&2; exit 2; }
+usage() { echo "usage: selfhost-smoke.sh (--build|--staged) --dir <deploy/selfhost> --tag <tag> --commit <40-hex> [--journeys]" >&2; exit 2; }
 
-mode='' dir='' tag='' commit=''
+mode='' dir='' tag='' commit='' journeys=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --build | --staged) [ -z "$mode" ] || usage; mode=${1#--}; shift ;;
+    --journeys) journeys=1; shift ;;
     --dir) [ $# -ge 2 ] || usage; dir=$2; shift 2 ;;
     --tag) [ $# -ge 2 ] || usage; tag=$2; shift 2 ;;
     --commit) [ $# -ge 2 ] || usage; commit=$2; shift 2 ;;
@@ -90,14 +96,29 @@ umask 077
 chmod 600 "$env_file"
 
 C=("$DOCKER" compose -f "$dir/docker-compose.yml" -f "$dir/docker-compose.ci.yml" --env-file "$env_file")
+# The journeys' handover: written by boot-smoke (it refuses one that exists), read by the journeys, removed at the end.
+handover=$RUNNER_TEMP/selfhost-journeys.json
+# The journeys' accounts: each is a registration, and the server allows a bounded number per window
+# (maxRegistrationsPerWindow, less four; test/selfhost-smoke.test.ts holds the two together).
+JOURNEY_INVITES=16
+
+# The api's log holds the first-run setup token in a framed block: a red run prints every service's log
+# without that block and without any line shaped like the token: one word of 16 or more after an indent.
+# No interval expressions: mawk, the runners' awk, does not read them.
+unsecret() {
+  awk '/FIRST-RUN SETUP/ { skip = 13 } skip > 0 { skip--; next }
+    NF >= 2 && $(NF-1) == "|" && $NF ~ /^[A-Za-z0-9_-]+$/ && length($NF) >= 16 && /\|[[:space:]][[:space:]][[:space:]][[:space:]]/ { next }
+    { print }'
+}
 
 finish() {
   rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "selfhost-smoke: RED (exit $rc); the stack's logs follow"
-    "${C[@]}" logs --no-color || true
+    echo "selfhost-smoke: RED (exit $rc); the stack's logs follow, the first-run block left out"
+    "${C[@]}" logs --no-color 2>&1 | unsecret || true
   fi
   "${C[@]}" down -v || true
+  rm -f "$handover" "$handover.taken"
   exit "$rc"
 }
 trap finish EXIT
@@ -150,7 +171,13 @@ for svc in $OURS; do
   echo "identity: $svc runs $ref ($want)"
 done
 
-SMOKE_COMPOSE="${C[*]}" SMOKE_ENV_FILE="$env_file" SMOKE_BASE="$ORIGIN" "$NODE" "$dir/boot-smoke.mjs"
+rm -f "$handover"
+if [ -n "$journeys" ]; then
+  SMOKE_HANDOVER="$handover" SMOKE_INVITES="$JOURNEY_INVITES" \
+    SMOKE_COMPOSE="${C[*]}" SMOKE_ENV_FILE="$env_file" SMOKE_BASE="$ORIGIN" "$NODE" "$dir/boot-smoke.mjs"
+else
+  SMOKE_COMPOSE="${C[*]}" SMOKE_ENV_FILE="$env_file" SMOKE_BASE="$ORIGIN" "$NODE" "$dir/boot-smoke.mjs"
+fi
 
 # The overlay slows the db's first start: the api must have waited on the db's healthcheck, not restarted
 # or retried. Its log is counted, never printed (it holds the setup token).
@@ -163,4 +190,18 @@ waits=$("${C[@]}" logs --no-color api | awk '/boot_database_waiting/ { n++ } END
 health=$("$CURL" -fsS "$ORIGIN/health" | jq -r '"\(.version) \(.buildSource)"')
 [ "$health" = "$commit file" ] || die "/health names '$health', not '$commit file'"
 echo "identity: /health names $commit, read from the build's file"
-echo "selfhost-smoke: GREEN ($mode, $tag)"
+
+# ── The journeys, on this stack, after every check above ─────────────────────────────────────
+if [ -n "$journeys" ]; then
+  [ -s "$handover" ] || die "boot-smoke wrote no journeys' handover"
+  # The argv as a JSON array, word by word: jq reads every later word as one of its own options.
+  argv=$(printf '%s\0' "${C[@]}" | jq -Rsc 'split("\u0000") | .[:-1]') || die "could not write the compose's argv"
+  merged=$(jq --argjson compose "$argv" --arg env "$env_file" --arg commit "$commit" '. + { compose: $compose, envFile: $env, commit: $commit }' "$handover") \
+    || die "could not complete the journeys' handover"
+  printf '%s\n' "$merged" > "$handover"
+  files=$(ls test/journeys/guards.test.ts test/journeys/journeys/*.journeys.test.ts 2> /dev/null) || true
+  [ -n "$files" ] || die "no journeys under test/journeys: run from the repository's root"
+  # shellcheck disable=SC2086 # one file a word
+  TF_JOURNEYS=stack TF_JOURNEYS_STACK="$handover" "$NPX" vitest run $files || die "the journeys on the stack are red"
+fi
+echo "selfhost-smoke: GREEN ($mode, $tag${journeys:+, journeys})"

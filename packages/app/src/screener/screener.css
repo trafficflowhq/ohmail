@@ -1,0 +1,36 @@
+/* The Screener's placement only: where its parts stand. Every look is the kit's. */
+.sc-list {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.sc-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+.sc-sentence-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s1);
+}
+/* The place's notices stand in the list's own inset, as its rows do. */
+.sc-notices {
+  padding-inline: var(--s2);
+}
+/* With everyone decided the mark stands in the middle of the reading column, as a blank column's words do. */
+.sc-all-decided {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  flex: 1;
+  min-height: 0;
+}

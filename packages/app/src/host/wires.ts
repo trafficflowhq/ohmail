@@ -3,23 +3,30 @@
  * the transport is the shell's. Each key of {@link HostWires} is its transport, or `none`.
  *
  * Thirteen replace an input of the old shell and repeat the type that input has there, verb for
- * verb, so the transport a mount hands in today is a wire as it stands. Six replace no input:
+ * verb, so the transport a mount hands in today is a wire as it stands. Seven replace no input:
  * four shared files reach their route through the server client today, one control exists only
- * in the desktop's own pane, and the Mailboxes pane's verbs live inside the node a mount passes.
+ * in the desktop's own pane, the Mailboxes pane's verbs live inside the node a mount passes, and
+ * five forms connect a mailbox each by its own calls.
  *
- * Until its first caller arrives, a shell answers `none` for a call today's views still make themselves: the six wires
+ * Until its first caller arrives, a shell answers `none` for a call today's views still make themselves: the seven wires
  * that replace no input, and a browser's `images`. The `none:` sentences below say what a 2.0 view does with that answer.
  */
 import type { OlderBodyWire } from "@ohmail/client-engine";
 import type { CalendarPort } from "@ohmail/app-logic/calendar/port";
+import type {
+  Answered, CodeCeremony, Connected, ConnectInput, ConnectPatch, ConnectProbed, ConnectPurposeKind, MailboxId,
+  Secret, SignInProvider, SignInReturn, SignInWays,
+} from "@ohmail/app-logic/mailboxes/contract";
 import type { None } from "./contract.js";
 import type {
-  AutoFiled, AutoFiledPutBack, AwayDraft, AwaySaved, AwayState, ConsentReadFailure, ConsentState, DraftReplyRead,
-  FirstRunCount, FirstRunMailbox, FirstRunOrganizeIntent, FirstRunOrganized, FirstRunProbed, FirstRunStepUp,
-  FolderSummary, JunkFound, JunkPage, JunkRescued, JunkSweep, MailboxConnection, MailboxVerbAnswer,
-  OwnModelAutoSuggest, ProfileImportApplied, ProfileImportCandidate, ProfileImportStatus, ScreenerPage,
-  ScreenerSuggested, ScreeningChange, ScreeningPreference, SeedConfirmed, SeedReview, TrashPage, TravelledChange,
+  AutoFiled, AutoFiledPutBack, AwayDraft, AwaySaved, AwayState, ConnectAllowance, ConsentReadFailure, ConsentState,
+  DraftReplyRead, FirstRunCount, FirstRunMailbox, FirstRunOrganizeIntent, FirstRunOrganized, FirstRunProbed,
+  FirstRunStepUp, FolderSummary, JunkFound, JunkPage, JunkRescued, JunkSweep, MailboxErased, MailboxRow,
+  OrganizeAnswer, OrganizerPeek, OwnModelAutoSuggest, ProfileImportApplied, ProfileImportCandidate,
+  ProfileImportStatus, ReleaseAnswer, ScreenerPage, ScreenerSuggested, ScreeningChange, ScreeningPreference,
+  SeedConfirmed, SeedReview, TrashPage, TravelledChange,
 } from "./payloads.js";
+import type { Signal } from "./signals.js";
 
 /** Acknowledges the organizer's notice for a mailbox. The shell's `OrganizerNoticeTransport`. */
 export type OrganizerNoticeWire = (mailboxId: string) => Promise<unknown>;
@@ -119,11 +126,21 @@ export interface SuggestWire {
   aiAvailable?: () => Promise<boolean | null>;
 }
 
+/** `POST /drafts/from-text`: the person's words, and the letter they answer or the mailbox they are written in. */
+export interface DraftFromTextBody {
+  text: string;
+  inReplyToMessageId?: string;
+  mailboxId?: string;
+  subject?: string;
+}
+
 /** A reply drafted by a model. The shell's `DraftReplyWire`. */
 export interface DraftReplyWire {
   configured: () => boolean;
   create: (messageId: string, idempotencyKey: string) => Promise<{ draftId: string }>;
   read: (draftId: string) => Promise<DraftReplyRead>;
+  /** A draft made of the person's own words, one key per press. `none`: no door for it here; the control does not offer it. */
+  fromText: ((body: DraftFromTextBody, idempotencyKey: string) => Promise<{ draftId: string }>) | None;
   noModel?: "noModelHere" | "noModelHost";
 }
 
@@ -187,18 +204,79 @@ export interface OwnModelAutoSuggestWire {
 }
 
 /**
- * The Mailboxes pane's verbs. No input today. Which of them a shell offers is the capability
- * `mailboxes`, not this wire.
+ * A PROVIDER'S OWN SIGN-IN, the shell's whole: the start, the state, whose ceremony it is, where it lands, its
+ * completion and the loop of a sign-in by code. A view presses and draws two signals; it holds no state, no code and
+ * no handle of a ceremony.
+ */
+export interface ProviderSignInWire {
+  /** Which ceremonies this shell can run. It fails closed inside the shell: unread or unreadable is shut. */
+  ways(): Promise<SignInWays>;
+  /**
+   * Leave for the provider. `leaving`: the browser is on its way. `retired`: the press was withdrawn while the
+   * server answered (`stillWanted` said no); nothing was recorded and nothing navigates. `mailboxId` is a
+   * reconnect's subject and only preselects the account at the provider.
+   */
+  start(o: {
+    provider: SignInProvider;
+    purpose: ConnectPurposeKind;
+    mailboxId?: MailboxId;
+    stillWanted: () => boolean;
+  }): Promise<Answered<"leaving" | "retired">>;
+  /** What a sign-in started earlier came back with; `null` where none did. */
+  readonly returned: Signal<SignInReturn | null>;
+  /**
+   * The sign-in by a code typed at the provider. `begin` starts one; `live` is what to draw, polled at the server's
+   * pace and only while something subscribes; `stop` forgets it. `none`: this shell runs no such ceremony here.
+   */
+  readonly code:
+    | { begin(provider: SignInProvider): Promise<Answered<null>>; readonly live: Signal<CodeCeremony | null>; stop(): void }
+    | None;
+}
+
+/**
+ * THE CONNECT FORM'S CALLS. No input today: five forms reach their routes themselves. Every member answers and none
+ * throws; a refusal is the plain record a shell's adapter read off its transport.
+ */
+export interface ConnectWire {
+  /** Try the login and store nothing. */
+  probe(input: ConnectInput): Promise<Answered<ConnectProbed>>;
+  /** Connect it. `seed`: an install's first mailbox; `add`: a further one. The mode is stated, never defaulted. */
+  connect(input: ConnectInput, mode: "seed" | "add"): Promise<Answered<Connected>>;
+  /** New credentials for a connected mailbox, proven before they are stored. It names no mailbox in its answer: the one asked. */
+  edit: ((mailboxId: MailboxId, patch: ConnectPatch) => Promise<Answered<null>>) | None;
+  /** Who hosts a domain's mail. The domain alone, never the part before the @. */
+  discover: ((domain: string, signal: AbortSignal) => Promise<unknown>) | None;
+  signIn: ProviderSignInWire | None;
+  /** A server on this computer may take minutes to answer a test: the form says so while it waits. */
+  readonly localServerWait: boolean;
+}
+
+/**
+ * The Mailboxes pane's own calls. No input today. Which of them a shell offers is the capability `mailboxes` and a
+ * member's own `none`, together: a withheld verb is absent, never disabled. Connecting and editing are the connect
+ * form's ({@link ConnectWire}).
  */
 export interface MailboxesWire {
-  connect(mailbox: MailboxConnection): Promise<MailboxVerbAnswer>;
-  edit(mailboxId: string, mailbox: MailboxConnection): Promise<MailboxVerbAnswer>;
-  remove(mailboxId: string): Promise<MailboxVerbAnswer>;
-  resync(mailboxId: string): Promise<MailboxVerbAnswer>;
-  organizeHere(mailboxId: string): Promise<MailboxVerbAnswer>;
-  stopOrganizing(mailboxId: string): Promise<MailboxVerbAnswer>;
-  takeOver(mailboxId: string): Promise<MailboxVerbAnswer>;
-  dismissForwardingNotice(mailboxId: string): Promise<MailboxVerbAnswer>;
+  list(o: { counts: boolean }): Promise<Answered<readonly MailboxRow[]>>;
+  allowance: (() => Promise<Answered<ConnectAllowance>>) | None;
+  resync(mailboxId: MailboxId): Promise<Answered<null>>;
+  remove: ((mailboxId: MailboxId) => Promise<Answered<null>>) | None;
+  /** `typed`: the address as the person typed it; never filled in for them. */
+  erase: ((mailboxId: MailboxId, typed: string) => Promise<Answered<MailboxErased>>) | None;
+  organizer: ((mailboxId: MailboxId) => Promise<Answered<OrganizerPeek>>) | None;
+  organizeHere: ((mailboxId: MailboxId, o: { password?: Secret }) => Promise<Answered<OrganizeAnswer>>) | None;
+  stopOrganizing: ((mailboxId: MailboxId) => Promise<Answered<ReleaseAnswer>>) | None;
+  dismissForwardingNotice: ((mailboxId: MailboxId) => Promise<Answered<MailboxRow>>) | None;
+  selfCheck: ((mailboxId: MailboxId) => Promise<Answered<unknown>>) | None;
+  filings:
+    | {
+        read(mailboxId: MailboxId): Promise<Answered<unknown>>;
+        retry(mailboxId: MailboxId, folder: string): Promise<Answered<{ reset: number; skipped: number }>>;
+        leave(mailboxId: MailboxId, folder: string, through: string): Promise<Answered<{ settled: number; remaining: number }>>;
+      }
+    | None;
+  /** The way out where this shell changes mailboxes elsewhere (the capability `resyncAndOut`). */
+  out: (() => void) | None;
 }
 
 export interface HostWires {
@@ -238,6 +316,8 @@ export interface HostWires {
   readonly folderSummary: FolderSummaryWire | None;
   /** `none` everywhere `suggest` is not `ownModel`. */
   readonly ownModelAutoSuggest: OwnModelAutoSuggestWire | None;
+  /** `none`: nothing is connected or edited from this shell. */
+  readonly connect: ConnectWire | None;
   /** `none`, with the capability `mailboxes` at `none`. */
   readonly mailboxes: MailboxesWire | None;
   /** The calendar's port over this shell's engine. `none`: no calendar here; with the capability `products` at `none`. */

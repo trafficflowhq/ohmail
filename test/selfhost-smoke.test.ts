@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { DEFAULT_AUTH_CONFIG } from "@trafficflow/services";
 import { KEY_RING_V1 } from "./support/key-ring-env.js";
 import { publicPath } from "./support/public-root.mjs";
 import { evalIf, type IfContext } from "./support/workflow-if.js";
@@ -132,7 +134,7 @@ case "$a" in
   *" compose "*" up "*) exit 0 ;;
   *" compose "*" ps "*) echo "cid-$last"; exit 0 ;;
   *" compose "*" logs --no-color api "*) printf '%s\\n' "\${STUB_API_LOG:-api: listening}"; exit 0 ;;
-  *" compose "*" logs "*) echo "STUB-SERVICE-LOGS"; exit 0 ;;
+  *" compose "*" logs "*) printf '%s\\n' "\${STUB_ALL_LOGS:-STUB-SERVICE-LOGS}"; exit 0 ;;
   " inspect --format {{.RestartCount}} "*) echo "\${STUB_RESTARTS:-0}"; exit 0 ;;
   *" compose "*" down "*) exit 0 ;;
   " inspect --format {{.Image}} "*) s=\${last#cid-}; if [ "$s" = "\${STUB_MISMATCH:-}" ]; then echo "sha256:published"; else echo "sha256:id-$s"; fi; exit 0 ;;
@@ -152,6 +154,8 @@ exit 99
 /** A node that runs the smoke as STUB_SMOKE_RC, and a curl that answers /health with STUB_HEALTH ("<version> <source>"). */
 const NODE_STUB = `#!/usr/bin/env bash
 printf 'node %s SMOKE_COMPOSE=%s SMOKE_ENV_FILE=%s\\n' "$*" "$SMOKE_COMPOSE" "$SMOKE_ENV_FILE" >> "$STUB_DIR/log"
+printf 'handover %s %s\\n' "\${SMOKE_HANDOVER:-none}" "\${SMOKE_INVITES:-none}" >> "$STUB_DIR/log"
+if [ -n "\${SMOKE_HANDOVER:-}" ]; then (umask 077; printf '{"origin":"http://localhost:3080","invites":["STUB-INVITE"]}\\n' > "$SMOKE_HANDOVER"); fi
 echo "[11] the stub smoke"
 exit "\${STUB_SMOKE_RC:-0}"
 `;
@@ -161,8 +165,16 @@ set -- \${STUB_HEALTH:-}
 if [ $# -eq 2 ]; then printf '{"ok":true,"version":"%s","buildSource":"%s"}\\n' "$1" "$2"; else echo '{}'; fi
 `;
 
+/** An npx that logs the journeys' run and keeps a copy of the handover it was given, mode and all. */
+const NPX_STUB = `#!/usr/bin/env bash
+printf 'npx %s TF_JOURNEYS=%s\\n' "$*" "\${TF_JOURNEYS:-}" >> "$STUB_DIR/log"
+echo 0 > "$TF_JOURNEYS_STACK.taken"
+cp -p "$TF_JOURNEYS_STACK" "$STUB_DIR/handover.seen"
+exit "\${STUB_JOURNEYS_RC:-0}"
+`;
+
 type Run = { status: number | null; out: string; log: string[]; env: string; dir: string };
-function smoke(mode: "--build" | "--staged", tag: string, opts: { images?: string[]; env?: Record<string, string>; dir?: string; json?: Record<string, string> } = {}): Run {
+function smoke(mode: "--build" | "--staged", tag: string, opts: { images?: string[]; env?: Record<string, string>; dir?: string; json?: Record<string, string>; journeys?: boolean } = {}): Run {
   const dir = mkdtempSync(join(tmpdir(), "selfhost-smoke-"));
   const services: Record<string, string> = { ...OTHERS };
   for (const [svc, name] of Object.entries(OURS)) services[svc] = `ghcr.io/trafficflowhq/${name}:${tag}`;
@@ -173,17 +185,20 @@ function smoke(mode: "--build" | "--staged", tag: string, opts: { images?: strin
   writeFileSync(join(dir, "docker"), DOCKER_STUB, { mode: 0o755 });
   writeFileSync(join(dir, "node"), NODE_STUB, { mode: 0o755 });
   writeFileSync(join(dir, "curl"), CURL_STUB, { mode: 0o755 });
+  writeFileSync(join(dir, "npx"), NPX_STUB, { mode: 0o755 });
   const env = {
     PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: dir, LC_ALL: "C", RUNNER_TEMP: dir, STUB_DIR: dir,
-    DOCKER: join(dir, "docker"), NODE: join(dir, "node"), CURL: join(dir, "curl"), STUB_HEALTH: `${COMMIT} file`, ...opts.env,
+    DOCKER: join(dir, "docker"), NODE: join(dir, "node"), CURL: join(dir, "curl"), NPX: join(dir, "npx"), STUB_HEALTH: `${COMMIT} file`, ...opts.env,
   };
-  const r = spawnSync("bash", [SCRIPT, mode, "--dir", opts.dir ?? DIR, "--tag", tag, "--commit", COMMIT], { encoding: "utf8", env });
+  const args = [SCRIPT, mode, "--dir", opts.dir ?? DIR, "--tag", tag, "--commit", COMMIT, ...(opts.journeys ? ["--journeys"] : [])];
+  const r = spawnSync("bash", args, { encoding: "utf8", env, cwd: REPO });
   const envFile = join(dir, "selfhost-smoke.env");
   let envText = "";
   try { envText = readFileSync(envFile, "utf8"); } catch { /* not minted */ }
   return { status: r.status, out: `${r.stdout}${r.stderr}`, log: readFileSync(join(dir, "log"), "utf8").split("\n").filter(Boolean), env: envText, dir };
 }
 const idx = (log: string[], re: RegExp) => log.findIndex((l) => re.test(l));
+const REPO = fileURLToPath(new URL("..", import.meta.url));
 const lastValue = (env: string, key: string) => [...env.matchAll(new RegExp(`^${key}=(.*)$`, "gm"))].pop()?.[1] ?? "";
 
 describe("selfhost-smoke.sh boots exactly the images of this run and the commit they were built from", () => {
@@ -285,6 +300,75 @@ describe("selfhost-smoke.sh boots exactly the images of this run and the commit 
       expect(r.out).toMatch(/\/health names/);
       expect(r.log.at(-1)).toMatch(/ down -v$/);
     }
+  });
+
+  it("--journeys: boot-smoke hands over, the journeys run on the stack after every check, and the handover leaves with the run", () => {
+    const r = smoke("--build", "smoke-7-1", { journeys: true });
+    expect(r.status, r.out).toBe(0);
+    const handover = join(r.dir, "selfhost-journeys.json");
+    // One invite per account the stack's journeys make, under the product's own registration bound with room to spare.
+    expect(r.log).toContain(`handover ${handover} ${DEFAULT_AUTH_CONFIG.maxRegistrationsPerWindow - 4}`);
+    const journeys = idx(r.log, /^npx vitest run /);
+    expect(journeys, r.log.join("\n")).toBeGreaterThan(idx(r.log, /^curl -fsS http:\/\/localhost:3080\/health$/));
+    expect(journeys).toBeLessThan(idx(r.log, / down -v$/));
+    expect(r.log[journeys]).toMatch(/^npx vitest run test\/journeys\/guards\.test\.ts test\/journeys\/journeys\/\S+\.journeys\.test\.ts .* TF_JOURNEYS=stack$/);
+    expect(r.log[journeys], "a folder as the filter runs the whole suite").not.toMatch(/ test\/journeys( |$)/);
+    const seen = JSON.parse(readFileSync(join(r.dir, "handover.seen"), "utf8")) as Record<string, unknown>;
+    expect(seen).toEqual({
+      origin: "http://localhost:3080", invites: ["STUB-INVITE"], commit: COMMIT, envFile: join(r.dir, "selfhost-smoke.env"),
+      compose: [join(r.dir, "docker"), "compose", "-f", `${DIR}/docker-compose.yml`, "-f", `${DIR}/docker-compose.ci.yml`, "--env-file", join(r.dir, "selfhost-smoke.env")],
+    });
+    expect(statSync(join(r.dir, "handover.seen")).mode & 0o777).toBe(0o600);
+    expect(existsSync(handover), "the handover outlived the run").toBe(false);
+    expect(existsSync(`${handover}.taken`), "the count of invites taken outlived the run").toBe(false);
+    expect(r.out).not.toContain("STUB-INVITE");
+    expect(r.out).toContain("selfhost-smoke: GREEN (build, smoke-7-1, journeys)");
+  });
+
+  it("without --journeys there is no handover and no journeys; a red journeys run is the run's red and still tears down", () => {
+    const plain = smoke("--build", "smoke-7-1");
+    expect(plain.status, plain.out).toBe(0);
+    expect(plain.log).toContain("handover none none");
+    expect(idx(plain.log, /^npx /)).toBe(-1);
+    const red = smoke("--build", "smoke-7-1", { journeys: true, env: { STUB_JOURNEYS_RC: "1" } });
+    expect(red.status).not.toBe(0);
+    expect(red.out).toContain("the journeys on the stack are red");
+    expect(red.log.at(-1)).toMatch(/ down -v$/);
+    expect(existsSync(join(red.dir, "selfhost-journeys.json"))).toBe(false);
+  });
+
+  it("a red run prints the stack's logs without the first-run block or any line shaped like its token", () => {
+    const token = "Zq7".repeat(11);
+    const logs = [
+      "db-1   | ready", "", "api-1  | ===== FIRST-RUN SETUP =====", "api-1  |   Open the setup page and paste:", `api-1  |     ${token}`,
+      "api-1  | =====", ...Array.from({ length: 14 }, (_, i) => `web-1  | line ${i}`), `api-1  |     ${token.toLowerCase()}`, "STUB-SERVICE-LOGS",
+    ].join("\n");
+    const r = smoke("--build", "smoke-7-1", { env: { STUB_SMOKE_RC: "1", STUB_ALL_LOGS: logs } });
+    expect(r.status).not.toBe(0);
+    expect(r.out).toContain("STUB-SERVICE-LOGS");
+    expect(r.out).toContain("db-1   | ready");
+    expect(r.out).toContain("web-1  | line 13");
+    expect(r.out).not.toContain(token);
+    expect(r.out).not.toContain(token.toLowerCase());
+    expect(r.out).not.toContain("FIRST-RUN SETUP");
+  });
+
+  it("boot-smoke refuses a handover off this machine's loopback, or of no count it can make, before it asks anything", () => {
+    const dir = mkdtempSync(join(tmpdir(), "boot-smoke-handover-"));
+    const run = (base: string, invites: string) => spawnSync(process.execPath, [join(DIR, "boot-smoke.mjs")], {
+      encoding: "utf8", timeout: 20_000,
+      env: { PATH: process.env.PATH ?? "/usr/bin:/bin", SMOKE_BASE: base, SMOKE_HANDOVER: join(dir, "handover.json"), SMOKE_INVITES: invites, SMOKE_READY_TIMEOUT_MS: "1" },
+    });
+    const remote = run("https://mail.example.com", "3");
+    expect(remote.status).toBe(1);
+    expect(remote.stdout).toContain("SMOKE_HANDOVER is refused against mail.example.com");
+    expect(remote.stdout).not.toContain("waiting for the stack");
+    for (const invites of ["0", "21", "two"]) {
+      const none = run("http://localhost:3080", invites);
+      expect(none.status, invites).toBe(1);
+      expect(none.stdout).toContain("SMOKE_INVITES must be a whole number from 1 to 20");
+    }
+    expect(existsSync(join(dir, "handover.json"))).toBe(false);
   });
 
   it("names the service and the image a pull could not fetch", () => {

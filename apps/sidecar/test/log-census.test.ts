@@ -6,6 +6,7 @@ import { createSidecarLog } from "../src/log.js";
 /* THE MASKER MOVED to `_mask.ts` so a SECOND census could reuse it without importing this file —
    importing a test module runs its suites, and one shared helper is the point of having one. */
 import { maskSource } from "./_mask.js";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 
 /**
  * THE CENSUS GUARD — every field name this package hands a logger is on `ALLOWED_FIELDS`.
@@ -1881,7 +1882,7 @@ describe("apps/sidecar — the census", () => {
  * correction watchable rather than a sentence somebody can undo without anything going red.
  */
 describe("the roster line does not claim an organizer claim", () => {
-  const engine = readFileSync(join(SRC, "engine.ts"), "utf8");
+  const engine = readEngineAsOneText();
 
   it("finds the call at all — the anti-vacuity case", () => {
     // A guard that cannot locate its subject passes for the wrong reason for ever.

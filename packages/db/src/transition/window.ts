@@ -2,7 +2,7 @@ import { readMigrationFiles } from "drizzle-orm/migrator";
 import { readJournalOf, type JournalSpec } from "../baseline.js";
 import { CLOUD_JOURNAL, MAIL_JOURNAL } from "../journal-specs.js";
 import {
-  LINE_2_0_START, OLD_HEADS, TRANSITION_WINDOW, entryNumber, windowEntries, type ServerJournal,
+  OLD_HEADS, TRANSITION_WINDOW, entryNumber, windowEntries, windowNumbers, type ServerJournal,
 } from "../journal-heads.js";
 
 /** One entry the transition applies: its statements as the migrator splits them, its ledger row. */
@@ -22,9 +22,9 @@ export interface TransitionJournals { readonly mail: JournalSpec; readonly cloud
 export const SHIPPED_JOURNALS: TransitionJournals = { mail: MAIL_JOURNAL, cloud: CLOUD_JOURNAL };
 
 /** How many entries each journal's window holds. The transition applies that list and nothing else. */
-export const WINDOW_LENGTH = 6;
+export const WINDOW_LENGTH: Readonly<Record<ServerJournal, number>> = { mail: 8, cloud: 6 };
 
-/** The window is not the six entries, in order, that the transition was written for. */
+/** The window is not the entries, in order, that the transition was written for. */
 export class WindowMalformed extends Error {
   constructor(journal: string, why: string) {
     super(`the ${journal} journal's 2.0 window is not what the transition applies: ${why}`);
@@ -38,17 +38,20 @@ export class WindowMalformed extends Error {
  * is what the ordinary migrator would run and what is recorded is what it would record.
  *
  * Refuses a window that is not {@link WINDOW_LENGTH} entries numbered one after another from the
- * line's start through `TRANSITION_WINDOW`'s last, each stamped above the old head and above its
- * predecessor.
+ * line's start through `TRANSITION_WINDOW`'s last, but for the numbers it names as skipped, each
+ * stamped above the old head and above its predecessor; and a journal that holds any other entry
+ * stamped inside the window (a skipped number filled, say): once the window is recorded the
+ * ordinary migrator would skip that entry for ever, stamped below the head.
  */
 export function readWindow(journal: ServerJournal, spec: JournalSpec = SHIPPED_JOURNALS[journal]): WindowEntry[] {
-  const entries = windowEntries(journal, readJournalOf(spec));
-  const start = LINE_2_0_START[journal];
-  if (entries.length !== WINDOW_LENGTH) {
-    throw new WindowMalformed(journal, `it holds ${entries.length} entries, not ${WINDOW_LENGTH}`);
+  const all = readJournalOf(spec);
+  const entries = windowEntries(journal, all);
+  const numbers = windowNumbers(journal);
+  if (entries.length !== WINDOW_LENGTH[journal] || numbers.length !== WINDOW_LENGTH[journal]) {
+    throw new WindowMalformed(journal, `it holds ${entries.length} entries, not ${WINDOW_LENGTH[journal]}`);
   }
   entries.forEach((e, i) => {
-    if (entryNumber(e.tag) !== start + i) throw new WindowMalformed(journal, `entry ${i + 1} is ${e.tag}, not number ${start + i}`);
+    if (entryNumber(e.tag) !== numbers[i]) throw new WindowMalformed(journal, `entry ${i + 1} is ${e.tag}, not number ${numbers[i]}`);
   });
   if (entries.at(-1)!.tag !== TRANSITION_WINDOW[journal].last) {
     throw new WindowMalformed(journal, `it ends at ${entries.at(-1)!.tag}, not ${TRANSITION_WINDOW[journal].last}`);
@@ -58,6 +61,9 @@ export function readWindow(journal: ServerJournal, spec: JournalSpec = SHIPPED_J
     if (e.when <= floor) throw new WindowMalformed(journal, `${e.tag} is stamped at or below what precedes it`);
     floor = e.when;
   }
+  const inside = new Set(entries.map((e) => e.tag));
+  const stray = all.find((e) => e.when > OLD_HEADS[journal].when && e.when <= floor && !inside.has(e.tag));
+  if (stray) throw new WindowMalformed(journal, `${stray.tag} is stamped inside the window and is none of its entries`);
   const files = new Map(readMigrationFiles({ migrationsFolder: spec.dir }).map((m) => [m.folderMillis, m]));
   return entries.map((e) => {
     const file = files.get(e.when);

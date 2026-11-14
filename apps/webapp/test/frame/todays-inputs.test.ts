@@ -11,7 +11,7 @@ const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
   "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary",
-  "ownModelAutoSuggest", "mailboxes",
+  "ownModelAutoSuggest", "connect", "mailboxes",
 ] as const;
 const CONSENT = { named: "consent", foldersStorable: true };
 const FIRST_RUN = { named: "firstRun", door: "cloud" };

@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import type { CalendarEntry, FrameNotice, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
+import type { CalendarEntry, FrameNotice, FrameOvers, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
 import type { None } from "./contract.js";
 
 /**
@@ -52,6 +52,13 @@ export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & 
   readonly stages: FrameStages;
   /** The reading column, or `none`: a place that names it then draws an empty column. */
   readonly reader: ReaderEntry | None;
+  /**
+   * What a shell stands above every pane, once per mounted frame, under the scope: the providers its places read.
+   * `none`: nothing stands there (a host with no old shell; the fake host).
+   */
+  readonly above: ComponentType<{ readonly children: ReactNode }> | None;
+  /** What stands over every place (the palette, the key sheet), each the entry it imports or `none`. */
+  readonly overs: FrameOvers;
   /** The calendar's root export (`@ohmail/app/calendar`), handed in by a shell that mounts it; `none`: no calendar here. */
   readonly calendar: CalendarEntry | None;
 };

@@ -9,7 +9,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
-import { MAIL_JOURNAL, OLD_HEADS, readJournalOf, type JournalEntry } from "@trafficflow/db/journal";
+import { MAIL_JOURNAL, OLD_HEADS, readJournalOf, windowEntries, type JournalEntry } from "@trafficflow/db/journal";
 import {
   openLocalDb, openPhaseFor, PGDATA_SUBDIR, REPLAY_PHASE_BYTES, SLOW_MIGRATION_MS,
   type LocalDbOpenPhase, type MigrationProgress, type OpenLocalDb,
@@ -117,10 +117,11 @@ describe("the schema upgrade says how far it has got", () => {
    * only thing this fixture decides is where the old install stopped. Answers the entries it
    * owes, so a test names them rather than recomputing the arithmetic it is checking.
    */
-  /** Three entries of the 1.0 road, the six of the 2.0 window, which an open takes as one step, and
+  /** Three entries of the 1.0 road, the 2.0 window's entries, which an open takes as one step, and
    *  each ordinary entry after the window. */
-  const AFTER_WINDOW = readJournalOf(MAIL_JOURNAL).filter((e) => e.when > OLD_HEADS.mail.when).length - 6;
-  const OWED = 9 + AFTER_WINDOW;
+  const WINDOW = windowEntries("mail", readJournalOf(MAIL_JOURNAL)).length;
+  const AFTER_WINDOW = readJournalOf(MAIL_JOURNAL).filter((e) => e.when > OLD_HEADS.mail.when).length - WINDOW;
+  const OWED = 3 + WINDOW + AFTER_WINDOW;
   async function oldInstall(dataDir: string, owed: number): Promise<JournalEntry[]> {
     const entries = readJournalOf(MAIL_JOURNAL);
     const folder = tempDir();
@@ -154,7 +155,7 @@ describe("the schema upgrade says how far it has got", () => {
 
   it("an upgrade counts 0 to N, and the launch after it has nothing to count", async () => {
     const dir = tempDir();
-    // Three entries short of 1.0.11's head, so this open owes those three, the six of the 2.0 window
+    // Three entries short of 1.0.11's head, so this open owes those three, the 2.0 window's entries
     // and each entry after it.
     const owed = await oldInstall(dir, OWED);
     // Not vacuous: with one owed migration a counter and a constant would read alike.
@@ -164,11 +165,13 @@ describe("the schema upgrade says how far it has got", () => {
     expect(upgrade.phases[0]!.phase).toBe("opening_store");
     const counted = upgrade.phases.filter((p) => p.phase === "migrating");
     // 0 before the first migration, N after the last: the sequence the window renders as
-    // "(3 of 9)", and the one thing a counter that never advanced could not produce. The three
-    // entries of the 1.0 road are a step each; the 2.0 window's six are applied together in one
-    // transaction, so the count goes from 3 to 9 at once; an entry after the window is a step again.
+    // "(3 of 11)", and the one thing a counter that never advanced could not produce. The three
+    // entries of the 1.0 road are a step each; the 2.0 window's entries are applied together in one
+    // transaction, so the count goes from 3 to 3 and the window at once; an entry after the window
+    // is a step again.
+    expect(WINDOW, "the window: mail 0200 to 0205, 0207 and 0208").toBe(8);
     expect(counted.map((p) => p.progress?.applied))
-      .toEqual([0, 1, 2, 3, 9, ...Array.from({ length: AFTER_WINDOW }, (_, i) => 10 + i)]);
+      .toEqual([0, 1, 2, 3, 3 + WINDOW, ...Array.from({ length: AFTER_WINDOW }, (_, i) => 4 + WINDOW + i)]);
     expect([...new Set(counted.map((p) => p.progress?.pending))]).toEqual([owed.length]);
     expect(upgrade.migrations).toEqual({
       pending: owed.length,

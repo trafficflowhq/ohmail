@@ -101,6 +101,8 @@ const BASE_MESSAGE_NAMESPACES = [
   // The calendar's invitations, From mail, setup, settings panes and its parts beside mail (the folders of the same
   // names under `packages/app/src`), for the same reason.
   "invitations", "frommail", "calsetup", "calsettings", "calmail",
+  // The new places' own words (`@ohmail/app/news`, `piles`, `tags`, `address`), read through `@ohmail/app/text`.
+  "news", "later", "parked", "resurface", "tags", "address",
   // `ohmarchy` is the Option B offer's line (shell/OhmarchyOffer.tsx) — shared-shell code the
   // desktop compiles; its gates (Linux device, an account-wide write available) decide whether
   // it renders, and the census lists what the sources READ, not what they display.
@@ -259,6 +261,8 @@ const BASE_MESSAGE_NAMESPACES = [
   // `sentCopy` is why a sent letter's Sent copy is missing or still owed, said under that line and in
   // the send toast; `mail-send.ts` computes the key and the unscoped `t` reads it.
   "sentCopy",
+  // `write` is the new composer's own namespace (`packages/app/src/write`), read wherever a shell registers it.
+  "write",
   // `trash` is the Trash view's own namespace — the list's empty and scope sentences, the
   // Restore verb, its four toasts and the "ohmail never erases mail" line the disabled delete
   // keys carry. Shared shell code reads it (`views/TrashView.tsx` and `MessagePane`'s bar), so
@@ -890,9 +894,16 @@ export default defineConfig({
       { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
+      // The letter editor's schema, marks and commands, each by its own file: the web shell's editor reads them.
+      { find: "@ohmail/app/write/editor/schema", replacement: r("../../packages/app/src/write/editor/schema.ts") },
+      { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },
+      { find: "@ohmail/app/write/editor/marks", replacement: r("../../packages/app/src/write/editor/marks.ts") },
+      { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
          when the platform jobs build this window. */
       { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },

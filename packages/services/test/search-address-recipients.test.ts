@@ -8,7 +8,7 @@ import { makeCtx, otherAccount, seedMessage } from "./helpers.js";
 
 /**
  * THE ADDRESS ARM BY RECIPIENT, on whichever store the project runs: PGlite (the desktop's store,
- * mail 0154's expression index) and SQLite (the phone's, 0154's side table kept by triggers). `to`
+ * the key each letter stores since mail 0208) and SQLite (the phone's, 0154's side table kept by triggers). `to`
  * is To and Cc, case-folded, each message once; `any` is that and the From half; the account
  * scopes both. `from` is the positive control: its answer does not move.
  */
@@ -38,6 +38,15 @@ async function corpus() {
 }
 
 const ids = (r: { items: Array<{ id: string }> }) => r.items.map((m) => m.id);
+
+/**
+ * A bulk-seeded store with the statistics a desktop's own store keeps for its letters. Without them
+ * PGlite plans a page that keeps nothing so that it takes 70 s on 20,004 letters (48 ms with them).
+ */
+async function settled(db: Parameters<typeof dialect>[0]): Promise<void> {
+  const d = dialect(db);
+  if (d.name === "pg") await d.exec(db, sql`analyze messages`);
+}
 
 describe("searchByAddress answers `to` and `any` on this store", () => {
   it("`to` is To and Cc, case-folded, once each, newest first, and never the sender half", async () => {
@@ -308,22 +317,24 @@ describe("a search with no words past the walk's bound", () => {
     const c = await makeCtx(new Date("2026-08-01T12:00:00Z"));
     const d = dialect(c.db);
     const pg = d.name === "pg";
-    // One statement each store can run, letter `i` a minute older than letter `i - 1`.
+    // One statement each store can run, letter `i` a minute older than letter `i - 1`; the last two carry no date.
     const date = pg ? sql`timestamptz '2026-07-01T00:00:00Z' - make_interval(mins => g.i)` : sql`${Date.UTC(2026, 6, 1)} - g.i * 60000`;
     const locator = pg ? sql`jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g.i)` : sql`json_object('folder', 'INBOX', 'ref', '1:' || g.i)`;
     const flag = (cond: SQL) => (pg ? cond : sql`case when ${cond} then 1 else 0 end`);
-    await d.exec(c.db, sql`with recursive g(i) as (select 0 union all select i + 1 from g where i < ${LETTERS - 1})
+    await d.exec(c.db, sql`with recursive g(i) as (select 0 union all select i + 1 from g where i < ${LETTERS + 1})
       insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, native_locator, unread)
       select ${c.accountId}, ${c.mailboxId}, 'h', 'bulk:' || g.i, 'bulk', case when g.i in (3, ${LETTERS - 1}) then 'few@x.test' else 'many@x.test' end,
-        ${date}, ${locator}, ${flag(sql`g.i in (${LETTERS - 3}, ${LETTERS - 1})`)} from g`);
+        case when g.i < ${LETTERS} then ${date} end, ${locator}, ${flag(sql`g.i in (${LETTERS - 3}, ${LETTERS - 1}, ${LETTERS + 1})`)} from g`);
     const idOf = new Map((await d.exec(c.db, sql`select dedup_key, id from messages where account_id = ${c.accountId}`))
       .map((r) => [Number(String(r[0]).slice(5)), String(r[1])]));
-    expect(idOf.size).toBe(LETTERS);
+    expect(idOf.size).toBe(LETTERS + 2);
+    await settled(c.db);
     const svc = new SearchService();
+    // The undated letter lies after every dated one: behind a dated cursor the walk still reaches it, last.
     const cases: ReadonlyArray<readonly [SearchFilters, number[]]> = [
-      [{ unread: true }, [LETTERS - 3, LETTERS - 1]],
+      [{ unread: true }, [LETTERS - 3, LETTERS - 1, LETTERS + 1]],
       // A person with many letters: the walk asks the person of each.
-      [{ sender: "many@x.test", unread: true }, [LETTERS - 3]],
+      [{ sender: "many@x.test", unread: true }, [LETTERS - 3, LETTERS + 1]],
     ];
     for (const [filters, places] of cases) {
       const want = places.map((i) => idOf.get(i)!);
@@ -382,6 +393,7 @@ describe("a search with no words in a large mailbox: each person is read off the
     const place = new Map((await d.exec(c.db, sql`select id, dedup_key from messages where account_id = ${c.accountId}`))
       .map((r) => [String(r[0]), Number(String(r[1]).slice(4))]));
     expect(place.size).toBe(N);
+    await settled(c.db);
     const plain = (keep: (g: number) => boolean) => Array.from({ length: N }, (_, g) => g).filter(keep);
     return { ...c, place, plain, svc: new SearchService() };
   }
@@ -432,9 +444,9 @@ describe("a search with no words in a large mailbox: each person is read off the
     }
   }, 120_000);
 
-  it("a person within 20,000 letters beside a recipient filter is walked newest first: the first page answers", async () => {
+  it("a person within 20,000 letters beside a recipient filter is read whole, newest first: the first page answers", async () => {
     for (const [filters, keep] of [
-      // 3,000 old letters, none among the newest 54,000: the mailbox's walk met none for 21 pages.
+      // 3,000 old letters, none among the newest 54,000: the mailbox's walk would meet none on its first two pages.
       [{ sender: "colleague@x.test", to: "me@own.test" }, keeps.colleague],
       [{ party: "colleague@x.test", to: "third@x.test" }, (g: number) => keeps.colleague(g) && keeps.third(g)],
     ] as const) {
@@ -496,13 +508,22 @@ describe("a search with no words in a large mailbox: each person is read off the
     }
   }, 300_000);
 
-  it("a walk that asks every letter its recipients asks at most 2,500 letters a page, and the next page reads on", async () => {
-    // One letter in 500 is unread: a page from 2,500 letters holds five.
+  it("a walk that asks every letter its recipients asks 20,000 letters a page, as every walk does, and the next page reads on", async () => {
+    // One letter in 500 is unread: a page from 20,000 letters holds forty.
     const filters = { to: "me@own.test", unread: true };
+    const unreadFrom = (g: number) => Array.from({ length: 40 }, (_, i) => g + 3 + 500 * i);
     const first = await big.svc.search(big.ctx, { q: "", filters, parts: "page" });
-    expect(placesOf(first)).toEqual([3, 503, 1003, 1503, 2003]);
+    expect(placesOf(first)).toEqual(unreadFrom(0));
     const second = await big.svc.search(big.ctx, { q: "", filters, parts: "page", cursor: first.nextCursor! });
-    expect(placesOf(second)).toEqual([2503, 3003, 3503, 4003, 4503]);
+    expect(placesOf(second)).toEqual(unreadFrom(20_000));
     expect(second.nextCursor).not.toBeNull();
+  }, 120_000);
+
+  it("every store pages a walk alike: 20,000 letters a page, its cursor through to the end", async () => {
+    // To the own address beside a flag, one letter in 500, each page read through the cursor: the
+    // device's store walks as many letters a page as the server's, so the pages and cursors are one.
+    const unread = big.plain(keeps.unread);
+    expect(unread).toHaveLength(120);
+    expect(await walkAll({ to: "me@own.test", unread: true })).toEqual([unread.slice(0, 40), unread.slice(40, 80), unread.slice(80, 120), []]);
   }, 120_000);
 });

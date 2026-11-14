@@ -8,6 +8,8 @@
  */
 import {
   Suspense,
+  createContext,
+  useContext,
   useEffect,
   useMemo,
   useState,
@@ -71,7 +73,6 @@ import {
   useDemoMode, useResolvedDemoMode,
   useEngine,
   useDerivedVersion,
-  useSearchIndexRevision,
   useSyncStatus,
   type OwnerResolver,
   type ProvidedEngine,
@@ -274,7 +275,7 @@ import { ManagedServiceContext } from "@ohmail/app-logic/doors/managed-service";
 import { SendReleaseProvider } from "./send-release";
 import { sendLine, sendLineValues } from "./SendStatus";
 import { HelpContactPane, type SupportHost } from "./HelpContactPane";
-import { useFrame, type PaneProps } from "@ohmail/app/frame";
+import { useFrame, useRoomHandOver, type PaneProps } from "@ohmail/app/frame";
 import { useTodaysFixed } from "./TodaysFrame";
 import { useTodaysSignals } from "./todays-signals";
 import { useTodaysFeeds } from "./todays-feeds";
@@ -418,34 +419,44 @@ export { DESKTOP_CTA_DISMISSED, DESKTOP_DOWNLOAD_URL, showDesktopCta } from "./t
 export { CURSOR_HINT_MS };
 
 /**
- * SEARCH'S OWN SUBSCRIPTION — the mirror it derives from, and the index that answers.
- *
- * It took the GLOBAL version while the index read `message_body`. The index no longer reads
- * bodies (`search.ts` — the archive is the body search), so the global version would re-run the
- * local pass for writes it cannot see: an open writes three body records and the eager pass one
- * per message, each of them a rebuild on the keystroke path. {@link useDerivedVersion} is the
- * honest key, and {@link useSearchIndexRevision} the other half — the index lags the mirror by
- * design, so a build settling changes the answer with no record having moved.
- */
-function SearchViewLive(props: Omit<ComponentProps<typeof SearchView>, "version" | "indexRev">) {
-  const version = useDerivedVersion();
-  const indexRev = useSearchIndexRevision();
-  return <SearchView {...props} version={version} indexRev={indexRev} />;
-}
-
-/**
- * TODAY'S VIEWS IN THE FRAME'S WIDE PANE: the one body every place of today's shares, fed the inputs the adapter read
- * off the host and the two a signal feeds. Their reports still reach the capsule the shells mount (`ToastHost`), whose
+ * TODAY'S VIEWS IN THE FRAME'S WIDE PANE: the one body every place of today's shares, kept mounted by the frame while
+ * a place of another body is on screen (`todays-places.ts`). It draws the stage the composition above made
+ * (`TodaysAbove`) and runs nothing itself. Their reports still reach the capsule the shells mount (`ToastHost`), whose
  * Undo `z` takes back: today's views and their tests read it there. A place that registers reports through the
  * frame's own slot (`useReport`).
  */
 export function TodaysViews(_: PaneProps) {
+  return useTodaysStage();
+}
+
+/**
+ * TODAY'S STAGE: the one element the old shell's composition draws for the wide pane (the demo's ribbon, the way back
+ * from a Settings section, the stage with its card, the seed review and the view switch, and today's reader sheet).
+ * `ShellInner` makes it above the panes and provides it; `TodaysViews` draws it where the frame keeps today's body.
+ */
+const TodaysStage = createContext<ReactNode>(null);
+
+/** The stage the composition above made. Throws where none stands: today's views draw nothing by themselves. */
+function useTodaysStage(): ReactNode {
+  const stage = useContext(TodaysStage);
+  if (stage === null) throw new Error("today's views were drawn with no composition above");
+  return stage;
+}
+
+/**
+ * WHAT THE OLD SHELL STANDS ABOVE EVERY PANE (the hosts' `features.above`): the mail state and the whole composition
+ * of `ShellInner`, once per mounted frame, under the frame's scope. A walk to a place of another body unmounts none
+ * of it: the press seam with its undo windows, the consent row, the send machine, the two doors, the keys and what
+ * today's feeds say stand for the frame's life. It is fed the inputs the adapter read off the host and the two a
+ * signal feeds, as `TodaysViews` was.
+ */
+export function TodaysAbove({ children }: { children: ReactNode }) {
   const { managedService: _managed, mirrorFreshness, ...fixed } = useTodaysFixed();
   const { host } = useFrame();
   const live = useTodaysSignals(host.signals);
   return (
     <MailStateHost scope={host.session.scope} probe={fixed.mailboxFacts} freshnessProbe={mirrorFreshness}>
-      <ShellInner {...fixed} {...live} />
+      <ShellInner {...fixed} {...live}>{children}</ShellInner>
     </MailStateHost>
   );
 }
@@ -491,7 +502,7 @@ function MailStateHost({ scope, probe, freshnessProbe, children }: { scope: stri
   );
 }
 
-function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread }: {
+function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTransport, hostConnection, sendSurfaceMaxTotalBytes, accountSection, mailboxSection, aiSection, billingSection, storageSection, storageCard, liveBodyWire, invitesSection, securitySection, aboutSection, support, desktopSection, devicesSection, defaultMailSection, stageCard, notificationHost, screeningSection, actRulesUnmarked, screenerSuggest, awayTransport, awayIsLocal, awayOnHost, profileImportTransport, consentTransport, imageWire, imagesFromComputer, olderBodyWire, junkWire, trashWire, suggestWire, draftReplyWire, firstRun, mailtoDraft, onMailtoDraftSeeded, onUnread, children }: {
   /** The pull settle watch's read — the same probe `MailStateHost` above provides the strip. */
   mailboxFacts?: MailboxProbe;
   /** See `AppShell`'s prop of this name — absent withholds the organizer notice. */
@@ -555,6 +566,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   mailtoDraft?: ComposePrefill | null;
   onMailtoDraftSeeded?: () => void;
   onUnread?: (unread: number) => void;
+  /** Everything the frame's root holds: the composition stands above it. */
+  children: ReactNode;
 }) {
   /* WHOSE STORED KEYS THIS MOUNT READS AND WRITES: the host's scope, read as the shell mounts and held for the
      life of the mount. The frame mounts everything again under another scope; a shell handed another one throws. */
@@ -629,7 +642,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   const {
     fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, pressWatch,
     toastWithUndo, mutateAndReport, mutateSetAndReport, runArmedUndo, undoToast, screenerRelease,
-    undoLink,
+    undoLink, refusalSentence, dispatchPress, queuedSentence,
   } = useShellDispatch({ engine, reader, toast: hostToast, t, placeLabel, demo, refreshFacts, scope });
   /* Every sentence below leaves through the undo door, so an Undo raised anywhere is one `z` takes. */
   const toast = undoToast;
@@ -694,6 +707,16 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
      `GET /consent` from a fixtures world, and an effect cleanup cannot recall a request. */
   const windowOwners = useMemo(() => windowOwnersOf(facts), [facts]); // the roles; a promotion re-asks (R20-02)
   const consent = useConsentState(!resolvedDemo, scope, consentTransport ?? NONE, settingsStamp, windowOwners);
+  /* ONE PRESS SEAM PER FRAME: this one, handed to the frame's room with the facts and the row's resurface hour, so a
+     reader's place presses through it and its undo windows live for the frame, whatever place is on screen. */
+  useRoomHandOver({
+    seam: {
+      fileAndRefresh, rosterRef, deleting, restoring, refusalCopy, routing, screenerRelease, pressWatch, refusalSentence,
+      dispatchPress, queuedSentence, runArmedUndo, undoToast, toastWithUndo, mutateAndReport, mutateSetAndReport, undoLink,
+    },
+    rows: facts,
+    resurface: { stored: consent.resurfaceTime ?? null, store: consent.setResurfaceTime },
+  });
   const setupHref = useShellSetup(firstRun, resolvedDemo, facts, consent); // setup resumes once per tab (`setup-resume.ts`)
   /**
    * The sync loop's posture, for the folders group's third render: `bootstrapping` is "no drain
@@ -1625,6 +1648,8 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     <MessageChromeProvider value={chrome}>
     <ListGoneProvider value={listGone}>
     <SendReleaseProvider value={releaseConfirmed}>
+    {/* THE STAGE, one element, made here and drawn by `TodaysViews` where the frame keeps today's body. */}
+    <TodaysStage.Provider value={
     <div className="today">
         {demo && !ribbonGone ? (
           <div className="demo-ribbon">
@@ -1643,12 +1668,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             </button>
           </div>
         ) : null}
-
-        {/* A send waiting holds every restart: the update notice greys Restart, and the desktop's shell installs
-            nothing meanwhile (`UpdateLine.tsx`). It draws nothing. */}
-        <SendWaitsRelay api={mailSend} />
-        {/* What the notice slot's "Show" opens: today's own lists, unchanged, in a dialog. */}
-        {todaysShown}
 
           {/* A SETTINGS SECTION ON A NARROW WINDOW: the way back to the section list, which the old top bar carried. */}
           {settingsSection && narrowNow ? (
@@ -2191,7 +2210,7 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
             ) : null}
 
             {effectiveView === "search" ? (
-              <SearchViewLive
+              <SearchView
                 engine={engine}
                 now={now}
                 query={searchQuery}
@@ -2775,6 +2794,18 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
           <span />
         )}
       </Reader>
+    </div>
+    }>
+      {children}
+    </TodaysStage.Provider>
+    {/* WHAT STANDS ABOVE, beside what the frame draws: every overlay of the composition, in a holder that takes no
+        box (`today.css`), so nothing here stands in the frame's layout. */}
+    <div className="today today-above">
+        {/* A send waiting holds every restart: the update notice greys Restart, and the desktop's shell installs
+            nothing meanwhile (`UpdateLine.tsx`). It draws nothing. */}
+        <SendWaitsRelay api={mailSend} />
+        {/* What the notice slot's "Show" opens: today's own lists, unchanged, in a dialog. */}
+        {todaysShown}
 
       {/* QUICK LOOK — the attachment preview, above the reader. Mounted only while open, so its
           overlay-scope key bindings (Esc/←/→/↑/↓) exist exactly when it does, and its pdf.js

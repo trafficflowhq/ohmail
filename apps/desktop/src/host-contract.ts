@@ -62,8 +62,8 @@ export interface DesktopSupplies {
   > & MayBeNone<"firstRun" | "screening" | "autoFiled" | "ownModelAutoSuggest" | "mailboxes"> & {
     readonly consent: { readonly account: Transports["consent"]; readonly standalone: Transports["consent"] };
   };
-  /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. The reader is no entry. */
-  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages" | "reader" | "calendar">>;
+  /** The desktop's own feature, Mailboxes, and the ways out to the browser. Never Invites. The reader, what stands above, the overs and the calendar are no entries. */
+  readonly features: Entries<Exclude<keyof HostContract["features"], "invites" | "places" | "stages" | "reader" | "above" | "overs" | "calendar">>;
   readonly notifications: DeviceNotifications;
   /** The places, the address bar, the window, the look and the way back. */
   readonly frame: FrameSupplies;
@@ -123,6 +123,7 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       seedReview: NONE,
       folderSummary: NONE,
       ownModelAutoSuggest: suggest === "local" ? has.wires.ownModelAutoSuggest : NONE,
+      connect: NONE,
       mailboxes: has.wires.mailboxes,
       // A desktop signed in to a server answers its calendar at the seating; one on its own has none.
       calendar: NONE,
@@ -145,6 +146,8 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       // On its own it changes everything; signed in, a re-sync and a way out; paired, a re-sync alone.
       mailboxes: local ? "here" : paired ? "resyncOnly" : cloud ? "resyncAndOut" : CANNOT.mailboxes,
       language: "install",
+      // No hello is held where this is built: no person on the wire until one is.
+      searchBy: CANNOT.searchBy,
       products: CANNOT.products,
     },
     features: {
@@ -161,7 +164,9 @@ export function desktopHost(engine: Engine, facts: DesktopFacts, has: DesktopSup
       invites: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      overs: has.frame.overs,
       reader: NONE,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

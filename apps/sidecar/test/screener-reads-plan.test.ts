@@ -9,6 +9,7 @@ import { openLocalDb, type OpenLocalDb } from "../src/db.js";
 import { armFirstPageGate, noteFirstPageServed, resetFirstPageGate } from "../src/first-page-gate.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 4 });
 
@@ -81,7 +82,7 @@ afterAll(async () => {
 /** Every statement the store's handle is given while `fn` runs. */
 async function recorded(fn: () => Promise<unknown>): Promise<Array<{ text: string; params: unknown[] }>> {
   const seen: Array<{ text: string; params: unknown[] }> = [];
-  const client = (o.db as unknown as { $client: { query: (...a: unknown[]) => Promise<unknown> } }).$client;
+  const client = pgliteOf(o.db) as unknown as { query: (...a: unknown[]) => Promise<unknown> };
   const orig = client.query;
   client.query = function (this: unknown, text: unknown, params?: unknown, ...rest: unknown[]) {
     seen.push({ text: String(text), params: Array.isArray(params) ? params : [] });
@@ -93,7 +94,7 @@ async function recorded(fn: () => Promise<unknown>): Promise<Array<{ text: strin
 
 interface PlanNode { "Node Type": string; Alias?: string; "Actual Rows": number; "Actual Loops": number; Plans?: PlanNode[] }
 async function plan(s: { text: string; params: unknown[] }): Promise<PlanNode> {
-  const r = rows(await (o.db as any).$client.query(`explain (analyze, format json) ${s.text}`, s.params));
+  const r = rows(await pgliteOf(o.db).query(`explain (analyze, format json) ${s.text}`, s.params));
   const doc = Object.values(r[0])[0] as unknown;
   return (typeof doc === "string" ? JSON.parse(doc) : doc as any)[0].Plan as PlanNode;
 }
@@ -115,7 +116,7 @@ describe("the Screener's reads, by plan", () => {
       expect(walk, "the walk's page statement was not seen").toBeDefined();
       const all = `select count(*) from (${walk!.text.trim().replace(/ limit \$\d+$/, "")}) q`;
       const params = walk!.params.slice(0, -1);
-      const client = (o.db as unknown as { $client: { query: (t: string, p: unknown[]) => Promise<unknown> } }).$client;
+      const client = pgliteOf(o.db) as unknown as { query: (t: string, p: unknown[]) => Promise<unknown> };
       const doc = Object.values(rows(await client.query(`explain (format json) ${all}`, params))[0])[0] as unknown;
       const top = (typeof doc === "string" ? JSON.parse(doc) : doc as any)[0].Plan as { Plans: Array<{ "Plan Rows": number }> };
       const found = Number(Object.values(rows(await client.query(all, params))[0])[0]);

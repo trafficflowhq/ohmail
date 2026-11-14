@@ -352,7 +352,7 @@ apps/desktop/test/host-contract-doors.test.ts	ohmail/package-borders:apps/paired
 apps/desktop/test/journeys-doors.test.tsx	ohmail/declared-dependency	2	desktop-layer
 apps/desktop/test/journeys-doors.test.tsx	ohmail/package-borders:apps/sidecar	2	desktop-layer
 apps/desktop/test/journeys-doors.test.tsx	ohmail/package-borders:apps/webapp	1	desktop-layer
-apps/desktop/test/journeys-host.test.ts	ohmail/declared-dependency	2	desktop-layer
+apps/desktop/test/journeys-host.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/journeys-host.test.ts	ohmail/package-borders:apps/sidecar	2	desktop-layer
 apps/desktop/test/mailto.test.ts	ohmail/declared-dependency	1	desktop-layer
 apps/desktop/test/opencode-go-form.test.tsx	ohmail/declared-dependency	1	desktop-layer
@@ -549,7 +549,6 @@ apps/sidecar/test/standalone-open-read.e2e.test.ts	ohmail/declared-dependency	1	
 apps/sidecar/test/window-writes-survive-sign-out.test.ts	ohmail/package-borders:apps/desktop	1	desktop-engine
 apps/sidecar/test/wire-corpus.gen.test.ts	ohmail/declared-dependency	1	desktop-engine
 apps/webapp/app/(product)/approve/use-approve-door.ts	eslint:unused-directive	2	removals
-apps/webapp/app/(product)/join/MailboxStep.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/(product)/join/invite/use-invite-door.ts	eslint:unused-directive	1	removals
 apps/webapp/app/(product)/join/use-join-door.ts	eslint:unused-directive	4	removals
 apps/webapp/app/(product)/mailbox/MailboxSection.tsx	eslint:unused-directive	2	removals
@@ -566,7 +565,6 @@ apps/webapp/app/shell/FoldersRailGroup.tsx	eslint:unused-directive	2	removals
 apps/webapp/app/shell/OhmarchyOffer.tsx	ohmail/owner-lookup	1	ruling:scope-switch-settings
 apps/webapp/app/shell/ThreadMarks.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/shell/ThreadStrip.tsx	eslint:unused-directive	1	removals
-apps/webapp/app/shell/address-first.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/shell/address-view.ts	eslint:unused-directive	2	removals
 apps/webapp/app/shell/engine-config.ts	ohmail/package-borders:testing	1	removals
 apps/webapp/app/shell/face-mirror.ts	ohmail/owner-lookup	1	ruling:scope-switch-settings
@@ -584,7 +582,7 @@ apps/webapp/app/views/HistoryView.tsx	eslint:unused-directive	2	removals
 apps/webapp/app/views/ReadsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/views/ReceiptsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/views/ScreenerView.tsx	eslint:unused-directive	3	removals
-apps/webapp/app/views/SearchView.tsx	eslint:unused-directive	5	removals
+apps/webapp/app/views/SearchView.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/views/SettingsView.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/views/TrashView.tsx	eslint:unused-directive	2	removals
 apps/webapp/test/api-rewrite.test.ts	ohmail/package-borders:apps/api-vercel	1	lift-a
@@ -932,6 +930,8 @@ packages/app/src/host/panes.ts	prettier	1	lift-a
 packages/app/src/host/session.ts	prettier	1	lift-a
 packages/app/src/host/wires.ts	prettier	1	lift-a
 packages/app/src/keys/touch-keys.css	stylelint:selector-max-type	5	ruling:lift-b-search
+packages/app/src/write/editor/commands.ts	prettier	1	ruling:write-lift
+packages/app/src/write/editor/marks.ts	prettier	1	ruling:write-lift
 packages/app/test/borders.test.ts	prettier	1	lift-a
 packages/app/test/host-contract.test.ts	prettier	1	lift-a
 packages/app/tsconfig.json	prettier	1	lift-a
@@ -1805,9 +1805,7 @@ scripts/perf/speed-check-entry.tsx	ohmail/declared-dependency	2	unassigned
 scripts/perf/view-switch-entry.tsx	ohmail/declared-dependency	2	unassigned
 test/desktop-unsubscribe-note.test.tsx	ohmail/declared-dependency	4	unassigned
 test/journeys/bench/web.ts	eslint:unused-directive	1	journeys
-test/journeys/bench/web.ts	ohmail/declared-dependency	2	journeys
-test/journeys/guards.test.ts	ohmail/declared-dependency	1	journeys
-test/journeys/vocabulary/acts.ts	ohmail/declared-dependency	1	journeys
+test/journeys/bench/web.ts	ohmail/declared-dependency	1	journeys
 test/journeys/vocabulary/world.ts	ohmail/declared-dependency	1	journeys
 test/lane-db-role-deadlines.pg.test.ts	ohmail/declared-dependency	1	unassigned
 test/organizer-environment-reads.test.ts	ohmail/platform-name	2	server-wiring

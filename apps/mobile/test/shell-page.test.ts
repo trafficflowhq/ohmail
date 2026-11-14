@@ -97,8 +97,8 @@ describe("the phone shell's answers, per setting", () => {
     signOut: named("signOut"),
     notifications: named<DeviceNotifications>("notifications"),
     frame: {
-      places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
-      appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
+      places: named("places"), stages: named("stages"), above: named("above"), overs: named("overs"), address: named("address"),
+      window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
     },
     signals: {
       linkIn: named("linkIn"), posture: named("posture"), insets: named("insets"), keyboard: named("keyboard"),
@@ -112,7 +112,7 @@ describe("the phone shell's answers, per setting", () => {
     }, has);
   const NO_WIRE = Object.fromEntries([
     "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk", "trash",
-    "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "mailboxes",
+    "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "ownModelAutoSuggest", "connect", "mailboxes",
     "calendar",
   ].map((w) => [w, NONE]));
   const NO_FEATURE = {
@@ -122,7 +122,9 @@ describe("the phone shell's answers, per setting", () => {
     ].map((f) => [f, NONE])),
     places: has.frame.places,
     stages: has.frame.stages,
+    overs: has.frame.overs,
     reader: NONE,
+    above: has.frame.above,
     calendar: has.frame.calendar,
   };
   const DEVICE = {
@@ -195,11 +197,12 @@ describe("what the page hands the frame", () => {
     expect(told).toEqual(["#/ohbox", "#/ohbox/m/42"]);
   });
 
-  it("mounts no place and no stage in either app, and offers no way back of its own", () => {
+  it("mounts no place, no stage and no over in either app, and offers no way back of its own", () => {
     for (const mounted of [ohmailMounted, ohcalMounted]) {
       const frame = phoneFrameSupplies(mounted, null, () => {}, windowWith(""));
       expect(Object.values(mounted.places).every((p) => p === NONE)).toBe(true);
       expect(Object.values(mounted.stages).every((s) => s === NONE)).toBe(true);
+      expect(frame.overs).toEqual({ palette: NONE, keys: NONE });
       expect(frame.places).toBe(mounted.places);
       expect(frame.stages).toBe(mounted.stages);
       expect(frame.calendar).toBe(NONE);

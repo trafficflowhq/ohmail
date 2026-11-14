@@ -355,7 +355,10 @@ export function policyDifferences(p: PolicyFacts, r: PolicyRow): PolicyDifferenc
   const out: PolicyDifference[] = [];
   if (!p.permissive) out.push({ arm: "policies.shape", detail: "restrictive" });
   if (VERB_OF[p.verb] !== r.verb) out.push({ arm: "policies.shape", detail: `for ${VERB_OF[p.verb] ?? p.verb}, the list says ${r.verb}` });
-  if ([...p.roles].sort().join(",") !== [...r.roles].sort().join(",")) out.push({ arm: "policies.roles", detail: `to ${[...p.roles].sort().join(",")}` });
+  // As a list, name by name: one role whose name holds a comma is not the roles its name spells.
+  const held = [...p.roles].sort();
+  const listed = [...r.roles].sort();
+  if (held.length !== listed.length || held.some((name, i) => name !== listed[i])) out.push({ arm: "policies.roles", detail: `to ${held.join(",")}` });
   const recorded = (p.comment ?? "").split(" ");
   if (recorded.length !== 3 || recorded[0] !== POLICY_COMMENT_TAG) out.push({ arm: "policies.unrecorded", detail: "no record of how it was made" });
   else {
@@ -457,12 +460,14 @@ export const VIEW_REMADE: ReadonlySet<string> = new Set(["options", "fewer colum
  * What a person does about a view the step refuses, said in its refusal: Postgres cannot make a view
  * again over other columns, so the release that changes them drops it first (`DROP VIEW IF EXISTS`
  * in its journal entry, or by hand), in a closed window: until the step makes it again a read of it
- * fails (42P01), and until the roles' apply grants it (42501). Code on a view and a label are
- * dropped by hand. Nothing for the rest (a relation of another kind or owner is the roles' check's
- * first, and named there).
+ * fails (42P01), and until the roles' apply grants it (42501). That is said only where the table
+ * holds every listed column: where it does not (a column renamed by hand), the step could not make
+ * the view again once it was dropped, and the gap is the census's own line (`views.columns`). Code
+ * on a view and a label are dropped by hand. Nothing for the rest (a relation of another kind or
+ * owner is the roles' check's first, and named there).
  */
-export function viewRemedy(v: AccountView, differs: readonly string[]): string {
-  if (differs.includes("columns")) {
+export function viewRemedy(v: AccountView, differs: readonly string[], facts: Pick<LockFacts, "viewTables">): string {
+  if (differs.includes("columns") && viewColumnsWanted(facts, v) !== null) {
     return `Postgres cannot make it again over other columns: drop it first (DROP VIEW IF EXISTS ${viewName(v)}, in the release's journal or by hand), `
       + "in a closed window; the step then makes it again and the roles' apply grants it";
   }

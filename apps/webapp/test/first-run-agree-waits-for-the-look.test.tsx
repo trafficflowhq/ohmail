@@ -4,6 +4,7 @@ import * as React from "react";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { readEngineAsOneText } from "../../../test/support/engine-unit.js";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
@@ -290,7 +291,9 @@ describe("census: every organize press carries the verb it means", () => {
     }
     return out;
   };
-  const code = (rel: string) => withoutComments(readFileSync(join(REPO, rel), "utf8"));
+  const code = (rel: string) => withoutComments(
+    rel === "apps/sidecar/src/engine.ts" ? readEngineAsOneText() : readFileSync(join(REPO, rel), "utf8"),
+  );
   /** A press: a call naming an organize route or an organize method. */
   const PRESS = /host\.organize\(|mailboxApi\.organize\(|organizePath\(mailboxId\)|\/organize`|"\/local\/organizer\/takeover"/g;
 
@@ -306,6 +309,8 @@ describe("census: every organize press carries the verb it means", () => {
     "apps/webapp/app/(product)/mailbox/useCloudFirstRun.ts": { presses: 1, verb: "forwards FirstRun's verb" },
     // Settings → Mailboxes "Organize here" on the web: the hosted door, absent = takeover.
     "apps/webapp/app/(product)/mailbox/MailboxSection.tsx": { presses: 1, verb: "takeover (hosted default)" },
+    // The new Mailboxes pane's web wire, the same press: no body, so the hosted door reads it as a takeover.
+    "apps/webapp/app/(product)/mailbox/mailboxes-wire.ts": { presses: 1, verb: "takeover (hosted default)" },
     // Settings → Mailboxes "Organize from this machine" on the desktop: the takeover route.
     "apps/desktop/src/DesktopMailboxes.tsx": { presses: 1, verb: "takeover (its own route)" },
     // The phone's consent: its door stamps join over every consent and has no takeover verb.

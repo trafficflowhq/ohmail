@@ -18,6 +18,8 @@ import { clock } from "@ohmail/client-engine";
 import { useMailState, useMailboxFacts } from "@ohmail/app-logic/mail-state/mail-state-binding";
 import { FILING_REFUSAL_REASONS, type MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { useHashRoute } from "./routing";
+/* The block's reader moved beside the Mailboxes pane's rules; this file draws it. */
+import { filingGroupsOf as groupsOf, filingWaits as waits, type FilingGroup as Group } from "@ohmail/app-logic/mailboxes/moved";
 
 export interface MailboxFilingsApi {
   read: (mailboxId: string) => Promise<unknown>;
@@ -25,46 +27,9 @@ export interface MailboxFilingsApi {
   leave: (mailboxId: string, folder: string, through: string) => Promise<{ settled: number; remaining?: number }>;
 }
 
-interface Group {
-  folder: string;
-  count: number;
-  /** Deletes waiting to land in Trash: Leave never settles them. */
-  deletes: number;
-  through: string | null;
-  since: string | null;
-  nextAttemptAt: string | null;
-  at: string | null;
-  reasons: Array<{ reason: string | null; count: number }>;
-}
-
 type Say = (key: string, values?: Record<string, string | number>) => string;
 type Read = { k: "loading" } | { k: "read"; groups: Group[] } | { k: "unread" };
 type Note = { k: "retried" | "left"; count: number } | { k: "failed" | "elsewhere" } | null;
-
-const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
-const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-
-/** The wire narrowed: anything that is not the shape reads as unreadable, never as "nothing waits". */
-function groupsOf(body: unknown, mailboxId: string): Group[] | null {
-  const b = body as { mailboxId?: unknown; groups?: unknown } | null;
-  if (!b || b.mailboxId !== mailboxId || !Array.isArray(b.groups)) return null;
-  const out: Group[] = [];
-  for (const g of b.groups as Array<Record<string, unknown>>) {
-    const folder = str(g?.folder);
-    if (folder === null || !Array.isArray(g.reasons)) return null;
-    out.push({
-      folder, count: num(g.count), deletes: num(g.deletes), through: str(g.through), since: str(g.since),
-      nextAttemptAt: str(g.nextAttemptAt), at: str(g.at),
-      reasons: (g.reasons as Array<Record<string, unknown>>).map((r) => ({ reason: str(r?.reason), count: num(r?.count) })),
-    });
-  }
-  return out;
-}
-
-/** Waiting by the strip's rule: stuck or deferred. */
-const waits = (m: MailboxFacts): boolean =>
-  m.status !== "disabled" && m.organizerRole !== "reader"
-  && Boolean(m.filing && ((m.filing.stuck ?? 0) > 0 || m.filing.deferred > 0));
 
 export function MailboxFilings({ api }: { api: MailboxFilingsApi }) {
   const facts = useMailboxFacts();

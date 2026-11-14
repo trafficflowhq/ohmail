@@ -95,22 +95,18 @@ const DOOR_PAGES = ["account/delete", "approve", "authorize-desktop", "join", "j
 const CEREMONY = /\/use-[a-z-]+-door\.ts$|\/mailbox\/(web-step-up\.ts|StepUp\.tsx)$/;
 /** The parts of today's design a door's route draws, each with the task that rebuilds it. */
 const DRAWN: Record<string, string[]> = {
-  // `mailboxes`: the join's mailbox step is today's form, stood in the stage behind `.today` and today's seam sheet.
-  [`${PRODUCT}/join/JoinRoute.tsx`]: [`${PRODUCT}/join/MailboxStep.tsx`],
   // `account`: the wall's password change is today's Settings pane, drawn in place of the wall with today's button and date.
   [`${PRODUCT}/mailbox/WallRoute.tsx`]: [`${PRODUCT}/mailbox/PasswordSection.tsx`, "apps/webapp/app/shell/format.ts", "packages/ui/src/index.ts"],
 };
 /**
  * The doors' modules that still reach both designs. Every door's route and page stays in the lists above, which the
  * two guards below walk; of them only these still reach the old stylesheets since the sending module left the old
- * shell. This list only falls, nothing joins it: a name leaves with the task that ends its reach, the ones DRAWN names
- * (`mailboxes`, `account`) and `removals`.
+ * shell. This list only falls, nothing joins it: a name leaves with the task that ends its reach, the one DRAWN names
+ * (`account`) and `removals`. The join's route and page left with `mailboxes`: its mailbox step is the one connect form.
  */
 const DOOR_MEETS = [
   `${PRODUCT}/account/delete/DeleteAccountRoute.tsx`,
   `${PRODUCT}/account/delete/page.tsx`,
-  `${PRODUCT}/join/JoinRoute.tsx`,
-  `${PRODUCT}/join/page.tsx`,
   `${PRODUCT}/mailbox/WallRoute.tsx`,
 ];
 const MAY_MEET = [...FRAME_MEETS, ...DOOR_MEETS].sort();
@@ -277,9 +273,10 @@ describe("a door on the web", () => {
     expect(drawnBy(files)).toEqual({ ...DRAWN, [route]: ["packages/ui/src/index.ts"] });
   });
 
-  it("every door's page stands on a stage that loads the frame's seam sheet, and the join's, which draws today's form, today's too", () => {
+  it("every door's page stands on a stage that loads the frame's seam sheet, and none loads today's: no door draws today's form", () => {
     expect(unseamed(tree)).toEqual([]);
-    expect(reaching(tree, SEAM_SHEETS[1]).has(`${PRODUCT}/join/page.tsx`)).toBe(true);
+    const todays = reaching(tree, SEAM_SHEETS[1]);
+    expect(DOOR_PAGES.filter((page) => todays.has(page))).toEqual([]);
   });
 
   it("a stage that stops loading the frame's seam sheet is found on every door's page", () => {

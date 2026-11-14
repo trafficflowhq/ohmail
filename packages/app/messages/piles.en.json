@@ -27,6 +27,45 @@
     "runPlaceholder": "Your reply",
     "runReplyAria": "Reply",
     "runExit": "exit",
-    "pileResurfaces": "resurfaces {when}"
+    "pileResurfaces": "resurfaces {when}",
+    "list": {
+      "menu": "List"
+    }
+  },
+  "later": {
+    "title": "Answer Later",
+    "empty": "Nothing to answer later",
+    "switch": {
+      "label": "Piles",
+      "segment": "{name} {count}"
+    },
+    "run": {
+      "start": "Reply Run",
+      "label": "Reply run",
+      "progress": "{step} of {total}",
+      "done": "Done → next",
+      "skip": "Skip",
+      "exit": "Exit",
+      "empty": "Nothing to answer later"
+    },
+    "row": {
+      "done": "Done",
+      "resurfaces": "back {when}"
+    },
+    "stamp": {
+      "yesterday": "yesterday {time}"
+    },
+    "step": {
+      "up": "Previous",
+      "down": "Next"
+    }
+  },
+  "parked": {
+    "title": "Parked",
+    "empty": "Nothing parked"
+  },
+  "resurface": {
+    "title": "Resurface",
+    "empty": "Nothing set to come back"
   }
 }

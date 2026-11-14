@@ -912,7 +912,7 @@ const planNodes = (p: Plan): Plan[] => [p, ...(p.Plans ?? []).flatMap(planNodes)
  * THE RULING'S TEN READS (the views' text ruling's buffers table), each written once over the relations it
  * names: `m` the letters, `s` the search documents, `w` the documents as the word reads key them, and the
  * account. The common page, a word search keyed as the service keys it, a person as sender and as recipient
- * (the product's own recipient key), a typo, a substring of the head terms, the next page by arrival, words
+ * (the product's own recipient key, read from the letters' stored column), a typo, a substring of the head terms, the next page by arrival, words
  * joined to their letters, every document dated by id, a materialized set and a lateral.
  */
 const TEN_READS: Record<string, (r: { m: string; s: string; w: string }, a: string) => string> = {
@@ -923,8 +923,7 @@ const TEN_READS: Record<string, (r: { m: string; s: string; w: string }, a: stri
   word_search: (r, a) => `select s.message_id from ${r.w} s where ((s.account_id)::text = ('${a}'::uuid)::text)
     and (s.head_tsv @@ to_tsquery('simple', 'w7') or s.text_tsv @@ to_tsquery('simple', 'w7')) limit 200`,
   sender: (r, a) => `select m.id from ${r.m} m where m.account_id = '${a}' and lower(m.from_address) = 'p17@example.test' limit 20001`,
-  recipient: (r, a) => `select m.id from ${r.m} m
-    where messages_recipient_keys(m.account_id, m.to_addresses, m.cc_addresses) @> array['${a}'::text || ':' || lower('r14@example.test')] limit 20001`,
+  recipient: (r, a) => `select m.id from ${r.m} m where m.recipient_keys @> array['${a}:r14@example.test'] limit 20001`,
   typo: (r, a) => `select s.message_id from ${r.s} s where s.account_id = '${a}' and 'subjekt w123' <% s.terms limit 200`,
   substring: (r, a) => `select s.message_id from ${r.s} s where s.account_id = '${a}' and split_part(s.terms, chr(31), 1) ilike '%w123 p1%' limit 200`,
   next_page_by_arrival: (r, a) => `select m.id from ${r.m} m where m.account_id = '${a}' and m.deleted_at is null

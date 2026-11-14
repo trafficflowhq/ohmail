@@ -227,6 +227,9 @@ export async function searchInputsFromStore(
   }).from(messages)
     .leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
     .where(and(eq(messages.accountId, accountId), inArray(messages.id, ids)));
+  // In the order asked: the read has none of its own, and the pass writes its documents in this one.
+  const asked = new Map(ids.map((id, i) => [id, i]));
+  rows.sort((a, b) => asked.get(a.id)! - asked.get(b.id)!);
   const namesOf = await fileNamesOf(db, accountId, ids);
   return rows.map((r) => ({ messageId: r.id, input: inputOf(accountId, r, namesOf.get(r.id) ?? [], searchBodyOf(r.text, r.html)) }));
 }

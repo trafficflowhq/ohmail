@@ -7,6 +7,11 @@
  * policy as a header, and the app's build refuses to package a shell that has no manifest
  * (`plugins/shell-assets.js`).
  *
+ * THE DOOR'S PAGE is built beside it: `door.html` and `door.js` (and `door.css`), the second start
+ * page, which stands while no mailbox is open. It is a bundle of its own, so nothing of the scoped
+ * page's engine or stores is in it; it states the same policy, which the native module sends with
+ * every file; and it never carries the bench's door.
+ *
  *   node apps/mobile/scripts/build-shell.mjs            the page every build ships, for the ohmail app
  *   node apps/mobile/scripts/build-shell.mjs --app ohcal    the page for the ohcal app
  *   node apps/mobile/scripts/build-shell.mjs --bench    with the emulator bench's door compiled in
@@ -39,14 +44,19 @@ export const BENCH_MARKER = "ohmail-bench-door";
  * line borrows. A place registered on the phone adds the namespaces it reads here, in the same change.
  */
 export const PAGE_NAMESPACES = ["frame", "mailboxes"];
+/**
+ * The namespaces the door's page carries. None yet: its two pages are not built into it. A page of the door adds
+ * the namespaces it reads here, in the same change.
+ */
+export const DOOR_NAMESPACES = [];
 /** The module the build makes of the page's sentences from the catalogue's place files; it answers web/src's `./catalogue`. */
 const CATALOGUE_MODULE = "ohmail-shell:catalogue";
 
-/** The page's sentences in both languages, each namespace read from the place file that holds it. */
-export function pageCatalogue(messages = MESSAGES) {
+/** A page's sentences in both languages, each namespace read from the place file that holds it. */
+export function pageCatalogue(messages = MESSAGES, namespaces = PAGE_NAMESPACES) {
   const places = JSON.parse(readFileSync(join(messages, "places.json"), "utf8"));
   const out = { en: {}, de: {} };
-  for (const ns of PAGE_NAMESPACES) {
+  for (const ns of namespaces) {
     const place = Object.keys(places).find((p) => places[p].includes(ns));
     if (!place) throw new Error(`build-shell: the namespace "${ns}" is in no place of places.json`);
     for (const lang of ["en", "de"]) {
@@ -73,18 +83,18 @@ function mountedOf(app) {
   };
 }
 
-/** Answers the page's catalogue import with {@link pageCatalogue}, read at build time. */
-const catalogue = {
+/** Answers a page's catalogue import (`./catalogue` in its own folder) with {@link pageCatalogue}, read at build time. */
+const catalogueOf = (folder, namespaces) => ({
   name: "shell-catalogue",
   setup(b) {
     b.onResolve({ filter: /^\.\/catalogue$/ }, (args) =>
-      args.resolveDir === join(WEB, "src") ? { path: CATALOGUE_MODULE, namespace: "shell-catalogue" } : undefined);
+      args.resolveDir === folder ? { path: CATALOGUE_MODULE, namespace: "shell-catalogue" } : undefined);
     b.onLoad({ filter: /.*/, namespace: "shell-catalogue" }, () => ({
-      contents: `export default ${JSON.stringify(pageCatalogue())};`,
+      contents: `export default ${JSON.stringify(pageCatalogue(MESSAGES, namespaces))};`,
       loader: "js",
     }));
   },
-};
+});
 
 /** What the page's policy must say, directive by directive, for the build to ship it. */
 const REQUIRED = {
@@ -132,22 +142,21 @@ function filesUnder(dir) {
   });
 }
 
-export async function buildShell({ out = SHELL_OUT, bench = false, app = "ohmail" } = {}) {
-  const mounted = mountedOf(app);
-  const template = readFileSync(join(WEB, "index.html"), "utf8");
-  const csp = policyOf(template);
-  rmSync(out, { recursive: true, force: true });
-  mkdirSync(out, { recursive: true });
+/**
+ * One page: its bundle (a chunk of its own, never shared with the other page's), its stylesheet when it imports
+ * styles, and its markup with no inline script. Answers what went into the bundle, by path from the repository's root.
+ */
+async function page({ out, name, entry, template, define, plugins }) {
   const result = await build({
-    entryPoints: [join(WEB, "src", "main.tsx")],
-    outfile: join(out, "shell.js"),
+    entryPoints: [entry],
+    outfile: join(out, `${name}.js`),
     bundle: true,
     format: "esm",
     platform: "browser",
     target: ["es2020", "chrome120", "safari15"],
     jsx: "automatic",
     conditions: ["ohmail-source"],
-    define: { "process.env.NODE_ENV": '"production"', __OHMAIL_BENCH__: bench ? "true" : "false" },
+    define: { "process.env.NODE_ENV": '"production"', ...define },
     loader: { ".woff2": "file", ".png": "file", ".svg": "file", ".webp": "file" },
     assetNames: "assets/[name]-[hash]",
     minify: true,
@@ -155,22 +164,44 @@ export async function buildShell({ out = SHELL_OUT, bench = false, app = "ohmail
     sourcemap: false,
     metafile: true,
     logLevel: "warning",
-    plugins: [catalogue, mounted],
+    plugins,
+  });
+  const styled = Object.keys(result.metafile.outputs).some((f) => f.endsWith(`${name}.css`));
+  const html = template.markup.replace("<!--styles-->", styled ? `<link rel="stylesheet" href="./${name}.css">` : "");
+  refuseInlineScript(html);
+  writeFileSync(join(out, template.file), html);
+  return Object.keys(result.metafile.inputs).map((p) => relative(join(MOBILE, "..", ".."), p).split("\\").join("/"));
+}
+
+export async function buildShell({ out = SHELL_OUT, bench = false, app = "ohmail" } = {}) {
+  const mounted = mountedOf(app);
+  const template = readFileSync(join(WEB, "index.html"), "utf8");
+  const csp = policyOf(template);
+  /* The door's page states the page's own policy, word for word: native sends that one policy with every file. */
+  const doorTemplate = readFileSync(join(WEB, "door.html"), "utf8");
+  if (policyOf(doorTemplate) !== csp) throw new Error("build-shell: door.html must state the policy index.html states");
+  rmSync(out, { recursive: true, force: true });
+  mkdirSync(out, { recursive: true });
+  const inputs = await page({
+    out, name: "shell", entry: join(WEB, "src", "main.tsx"), template: { file: "index.html", markup: template },
+    define: { __OHMAIL_BENCH__: bench ? "true" : "false" },
+    plugins: [catalogueOf(join(WEB, "src"), PAGE_NAMESPACES), mounted],
   });
   const js = readFileSync(join(out, "shell.js"), "utf8");
   if (!bench && js.includes(BENCH_MARKER)) throw new Error("build-shell: the bench's door is in a release page");
-  const styled = Object.keys(result.metafile.outputs).some((f) => f.endsWith("shell.css"));
-  const html = template.replace("<!--styles-->", styled ? '<link rel="stylesheet" href="./shell.css">' : "");
-  refuseInlineScript(html);
-  writeFileSync(join(out, "index.html"), html);
+  const doorInputs = await page({
+    out, name: "door", entry: join(WEB, "src", "door", "main.tsx"), template: { file: "door.html", markup: doorTemplate },
+    define: {},
+    plugins: [catalogueOf(join(WEB, "src", "door"), DOOR_NAMESPACES)],
+  });
+  if (readFileSync(join(out, "door.js"), "utf8").includes(BENCH_MARKER)) throw new Error("build-shell: the bench's door is in the door's page");
   const files = Object.fromEntries(
     filesUnder(out).map((path) => [relative(out, path).split("\\").join("/"), createHash("sha256").update(readFileSync(path)).digest("hex")]),
   );
-  const manifest = { app, csp, bench, files };
+  const manifest = { app, csp, bench, pages: { shell: "index.html", door: "door.html" }, files };
   writeFileSync(join(out, "shell.manifest.json"), `${JSON.stringify(manifest, null, 1)}\n`);
-  /* What went into the bundle, for whoever builds it to read: the manifest ships, this does not. */
-  const inputs = Object.keys(result.metafile.inputs).map((p) => relative(join(MOBILE, "..", ".."), p).split("\\").join("/"));
-  return { ...manifest, inputs };
+  /* What went into each bundle, for whoever builds it to read: the manifest ships, these do not. */
+  return { ...manifest, inputs, doorInputs };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

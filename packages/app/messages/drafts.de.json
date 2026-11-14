@@ -16,7 +16,7 @@
     "sendAgain": "Noch einmal senden",
     "itWasSent": "Sie wurde gesendet — ausblenden",
     "resolveFailed": "Das hat den Server nicht erreicht. Die Nachricht wird weiter hier festgehalten.",
-    "resolveStillRunning": "Dieser Versand l\u00e4uft m\u00f6glicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
+    "resolveStillRunning": "Dieser Versand läuft möglicherweise noch. Du kannst ihn beantworten, sobald er beendet ist.",
     "noSubject": "(kein Betreff)",
     "noRecipient": "Noch kein Empfänger",
     "isReply": "Antwort",
@@ -33,7 +33,7 @@
     "discardRefused": "Nicht verworfen: {reason}",
     "discardRefusedUnnamed": "Das hat nicht geklappt, und der Server hat nicht gesagt warum. Der Entwurf liegt weiter hier.",
     "discardQueued": "Noch nicht verworfen: Dieser Browser konnte deinen Account nicht erreichen. Wir versuchen es weiter.",
-    "discardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn beim n\u00e4chsten Durchlauf.",
+    "discardAwaitingOrganizer": "Angefragt. Die Installation, die dieses Postfach organisiert, verwirft ihn beim nächsten Durchlauf.",
     "emptyTitle": "Nichts halb Geschriebenes",
     "emptyHint": "Fang eine Nachricht an — nach einem Moment liegt sie hier, auf diesem Gerät und auf allen anderen.",
     "scheduledTitle": "Geplant",
@@ -46,6 +46,13 @@
     "filesNotKeptNote": "{count, plural, one {Ihre Datei wurde nicht aufbewahrt. Hänge sie vor dem Senden erneut an.} other {Ihre # Dateien wurden nicht aufbewahrt. Hänge sie vor dem Senden erneut an.}}",
     "scheduleCancelled": "Geplanter Versand abgebrochen. Die Nachricht liegt in den Entwürfen.",
     "scheduleCancelTooLate": "Zu spät zum Abbrechen — diese Nachricht wird gerade gesendet.",
-    "scheduleCancelQueued": "Keine Verbindung — das Abbrechen hat den Server noch nicht erreicht. Die Nachricht ist bis dahin weiterhin geplant."
+    "scheduleCancelQueued": "Keine Verbindung — das Abbrechen hat den Server noch nicht erreicht. Die Nachricht ist bis dahin weiterhin geplant.",
+    "rowTo": "An {name}",
+    "listLoading": "Deine Entwürfe werden geladen",
+    "heldActs": "Ein nicht bestätigter Versand",
+    "heldItWasSent": "Es wurde gesendet",
+    "reportDiscarded": "Verworfen",
+    "reportUndo": "Rückgängig",
+    "listMenu": "Liste"
   }
 }

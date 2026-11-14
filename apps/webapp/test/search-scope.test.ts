@@ -125,7 +125,11 @@ afterEach(async () => {
  * search memo. Passing a constant here would make every re-render show the first pass's
  * result — which is how the hydration case below silently "passed" by never re-searching.
  */
+/** The index revision a case hands, which an engine built to hold it reports (`bigEngine`). */
+let handedRev = 0;
+
 async function render(engine: OhmailEngine, query: string, version = 1, indexRev = 0): Promise<void> {
+  handedRev = indexRev;
   await act(async () => {
     root.render(
       // `children` goes in the PROPS object, not as a third argument: `apps/webapp` is one of
@@ -347,7 +351,11 @@ describe("the sentence while the index is still filling", () => {
     for (let i = 0; i < MANY; i++) {
       rows.push(msg({ id: `m-${i}`, subject: `Kingfisher invoice ${i}` }));
     }
-    return engineWith(rows, { searchServer: async () => new Promise(() => {}) } as unknown as Partial<EngineAdapter>);
+    const engine = await engineWith(rows, { searchServer: async () => new Promise(() => {}) } as unknown as Partial<EngineAdapter>);
+    /* The list reads the index's revision off the engine itself: held at the one the case hands, so the first paint
+       is the one before the build settles, and the case says when the settled index is read. */
+    engine.searchIndexRevision = () => handedRev;
+    return engine;
   }
 
   it("says it is still reading rather than that nothing matched", async () => {

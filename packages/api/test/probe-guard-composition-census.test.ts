@@ -1,8 +1,9 @@
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readdirSync, statSync, existsSync } from "node:fs";
 import { extname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
+import { isEnginePart, readAsUnit } from "../../../test/support/engine-unit.js";
 
 /**
  * EVERY FINISHED COMPOSITION WIRES THE SSRF GUARD (review 020, BACKEND L2). `probeHostGuardFor`
@@ -39,8 +40,8 @@ function sources(dir: string, into: { file: string; code: string }[] = []): { fi
     if (statSync(p).isDirectory()) {
       if (name === "node_modules" || name === "dist" || name === "build" || name === "test") continue;
       sources(p, into);
-    } else if (extname(name) === ".ts" && !name.endsWith(".test.ts")) {
-      into.push({ file: relative(REPO, p), code: withoutComments(readFileSync(p, "utf8")) as string });
+    } else if (extname(name) === ".ts" && !name.endsWith(".test.ts") && !isEnginePart(p)) {
+      into.push({ file: relative(REPO, p), code: withoutComments(readAsUnit(p)) as string });
     }
   }
   return into;

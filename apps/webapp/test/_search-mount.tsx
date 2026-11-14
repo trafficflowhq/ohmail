@@ -95,3 +95,57 @@ export function mountSearch(engine: OhmailEngine, query: string, now = new Date(
     },
   };
 }
+
+/**
+ * A PERSON'S VISIT TO SEARCH, by what they can do: type a question, press Enter, press a facet by its name, choose an
+ * order by its name, scroll to the list's end. The search screen's calls-per-setting test drives it; when the screen
+ * is swapped, this mount is re-pointed and the test is not edited.
+ */
+export interface SearchVisit {
+  type: (q: string) => void;
+  enter: () => void;
+  facet: (name: string) => boolean;
+  sort: (order: "relevance" | "date_desc" | "date_asc" | "mailbox" | "sender") => void;
+  scrollEnd: () => void;
+  unmount: () => void;
+}
+
+export function mountSearchVisit(engine: OhmailEngine, now: Date): SearchVisit {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  const door: { type?: (q: string) => void } = {};
+  function Live() {
+    const [query, setQuery] = React.useState("");
+    door.type = setQuery;
+    return <SearchView engine={engine} version={1} indexRev={0} now={now} query={query} onQuery={setQuery} onOpen={() => {}} />;
+  }
+  root.render(
+    <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC" now={now}>
+      <KeymapProvider>
+        <Live />
+      </KeymapProvider>
+    </NextIntlClientProvider>,
+  );
+  const box = () => host.querySelector<HTMLInputElement>(`input[aria-label="${messages.search.aria}"]`);
+  return {
+    type: (q) => door.type!(q),
+    enter: () => box()!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })),
+    facet: (name) => {
+      const b = [...host.querySelectorAll<HTMLButtonElement>("button[aria-pressed]")].find((x) => (x.textContent ?? "").includes(name));
+      b?.click();
+      return b !== undefined;
+    },
+    sort: (order) => {
+      const select = host.querySelector<HTMLSelectElement>("select")!;
+      const set = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      set.call(select, order);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    scrollEnd: () => host.querySelector('[role="list"]')?.closest(".scroller")?.dispatchEvent(new Event("scroll")),
+    unmount: () => {
+      root.unmount();
+      host.remove();
+    },
+  };
+}

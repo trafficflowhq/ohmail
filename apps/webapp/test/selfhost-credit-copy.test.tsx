@@ -51,8 +51,8 @@ function render(node: React.ReactNode, opts: { locale: "en" | "de"; managed?: bo
 }
 
 const offered = (): DraftReplyControl => ({
-  phase: "offered", messageId: "m1", cost: DRAFT_REPLY_COST_CREDITS, notice: null,
-  open: noop, cancel: noop, confirm: noop,
+  offered: true, phase: "offered", messageId: "m1", cost: DRAFT_REPLY_COST_CREDITS, notice: null,
+  open: noop, cancel: noop, confirm: noop, press: noop, fromText: "none", letter: "none", letterId: "letter:new", own: new Map(), keep: noop, forget: noop, moved: noop, restore: noop,
 });
 const draftCard = () => (
   <DraftReplyCard chrome={{ control: offered(), pending: null, resolve: noop } as never} messageId="m1" />

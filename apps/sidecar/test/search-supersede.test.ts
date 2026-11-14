@@ -11,6 +11,7 @@ import type { CloudAuth } from "../src/cloud-auth.js";
 import type { CloudMirror } from "../src/cloud-mirror.js";
 import { PGLITE_STANDUP_BUDGET_MS } from "./pglite-budget.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 vi.setConfig({ testTimeout: PGLITE_STANDUP_BUDGET_MS * 2 });
 
@@ -79,7 +80,7 @@ async function park(s: Sidecar): Promise<() => Promise<void>> {
 
 /** Every statement PGlite runs, by its text: a simple query's, or an extended query's Parse. */
 function statements(s: Sidecar, before?: (text: string) => void): string[] {
-  const client = (s.db as unknown as { session: { client: { execProtocol(m: Uint8Array, o?: unknown): Promise<unknown> } } }).session.client;
+  const client = pgliteOf(s.db) as unknown as { execProtocol(m: Uint8Array, o?: unknown): Promise<unknown> };
   const log: string[] = [];
   const real = client.execProtocol.bind(client);
   client.execProtocol = (m, o) => {

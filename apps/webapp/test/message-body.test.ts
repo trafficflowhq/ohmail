@@ -75,14 +75,14 @@ async function docFor(
 }
 
 /** Mount the component and hand back the container `MessagePane` wraps it in. */
-async function render(props: Parameters<Mod["MessageBody"]>[0]): Promise<HTMLDivElement> {
+async function render(props: Omit<Parameters<Mod["MessageBody"]>[0], "owner">): Promise<HTMLDivElement> {
   await unmount();
   const { MessageBody } = await mod();
   host = document.createElement("div");
   host.className = "msg-body";
   document.body.appendChild(host);
   root = createRoot(host);
-  await act(async () => { root!.render(h(MessageBody, props)); });
+  await act(async () => { root!.render(h(MessageBody, { ...props, owner: null })); });
   return host;
 }
 

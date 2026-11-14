@@ -63,6 +63,8 @@ export interface ServerHello {
   features: {
     staging: boolean; ai: boolean; pairing: boolean;
     accountHeader?: boolean; remoteImages?: boolean;
+    /** Its search takes a person, unread and the days; read as `=== true`, as `remoteImages` is. */
+    searchPeople?: boolean;
   };
 }
 

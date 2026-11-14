@@ -121,6 +121,7 @@ apps/mobile/test/death-nobody-heard.test.ts	source-text	reads source as text (ts
 apps/mobile/test/diagnostic-file.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/disabled-control-dims.test.ts	source-text	reads source as text (ts, tsx)	layer 2	phone-screens	
 apps/mobile/test/domain-card-files-the-domain.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
+apps/mobile/test/door-page.test.ts	artifact	reads what was built: the door's page, its policy, its manifest and its bundle's inputs	layer 5	phone-screens	
 apps/mobile/test/doorbell-cap.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/doors-answer-under-its-option.test.ts	source-text	reads source as text (tsx)	layer 2	phone-screens	
 apps/mobile/test/doors.test.ts	source-text	reads source as text (js, mjs, ts, tsx)	layer 2	phone-screens	
@@ -654,6 +655,7 @@ apps/webapp/test/first-run-stale-holder.test.tsx	source-text	reads source as tex
 apps/webapp/test/fold-band-ladder-polish.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/folders-rail.test.tsx	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/forward-always-offered.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	removals	
+apps/webapp/test/frame/first-run-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the web shell in the frame at its first run, run in Chromium	layer 2	frame	
 apps/webapp/test/frame/seam-in-a-browser.test.ts	source-text	reads source as text (css): the shipped sheets, laid out in Chromium	layer 2	frame	
 apps/webapp/test/frame/todays-selection-in-a-browser.test.ts	source-text	reads its own bundle as text (css, js): the demo's page and the product's sheets, run in Chromium	layer 2	frame	
 apps/webapp/test/freshness-first-frame.test.tsx	behaviour	a copy stale by days says so at the first frame; on a desktop whose host is quiet the host's line speaks instead	layer 1: red with catching up ranked above the host's silence	frame	held:packages/app/test/frame/connection.test.tsx#lets the host's silence quiet the catching up
@@ -790,9 +792,11 @@ apps/webapp/test/screener-held-body-door.test.tsx	source-text	reads source as te
 apps/webapp/test/screener-last-decision-narrow.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screener-row-actions-overlay.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screening-count-is-what-you-gain.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
+apps/webapp/test/search-calls-per-setting.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	search	
 apps/webapp/test/search-locate.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	search	
 apps/webapp/test/search-open-exact.test.tsx	source-text	reads source as text (tsx)	layer 2	search	
 apps/webapp/test/search-render-budget.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	removals	
+apps/webapp/test/search-screen/german-in-a-browser.test.ts	artifact	builds Search's states page (the feature bundled, the tokens' sheets) and reads the comparison's manifest for every state's window, and draws each in German and English at Text size 1.5 in a real browser	none	search	
 apps/webapp/test/secondary-ink-contrast.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/security-headers.test.ts	source-text	reads source as text (js, ts)	layer 2	removals	
 apps/webapp/test/seed-offer-needs-a-mailbox.test.tsx	source-text	reads source as text (tsx)	layer 2	mailboxes	
@@ -1045,6 +1049,7 @@ packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text 
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
+packages/app/test/compare/write-declared.test.ts	data	reads data files (json): the comparison's registry and write's declared rows	none	write	
 packages/app/test/doors/own-classes.test.tsx	source-text	reads source as text (css): the classes today's sheets style, against every class the doors draw	layer 2	removals	
 packages/app/test/doors/under-todays-sheets.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium against the doors' own	layer 2	removals	
 packages/app/test/frame/notice-bar-in-a-browser.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium	layer 2	frame	
@@ -1052,10 +1057,13 @@ packages/app/test/frame/own-classes.test.tsx	source-text	reads source as text (c
 packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	frame	
 packages/app/test/frame/seam.test.ts	artifact	reads generated files (css): the seam sheets against what their script writes	layer 5	frame	
 packages/app/test/month/range-fit-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts and the views' own sheets: laid out in Chromium	layer 2	cal-views	
+packages/app/test/states/connect-states.test.tsx	data	reads data files (json): the comparison's registry and its declared rows; its opener's page builder is never called here	none	mailboxes	
 packages/app/test/states/ohbox-window-in-a-browser.test.ts	artifact	builds the Ohbox's states page (the feature bundled, the tokens' sheets) and reads its list window in a real browser	none	ohbox	
+packages/app/test/states/places-in-a-browser.test.ts	artifact	builds the places' states page (the places bundled, the tokens' sheets), reads the comparison's registry and manifest for every place state's window, and draws each in English and in German in a real browser	none	places	
 packages/app/test/states/reader-german-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and reads the comparison's manifest for every reading state's window, and draws each in German and English in a real browser	none	reader	
 packages/app/test/states/reader-read-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and reads the read rule and the wide window in a real browser	none	reader	
 packages/app/test/states/reader-requests-in-a-browser.test.ts	artifact	builds the reader's states page (the feature bundled, the tokens' sheets) and records what it asks for in a real browser	none	reader	
+packages/app/test/states/streams-read-in-a-browser.test.ts	artifact	builds the streams' states page (the place bundled, the tokens' sheets) and reads the read rule in a real browser	none	places	
 packages/app/test/states/touch-in-a-browser.test.ts	artifact	builds the touch layer's page (the feature bundled, the tokens' sheets) and reads its list under a finger in a real browser	none	phone-touch	
 packages/app/test/week/time-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	cal-views	
 packages/cal-core/test/calendar.test.ts	data	reads files it wrote itself	none	cal-core	
@@ -1374,6 +1382,7 @@ test/diagnostics-census.test.ts	source-text	an import census: reads source as te
 test/dockerignore-carries-patches.test.ts	source-text	an import census: reads source as text (mjs, ts)	ohmail/package-borders	tools	
 test/drizzle-identifier-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/drop-database-sessions.test.ts	source-text	reads source as text (mjs, ts)	layer 5	unassigned	
+test/engine-unit.test.ts	source-text	reads source as text (ts): the desktop engine's door, through its helper; and files it wrote itself	layer 1	desktop-engine	
 test/engine-version-baked.test.ts	data	reads data files (json)	none	unassigned	
 test/erase-doors-census.test.ts	source-text	reads source as text (ts)	layer 5	unassigned	
 test/every-dial-is-guarded.test.ts	source-text	an import census: reads source as text (ts)	bundle contents	tools	
@@ -1398,12 +1407,14 @@ test/journeys/journeys/drafts.journeys.test.ts	data	through test/journeys/bench/
 test/journeys/journeys/erase.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/first-run.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/gate.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/gate.sign-in.journeys.test.ts	data	through test/journeys/bench/far-end.ts, test/journeys/vocabulary/catalogue.ts: reads the stack's handover and the invites it took; the message catalogue	none	journeys	
 test/journeys/journeys/history.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/ohbox.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/reader.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/reads.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/receipts.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/screener.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
+test/journeys/journeys/screener.mail.journeys.test.ts	data	through test/journeys/bench/far-end.ts, test/journeys/vocabulary/catalogue.ts: reads the stack's handover and the invites it took; the message catalogue	none	journeys	
 test/journeys/journeys/search.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/settings-about.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	
 test/journeys/journeys/settings-account.journeys.test.ts	data	through test/journeys/bench/web.ts, test/journeys/vocabulary/catalogue.ts: reads the bench's own build folder; the message catalogue	none	journeys	

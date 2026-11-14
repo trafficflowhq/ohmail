@@ -1,7 +1,7 @@
 import { EngineLocalSearch } from "./local-search.js";
 import { SEARCH_WARM_IDLE_MS } from "./options.js";
 import {
-  DIRECTION_UNSUPPORTED, errorClassOf, estimateFrom, indexedOf, type ReadySearch, SERVER_ADDRESS_DIRECTIONS,
+  DIRECTION_UNSUPPORTED, errorClassOf, estimateFrom, filterKey, filtersSet, indexedOf, type ReadySearch, SERVER_ADDRESS_DIRECTIONS,
   type ServerAddressDirection, type ServerAddressOpts, type ServerAddressOutcome, type ServerEstimateOutcome,
   type ServerSearchOpts, type ServerSearchOutcome, type ServerSearchPart,
 } from "./server-wire.js";
@@ -61,7 +61,8 @@ export abstract class EngineArchive extends EngineLocalSearch {
     const fn = this.serverSearchFn;
     if (fn === null) return { state: "unavailable" };
     const q = query.trim();
-    if (q === "") {
+    /* No words and no filter is no question; no words with a filter is every letter the filters keep. */
+    if (q === "" && !filtersSet(opts.filters)) {
       const none: ReadySearch = {
         state: "ready", items: [], total: 0, tier: "exact", totalExact: true, ms: null,
         nextCursor: null, bounded: false, indexed: null, facets: null,
@@ -80,7 +81,7 @@ export abstract class EngineArchive extends EngineLocalSearch {
     const f = opts.filters;
     const key = JSON.stringify([
       opts.limit ?? null, opts.sort ?? null, opts.parts ?? null, opts.cursor ?? null,
-      f ? [f.folder ?? null, f.sender ?? null, f.hasAttachments ?? null] : null, q,
+      filterKey(f), q,
       // A retyped question never joins an older one's request, which a newer one may have dropped.
       ...(lane ? [`${lane.id}.${lane.generation}`] : []),
     ]);

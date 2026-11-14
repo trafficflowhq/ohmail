@@ -134,6 +134,8 @@ function Screens() {
         >
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="shell" options={{ animation: "none", gestureEnabled: false }} />
+          {/* The door's page: the ways in and the list of servers under the shell. It leaves by its own acts. */}
+          <Stack.Screen name="door" options={{ animation: "none", gestureEnabled: false }} />
           {/* New mail is a sheet over the screen it was opened from, never a page of its own. */}
           <Stack.Screen
             name="compose"

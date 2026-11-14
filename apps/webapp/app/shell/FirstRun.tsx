@@ -34,9 +34,18 @@ import { PlaintextConsent, plaintextClaims, sameServerHost } from "./PlaintextCo
 import { CertificateTrust, certificateOfferOf, trustClaims, type TrustOffer } from "./CertificateTrust";
 import { refusalCopy, type RefusalCopyOptions } from "./server-refusal";
 import {
-  deriveOnboardingStep, importOverOf, onboardingPath, sendingLine, sendingPlaintextOffered,
+  importOverOf, onboardingPath, sendingLine, sendingPlaintextOffered,
   type OnboardingFacts, type OnboardingStep,
 } from "@ohmail/app-logic/doors/onboarding";
+/* The stage's pure rules moved beside the new first run's; this file re-exports the ones it exported. */
+import {
+  DECIDE_LEGEND, HOLDER_CHECK_MS, HOLDER_REREAD_MS, decisionCountSentence, firstRunStep, firstSentence, holderName,
+  initialWindow, nextStep, raiseStamp, railFor, type WindowChoice,
+} from "@ohmail/app-logic/mailboxes/moved";
+export {
+  HOLDER_CHECK_MS, HOLDER_REREAD_MS, decisionCountSentence, firstRunStep, initialWindow, nextStep, raiseStamp,
+  readIsNotOlder,
+} from "@ohmail/app-logic/mailboxes/moved";
 import { AGREE_REREAD_MS, AGREE_SWEEP_MS, firstRunImportOver } from "@ohmail/app-logic/doors/first-run-queue-settle";
 import type {
   FirstRunDecisionCount, FirstRunHost, FirstRunMailboxInput, FirstRunOrganizeOutcome, FirstRunProbeOk,
@@ -76,47 +85,6 @@ const STEP_UP_STEP: Record<Exclude<StepUpPress, "forget">, OnboardingStep> = {
 };
 
 /**
- * THE RAIL — seven groups over eleven screens, because the rail names PHASES and several
- * screens are two halves of one phase (welcome/mailbox/elsewhere are all "get the mailbox in";
- * ai/provider are one question and its answer; summary/pair are both "done").
- *
- * Ordered, and the order is `onboardingPath`'s: a rail whose order disagreed with the path's
- * would light a dot the Back button walks away from.
- */
-const ALL_RAIL: Array<{ id: string; steps: OnboardingStep[] }> = [
-  { id: "mailbox", steps: ["welcome", "mailbox", "elsewhere"] },
-  { id: "organize", steps: ["consent"] },
-  { id: "history", steps: ["window"] },
-  { id: "ai", steps: ["ai", "provider"] },
-  { id: "pull", steps: ["pull"] },
-  { id: "decide", steps: ["decide"] },
-  { id: "done", steps: ["summary", "pair"] },
-];
-
-/**
- * The rail this run actually walks — the groups above, filtered by the path. The list above is
- * every phase the flow HAS, not every phase a run walks: the rail used to draw all seven
- * whatever the path said, promising phases that never arrive and an `n / 7` total the person
- * never reaches (visible on the ADD run — no AI question, no pairing — and already wrong on a
- * run whose empty Screener queue skips `decide` silently). A phase survives when the path still
- * contains at least one of its steps, which keeps the groups meaningful: `ai`/`provider` are
- * one question and its answer, and a door with the question but not the form still has the
- * phase.
- */
-function railFor(path: readonly OnboardingStep[]): Array<{ id: string; steps: OnboardingStep[] }> {
-  return ALL_RAIL.filter((r) => r.steps.some((step) => path.includes(step)));
-}
-
-/** The five destinations the guided decision offers, with the keycap each one wears. */
-const DECIDE_LEGEND: Array<{ key: string; copy: "decideOhbox" | "decideReads" | "decideReceipts" | "decideScreened" | "decideSpam" }> = [
-  { key: "o", copy: "decideOhbox" },
-  { key: "r", copy: "decideReads" },
-  { key: "c", copy: "decideReceipts" },
-  { key: "n", copy: "decideScreened" },
-  { key: "x", copy: "decideSpam" },
-];
-
-/**
  * HOW LONG A WRITE WAITS FOR THE READ THAT MAKES IT VISIBLE. One budget, entered at the top of
  * every write, so no segment of this flow is unbounded: past it the stage paints over whatever
  * the facts say, which is the behaviour before this wait existed.
@@ -128,16 +96,6 @@ const SETTLE_MS = 4_000;
  * least this, and at least ten times as long as the last read took, so the reads cost a tenth of the time.
  */
 const COUNT_REREAD_MS = 5_000;
-
-/**
- * HOW LONG SETUP READS AGAIN WHILE IT WAITS FOR THE DOOR'S FIRST LOOK AT WHO HOLDS THE MAILBOX.
- * Past it the wait says it is slow and offers one more read; it never offers consent or Agree
- * over a look that has not answered.
- */
-export const HOLDER_CHECK_MS = 60_000;
-
-/** How often setup reads the facts again while it waits for that look. */
-export const HOLDER_REREAD_MS = 2_000;
 
 /**
  * TESTS A SERVER ON THIS COMPUTER IS STILL HOLDING, on the long-wait door: kept outside the form,
@@ -155,10 +113,6 @@ const subscribeHeld = (tell: () => void): (() => void) => {
   return () => { heldLocalListeners.delete(tell); };
 };
 const useHeldLocalTests = (): number => useSyncExternalStore(subscribeHeld, () => heldLocalTests, () => 0);
-
-/** The history-depth options. `365` is the default and wears the word for it. */
-const WINDOWS = ["90", "180", "365", "all"] as const;
-type WindowChoice = (typeof WINDOWS)[number];
 
 /** The one sender the guided decision is about, and what a decision on it does. */
 export interface FirstRunDecideSubject {
@@ -301,222 +255,6 @@ export interface FirstRunProps {
    * drawn ON over a write that failed.
    */
   screening?: { dormancyDays: number; scope: "window" | "all_time" };
-}
-
-/**
- * WHICH SCREEN IS ON, or `null` when the flow must not be open at all.
- *
- * Exported for the tests, which drive this table directly rather than through a render: the
- * cursor/derivation interaction is the part with rows, and rows are what a table test is for.
- */
-/**
- * Is this read at least as new as the one that showed the holder? The whole ordering rule, with
- * its three degenerate cases together: NO BASELINE — the holder read carried no stamp (nothing
- * had happened to the mailbox, or a pre-column build); nothing to order against, so the explicit
- * verdict stands — the pre-ordering behaviour, kept rather than a refusal that could park
- * somebody on the claim question for ever. A BASELINE AND NO STAMP NOW — the row went backwards,
- * which only a read issued before the stamp existed can do: OLDER. BOTH — later or equal is
- * current (equal because a read can repeat a stamp while another column moves). Unparseable is
- * treated as absent on both sides.
- */
-export function readIsNotOlder(readAt?: string | null, baseline?: string | null): boolean {
-  const base = baseline ? Date.parse(baseline) : Number.NaN;
-  if (!Number.isFinite(base)) return true;
-  const seen = readAt ? Date.parse(readAt) : Number.NaN;
-  if (!Number.isFinite(seen)) return false;
-  return seen >= base;
-}
-
-/**
- * The floor only ever moves up. It is remembered from the reads that showed
- * a holder, and those arrive out of order too — an EARLIER holder read
- * landing after a later one, assigned rather than raised, would LOWER the
- * floor to its own older stamp, and a `nobody` carrying that same older
- * stamp would then pass the comparison: the ordering rule defeated by the
- * very disorder it was written for. A stamped floor is never lowered by an
- * unstamped read either — a read that carries nothing is no evidence about
- * which read is newer.
- */
-export function raiseStamp(floor: string | null, seen?: string | null): string | null {
-  const at = seen ? Date.parse(seen) : Number.NaN;
-  if (!Number.isFinite(at)) return floor;
-  const base = floor ? Date.parse(floor) : Number.NaN;
-  if (!Number.isFinite(base)) return seen ?? null;
-  return at > base ? (seen ?? null) : floor;
-}
-
-/**
- * THE NEXT SCREEN ALONG THE WALK — and it is never `undefined` for a step the walk does not hold.
- *
- * A cursor can sit outside its own run's path: `onboardingPath` drops `welcome` for an ADD run, and
- * "Start over" used to put the cursor exactly there. `indexOf` answered -1, `path[-1 + 1]` answered
- * `undefined`, and the intro's one control — "Set up a mailbox" — did nothing at all, every press,
- * on every driver, until the app was restarted. A step outside the walk has no next, so the honest
- * destination is the walk's START. Only a genuinely LAST step moves nowhere, which is what the
- * summary is.
- */
-export function nextStep(
-  path: readonly OnboardingStep[], step: OnboardingStep,
-): OnboardingStep | undefined {
-  const i = path.indexOf(step);
-  const next = i >= 0 ? path[i + 1] : path[0];
-  return next === step ? undefined : next;
-}
-
-/**
- * The window step's count, in words: all of it, more than N when the walk stopped at its bound, or
- * nothing to screen. While the first import is still reading the mailbox it is a count so far and
- * says so, never "nothing".
- */
-export function decisionCountSentence(
-  t: (key: string, values?: Record<string, number>) => string, c: FirstRunDecisionCount,
-): string {
-  if (!c.mirrored) {
-    return c.letters === 0 ? t("agreeCountReading") : t("agreeCountSoFar", { letters: c.letters, senders: c.senders });
-  }
-  if (c.letters === 0) return t("agreeCountNone");
-  return t(c.complete ? "agreeCount" : "agreeCountFloor", { letters: c.letters, senders: c.senders });
-}
-
-export function firstRunStep(
-  facts: OnboardingFacts, at: OnboardingStep | null, rerun = false, claimAnswered = false,
-  add = false,
-  /**
-   * `organizerEventAt` AS IT STOOD ON THE READ THAT PUT A HOLDER ON THE CLAIM QUESTION, or null
-   * when no holder has been shown in this run. See {@link readIsNotOlder} — it is the only thing
-   * that can tell a current "nobody organizes this" from one that a slower read is still
-   * carrying about a moment that has passed.
-   */
-  heldStamp: string | null = null,
-  /**
-   * Has the claim question been on screen with a holder on it in this run, for this mailbox.
-   * The cursor is not the only way somebody arrives there: the DERIVATION puts them there
-   * straight after a connect, before any press, where `at` is still null — so a release rule
-   * written against the cursor alone did not run, and a stale or empty read carried the run on
-   * with the question never answered. The witness is the ref the floor comes from — written
-   * only while the question is rendered with a holder, keyed by mailbox. `heldStamp` cannot
-   * serve: it is null on a host that sends no `organizerEventAt`, which is a run that WAS
-   * asked.
-   */
-  asked = false,
-  /**
-   * THE RUN NAMES A MAILBOX THIS INSTALL DOES NOT HOLD — `firstRunSubject`'s `vanished`. See the arm
-   * below: it is answered before everything else, cursor included, because every other answer this
-   * function can give for a null mailbox is a screen that acts on one.
-   */
-  vanished = false,
-  /** THE RUN NAMES NO MAILBOX AND THERE ARE SEVERAL — `firstRunSubject`'s `choose`, answered as `vanished` is. */
-  choose = false,
-): OnboardingStep | null {
-  /* ── FIRST, AND BEFORE THE CURSOR ──────────────────────────────────────────────────────────
-   * A run about a mailbox that is not there has nothing to re-run, and the fall-through was not a
-   * dead end but a LIVE one: the re-run arm below answers `mailbox` for a null mailbox, the mailbox
-   * step is a FORM, and its connect mode is `seed` because only `add === true` selects `add` — so a
-   * re-run whose row had left the facts offered a connect form that reconfigures the whole install.
-   * Ahead of the cursor too: a cursor carried in from an earlier screen would walk straight back
-   * onto that form. `add` is not this arm's business — its hash carries an id the facts have not
-   * caught up with yet, and its form writes a row beside the others rather than replacing them.
-   */
-  if (vanished) return "vanished";
-  if (choose) return "choose";
-  const derived = deriveOnboardingStep(facts);
-  /**
-   * Is there a claim question outstanding — read from the FACTS, not from `derived`, which
-   * cannot answer on the path that needs it most: row 1 returns `null` for any account carrying
-   * a completion stamp, so on `#/first-run/again` the guard below would be structurally inert —
-   * and the walk is short: connect a mailbox somebody else holds, CANCEL on the consent screen
-   * (cancel stamps completion), press "Run setup again" — the re-run opens on the consent
-   * statement and Agree writes a consent the lease is about to decline. `flowIsOpen` keeps row
-   * 1's authority on a BOOT: the reader ending does not re-open this screen at every launch.
-   */
-  const mb = facts.mailbox;
-  const claimPending = mb !== null
-    && Boolean(mb.organizedBy && (mb.organizedBy.kind || mb.organizedBy.name))
-    && !mb.organizeConsentedAt;
-  const flowIsOpen = rerun || add || derived !== null;
-  /* The claim question is not skippable, and the cursor used to skip it
-   * silently (measured on 0.13.6): the flow opened on consent before the peek landed, Continue made
-   * `at` non-null, the peek then named a holder — and the cursor won, so the one screen built for
-   * this never rendered; the person agreed, stood down to reader, and the summary reported the
-   * organizing it had been refused. The cursor is a navigation aid, not evidence: it may carry a
-   * run through screens, never PAST an unanswered question. `claimAnswered` makes this a guard
-   * rather than a loop — "Organize here instead" moves the cursor to `consent` while the derivation
-   * still answers "elsewhere". Back still works (three exempt).
-   */
-  if (flowIsOpen && claimPending && !claimAnswered
-      && at !== "welcome" && at !== "mailbox" && at !== "elsewhere") {
-    return "elsewhere";
-  }
-  /* And the cursor may not keep that screen up after its subject is gone.
-   * `elsewhere` is written for one situation and the cursor can hold it up after the holder went
-   * away. The release is judged by `holderVerdict` — did a read ANSWER — not `readerHolder`, whose
-   * "no field = nobody" collapse released the cursor with the mailbox absent from the facts,
-   * resuming on consent where Agree authorizes an unshown takeover. A holder with neither kind nor
-   * name is still `somebody`; a stale `nobody` is ordered out by `organizerEventAt` against the
-   * screen-held floor ({@link readIsNotOlder}, {@link heldStamp}). Up two ways (cursor, or
-   * derivation + {@link asked}); down one: a fresh explicit `nobody`.
-   */
-  const questionUp = at === "elsewhere" || (at === null && asked && !claimAnswered);
-  const kept = questionUp
-    ? (holderVerdict(mb) === "nobody" && readIsNotOlder(mb?.organizerEventAt, heldStamp)
-      ? null
-      : "elsewhere")
-    : at;
-  /* NOR MAY IT HOLD THE PULL PAST THE IMPORT. The pull screen asks nothing, so nothing on it writes
-   * and a cursor left there (the AI answer keeps one) is never cleared: the stamp the server writes
-   * when the import drains went unread and the screen said "reading the mailbox" for ever. Once the
-   * import is over the run goes on to what the walk holds after the pull — row 7's rule, `=== null`
-   * is running and absent is a build that cannot tell. */
-  const cursor = kept === "pull" && mb !== null && importOverOf(mb)
-    ? nextStep(onboardingPath(facts, add), "pull") ?? null
-    : kept;
-  /* A re-run is an intent, and it outranks the completion stamp. `rerun`
-   * comes from the route (`#/first-run/again`) — the only place it can: a
-   * finished account derives to "nothing to do", correctly, which is
-   * exactly what somebody pressing "Run setup again" does not want. The
-   * alternative — clearing the stamp — deliberately has no instruction:
-   * nothing un-finishes onboarding. It opens on the consent statement (the
-   * three things a person comes back to change: what ohmail files, how far
-   * back, AI), pre-filled from what the account stored. The one exception
-   * is an account with no mailbox, where the flow is a first run.
-   */
-  if (rerun) {
-    if (cursor !== null) return cursor;
-    return facts.mailbox === null ? "mailbox" : "consent";
-  }
-  /* An add is an intent too, and it opens on the connect form. Same
-   * argument as the re-run, one difference: a re-run is about a mailbox
-   * that exists, an add about one that does not — and it keeps opening on
-   * the form until the create has answered, which is what
-   * `facts.mailbox === null` means on this run (`AppShell` withholds the
-   * mailbox while the route names none). After the create the cursor
-   * carries the run forward (`onConnected` re-points the route); the
-   * derivation is consulted for the resume, so quitting mid-add and coming
-   * back lands on the first thing the new mailbox still needs.
-   */
-  if (add) {
-    if (cursor !== null) return cursor;
-    /* The two facts this run is not about are withheld:
-     * `account.onboardingCompletedAt` is about the INSTALL (it is set —
-     * that is why "Add mailbox" is visible — so row 1 would answer `null`
-     * for every add run); `ai` is about the install too, reported as `on`
-     * so the derivation flows to rows 7-9. What is left is the mailbox's
-     * own truth-conditions. This does NOT describe a resume: coming back
-     * means pressing "Add mailbox" with no `?mailbox=` — the connect form
-     * again; the half-added mailbox is recovered from its own row ("Run
-     * setup" → the re-run). This arm is for the run in FLIGHT, once `onConnected` has put the id in the hash.
-     */
-    return deriveOnboardingStep({ ...facts, account: {}, ai: "on" }) ?? "mailbox";
-  }
-  // THE DERIVATION CLOSES THE FLOW AND THE CURSOR MAY NOT REOPEN IT. `null` means the
-  // completion stamp is set — cancelled or finished — and a cursor left over from the press
-  // that stamped it would keep the stage on screen after the person asked to leave.
-  if (derived === null) return null;
-  if (cursor !== null) return cursor;
-  // THE ONE PLACE THE OPENING SCREEN IS NOT THE DERIVED ONE. A run with no mailbox behind it
-  // has nothing to resume, so it starts at the welcome; a run that resumes onto `mailbox`
-  // because the mailbox was REMOVED has a history and does not need the greeting again.
-  return facts.mailbox === null && derived === "mailbox" ? "welcome" : derived;
 }
 
 export function FirstRun({
@@ -986,12 +724,16 @@ export function FirstRun({
   const stepProblem = confirm === "restart" && forgetRefused ? null : problem;
   const stepUpOpen = stepUp !== null && stepUp.on === step && stepUp.mailboxId === mailboxId
     && host.stepUp !== undefined;
+  /** The question a destructive verb asks in place, while it stands. */
+  const confirmRef = useRef<HTMLDivElement | null>(null);
   /* FOCUS STANDS WHERE ↵ BELONGS, after every commit: on open, on a step change, as the code prompt
      opens and closes and as a shut ↵ control opens. Left on the card, ↵ reached no form. A place the
-     person chose inside the step stays theirs. The decision (its verbs are letters) holds the card. */
+     person chose inside the step stays theirs. The decision (its verbs are letters) holds the card.
+     While a question stands it is the question's first verb: left in the step, ↵ ran the step's verb. */
   const landed = useRef<Element | null>(null);
-  const landingIn = (): HTMLElement | null => (confirm !== null || cardRef.current === null ? null
-    : (stepUpOpen ? stepUpRef.current : null) ?? formRef.current ?? cardRef.current);
+  const landingIn = (): HTMLElement | null => (cardRef.current === null ? null
+    : (stepUpOpen ? stepUpRef.current : null)
+      ?? (confirm !== null ? confirmRef.current : formRef.current ?? cardRef.current));
   useCommitEffect(() => {
     const target = landingIn();
     if (target === null) return;
@@ -1442,7 +1184,7 @@ export function FirstRun({
   const railLabel = (id: string) => t(`rail_${id}` as "rail_mailbox");
 
   const foot = (opts: { primary?: ReactNode; back?: boolean; cancel?: boolean } = {}) => (
-    <div className="ob-foot">
+    <div className="ob-card-foot">
       {opts.cancel === false ? null : (
         <button type="button" className="join-alt" disabled={busy}
           onClick={() => setConfirm("cancel")}>
@@ -2314,22 +2056,22 @@ export function FirstRun({
         )) : null}
 
         {confirm === "cancel" ? (
-          <div className="ob-confirm">
+          <div ref={confirmRef} className="ob-confirm">
             {/* NOTHING AGREED IS NOT "WHAT YOU AGREED TO STAYS AGREED" — a refused Agree stored nothing. */}
             <p>{facts.mailbox && !facts.mailbox.organizeConsentedAt ? t("cancelWhatNothingAgreed") : t("cancelWhat")}</p>
             <SettingsActions>
-              <Button variant="primary" onClick={leave} disabled={busy}>{t("cancelConfirm")}</Button>
+              <Button variant="primary" onClick={leave} disabled={busy} data-focus-entry>{t("cancelConfirm")}</Button>
               <Button variant="ghost" onClick={() => setConfirm(null)}>{t("back")}</Button>
             </SettingsActions>
           </div>
         ) : null}
 
         {confirm === "restart" ? (
-          <div className="ob-confirm">
+          <div ref={confirmRef} className="ob-confirm">
             <p>{t("restartWhat")}</p>
             {forgetRefused && problem ? <SettingsVerdict state="bad" headline={problem} /> : null}
             <SettingsActions>
-              <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy}>
+              <Button variant="primary" onClick={() => goTo("mailbox")} disabled={busy} data-focus-entry>
                 {t("restartKeep")}
               </Button>
               {/* AND SO DOES FORGETTING IT — the same rule as the foot's verb above: this run's
@@ -2347,54 +2089,4 @@ export function FirstRun({
       </div>
     </div>
   );
-}
-
-/**
- * WHICH RUNG A STORED WINDOW SITS ON.
- *
- * `all_time` is a MODE and not a number, so it is answered first — reading it off `dormancyDays`
- * would put an account that screens everything onto whatever day-count happens to be stored
- * beside the mode. Everything else picks the CLOSEST offered rung, because the four on screen are
- * an offer and not the set of storable values: Settings will store any day-count from 1 to 365.
- */
-export function initialWindow(
-  screening?: { dormancyDays: number; scope: "window" | "all_time" },
-): WindowChoice {
-  if (!screening) return "365";
-  if (screening.scope === "all_time") return "all";
-  const rungs = [90, 180, 365] as const;
-  let best: WindowChoice = "365";
-  let bestGap = Number.POSITIVE_INFINITY;
-  for (const r of rungs) {
-    const gap = Math.abs(r - screening.dormancyDays);
-    if (gap < bestGap) { bestGap = gap; best = String(r) as WindowChoice; }
-  }
-  return best;
-}
-
-/** The first sentence of the consent statement, re-shown under the window choice. */
-function firstSentence(s: string): string {
-  const at = s.indexOf(". ");
-  return at < 0 ? s : `${s.slice(0, at)}.`;
-}
-
-/**
- * WHO ORGANIZES THIS MAILBOX, by name, or `null` when nobody is NAMED. `null` is not the same as "nobody organizes
- * it", and THIS COMMENT USED TO ARGUE THAT IT WAS SAFE TO TREAT THEM AS ONE — *"the mailbox has a holder (that is
- * what put the elsewhere screen on screen)"* — which is true of the elsewhere screen and false of every other caller.
- * The summary's reader row is reached on a consent-less reader whose mailbox nothing has ever claimed, and it read
- * this `null` as "a holder we cannot name": "Organized by another install · Since —", with no other install anywhere.
- * A guarantee a function cannot make is worse than no comment, because the next caller believes it. So `null` here
- * means only what the name says: no NAME. Whether a holder exists at all is {@link readerHolder}'s question, and the
- * surfaces ask that one first.
- */
-
-/**
- * A `null` name is still not "another install" as a NAME: inventing one would read as a machine called "another
- * install". The copy has a legacy label for exactly that state.
- */
-function holderName(facts: OnboardingFacts): string | null {
-  const by = facts.mailbox?.organizedBy;
-  if (!by) return null;
-  return by.name && by.name.trim() ? by.name : null;
 }

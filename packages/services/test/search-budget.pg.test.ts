@@ -35,13 +35,11 @@ import {
  * workers off (this server cannot grow a parallel query's shared memory). Alone: it seeds a large
  * corpus of messages.
  *
- * OVER THE RULED BOUND, NAMED: a common word beside the account's own address (To, either side, and
- * with a flag) asks the recipients' key function of more than 2,500 letters a page and reads more
- * than 30,000 buffers: the address is on every letter, so each of the word's letters is asked its
- * recipients, a function call apiece. Each such case states its own ceilings ({@link WORDS_BESIDE}),
- * just over what a run on a database made from empty read, so the class is judged by its worst member
- * and cannot grow. They stay over the bound until a stored recipient key with its index lands
- * (FOR-THE-SEARCH-RULING.md, the search's open questions); every other case keeps 2,500 and 30,000.
+ * THE RECIPIENTS' KEY IS A COLUMN (mail 0208), so no statement of a person case calls its function:
+ * a letter asked its recipients compares the key it holds. Every person case is held to 30,000
+ * buffers a statement, the words beside the account's own address among them, which asked the
+ * function of up to 7,292 letters and read up to 36,442 buffers a page before the column (12,845 to
+ * 12,871 on it, on Postgres 16 and 17).
  */
 // Refused at collection where this checkout has no database of its own: the store is made on the server it names.
 pgTestUrl(import.meta.url);
@@ -264,25 +262,18 @@ async function seedPeople(acct: string, n: number): Promise<void> {
 }
 
 /**
- * THE PERSON CASES' BOUNDS ({@link personCases}), and the stated ceilings of the cases over them:
- * words beside the account's own address, read on a database made from empty (the most of the two
- * generations) and set just over it; the file's head says why. A ceiling never rises to make a run green.
+ * THE PERSON CASES' BOUND ({@link personCases}): buffers a statement. A case under it may be held
+ * lower, to what it read before; a ceiling never rises to make a run green.
  */
 const PERSON_BUFFERS = 30_000;
-const PERSON_KEYS = 2_500;
-/** `w40` To the own address: 4,340 letters asked before the backfill, 4,974 after. */
-const KEYS_W40_OWN = 5_100;
-/** `w40` To the own address, unread: 6,007 before, 6,641 after (27,256 buffers, within the bound). */
-const KEYS_W40_OWN_UNREAD = 6_800;
-/** `w1` To or on either side of the own address: 209 letters and 6,266 buffers before, 7,292 and 36,442 after. */
-const KEYS_W1_OWN = 7_500;
-const BUFFERS_W1_OWN = 37_500;
+/** The recipients' key function, as a plan names a call of it: no plan of a person case may (mail 0208). */
+const KEY_FUNCTION_CALL = "messages_recipient_keys(";
 /**
- * A person case: a query and its filters, in A's mailbox unless `account` names another; `keys` and
- * `buffers` are its own ceilings, over the bound where the class is (the head says why) or under it
- * where a case is held to what it read before; `rows` the fewest rows its first page holds.
+ * A person case: a query and its filters, in A's mailbox unless `account` names another; `buffers` its
+ * own ceiling, under the bound, where a case is held to what it read before; `rows` the fewest rows
+ * its first page holds.
  */
-interface PersonCase { name: string; q: string; filters: SearchFilters; account?: string; keys?: number; buffers?: number; rows?: number }
+interface PersonCase { name: string; q: string; filters: SearchFilters; account?: string; buffers?: number; rows?: number }
 
 function ctx(accountId: string = A): ServiceContext {
   return { db, accountId, userId: null, now: () => new Date("2026-09-23T12:00:00Z"), requestId: "search-budget" };
@@ -511,13 +502,13 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   /**
    * THE PERSON FILTERS AND A FILTER WITH NO WORDS, judged as A's words are: each case found, its
    * first page inside the budget at p95, and each of its statements read as it ran: no table
-   * scanned, at most {@link PERSON_BUFFERS} buffers, the recipients' key function asked of at most
-   * {@link PERSON_KEYS} letters (it cannot be inlined, so every letter it is asked of costs a call),
-   * and at most four statements a page (begin, settings, rows, commit), five where a walk's page is
-   * short and reads where it stopped. A case over the bound states its own ceilings (`keys`, `buffers`).
+   * scanned, at most {@link PERSON_BUFFERS} buffers (or the case's own, lower), no plan node naming
+   * the recipients' key function (the key is a column since mail 0208: nothing is called), and at
+   * most four statements a page (begin, settings, rows, commit), five where a walk's page is short
+   * and reads where it stopped.
    */
   const personCases = (label: string, cases: ReadonlyArray<PersonCase>): void => {
-    it(`${label}the person filters and a filter alone: inside ${BUDGET_MS} ms at p95, no table scanned, the key function asked of few letters`, async () => {
+    it(`${label}the person filters and a filter alone: inside ${BUDGET_MS} ms at p95, no table scanned, the key function asked of no letter`, async () => {
       const svc = new SearchService();
       const count = { n: 0 };
       const over: string[] = [];
@@ -538,17 +529,18 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
         for (const [k, st] of reads.entries()) {
           expect(await seqScans(st, session), c.name).toEqual([]);
           const buffers = await buffersOf(st, session);
-          const nodes = await planNodes(st, session, base);
-          const keys = nodes.filter((p) => String(p["Filter"] ?? "").includes("messages_recipient_keys"))
-            .reduce((n, p) => n + (Number(p["Actual Rows"]) + Number(p["Rows Removed by Filter"] ?? 0)) * Number(p["Actual Loops"]), 0);
+          // With each node's output list: a walk asks its filters in its select list, which a plan names nowhere else.
+          const nodes = await planNodes(st, session, base, true, true);
+          // Every node whose own expressions name the function (its condition, filter, recheck or output), children apart.
+          const calls = nodes.filter((p) => Object.entries(p).some(([field, v]) => field !== "Plans" && JSON.stringify(v).includes(KEY_FUNCTION_CALL))).length;
           // THE LETTER WHERE A SHORT PAGE'S WALK STOPPED, read after the page (the only statement of a wordless page that
           // reads `messages` alone), by the shape the page picked: it counts nothing.
           const after = c.q === "" && short && nodes.every((p) => p["Relation Name"] === undefined || p["Relation Name"] === "messages");
           const counts = after ? nodes.filter((p) => p["Node Type"] === "Aggregate").length : 0;
-          console.log(`search-budget ${label}${c.name}: ${buffers} buffers, the key function asked of ${keys} letters, ${count.n} statements, `
+          console.log(`search-budget ${label}${c.name}: ${buffers} buffers, the key function in ${calls} plan nodes, ${count.n} statements, `
             + `${r.items.length} rows${after ? `, after the page: ${counts} counts` : ""}`);
           if (buffers > (c.buffers ?? PERSON_BUFFERS)) over.push(`${c.name} ${buffers} buffers`);
-          if (keys > (c.keys ?? PERSON_KEYS)) over.push(`${c.name} the key function asked of ${keys} letters`);
+          if (calls > 0) over.push(`${c.name} the key function in ${calls} plan nodes`);
           if (counts > 0) over.push(`${c.name} statement ${k + 1} counts again (${counts})`);
         }
       }
@@ -571,17 +563,16 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
   /**
    * Words beside a person: To a rare, a mid and the own address, either side of the rare one, and
    * From one sender. BESIDE THE OWN ADDRESS the plan reads the word's letters and asks each its
-   * recipients (the address is on every letter): a common word (`w1`), To and either side, and a rarer
-   * one with a flag are over the ruled bound and carry their own ceilings, set just over a run on a
-   * database made from empty (the file's head says why, and until when).
+   * recipients (the address is on every letter): the key it holds, compared in the row the plan reads
+   * anyway. Every case under the general bound (the file's head has the figures before the column).
    */
   const WORDS_BESIDE: ReadonlyArray<PersonCase> = [
     { name: "w1 to rare", q: "w1", filters: { to: RARE } },
     { name: "w40 to mid", q: "w40", filters: { to: MID } },
-    { name: "w40 to own", q: "w40", filters: { to: OWN }, keys: KEYS_W40_OWN },
-    { name: "w40 to own unread", q: "w40", filters: { to: OWN, unread: true }, keys: KEYS_W40_OWN_UNREAD },
-    { name: "w1 to own", q: "w1", filters: { to: OWN }, keys: KEYS_W1_OWN, buffers: BUFFERS_W1_OWN },
-    { name: "w1 party own", q: "w1", filters: { party: OWN }, keys: KEYS_W1_OWN, buffers: BUFFERS_W1_OWN },
+    { name: "w40 to own", q: "w40", filters: { to: OWN } },
+    { name: "w40 to own unread", q: "w40", filters: { to: OWN, unread: true } },
+    { name: "w1 to own", q: "w1", filters: { to: OWN } },
+    { name: "w1 party own", q: "w1", filters: { party: OWN } },
     { name: "w1 party rare", q: "w1", filters: { party: RARE } },
     { name: "w40 sender", q: "w40", filters: { sender: "news@axa.example" } },
   ];
@@ -601,15 +592,19 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
    * address (From 30,000 letters, To every one) beside one with few letters or with many, and the own
    * address To with a flag.
    *
-   * EITHER SIDE OF THE OWN ADDRESS, alone and beside each person of round 1's recheck, at or under what
-   * each page asked before round 1 (51, 101, 3,600 and 3,000 letters; the last two read 51 now and are
-   * held just over it): counting a person costs index reads on this store, never a letter asked. That holds while the count's bitmap fits the server's working
-   * memory; past it the server asks the letters of its lossy pages, which this measure (a filter naming
-   * the key function) does not see.
+   * EITHER SIDE OF THE OWN ADDRESS, alone and beside each person of round 1's recheck (pages that asked
+   * the key function of 51, 101, 3,600 and 3,000 letters before round 1, of 51 to 101 after it, and of
+   * none since mail 0208 made the key a column): counting a person costs index reads on this store.
+   * Past the server's working memory the count's bitmap is lossy, and each letter on a lossy page is
+   * compared again with the key it holds.
    *
    * A PERSON WITHIN 20,000 LETTERS BESIDE A RECIPIENT FILTER answers on its first page: 3,000 old
    * letters from a colleague beside To the own address (one statement and 50 rows before round 1, 21
    * empty pages after it), and either side of the colleague beside To a third.
+   *
+   * A FOLDER BESIDE THE OWN ADDRESS AND A FLAG is asked last, of the forty letters the flag keeps: a walk
+   * asks its filters in the order they are written, and the folder is the one that reads another row (83,706
+   * buffers when it was asked first, of each of the walk's 20,000 letters).
    *
    * A DATE RANGE BESIDE A DENSE PERSON (the newest 1,000 letters, To, either side and From the own
    * address): a person is counted without the dates, which no index of a person carries, so the count
@@ -622,31 +617,32 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
     { name: "party own, to few", q: "", filters: { party: P_OWN, to: P_FEW }, account: P },
     { name: "to own, party old", q: "", filters: { to: P_OWN, party: P_OLD }, account: P },
     { name: "to own unread", q: "", filters: { to: P_OWN, unread: true }, account: P },
+    { name: "to own unread in INBOX", q: "", filters: { to: P_OWN, unread: true, folder: "INBOX" }, account: P },
     { name: "party own alone", q: "", filters: { party: P_OWN }, account: P },
-    { name: "to own, party own", q: "", filters: { to: P_OWN, party: P_OWN }, account: P, keys: 51 },
-    { name: "sender own, party own", q: "", filters: { sender: P_OWN, party: P_OWN }, account: P, keys: 101 },
-    // Each reads 51 letters asked now (3,600 and 3,000 before round 1).
-    { name: "sender news, party own", q: "", filters: { sender: P_NEWS, party: P_OWN }, account: P, keys: 60 },
-    { name: "sender colleague, party own", q: "", filters: { sender: P_COLLEAGUE, party: P_OWN }, account: P, keys: 60, rows: 50 },
+    { name: "to own, party own", q: "", filters: { to: P_OWN, party: P_OWN }, account: P },
+    { name: "sender own, party own", q: "", filters: { sender: P_OWN, party: P_OWN }, account: P },
+    { name: "sender news, party own", q: "", filters: { sender: P_NEWS, party: P_OWN }, account: P },
+    { name: "sender colleague, party own", q: "", filters: { sender: P_COLLEAGUE, party: P_OWN }, account: P, rows: 50 },
     { name: "sender colleague, to own", q: "", filters: { sender: P_COLLEAGUE, to: P_OWN }, account: P, rows: 50 },
     { name: "party colleague, to third", q: "", filters: { party: P_COLLEAGUE, to: P_THIRD }, account: P, rows: 50 },
-    // On a database made from empty, with the dates in the count: 7,238 buffers; 16,080 and 1,000 letters asked; 6,520 buffers.
-    // Without: 4,679; 4,679 and 51; 4,899.
-    { name: "to own, the newest 1,000", q: "", filters: { to: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 5_000 },
-    { name: "party own, the newest 1,000", q: "", filters: { party: P_OWN, dateFrom: NEWEST_1000 }, account: P, keys: 60, buffers: 5_000 },
-    { name: "sender own, the newest 1,000", q: "", filters: { sender: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 5_200 },
+    // On a database made from empty, with the dates in the count: 5,316, 13,025 and 5,623 buffers.
+    // Without: 2,650, 2,650 and 4,057.
+    { name: "to own, the newest 1,000", q: "", filters: { to: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 2_800 },
+    { name: "party own, the newest 1,000", q: "", filters: { party: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 2_800 },
+    { name: "sender own, the newest 1,000", q: "", filters: { sender: P_OWN, dateFrom: NEWEST_1000 }, account: P, buffers: 4_300 },
   ];
   /**
-   * PAST 150,000 LETTERS (Q, 300,000): the server's planner reads a dense address's count by an
-   * account index and asks each letter its recipients where the recipients' index was read below
-   * it. The own address To and either side, alone, To with a flag, and To beside the newest 1,000.
+   * PAST 150,000 LETTERS (Q, 300,000): beside the account the server's planner priced the recipients'
+   * index's recheck as a call a letter and read a dense address's count by an account index instead,
+   * asking each letter; the key is a column since mail 0208. The own address To and either side,
+   * alone, To with a flag, and To beside the newest 1,000.
    */
   const LARGE_ALONE: ReadonlyArray<PersonCase> = [
     { name: "to own alone", q: "", filters: { to: P_OWN }, account: Q },
     { name: "party own alone", q: "", filters: { party: P_OWN }, account: Q },
     { name: "to own unread", q: "", filters: { to: P_OWN, unread: true }, account: Q },
-    // On a database made from empty, with the dates in the count: 12,682 buffers and 1,000 letters asked; without: 2,216 and 51.
-    { name: "to own, the newest 1,000", q: "", filters: { to: P_OWN, dateFrom: NEWEST_1000 }, account: Q, keys: 60, buffers: 2_500 },
+    // On a database made from empty, with the dates in the count: 16,939 buffers; without: 2,282.
+    { name: "to own, the newest 1,000", q: "", filters: { to: P_OWN, dateFrom: NEWEST_1000 }, account: Q, buffers: 2_500 },
   ];
   const WORDS = ["w1", "w40", "w3000", "axa", "w100", "myax"];
   const aCases = (before: string): void => {
@@ -1251,5 +1247,34 @@ describe("the first page of a search is milliseconds (real Postgres, a large mai
       await qStore.drop();
     }, 900_000);
     personCases("Q, ", LARGE_ALONE);
+
+    /**
+     * A PAGE BEHIND A CURSOR IS A FIRST PAGE STARTED THERE: To the own address beside a flag, read through
+     * its cursor to the page behind the newest 280,000 letters (fourteen walks of 20,000, forty rows each).
+     * That page's statement may read what the first page's read and 1,000 buffers. The walk starts at its
+     * cursor by an index condition; under the keyset alone, a filter, it read the row of every letter
+     * before the cursor to throw it away (30,976 buffers there against the first page's 3,987).
+     */
+    it("Q, a page behind a far cursor reads at most the first page's buffers and 1,000", async () => {
+      const svc = new SearchService();
+      const filters = { to: P_OWN, unread: true };
+      /** A page and the buffers of its own statement, the first it sends (a short page then reads where its walk stopped). */
+      const page = async (cursor?: string): Promise<{ rows: number; next: string | null; buffers: number }> => {
+        seen.length = 0;
+        const r = await svc.search(ctx(Q), { q: "", filters, parts: "page", ...(cursor === undefined ? {} : { cursor }) });
+        const session = seen.filter(isSession);
+        const [rows] = seen.filter((st) => !isSession(st) && !isExplain(st));
+        return { rows: r.items.length, next: r.nextCursor, buffers: await buffersOf(rows!, session) };
+      };
+      // A pool's first search asks the store's indexes first (one probe, kept per pool): asked here, so each page
+      // measured below is the page's own statement, whatever ran before this case.
+      await svc.search(ctx(Q), { q: "", filters, parts: "page" });
+      const first = await page();
+      let far = first;
+      for (let walked = 20_000; walked < Q_N; walked += 20_000) far = await page(far.next!);
+      console.log(`search-budget Q, to own unread: the first page ${first.buffers} buffers, the page behind the newest ${Q_N - 20_000} letters ${far.buffers}`);
+      expect([first.rows, far.rows]).toEqual([40, 40]);
+      expect(far.buffers).toBeLessThanOrEqual(first.buffers + 1_000);
+    }, 300_000);
   });
 });

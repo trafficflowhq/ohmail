@@ -7,6 +7,7 @@ import { mintLaunchBearer } from "../src/launch-bearer.js";
 import { createCloudSidecar, type CloudSidecar } from "../src/cloud-engine.js";
 import { hostedMailbox, mailboxList } from "./fixtures/hosted-mailbox.js";
 import { freshDataDir } from "./_datadir.js";
+import { pgliteOf } from "./_store-client.js";
 
 /**
  * THE CLOUD DOOR'S LAUNCH BEARER IS DECIDED IN MEMORY, AND THE MEMORY NEVER ADMITS WHAT THE STORE
@@ -33,7 +34,7 @@ type Client = Record<"query" | "exec" | "transaction", (...a: unknown[]) => Prom
 
 /** Every statement this store handle runs, counted — the store-read spy. */
 function spyOnStore(db: LocalDb): { reads: () => number; stop: () => void } {
-  const client = (db as unknown as { $client: Client }).$client;
+  const client = pgliteOf(db) as unknown as Client;
   let n = 0;
   const originals = { query: client.query, exec: client.exec, transaction: client.transaction };
   for (const name of ["query", "exec", "transaction"] as const) {

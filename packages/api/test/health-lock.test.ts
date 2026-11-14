@@ -19,7 +19,7 @@ const reading = (over: Partial<LockReading> = {}): LockReading => ({
 });
 
 /** The database package's line, typed as the health answer takes it: the two shapes are one. */
-const reader = (r: LockReading): NonNullable<HealthConfig["lock"]> => async () => lockHealthLine(r);
+const reader = (r: LockReading): NonNullable<HealthConfig["lock"]> => async () => lockHealthLine(r, null);
 
 describe("GET /health — the lock", () => {
   it("publishes the injected line on the healthy answer", async () => {

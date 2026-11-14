@@ -1,8 +1,8 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { withoutComments } from "../scripts/lib/source-scan.mjs";
+import { readAsUnit } from "./support/engine-unit.js";
 
 /**
  * EVERY IDLE-PATH DERIVATION IS KEYED ON A CHANGE SIGNAL.
@@ -104,7 +104,7 @@ const REGISTRY: readonly Site[] = [
 ];
 
 /** The file's code, comments blanked — a gate that lives in prose is not a gate. */
-const codeOf = (file: string): string => withoutComments(readFileSync(join(REPO, file), "utf8"));
+const codeOf = (file: string): string => withoutComments(readAsUnit(join(REPO, file)));
 
 describe("the idle-derivation registry", () => {
   it("covers the seven sites the inventory named, and no others", () => {

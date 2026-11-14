@@ -64,8 +64,8 @@ describe("with the list's visit of the open letter", () => {
   it("j and k step the list", () => {
     const visit = visitOf("m1");
     mountReader({ letters: [letter("m1")], open: "m1", meeting: { visit, blank: null } });
-    fireEvent.keyDown(window, { key: "j" });
-    fireEvent.keyDown(window, { key: "k" });
+    fireEvent.keyDown(document.body, { key: "j" });
+    fireEvent.keyDown(document.body, { key: "k" });
     expect(visit.step.down.run).toHaveBeenCalledTimes(1);
     expect(visit.step.up.run).toHaveBeenCalledTimes(1);
   });

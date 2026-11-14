@@ -37,7 +37,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
  * ── WHAT THIS FILE PROVES THAT PGlite CANNOT ──────────────────────────────────────────────
  *
  * The `from` predicate is `lower(m.from_address) = lower($1)` over `messages_account_from_addr_idx`;
- * `to` is To and Cc through mail 0154's account-keyed expression index (`messages_recipient_keys`),
+ * `to` is To and Cc through the account-keyed recipients' key (mail 0208's `messages.recipient_keys`),
  * and `any` is the union of the two. There is deliberately NO plan assertion here — the
  * planner sequential-scans a small table whatever indexes exist, so an `EXPLAIN` expectation in
  * a test would either be vacuous or would pin the planner's choice on a fixture size. The

@@ -240,8 +240,11 @@ export interface LockHealthLine {
   readonly why?: string;
 }
 
-/** The health line of reading `r`, with `reads`: the road the instance's pool was answered (`accountRowsAnswered`), `null` before it was. */
-export function lockHealthLine(r: LockReading, reads: "views" | "tables" | null = null): LockHealthLine {
+/**
+ * The health line of reading `r`, with `reads`: the road the instance's pool was answered (`accountRowsAnswered`), `null` before it was.
+ * Every host says it: a line that left it out would read `unasked` and hide the road.
+ */
+export function lockHealthLine(r: LockReading, reads: "views" | "tables" | null): LockHealthLine {
   return {
     verdict: r.verdict, role: r.role.name, listed: r.listed, forced: r.forced,
     census: r.census === 0 ? "equal" : "drift", policies: r.role.policies, views: r.views, reads: reads ?? "unasked",

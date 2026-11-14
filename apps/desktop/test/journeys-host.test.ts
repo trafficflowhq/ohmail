@@ -7,11 +7,12 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type Browser } from "playwright";
+import { chromium, type Browser } from "@playwright/test";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
 import { createSidecar, type Sidecar } from "../../sidecar/src/engine.js";
 import { startHostListener, type HostListener } from "../../sidecar/src/host-listener.js";
-import { fenced, HOST, type Person } from "../../../test/journeys/bench/web.js";
+import { fenced, type PlaywrightPerson } from "../../../test/journeys/bench/dom-playwright.js";
+import { HOST } from "../../../test/journeys/bench/seam.js";
 import { say } from "../../../test/journeys/vocabulary/catalogue.js";
 import { HOST_PANES } from "../../../test/journeys/vocabulary/panes.js";
 import { PLACES } from "../../../test/journeys/vocabulary/places.js";
@@ -50,7 +51,7 @@ async function freePort(): Promise<number> {
 }
 
 /** A phone's browser, paired: it opens the pairing address with a code this engine just minted. */
-async function paired(): Promise<Person> {
+async function paired(): Promise<PlaywrightPerson> {
   const minted = await sidecar.handle(new Request("http://sidecar/pair", {
     method: "POST", headers: { authorization: `Bearer ${sidecar.sessionToken}`, "content-type": "application/json" },
     body: JSON.stringify({ grant: "device-pair" }),
