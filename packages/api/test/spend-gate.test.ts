@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
 import {
   createApp, apiRoutes, UNVERIFIED_MAY_REACH, unverifiedMayReach,
   type ApiDeps, type CostClass, type Route,
@@ -1238,25 +1237,38 @@ describe("the route table declares what every handler causes", () => {
     }
   });
 
-  it("THE OLD OPT-IN FLAG CANNOT COME BACK", () => {
-    // A deleted interface field does not stop anyone re-adding one, and `verifiedEmail: true` on
-    // a route would now read as a gate while doing nothing at all — the worst of both. Asserted
-    // over the SOURCE TEXT for the reason the guard is: TypeScript is perfectly happy for a
-    // second, parallel mechanism to exist beside the first.
-    const dir = new URL("../src/", import.meta.url);
-    const hits: string[] = [];
-    const walk = (rel: string): void => {
-      for (const e of readdirSync(new URL(rel, dir), { withFileTypes: true })) {
-        if (e.isDirectory()) { walk(`${rel}${e.name}/`); continue; }
-        if (!e.name.endsWith(".ts")) continue;
-        const text = readFileSync(new URL(`${rel}${e.name}`, dir), "utf8");
-        text.split("\n").forEach((line, i) => {
-          if (/verifiedEmail/.test(line)) hits.push(`src/${rel}${e.name}:${i + 1}`);
-        });
+  it("THE OLD OPT-IN FLAG CANNOT COME BACK", async () => {
+    // A deleted interface field does not stop anyone re-adding one, and `verifiedEmail` on a
+    // route would read as a gate beside `cost`. Asked of the pipeline, through the real
+    // `createApp`: the flag, in either spelling, decides nothing. A route that says it needs no
+    // proven address is refused like any other that spends, and a read that says it needs one is
+    // served.
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, {
+      now: FIXED_NOW, lastTwofaAt: FIXED_NOW, emailVerified: false,
+    });
+    const flagged = (cost: CostClass | undefined, verifiedEmail: boolean): Route[] => [{
+      method: "POST",
+      pattern: "/flagged",
+      ...(cost ? { cost, relay: false } : ({} as { cost: CostClass; relay: boolean })),
+      options: { verifiedEmail } as Route["options"],
+      handler: async () => new Response(JSON.stringify({ ran: true }), {
+        status: 200, headers: { "content-type": "application/json" },
+      }),
+    }];
+    const ask = (routes: Route[]): Promise<Response> => createApp(routes).handle(
+      req("POST", "/flagged", { bearer: s.token, body: "{}" }),
+      { ...deps, session: null, idempotency: null },
+    );
+    for (const verifiedEmail of [false, true]) {
+      for (const cost of ["work", "connection", "paid", undefined] as const) {
+        const res = await ask(flagged(cost, verifiedEmail));
+        expect(res.status, `${cost} with verifiedEmail: ${verifiedEmail}`).toBe(403);
+        expect((await res.json() as { error: { code: string } }).error.code).toBe("email_unverified");
       }
-    };
-    walk("");
-    expect(hits, "a second verification mechanism reappeared beside `cost`").toEqual([]);
+      const read = await ask(flagged("read", verifiedEmail));
+      expect(read.status, `read with verifiedEmail: ${verifiedEmail}`).toBe(200);
+    }
   });
 });
 

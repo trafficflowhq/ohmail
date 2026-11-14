@@ -1,7 +1,4 @@
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
-import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 import { eq, sql } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps } from "@trafficflow/api";
 import { changeLog, messages } from "@trafficflow/db";
@@ -12,9 +9,10 @@ import { makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW } from 
  * delivers that change at, so a client that applies the answer treats the delta at that seq as a
  * no-op. A same-key retry answers the same number; a write that commits no change answers none.
  * The header is set by `jsonResponse` (responses.ts), by hand on three 204s (drafts, tags,
- * mailboxes) and on replay by `storedResponse` (idempotency.ts).
+ * mailboxes) and on replay by `storedResponse` (idempotency.ts). Each of the three has its case.
  * Mutations that turn this red: drop the header in `jsonResponse`; replay `seq: undefined`; answer
- * seq+1 on the draft DELETE or seq-1 on the tag DELETE (no other test notices either).
+ * seq+1 on the draft DELETE or the mailbox DELETE, or seq-1 on the tag DELETE (no other test
+ * notices either).
  */
 const app = createApp(apiRoutes);
 const H = (r: Request, d: ApiDeps): Promise<Response> => app.handle(r, { ...d, session: null, idempotency: null });
@@ -129,13 +127,35 @@ describe("X-Sync-Seq is the seq /sync delivers the write at", () => {
     expect(await lastSeq(db, s.accountId)).toBe(before);
   });
 
-  it("the header is spelled out in these four files only (a replay goes through jsonResponse)", () => {
-    const src = resolve(__dirname, "../src");
-    const files: string[] = [];
-    const walk = (d: string): void => { for (const n of readdirSync(d)) { const p = join(d, n); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith(".ts")) files.push(p); } };
-    walk(src);
-    const writers = files.filter((f) => /["'`]x-sync-seq["'`]/i.test(withoutComments(readFileSync(f, "utf8"))))
-      .map((f) => relative(src, f).split("\\").join("/")).sort();
-    expect(writers).toEqual(["responses.ts", "routes/drafts.ts", "routes/mailboxes.ts", "routes/tags.ts"]);
+  it("a mailbox removal that closes a scheduled send (the third hand-built 204)", async () => {
+    const { db, deps } = await makeDeps();
+    const s = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const mailboxId = await seedMailbox(db, { accountId: s.accountId });
+    const created = await H(req("POST", "/drafts", {
+      bearer: s.token, body: JSON.stringify({ mailboxId, subject: "Later", to: [{ address: "ada@lichtgrat.example" }], body: "See you then." }),
+    }), deps);
+    expect(created.status).toBe(201);
+    const draft = await created.json();
+    const sendAt = new Date(FIXED_NOW.getTime() + 3_600_000).toISOString();
+    const scheduled = await H(req("POST", `/drafts/${draft.id}/schedule`, { bearer: s.token, body: JSON.stringify({ sendAt }) }), deps);
+    expect(scheduled.status).toBe(200);
+    expect(echoOf(scheduled)).toBe(await lastSeq(db, s.accountId));
+
+    const gone = await H(req("DELETE", `/mailboxes/${mailboxId}`, { bearer: s.token }), deps);
+    expect(gone.status).toBe(204);
+    const echo = echoOf(gone);
+    // The removal closed the appointment: that draft change is what the asking mirror applies.
+    expect(echo).toBeGreaterThan(echoOf(scheduled)!);
+    const mine = (await delivered(deps, s.token)).filter((c) => c.id === draft.id);
+    expect(echo).toBe(Math.max(...mine.map((c) => c.seq)));
+    expect(echo).toBe(await lastSeq(db, s.accountId));
+
+    // A removal that closes nothing commits no change and answers no seq.
+    const idle = await seedMailbox(db, { accountId: s.accountId });
+    const before = await lastSeq(db, s.accountId);
+    const bare = await H(req("DELETE", `/mailboxes/${idle}`, { bearer: s.token }), deps);
+    expect(bare.status).toBe(204);
+    expect(bare.headers.get("x-sync-seq")).toBeNull();
+    expect(await lastSeq(db, s.accountId)).toBe(before);
   });
 });

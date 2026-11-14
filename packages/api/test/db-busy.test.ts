@@ -369,11 +369,14 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * the real class's `name`.
    */
   it("the middleware's spelling of the error name still matches the real class", () => {
-    const source = readFileSync(new URL("../src/middleware.ts", import.meta.url), "utf8");
-    const declared = /const DB_ACQUIRE_TIMEOUT_ERROR = "([^"]+)"/.exec(source)?.[1];
-    expect(declared, "middleware.ts must declare DB_ACQUIRE_TIMEOUT_ERROR").toBeDefined();
-    expect(declared).toBe(new DbAcquireTimeoutError(1).name);
-    expect(declared).toBe("DbAcquireTimeoutError");
+    // Asked of the matcher itself, with the real classes: a rename on either side reads false here.
+    expect(isDbBusy(new DbAcquireTimeoutError(1))).toBe(true);
+    expect(isDbBusy(new DbConnectionCapError("pooler"))).toBe(true);
+    expect(new DbAcquireTimeoutError(1).name).toBe("DbAcquireTimeoutError");
+    // And only those: a near name, or any other throw, stays the opaque 500.
+    expect(isDbBusy(Object.assign(new Error("x"), { name: "DbAcquireTimeout" }))).toBe(false);
+    expect(isDbBusy(new Error("kaboom"))).toBe(false);
+    expect(isDbBusy(null)).toBe(false);
   });
 
   it("the middleware does not import the class it matches (the closure rule)", () => {
@@ -396,15 +399,15 @@ describe("db_busy — a starved connection answers, it does not hang", () => {
    * at all.
    */
   it("the middleware's spelling of the organizer refusals still matches the real classes", () => {
-    const source = readFileSync(new URL("../src/middleware.ts", import.meta.url), "utf8");
-    const declared = /const ORGANIZER_REFUSAL_ERRORS = \[([^\]]+)\]/.exec(source)?.[1];
-    expect(declared, "middleware.ts must declare ORGANIZER_REFUSAL_ERRORS").toBeDefined();
-    const names = [...declared!.matchAll(/"([^"]+)"/g)].map((m) => m[1]).sort();
-    expect(names).toEqual(
-      [new OrganizedElsewhereError("m", { kind: null, name: null, since: null }).name,
-        new MailboxNotFoundError("m").name].sort(),
-    );
-    expect(names).toEqual(["MailboxNotFoundError", "OrganizedElsewhereError"]);
+    // Asked of the matcher itself, with the real classes: a rename on either side reads false here.
+    const held = new OrganizedElsewhereError("m", { kind: null, name: null, since: null });
+    const gone = new MailboxNotFoundError("m");
+    expect(isOrganizerRefusal(held)).toBe(true);
+    expect(isOrganizerRefusal(gone)).toBe(true);
+    expect([gone.name, held.name]).toEqual(["MailboxNotFoundError", "OrganizedElsewhereError"]);
+    // The two families stay apart: a refusal is never answered as a busy database, nor the reverse.
+    expect(isDbBusy(held)).toBe(false);
+    expect(isOrganizerRefusal(new DbAcquireTimeoutError(1))).toBe(false);
   });
 
   /**

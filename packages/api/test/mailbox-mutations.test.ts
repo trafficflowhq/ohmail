@@ -53,6 +53,12 @@ describe("mailbox mutations (create / update / delete)", () => {
     expect(imap.meta).toEqual({ host: "imap.example", port: 993, secure: true, user: "mila" });
     const smtp = rows.find((r) => r.transport === "smtp")!;
     expect(await KP.decrypt(smtp.secretEnc, smtp.keyVersion)).toBe("mailbox-smtp-password");
+
+    // Connecting is not agreeing to be organized: the new mailbox reads, with no consent on record.
+    const [row] = await db.select().from(mailboxes).where(eq(mailboxes.id, dto.id));
+    expect(row!.organizerRole).toBe("reader");
+    expect(row!.organizeConsentedAt).toBeNull();
+    expect(row!.takeoverAuthorizedAt).toBeNull();
   });
 
   it("POST /mailboxes without an smtp block creates only the imap credential row", async () => {

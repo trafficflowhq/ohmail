@@ -5,7 +5,8 @@ import {
   UNMETERED_ACCESS, type EntitlementsPort, type ReleaseOutcome,
 } from "@trafficflow/db";
 import { eq } from "drizzle-orm";
-import { creditRefundObligations } from "@trafficflow/db/cloud";
+import { authThrottle, creditRefundObligations } from "@trafficflow/db/cloud";
+import { throttleKeysFor } from "@trafficflow/services";
 import {
   makeDeps, seedSession, seedMailbox, seedMessage, req, FIXED_NOW,
   setCookieMap,
@@ -93,6 +94,37 @@ describe("DELETE /account", () => {
     // The token is not merely expired-looking: nothing resolves it any more.
     const after = await H(req("GET", "/auth/session", { bearer: s.token }), deps);
     expect(after.status).toBe(401);
+  });
+
+  /**
+   * The sign-in throttle names a person by a keyed hash of their address, which no join builds in
+   * SQL: the route hands the erasure the keyer. The rows are the sign-in door's own, from a
+   * refused password.
+   */
+  it("takes the sign-in throttle's rows for the person's address, and leaves another person's", async () => {
+    const { db, deps } = await makeDeps();
+    const mine = await seedSession(db, { now: FIXED_NOW, lastTwofaAt: FIXED_NOW });
+    const theirs = await seedSession(db, { now: FIXED_NOW });
+    const keys = throttleKeysFor(deps.keyProvider);
+    const hashOf = async (userId: string): Promise<string> => {
+      const [u] = await db.select({ email: users.email }).from(users).where(eq(users.id, userId));
+      const refused = await H(req("POST", "/auth/login", {
+        body: JSON.stringify({ email: u!.email, password: "not the password" }),
+      }), deps);
+      expect(refused.status).toBe(401);
+      return keys.address(u!.email.trim().toLowerCase());
+    };
+    const naming = async (hash: string): Promise<number> =>
+      (await db.select({ key: authThrottle.key }).from(authThrottle)).filter((r) => r.key.includes(hash)).length;
+    const mineHash = await hashOf(mine.userId);
+    const theirsHash = await hashOf(theirs.userId);
+    expect(await naming(mineHash), "the refused sign-in wrote no row to erase").toBeGreaterThan(0);
+    const theirsBefore = await naming(theirsHash);
+    expect(theirsBefore).toBeGreaterThan(0);
+
+    expect((await H(req("DELETE", "/account", { bearer: mine.token }), deps)).status).toBe(200);
+    expect(await naming(mineHash), "a throttle row still names the erased person's address").toBe(0);
+    expect(await naming(theirsHash), "another person's throttle rows went").toBe(theirsBefore);
   });
 
   /**

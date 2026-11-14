@@ -505,7 +505,7 @@ describe("the readers of this tree", () => {
 
   it("select the censuses that read a changed file", () => {
     expect(hit("apps/webapp/app/views/OhboxView.tsx").has("apps/webapp/test/dispatch-seam-census.test.ts")).toBe(true);
-    expect(hit("packages/api/src/router.ts").has("packages/api/test/spend-gate.test.ts")).toBe(true);
+    expect(hit("packages/api/src/router.ts").has("packages/api/test/local-door-carries-no-admin.test.ts")).toBe(true);
     expect(hit("packages/db/src/schema-mail.ts").has("packages/db/test/schema-split.test.ts")).toBe(true);
     expect(decideScope({ root: ROOT, ctx: pr(), changes: [M("packages/db/drizzle/meta/_journal.json")] }).scope).toBe("whole");
   });
