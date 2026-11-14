@@ -75,6 +75,7 @@
       "@ohmail/client-engine/html-tree-budget": ["../../packages/client-engine/src/html-tree-budget.ts"],
       "@ohmail/client-engine/calendar-acts": ["../../packages/client-engine/src/calendar-acts.ts"],
       "@ohmail/client-engine/calendar-writes": ["../../packages/client-engine/src/calendar-writes.ts"],
+      "@ohmail/client-engine/providers": ["../../packages/client-engine/src/providers.ts"],
       "@ohmail/client-engine": ["../../packages/client-engine/src/index.ts"],
       "@ohmail/ui/body-parts": ["../../packages/ui/src/body-parts.ts"],
       "@ohmail/ui/base": ["../../packages/ui/src/base/index.ts"],

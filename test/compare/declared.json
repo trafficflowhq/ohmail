@@ -1592,6 +1592,216 @@
     "since": "2026-11-17"
   },
   {
+    "key": "device=phone&screen=onboarding",
+    "reason": "The first screen carries a quiet third way, Servers, which the reference's first screen does not draw yet (ruled; asked of the studio).",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=form",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=formhost",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=opening",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=refused",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=apponly",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=weblogin",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=imapoff",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=certname",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=starttls",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=noenc",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=offline",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=port",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=already",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=several",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=unfinished",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=notstored",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=nohost",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=nosmtphost",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=smtpport",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=namerefused",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=authinvalid",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=certmatch",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=certrefused",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=certuntrusted",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=certexpired",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=certearly",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=imapaway",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=smtprefused",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=smtpnoenc",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=smtpaway",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=smtpcert",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=smtpcertname",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=starttlstimeout",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=starttlsfailed",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=nothingstored",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=othermailbox",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=removedhere",
+    "reason": "The mailbox on this phone is the one connect form, opened for the purpose standalone: a block of the kit's fields, tiles and lines on the doors' stage, with the incoming and the outgoing server on the manual entry as on every purpose, and a refusal said by the form alone. The reference draws the step as two sentences with blanks (the address and the password, the name), a host tag that opens the server fields, the app password's help under a refused sign-in and a suggested host: the help waits on the phone's refusal naming its provider (asked of the wire), and the studio is asked which the step follows.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=confirm",
+    "reason": "What answered, at which address, with which key, as the kit's setting lines on the doors' sheet: the doors' named facts (the reference's three rows of a name and its value, the key set apart) are asked of the doors.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=confirmserver",
+    "reason": "What answered, at which address, with which key, as the kit's setting lines on the doors' sheet: the doors' named facts (the reference's three rows of a name and its value, the key set apart) are asked of the doors.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=confirmcloud",
+    "reason": "What answered, at which address, with which key, as the kit's setting lines on the doors' sheet: the doors' named facts (the reference's three rows of a name and its value, the key set apart) are asked of the doors.",
+    "since": "2026-11-17"
+  },
+  {
+    "key": "device=phone&screen=phonedoor&state=pairing",
+    "reason": "What answered, at which address, with which key, as the kit's setting lines on the doors' sheet: the doors' named facts (the reference's three rows of a name and its value, the key set apart) are asked of the doors.",
+    "since": "2026-11-17"
+  },
+  {
     "key": "screen=serversetup",
     "reason": "The page names itself at its top where the design leaves the room empty (setup.title, \"Set up your ohmail server\", as the shipped page was titled): the setup's kept test reads it (apps/webapp/test/setup-screen.test.tsx). Declared on the top's words; the sentences, the blanks and the sheet are compared.",
     "since": "2026-11-15",

@@ -424,6 +424,12 @@
       "node": "./dist/mailboxes/connect/kept.js",
       "default": "./src/mailboxes/connect/kept.ts"
     },
+    "./mailboxes/connect/mailbox-id": {
+      "types": "./src/mailboxes/connect/mailbox-id.ts",
+      "ohmail-source": "./src/mailboxes/connect/mailbox-id.ts",
+      "node": "./dist/mailboxes/connect/mailbox-id.js",
+      "default": "./src/mailboxes/connect/mailbox-id.ts"
+    },
     "./mailboxes/connect/model": {
       "types": "./src/mailboxes/connect/model.ts",
       "ohmail-source": "./src/mailboxes/connect/model.ts",
@@ -448,11 +454,23 @@
       "node": "./dist/mailboxes/connect/secret.js",
       "default": "./src/mailboxes/connect/secret.ts"
     },
+    "./mailboxes/connect/sender-name": {
+      "types": "./src/mailboxes/connect/sender-name.ts",
+      "ohmail-source": "./src/mailboxes/connect/sender-name.ts",
+      "node": "./dist/mailboxes/connect/sender-name.js",
+      "default": "./src/mailboxes/connect/sender-name.ts"
+    },
     "./mailboxes/connect/sign-in": {
       "types": "./src/mailboxes/connect/sign-in.ts",
       "ohmail-source": "./src/mailboxes/connect/sign-in.ts",
       "node": "./dist/mailboxes/connect/sign-in.js",
       "default": "./src/mailboxes/connect/sign-in.ts"
+    },
+    "./mailboxes/connect/standalone-said": {
+      "types": "./src/mailboxes/connect/standalone-said.ts",
+      "ohmail-source": "./src/mailboxes/connect/standalone-said.ts",
+      "node": "./dist/mailboxes/connect/standalone-said.js",
+      "default": "./src/mailboxes/connect/standalone-said.ts"
     },
     "./mailboxes/connect/state": {
       "types": "./src/mailboxes/connect/state.ts",

@@ -46,6 +46,12 @@
       "node": "./dist/calendar-writes.js",
       "default": "./src/calendar-writes.ts"
     },
+    "./providers": {
+      "types": "./src/providers.ts",
+      "ohmail-source": "./src/providers.ts",
+      "node": "./dist/providers.js",
+      "default": "./src/providers.ts"
+    },
     "./calendar-span": {
       "types": "./src/engine/calendar-span.ts",
       "ohmail-source": "./src/engine/calendar-span.ts",

@@ -48,7 +48,8 @@ export interface SignInCalls {
 }
 
 export interface ConnectCalls {
-  probe(input: ConnectInput): Promise<Answered<ConnectProbed>>;
+  /** `none`: this shell has no test, and the form draws no test press. */
+  readonly probe: ((input: ConnectInput) => Promise<Answered<ConnectProbed>>) | None;
   connect(input: ConnectInput, mode: "seed" | "add"): Promise<Answered<Connected>>;
   readonly edit: ((mailboxId: MailboxId, patch: ConnectPatch) => Promise<Answered<null>>) | None;
   readonly discover: ((domain: string, signal: AbortSignal) => Promise<unknown>) | None;

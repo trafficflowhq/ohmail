@@ -4,9 +4,10 @@
  * key with its values, or the server's own sentence where no key words it. A reason this build does not know says
  * the server's sentence, never a generic apology.
  */
-import { asAuthHint, type AuthHint } from "@ohmail/client-engine";
+import { asAuthHint, type AuthHint } from "@ohmail/client-engine/providers";
 import { probeCopyKey } from "../../doors/local-server-host.js";
 import { noPortProbeKey, type NoPortProbeKey } from "../../doors/no-port-sentence.js";
+import { STANDALONE_UNKNOWN, standaloneSaid } from "./standalone-said.js";
 import {
   PROBE_REASONS,
   PROBE_TLS_KINDS,
@@ -184,9 +185,11 @@ export function reasonCodeOf(r: Refusal): string | null {
 /** A sentence to say: a catalogue key with its values, or the server's own words. */
 export type Said =
   | {
-      readonly ns: "mailboxes" | "join" | "devices" | "providerPicker" | "onboarding";
+      readonly ns: "mailboxes" | "join" | "devices" | "providerPicker" | "onboarding" | "phoneRefusal";
       readonly key: string;
       readonly values?: Readonly<Record<string, string | number>>;
+      /** The key to say where the catalogue holds no sentence for `key`, or one that says nothing. */
+      readonly orElse?: string;
     }
   | { readonly server: string };
 
@@ -212,11 +215,13 @@ const mailboxes = (key: string, values?: Readonly<Record<string, string | number
 
 /** Sign in again, in the mount's own words. */
 export function signInSaid(purpose: ConnectPurposeKind): Said {
+  if (purpose === "standalone") return STANDALONE_UNKNOWN;
   return purpose === "join" ? { ns: "join", key: "stepUpExpired" } : { ns: "devices", key: "stepUpExpired" };
 }
 
 /** A factor landed after Cancel and was thrown away: nothing ran. */
 export function nothingRanSaid(purpose: ConnectPurposeKind): Said {
+  if (purpose === "standalone") return STANDALONE_UNKNOWN;
   return purpose === "join"
     ? { ns: "devices", key: "stepUpCancelledNothingRan" }
     : mailboxes("cancelledNothingChanged");
@@ -325,6 +330,7 @@ const TABLE: Readonly<Record<string, (d: RefusalDetails) => Said | null>> = {
  * said in the server's own sentence; with no sentence at all, that the check did not finish.
  */
 export function saidOf(r: Refusal, ctx: SaidContext): Said {
+  if (ctx.purpose === "standalone") return standaloneSaid(r);
   const gate = gateOf(r);
   if (gate === "signIn" || (gate === "factor" && (ctx.afterFactor || !ctx.factor)))
     return signInSaid(ctx.purpose);

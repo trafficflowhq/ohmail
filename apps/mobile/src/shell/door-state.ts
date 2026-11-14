@@ -14,7 +14,8 @@ import { gateFor } from "../state/gate";
 import type { ServerProfile } from "../state/servers";
 import { EMPTY_STANDALONE, type StandaloneFields } from "../ui/standalone-form";
 import {
-  SAID_ARG_MAX, SAID_DEPTH, type DoorAt, type DoorState, type OpenInput, type PairFacts, type PairedRow, type SaidRefusal,
+  SAID_ARG_MAX, SAID_DEPTH, type DoorAt, type DoorMigrating, type DoorState, type OpenInput, type PairFacts, type PairedRow,
+  type SaidRefusal,
 } from "./door-kinds";
 
 /** The part of the connection the door stands on. */
@@ -74,6 +75,17 @@ function rowOf(p: ServerProfile, activeId: string | null): PairedRow {
   };
 }
 
+/**
+ * A store's upgrade as the door says it: only under the connect that waits on it, and only where the boot screen
+ * counts one (a store that is not fresh, more than one entry owed). A first launch's empty store and a single entry
+ * are over before anybody reads a number.
+ */
+function migratingOf(s: DoorConnection["state"]): DoorMigrating | null {
+  const m = s.k === "connecting" ? s.migrating : undefined;
+  if (m === undefined || m.fresh || m.pending <= 1) return null;
+  return { applied: m.applied, pending: m.pending, since: m.since };
+}
+
 /** The connection as the door draws it. Under the shell this side holds no mail, so it counts none. */
 export function doorStateOf(conn: DoorConnection, after: SaidRefusal | null): DoorState {
   const s = conn.state;
@@ -86,6 +98,7 @@ export function doorStateOf(conn: DoorConnection, after: SaidRefusal | null): Do
   const held = heldTokens(conn.profiles);
   return {
     session: open !== null ? "live" : s.k === "connecting" ? "opening" : s.k === "refused" ? "refused" : s.k === "ended" ? "ended" : "none",
+    migrating: migratingOf(s),
     said: s.k === "refused" || s.k === "ended" ? said(s.reason, held) : null,
     openId: open?.id ?? null,
     syncing: conn.syncing,

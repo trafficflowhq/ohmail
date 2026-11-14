@@ -81,7 +81,7 @@ describe("a start writes down where it lands, from a closed table", () => {
 
   it("the join returns to the join, and everything else to Settings: no purpose starts the landing nothing started before", async () => {
     const { LANDING_OF } = await import("../app/(product)/mailbox/connect-wire");
-    expect(LANDING_OF).toEqual({ join: "join", firstRun: "settings", add: "settings", edit: "settings", reconnect: "settings" });
+    expect(LANDING_OF).toEqual({ join: "join", firstRun: "settings", add: "settings", edit: "settings", reconnect: "settings", standalone: "settings" });
   });
 
   it("a reconnect's mailbox rides the start, and nothing else of the form does", async () => {

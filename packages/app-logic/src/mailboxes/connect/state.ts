@@ -94,7 +94,8 @@ export interface ConnectState {
   readonly leaving: boolean;
 }
 
-export type TypedField = "address" | "user" | "imapHost" | "smtpHost" | "imapPort" | "smtpPort";
+export type TypedField =
+  "address" | "user" | "imapHost" | "smtpHost" | "imapPort" | "smtpPort" | "displayName";
 
 export type ConnectEvent =
   | { readonly kind: "typed"; readonly field: TypedField; readonly value: string }

@@ -31,8 +31,8 @@ describe("the connect form's contract", () => {
     expect(props.factor).toBe(NONE);
   });
 
-  it("names its closed lists: five purposes, one provider that signs in, and every reason a refusal may carry", () => {
-    expect(CONNECT_PURPOSES).toEqual(["join", "firstRun", "add", "edit", "reconnect"]);
+  it("names its closed lists: six purposes, one provider that signs in, and every reason a refusal may carry", () => {
+    expect(CONNECT_PURPOSES).toEqual(["join", "firstRun", "add", "edit", "reconnect", "standalone"]);
     expect(SIGN_IN_PROVIDERS).toEqual(["microsoft"]);
     expect(PROBE_REASONS).toHaveLength(7);
     expect(PROBE_TLS_KINDS).toHaveLength(7);

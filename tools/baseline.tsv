@@ -407,7 +407,6 @@ apps/mobile/src/ui/Skeleton.tsx	eslint:unused-directive	1	phone-screens
 apps/mobile/src/ui/chrome.tsx	eslint:unused-directive	2	phone-screens
 apps/mobile/src/ui/list-detail.tsx	eslint:unused-directive	1	phone-screens
 apps/mobile/src/ui/pane-move.ts	eslint:unused-directive	1	phone-screens
-apps/mobile/src/ui/standalone-form.ts	eslint:unused-directive	1	phone-screens
 apps/mobile/test/away-refused.test.ts	ohmail/package-borders:apps/webapp	2	phone-shell
 apps/mobile/test/away-says-what-is-saved.test.ts	ohmail/package-borders:apps/webapp	1	phone-shell
 apps/mobile/test/copy-parity.test.ts	ohmail/declared-dependency	1	phone-shell

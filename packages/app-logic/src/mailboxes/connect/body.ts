@@ -5,6 +5,7 @@
  */
 import { discoveryRequestFor, type ProviderPreset } from "./providers.js";
 import type { Secret } from "./secret.js";
+import { senderNameOf } from "./sender-name.js";
 import type { ConnectInput, ConnectPatch, ConnectServer, ConnectTyped, Leg } from "./types.js";
 
 /**
@@ -123,8 +124,9 @@ function serverOf(
 
 /**
  * THE BODY OF A TEST AND OF A CONNECT, the same for both: the test dials what the connect dials. The username
- * defaults to the address on both servers; a claim rides only the server it stands for. Frozen: a press parked
- * behind the second factor is re-sent as this value.
+ * defaults to the address on both servers; a claim rides only the server it stands for. The name the letters carry
+ * rides only where one was typed, as it is stored. Frozen: a press parked behind the second factor is re-sent as
+ * this value.
  */
 export function inputOf(
   typed: ConnectTyped,
@@ -134,6 +136,8 @@ export function inputOf(
 ): ConnectInput {
   const address = typed.address.trim();
   const user = typed.user.trim() || address;
+  // A name that cannot be stored never reaches a body: the press refuses it first.
+  const name = senderNameOf(typed.displayName ?? "");
   const block = (of: Leg, field: string) =>
     Object.freeze({
       ...serverOf(field, preset, of),
@@ -147,6 +151,7 @@ export function inputOf(
     address,
     imap: block("imap", typed.imapHost),
     smtp: block("smtp", typed.smtpHost),
+    ...(typeof name === "string" ? { displayName: name } : {}),
   });
 }
 

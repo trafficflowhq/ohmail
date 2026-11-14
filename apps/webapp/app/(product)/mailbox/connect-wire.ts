@@ -16,7 +16,7 @@ import {
   SIGN_IN_FAILURES, SIGN_IN_REFUSALS, type Answered, type ConnectInput, type ConnectPurposeKind, type Refusal,
   type SignInFailureReason, type SignInProvider, type SignInRefusalReason, type SignInReturn,
 } from "@ohmail/app-logic/mailboxes/connect/types";
-import { NONE, type ConnectWire, type ProviderSignInWire, type Signal } from "@ohmail/app/host";
+import { NONE, type ConnectWire, type None, type ProviderSignInWire, type Signal } from "@ohmail/app/host";
 import { ApiError, mailboxes as mailboxApi, messageOf, type MailboxDTO } from "../../api-client";
 import { SessionBusyError } from "../../session-refresh";
 import { readMicrosoftDoor } from "./microsoft-door";
@@ -31,6 +31,8 @@ import {
  */
 export const LANDING_OF: Readonly<Record<ConnectPurposeKind, OAuthLanding>> = Object.freeze({
   join: "join", firstRun: "settings", add: "settings", edit: "settings", reconnect: "settings",
+  // A phone's own mailbox is opened on the phone, never here: its row is the shut default.
+  standalone: "settings",
 });
 
 /** What each landing asks the server to return to. Never read from the address, a parameter or a field. */
@@ -216,7 +218,8 @@ export interface WebConnectWire {
   };
 }
 
-export function webConnectWire(o: WebConnectWire): ConnectWire {
+/** This wire tests: its `probe` is a call, and its type says so. */
+export function webConnectWire(o: WebConnectWire): ConnectWire & { probe: Exclude<ConnectWire["probe"], None> } {
   /* The presses a connect was refused for, by the body itself: the form re-sends that same value, never a copy. */
   const refusedOnce = new WeakSet<object>();
   return {
