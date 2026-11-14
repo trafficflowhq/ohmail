@@ -59,12 +59,21 @@ const near = (seen: number, meant: number): void => {
 async function mount(
   scene: Scene,
   zoom: number,
-  how: { phone?: boolean; moving?: boolean } = {},
+  how: {
+    phone?: boolean;
+    moving?: boolean;
+    face?: "paper" | "ohmarchy";
+    scheme?: "light" | "dark";
+    /** A window of another size than the device's own. */
+    window?: [number, number];
+    /** The unfolded phone on its side, by its root's attributes (a pointer's case: no finger). */
+    foldl?: boolean;
+  } = {},
 ): Promise<Page> {
-  const device = DEVICES[how.phone ? "phone" : "desktop"];
+  const device = DEVICES[how.phone ? "phone" : how.foldl ? "foldl" : "desktop"];
   const root = {
-    "data-face": "paper",
-    "data-scheme": "light",
+    "data-face": how.face ?? "paper",
+    "data-scheme": how.scheme ?? "light",
     ...device.root,
     "data-icons": "1",
     "data-rm": how.moving ? "0" : "1",
@@ -73,7 +82,7 @@ async function mount(
     .map(([k, v]) => ` ${k}="${v}"`)
     .join("");
   const stamp = zoom === 1 ? "" : ` style="zoom:${zoom};--ui-zoom:${zoom}"`;
-  const [width, height] = device.window;
+  const [width, height] = how.window ?? device.window;
   const page = await browser!.newPage({
     viewport: { width, height },
     hasTouch: how.phone === true,
@@ -145,6 +154,42 @@ describe.each(ZOOMS)("at a text size of %s", (zoom) => {
       await page.close();
     }
   }, 60_000);
+
+  it.each([
+    /* one column from 600 wide (the open Duo held upright is 669 by 951): the sheet keeps a phone's 460 in the middle */
+    [600, 951, true],
+    [669, 951, true],
+    [699, 951, true],
+    /* a phone's own window: the sheet runs from edge to edge, a step in from each side */
+    [390, 844, false],
+    [466, 678, false],
+  ] as const)(
+    "a menu, a card or a sheet a finger opens on a phone %sx%s comes up from the foot, 460 wide in the middle from 600 wide (%s)",
+    async (width, height, middle) => {
+      for (const scene of ["control", "card", "footSheet"] as const)
+        for (const face of ["paper", "ohmarchy"] as const)
+          for (const scheme of ["light", "dark"] as const) {
+            const page = await mount(scene, zoom, { phone: true, face, scheme, window: [width, height] });
+            try {
+              await page.getByRole("button", { name: "More" }).tap();
+              await frames(page);
+              const menu = await rectOf(page, scene === "card" ? "[role='dialog']" : "[role='menu']");
+              const look = `${scene} ${face} ${scheme}`;
+              /* The window's px: the page's own lengths (460, the 8 at the edge) are drawn × the zoom. */
+              const room = width / zoom;
+              const side = middle ? Math.max(8, room / 2 - 230) : 8;
+              near(menu.left, side * zoom);
+              near(menu.width, (room - 2 * side) * zoom);
+              if (middle) near(menu.width, 460 * zoom);
+              near(height - menu.bottom, 8 * zoom);
+              expect(await page.getByText("Forward", { exact: true }).isVisible(), look).toBe(true);
+            } finally {
+              await page.close();
+            }
+          }
+    },
+    120_000,
+  );
 
   it.each(["row", "agenda", "trigger"])(
     "a menu at the pointer: a right click on a %s opens it with its corner at the pointer",
@@ -385,6 +430,348 @@ describe.each(ZOOMS)("at a text size of %s", (zoom) => {
       } finally {
         await page.close();
       }
+    },
+    60_000,
+  );
+});
+
+/*
+ * A PAGE OF TWO COLUMNS IN A SMALLER WINDOW (the doors' ask, from their security review and its ruling): a page
+ * whose sentence column is taller than its window folds to one column, which scrolls, so its one act is reached with
+ * a pointer; a page that fits keeps its two columns. The rooms are the review's: three smaller desktop windows, and
+ * the web door's Text size at the desktop's window and at the smallest of them.
+ */
+const ROOMS = [
+  { room: "1280x720", size: [1280, 720], zoom: 1 },
+  { room: "1100x640", size: [1100, 640], zoom: 1 },
+  { room: "1024x600", size: [1024, 600], zoom: 1 },
+  { room: "text 1.25 at 1440x900", size: [1440, 900], zoom: 1.25 },
+  { room: "text 1.5 at 1440x900", size: [1440, 900], zoom: 1.5 },
+  { room: "text 1.25 at 1280x720", size: [1280, 720], zoom: 1.25 },
+] as const;
+const LOOKS = [
+  ["paper", "light"],
+  ["paper", "dark"],
+  ["ohmarchy", "light"],
+  ["ohmarchy", "dark"],
+] as const;
+
+/** The rooms where the scene's two refusals push paper's act under the window's foot (ohmarchy's lead is 0: it fits). */
+const FOLD_ON_REFUSAL: readonly string[] = ["1024x600", "text 1.5 at 1440x900", "text 1.25 at 1280x720"];
+
+/** Where the page's parts stand, in the window's px, and whether the page says it folded. */
+const pageRead = (page: Page) =>
+  page.evaluate(() => {
+    const box = (sel: string) => {
+      const r = document.querySelector(sel)!.getBoundingClientRect();
+      return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+    };
+    return {
+      say: box(".oh-page-say"),
+      material: box("[data-scene='material']"),
+      act: box(".oh-page-acts .oh-button"),
+      folded: document.querySelector(".oh-page")!.hasAttribute("data-folded"),
+    };
+  });
+
+describe("a page of two columns in a smaller window", () => {
+  it.each([
+    ...ROOMS,
+    { room: "the unfolded phone on its side, 841x673", size: [841, 673], zoom: 1, foldl: true },
+  ] as const)(
+    "at $room, a page whose sentence column is taller than the window folds to one column: its act is reached by a wheel and pressed by a pointer",
+    async ({ size, zoom, ...at }) => {
+      const [width, height] = size;
+      for (const [face, scheme] of LOOKS) {
+        const look = `${face} ${scheme}`;
+        const page = await mount("pageTall", zoom, {
+          face,
+          scheme,
+          window: [width, height],
+          foldl: "foldl" in at,
+        });
+        try {
+          /* The case is what it says: the act stands under the window's foot when the page is drawn. */
+          expect((await pageRead(page)).act.bottom, `${look}: the act starts under the foot`).toBeGreaterThan(
+            height,
+          );
+          await page.mouse.move(width / 2, height / 2);
+          await page.mouse.wheel(0, 4000);
+          const reached = await page
+            .waitForFunction(
+              (foot) =>
+                document.querySelector(".oh-page-acts .oh-button")!.getBoundingClientRect().bottom <= foot,
+              height,
+              { timeout: 3_000 },
+            )
+            .then(() => true)
+            .catch(() => false);
+          const seen = await pageRead(page);
+          expect(
+            reached,
+            `${look}: a wheel brings the act inside (it stands at ${seen.act.top} to ${seen.act.bottom})`,
+          ).toBe(true);
+          expect(seen.act.top, `${look}: the act inside the window`).toBeGreaterThanOrEqual(0);
+          await page.mouse.click((seen.act.left + seen.act.right) / 2, (seen.act.top + seen.act.bottom) / 2);
+          expect(await page.locator("[data-pressed]").getAttribute("data-pressed"), `${look}: pressed`).toBe(
+            "1",
+          );
+          /* One column, as the unfolded phone held upright draws a page that stacks: the material under the act. */
+          expect(seen.folded, look).toBe(true);
+          expect(seen.material.top, `${look}: the material under the act`).toBeGreaterThan(seen.act.bottom);
+          near(seen.material.left, seen.say.left);
+        } finally {
+          await page.close();
+        }
+      }
+    },
+    120_000,
+  );
+
+  it.each([
+    ...ROOMS,
+    { room: "1440x900", size: [1440, 900], zoom: 1 },
+    { room: "the unfolded phone on its side, 841x673", size: [841, 673], zoom: 1, foldl: true },
+  ] as const)(
+    "at $room, a page whose sentence column fits keeps its two columns",
+    async ({ size, zoom, ...at }) => {
+      const [width, height] = size;
+      for (const [face, scheme] of LOOKS) {
+        const look = `${face} ${scheme}`;
+        const foldl = "foldl" in at;
+        const page = await mount("pageShort", zoom, { face, scheme, window: [width, height], foldl });
+        try {
+          const seen = await pageRead(page);
+          expect(seen.folded, look).toBe(false);
+          expect(seen.material.left, `${look}: the material beside the sentence`).toBeGreaterThan(
+            seen.say.right,
+          );
+          expect(seen.act.bottom, `${look}: the act inside the window`).toBeLessThanOrEqual(height);
+        } finally {
+          await page.close();
+        }
+      }
+    },
+    120_000,
+  );
+
+  it("a folded page that is measured again keeps the place it was scrolled to; folded under the keys, what has them stays in sight, and the window is told of no error", async () => {
+    const [width, height] = [1024, 600];
+    const step = (page: Page) =>
+      page.evaluate(() => (window as unknown as { stepScene: () => void }).stepScene());
+    const scrolled = (page: Page) => page.evaluate(() => document.querySelector(".oh-page-body")!.scrollTop);
+    /*
+     * Folded by a refusal and scrolled to its foot, further than its two columns could scroll; then the window a
+     * little lower: the page measures in its two columns again and stays where it was.
+     */
+    const kept = await mount("pageShort", 1, { window: [width, height] });
+    try {
+      await step(kept);
+      await frames(kept);
+      expect((await pageRead(kept)).folded).toBe(true);
+      await kept.mouse.move(width / 2, height / 2);
+      await kept.mouse.wheel(0, 4000);
+      await kept.waitForFunction(() => {
+        const body = document.querySelector(".oh-page-body")!;
+        return body.scrollTop > 200 && body.scrollTop + body.clientHeight >= body.scrollHeight - 1;
+      });
+      const at = await scrolled(kept);
+      await kept.setViewportSize({ width, height: height - 10 });
+      await frames(kept);
+      expect((await pageRead(kept)).folded).toBe(true);
+      near(await scrolled(kept), at);
+      /* And in a window it fits again, it is two columns again. */
+      await kept.setViewportSize({ width: 1440, height: 900 });
+      await frames(kept);
+      const wide = await pageRead(kept);
+      expect(wide.folded).toBe(false);
+      expect(wide.material.left, "the material beside the sentence").toBeGreaterThan(wide.say.right);
+    } finally {
+      await kept.close();
+    }
+    /* The keys in the material, which the fold sends under the buttons and the window's foot: it is brought back. */
+    const held = await mount("pageShort", 1, { window: [width, height] });
+    try {
+      const inside = held.locator("[data-scene='in-material']");
+      await inside.focus();
+      /* The fold moves the boxes the part watches: the browser must not say on the window that it could not tell of them. */
+      await held.evaluate(() => {
+        const told: string[] = [];
+        Object.assign(window, { told });
+        addEventListener("error", (event) => told.push(event.message));
+      });
+      await step(held);
+      await frames(held);
+      expect(await held.evaluate(() => (window as unknown as { told: string[] }).told)).toEqual([]);
+      const seen = await pageRead(held);
+      expect(seen.folded).toBe(true);
+      expect(seen.material.top, "the material under the act").toBeGreaterThan(seen.act.bottom);
+      expect(await inside.evaluate((el) => el === document.activeElement), "the keys stay").toBe(true);
+      const box = await rectOf(held, "[data-scene='in-material']");
+      expect(box.top, "what has the keys in sight").toBeGreaterThanOrEqual(0);
+      expect(box.bottom, "what has the keys in sight").toBeLessThanOrEqual(height + 1);
+    } finally {
+      await held.close();
+    }
+  }, 60_000);
+
+  it.each(ROOMS)(
+    "at $room, a refusal said while a person types folds the page where it no longer fits: the keys and the typed words stay in the blank",
+    async ({ room, size, zoom }) => {
+      const [width, height] = size;
+      for (const [face, scheme] of LOOKS) {
+        const look = `${face} ${scheme}`;
+        const page = await mount("pageShort", zoom, { face, scheme, window: [width, height] });
+        try {
+          const blank = page.getByRole("textbox", { name: "Billing address" });
+          await blank.click();
+          await page.keyboard.type("anna@");
+          await page.evaluate(() => (window as unknown as { stepScene: () => void }).stepScene());
+          await frames(page);
+          await page.keyboard.type("example.ch");
+          const seen = await pageRead(page);
+          /* Where the two refusals make the sentence column taller than the window, the page folds; else it keeps two. */
+          expect(seen.folded, look).toBe(face === "paper" && FOLD_ON_REFUSAL.includes(room));
+          if (seen.folded)
+            expect(seen.material.top, `${look}: the material under the act`).toBeGreaterThan(seen.act.bottom);
+          else expect(seen.material.left, `${look}: the material beside`).toBeGreaterThan(seen.say.right);
+          expect(await blank.inputValue(), look).toBe("anna@example.ch");
+          expect(await blank.evaluate((el) => el === document.activeElement), `${look}: the keys stay`).toBe(
+            true,
+          );
+          const at = await rectOf(page, ".oh-blank");
+          expect(at.top, `${look}: the blank in sight`).toBeGreaterThanOrEqual(0);
+          expect(at.bottom, `${look}: the blank in sight`).toBeLessThanOrEqual(height);
+        } finally {
+          await page.close();
+        }
+      }
+    },
+    120_000,
+  );
+});
+
+describe("the look tiles under the keys and a finger", () => {
+  const PAPER = "oh";
+  const OHMARCHY = "ohmarchy follows Omarchy";
+  const pressed = (page: Page) =>
+    Promise.all(
+      [PAPER, OHMARCHY].map((name) =>
+        page.getByRole("button", { name, exact: true }).getAttribute("aria-pressed"),
+      ),
+    );
+  it.each([1, 1.25] as const)(
+    "at Text size %s: Tab reaches each tile, Enter and Space choose and pressed is said; under a finger a tap chooses and each tile is a thumb's height or more",
+    async (zoom) => {
+      for (const face of ["paper", "ohmarchy"] as const) {
+        const keys = await mount("tiles", zoom, { face });
+        try {
+          await keys.keyboard.press("Tab");
+          const first = await keys.evaluate(() => document.activeElement?.getAttribute("aria-pressed"));
+          expect(first, `${face}: the first stop is the first tile`).toBe("true");
+          await keys.keyboard.press("Tab");
+          expect(
+            await keys
+              .getByRole("button", { name: OHMARCHY, exact: true })
+              .evaluate((el) => el === document.activeElement),
+          ).toBe(true);
+          await keys.keyboard.press("Enter");
+          expect(await pressed(keys), `${face}: Enter`).toEqual(["false", "true"]);
+          await keys.keyboard.press("Shift+Tab");
+          await keys.keyboard.press(" ");
+          expect(await pressed(keys), `${face}: Space`).toEqual(["true", "false"]);
+          /* Said: one button of each name, and the chosen one pressed. */
+          expect(await keys.getByRole("button", { name: PAPER, exact: true, pressed: true }).count()).toBe(1);
+        } finally {
+          await keys.close();
+        }
+        const touch = await mount("tiles", zoom, { face, phone: true });
+        try {
+          await touch.getByRole("button", { name: OHMARCHY, exact: true }).tap();
+          expect(await pressed(touch), `${face}: a tap`).toEqual(["false", "true"]);
+          for (const name of [PAPER, OHMARCHY]) {
+            const box = (await touch.getByRole("button", { name, exact: true }).boundingBox())!;
+            expect(box.height, `${face}: ${name} under a finger`).toBeGreaterThanOrEqual(44 * zoom);
+          }
+          /* One column under a finger: the second tile stands under the first. */
+          const [a, b] = await Promise.all(
+            [PAPER, OHMARCHY].map(
+              async (name) => (await touch.getByRole("button", { name, exact: true }).boundingBox())!,
+            ),
+          );
+          expect(b!.y, `${face}: one column`).toBeGreaterThanOrEqual(a!.y + a!.height);
+        } finally {
+          await touch.close();
+        }
+      }
+    },
+    60_000,
+  );
+  it.each([1, 1.25] as const)(
+    "at Text size %s: under a pointer the tiles stand side by side where two fit, and one under the other in a narrower column; every word stays in its tile",
+    async (zoom) => {
+      for (const face of ["paper", "ohmarchy"] as const)
+        for (const width of [390, 430, 760] as const) {
+          /* A mouse in a narrow window: the frame says one column under 700 wide, and a finger only where one is. */
+          const page = await mount("tiles", zoom, { face, window: [Math.round(width * zoom), 800] });
+          try {
+            const tiles = await page.evaluate(() =>
+              [...document.querySelectorAll("button[aria-pressed]")].map((tile) => {
+                const at = tile.getBoundingClientRect();
+                const ends = [...tile.querySelectorAll("time"), tile.lastElementChild!.lastElementChild!].map(
+                  (word) => word.getBoundingClientRect().right,
+                );
+                return {
+                  top: at.top,
+                  bottom: at.bottom,
+                  right: at.right,
+                  past: Math.max(...ends) - at.right,
+                };
+              }),
+            );
+            const [a, b] = tiles as [(typeof tiles)[number], (typeof tiles)[number]];
+            for (const tile of tiles)
+              expect(tile.past, `${face} ${width}: a word past its tile's edge`).toBeLessThanOrEqual(0);
+            if (width === 760) expect(b.top, `${face} ${width}: side by side`).toBe(a.top);
+            else expect(b.top, `${face} ${width}: one under the other`).toBeGreaterThanOrEqual(a.bottom);
+          } finally {
+            await page.close();
+          }
+        }
+    },
+    60_000,
+  );
+  it.each([1, 1.25, 1.5] as const)(
+    "at Text size %s: a longer word beside a tile's name stays inside its tile, under a finger and under a mouse, and the tile is heard by the whole word",
+    async (zoom) => {
+      const LONG = "übernimmt das Omarchy-Theme";
+      for (const face of ["paper", "ohmarchy"] as const)
+        for (const finger of [true, false]) {
+          /* A phone, and a mouse in the desktop's narrowest window. */
+          const page = await mount(
+            "tilesLong",
+            zoom,
+            finger ? { face, phone: true } : { face, window: [Math.round(390 * zoom), 800] },
+          );
+          try {
+            const tile = page.getByRole("button", { name: `ohmarchy ${LONG}`, exact: true });
+            expect(await tile.count(), `${face}: the tile heard by its name and the whole word`).toBe(1);
+            const at = await tile.evaluate((button) => {
+              const box = button.getBoundingClientRect();
+              const tag = button.lastElementChild!.lastElementChild!;
+              const word = tag.getBoundingClientRect();
+              return {
+                past: Math.max(word.right - box.right, word.bottom - box.bottom, box.left - word.left),
+                over: tag.scrollWidth - tag.clientWidth,
+              };
+            });
+            const where = `${face} ${finger ? "a finger" : "a mouse"}`;
+            expect(at.past, `${where}: the word past its tile's edge`).toBeLessThanOrEqual(0);
+            expect(at.over, `${where}: the word past its own capsule`).toBeLessThanOrEqual(0);
+          } finally {
+            await page.close();
+          }
+        }
     },
     60_000,
   );

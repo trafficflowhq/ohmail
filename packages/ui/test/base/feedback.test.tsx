@@ -237,6 +237,65 @@ describe("Page and Opening", () => {
     expect(within(page).getByRole("button", { name: "Sign in" })).toBeTruthy();
   });
 
+  it("a page of two columns whose sentence column is taller than its body says it folded; one that fits says nothing", () => {
+    /* jsdom lays nothing out: the body's two columns and its heights are what a browser would answer. */
+    let tall = true;
+    const watched = new Set<() => void>();
+    const heights = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("oh-page-body") && tall ? 900 : 600;
+    });
+    const room = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(600);
+    const style = window.getComputedStyle;
+    const columns = vi.spyOn(window, "getComputedStyle").mockImplementation((el, at) => {
+      const seen = style(el, at);
+      if (!(el as HTMLElement).classList?.contains("oh-page-body")) return seen;
+      return new Proxy(seen, {
+        get: (on, key) => (key === "gridTemplateColumns" ? "344px 520px" : Reflect.get(on, key)),
+      });
+    });
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        private readonly tell: () => void;
+        constructor(told: () => void) {
+          this.tell = () => told();
+          watched.add(this.tell);
+        }
+        observe() {}
+        disconnect() {
+          watched.delete(this.tell);
+        }
+      },
+    );
+    try {
+      const page = (columns: 1 | 2) => (
+        <Page columns={columns} material={<p>Plans</p>} acts={<Button size="l">Subscribe</Button>}>
+          <Sentence size="xl" level={1}>
+            Your trial has ended
+          </Sentence>
+        </Page>
+      );
+      const { rerender, container } = render(page(2));
+      const main = screen.getByRole("main");
+      expect(main.hasAttribute("data-folded")).toBe(true);
+      tall = false;
+      for (const told of watched) told();
+      expect(main.hasAttribute("data-folded")).toBe(false);
+      expect(container.innerHTML).not.toContain("data-folded");
+      tall = true;
+      rerender(page(1));
+      for (const told of watched) told();
+      expect(screen.getByRole("main").hasAttribute("data-folded")).toBe(false);
+    } finally {
+      heights.mockRestore();
+      room.mockRestore();
+      columns.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("the opening shapes say nothing until the wait has lasted, then one status line", () => {
     const { rerender } = render(<Opening kind="window" />);
     expect(screen.queryByRole("status")).toBeNull();
