@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HttpAdapter } from "../src/index.js";
-import type { MutationOutcome } from "../src/adapters/adapter.js";
+import { HttpAdapter } from "@ohmail/client-engine";
+import type { MutationOutcome } from "@ohmail/client-engine";
 import type { ScreenDecisionResult } from "@trafficflow/services";
 
 /**

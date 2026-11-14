@@ -6,7 +6,8 @@ import { NextIntlClientProvider } from "next-intl";
 import messages from "../messages/en.json";
 import { IDBFactory } from "fake-indexeddb";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
-import { FixturesAdapter, IndexedDbMirrorStore, MemoryMirrorStore, OhmailEngine, isOwnSent, ohboxView, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { IndexedDbMirrorStore, MemoryMirrorStore, OhmailEngine, isOwnSent, ohboxView, type EngineMessage, type SyncChange } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;

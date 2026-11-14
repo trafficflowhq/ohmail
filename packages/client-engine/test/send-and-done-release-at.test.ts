@@ -8,10 +8,11 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW, FixturesAdapter, MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE,
+  MemoryMirrorStore, MutationRejectedError, OhmailEngine, OUTBOX_TYPE,
   applySendAndDone, asSendAndDoneIntent, intentOf, ohboxView, releasePlanAt, sendAndDonePlanFor,
   type EngineMessage, type EngineMutation, type EntityReader, type MutationResult,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The fixture's ids, built from their numbers. */
 const tid = (n: number): string => `T${n}`;

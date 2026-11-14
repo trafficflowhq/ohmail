@@ -37,7 +37,6 @@
   },
   "dependencies": {
     "parse5": "7.3.0",
-    "@ohmail/fixtures": "*",
     "@ohmail/wire": "*",
     "@trafficflow/core": "*"
   }

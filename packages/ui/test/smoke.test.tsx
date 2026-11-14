@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 /**
  * Render smoke for every exported component, populated from
- * @ohmail/fixtures wherever the component has a natural fixture.
+ * @ohmail/testing wherever the component has a natural fixture.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render } from "@testing-library/react";
@@ -58,7 +58,7 @@ import {
   search,
   triage,
   waiting,
-} from "@ohmail/fixtures";
+} from "@ohmail/testing";
 
 afterEach(cleanup);
 

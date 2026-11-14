@@ -9,7 +9,7 @@ import {
   type EngineMutation,
   type MutationResult,
 } from "@ohmail/client-engine";
-import { triage } from "@ohmail/fixtures";
+import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
 import { replyDraftKey } from "../app/shell/mail-send";

@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { SLOP } from "@ohmail/fixtures";
+import { SLOP } from "@ohmail/testing";
 import { DOOR_COPY } from "../src/door-copy.js";
 
 /**

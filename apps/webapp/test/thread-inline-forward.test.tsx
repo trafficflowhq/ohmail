@@ -457,7 +457,7 @@ describe("forward is the reply's sibling, inside the reading surface", () => {
   it("a LATE forward confirmation never closes the reply opened after it", async () => {
     // A review finding: the fwd: settle closed whatever editor held the same message id,
     // mode-blind — a delayed confirmation took down an unrelated reply.
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const real = FixturesAdapter.prototype.mutate;
     let release: ((v: unknown) => void) | null = null;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (

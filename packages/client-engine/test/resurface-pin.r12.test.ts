@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   HttpAdapter,
   OhmailEngine,
   isResurfaced,
@@ -14,6 +12,7 @@ import {
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * A RESURFACED ROW STAYS PINNED UNTIL IT IS ANSWERED OR DELIBERATELY MARKED READ.

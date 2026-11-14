@@ -7,5 +7,5 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src", "src/icons/icons.json"],
-  "references": [{ "path": "../tokens" }, { "path": "../fixtures" }]
+  "references": [{ "path": "../tokens" }, { "path": "../testing" }]
 }

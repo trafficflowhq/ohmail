@@ -544,7 +544,7 @@ function RowActions({
 /**
  * The three empty states.
  *
- * The copy used to be read from `@ohmail/fixtures` and rendered on every account, demo or not.
+ * The copy used to be read from `@ohmail/testing` and rendered on every account, demo or not.
  * It happened to be brand-neutral English, so nobody noticed — but the defect is the import,
  * not the wording: the fixtures package is Mila's world, it is the ONE place in this repo where
  * invented people and invented brands are allowed to live, and a live surface reading strings

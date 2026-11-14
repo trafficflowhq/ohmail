@@ -5,8 +5,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   type EngineAdapter,
@@ -15,6 +13,7 @@ import {
   type SyncChange,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
 import { AddressView, archiveRowsBelong, nameFor } from "../app/views/AddressView";

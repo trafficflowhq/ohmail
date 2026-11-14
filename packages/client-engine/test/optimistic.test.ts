@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   OhmailEngine,
   MutationRejectedError,
   FOLDER_OF_VIEW,
@@ -23,6 +21,7 @@ import {
   type SyncParams,
   type SyncResponse,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** Optimistic mutations against the FixturesAdapter (the ?demo backend). */
 

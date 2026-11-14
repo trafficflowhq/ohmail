@@ -27,8 +27,9 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter, OhmailEngine, messageDisplayTime, messagesIn, type EngineMessage,
+  OhmailEngine, messageDisplayTime, messagesIn, type EngineMessage,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /** The four bands `messageStamp` can emit, with the names taken from `Intl` and not retyped. */
 const LOCALES = ["en", "de"] as const;

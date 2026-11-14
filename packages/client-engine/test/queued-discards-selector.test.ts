@@ -23,7 +23,7 @@ const draft = (id: string) => ({
 /** `offline` reaches every draft but those in `through`; `hang` holds the request open. */
 interface Net { offline: boolean; through: Set<string>; hang: Promise<void> | null }
 
-async function scene(ids: readonly string[]) {
+async function scene(ids: readonly string[], wire: (net: Net) => Record<string, unknown> = () => ({})) {
   const store = new IndexedDbMirrorStore({ owner: "acct-queued-discards", factory: new IDBFactory() });
   await store.load();
   const net: Net = { offline: true, through: new Set(), hang: null };
@@ -50,6 +50,7 @@ async function scene(ids: readonly string[]) {
         if (net.offline && !net.through.has(target)) throw new MutationRejectedError("network failure", { code: "network", retryable: true });
         return { changes: [], seq: null };
       },
+      ...wire(net),
     } as never,
   });
   await engine.start();
@@ -124,20 +125,20 @@ describe("waitingSends — the sends waiting to go, as Drafts lists them", () =>
 
   /** The send's create reaches the server and its send step does not, as the phone's held step answers. */
   async function sendScene() {
-    const s = await scene(["d1"]);
     let rows = 0;
     let hang: Promise<void> | null = null;
-    const adapter = (s.engine as unknown as { adapter: Record<string, unknown> }).adapter;
-    adapter.mutate = async (m: EngineMutation, opts: { onDraftRow?: (r: { id: string; revision: null }) => Promise<void>; createdRow?: unknown }) => {
-      if (m.kind !== "mail_send") return { changes: [], seq: null };
-      if (opts.createdRow === undefined && (m as { draftId?: string }).draftId === undefined) {
-        await opts.onDraftRow?.({ id: `row-${++rows}`, revision: null });
-      }
-      if (hang) await hang;
-      if (s.net.offline) throw new MutationRejectedError("network failure", { code: "network", retryable: true });
-      return { changes: [], seq: null, providerMessageId: "pm" };
-    };
-    adapter.withdrawSend = async () => ({ outcome: "withdrawn" });
+    const s = await scene(["d1"], (net) => ({
+      mutate: async (m: EngineMutation, opts: { onDraftRow?: (r: { id: string; revision: null }) => Promise<void>; createdRow?: unknown }) => {
+        if (m.kind !== "mail_send") return { changes: [], seq: null };
+        if (opts.createdRow === undefined && (m as { draftId?: string }).draftId === undefined) {
+          await opts.onDraftRow?.({ id: `row-${++rows}`, revision: null });
+        }
+        if (hang) await hang;
+        if (net.offline) throw new MutationRejectedError("network failure", { code: "network", retryable: true });
+        return { changes: [], seq: null, providerMessageId: "pm" };
+      },
+      withdrawSend: async () => ({ outcome: "withdrawn" }),
+    }));
     return { ...s, hold: (p: Promise<void> | null) => { hang = p; } };
   }
 

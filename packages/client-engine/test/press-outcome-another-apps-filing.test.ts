@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   consentPartition,
@@ -13,6 +12,7 @@ import {
   type RuleDTO,
   type SyncChange,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * THE PRESS SENTENCE OVER MAIL ANOTHER APP FILED. The rule's pass leaves a

@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
@@ -12,6 +10,7 @@ import {
   type EngineMutation,
   type MirrorStore,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * Two halves of DESKTOP-OUTBOX-IS-NOT-DURABLE that live in the engine every surface shares.

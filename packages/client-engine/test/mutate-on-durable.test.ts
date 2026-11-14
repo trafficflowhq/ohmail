@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import { faultyFactory } from "./helpers/faulty-idb.js";
 import {
-  FixturesAdapter, IndexedDbMirrorStore, OhmailEngine, OUTBOX_TYPE, type EngineMutation,
+  IndexedDbMirrorStore, OhmailEngine, OUTBOX_TYPE, type EngineMutation,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * `mutate(m, { onDurable })` — the moment a send may leave its editor. Called once, after the

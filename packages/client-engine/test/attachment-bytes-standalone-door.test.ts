@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
 import { HttpAdapter } from "../src/adapters/http-adapter.js";
-import { FixturesAdapter } from "../src/adapters/fixtures-adapter.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { bytesBlob, canBuildBlobFromBytes, responseBlob, retypedBlob } from "../src/bytes-blob.js";
 import type { EngineAdapter } from "../src/adapters/adapter.js";
 

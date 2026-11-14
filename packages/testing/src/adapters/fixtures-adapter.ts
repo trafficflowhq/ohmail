@@ -4,10 +4,10 @@ import {
   type Fixtures,
   type MessageFixture,
   type TriageItemFixture,
-} from "@ohmail/fixtures";
-import { applyToRecords, recordKey, type MirrorRecord } from "../apply.js";
-import type { EntityReader } from "../store.js";
-import { mutationEffects, type MutationEffect } from "../mutations.js";
+} from "../index.js";
+import { applyToRecords, recordKey, type MirrorRecord } from "@ohmail/client-engine";
+import type { EntityReader } from "@ohmail/client-engine";
+import { mutationEffects, type MutationEffect } from "@ohmail/client-engine";
 import {
   CursorExpiredError,
   FEED_SINCE_ID,
@@ -24,9 +24,9 @@ import {
   type SyncChange,
   type SyncResponse,
   type TriageItemDTO,
-} from "../types.js";
-import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams, WithdrawSendAnswer } from "./adapter.js";
-import { OUTBOX_WITHDRAWN_CODE } from "./refusal-shape.js";
+} from "@ohmail/client-engine";
+import type { AttachmentWire, EngineAdapter, MutationOutcome, SyncParams, WithdrawSendAnswer } from "@ohmail/client-engine";
+import { OUTBOX_WITHDRAWN_CODE } from "@ohmail/client-engine";
 
 /** The demo world's fixed "now" — a Wednesday; "Tue" fixtures land the day before. */
 export const DEMO_NOW = new Date("2026-07-29T12:00:00.000Z");
@@ -80,7 +80,7 @@ export interface FixturesAdapterOptions {
 }
 
 /**
- * The demo backend: boots the mirror from @ohmail/fixtures and serves mutations
+ * The demo backend: boots the mirror from @ohmail/testing and serves mutations
  * locally with realistic protocol semantics — a real change log with monotonic
  * seqs, paged bootstrap (`hasMore` drain), tail deltas after every mutation,
  * malformed-cursor 410s, and Idempotency-Key replay. Powers ?demo and UI tests;
@@ -356,7 +356,7 @@ export class FixturesAdapter implements EngineAdapter {
     this.emit("view_meta", "account", fx.account);
     /**
      * The Notifications screen's VIP list and its learned suggestion. They used to be imported into `SettingsView`
-     * straight from `@ohmail/fixtures` and rendered on every account, so a paying customer read a learned pattern
+     * straight from `@ohmail/testing` and rendered on every account, so a paying customer read a learned pattern
      * about Petra Wyss — a person invented for the demo. They travel through the MIRROR now, exactly as the Reads
      * waterline and the AI chip already do, which means the gate is structural: `/sync` has no `view_meta` entity
      * type at all, so a Cloud account can never receive this row and the block simply does not render there. It is a

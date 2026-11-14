@@ -166,7 +166,9 @@ export default defineConfig({
       { find: "@ohmail/tokens/faces.css", replacement: r("./packages/tokens/src/faces.css") },
       { find: "@ohmail/tokens/ohmarchy.css", replacement: r("./packages/tokens/src/ohmarchy.css") },
       { find: "@ohmail/tokens", replacement: r("./packages/tokens/src/index.ts") },
-      { find: "@ohmail/fixtures", replacement: r("./packages/fixtures/src/index.ts") },
+      // Above the bare name, for the prefix reason the tokens entries give.
+      { find: "@ohmail/testing/adapter", replacement: r("./packages/testing/src/adapter.ts") },
+      { find: "@ohmail/testing", replacement: r("./packages/testing/src/index.ts") },
       { find: /^@ohmail\/cal-core$/, replacement: r("./packages/cal-core/src/index.ts") }, // anchored: a subpath resolves by the package's own exports
       // Types only, so no run resolves it; listed for the censuses that walk import graphs off this table.
       { find: "@ohmail/wire", replacement: r("./packages/wire/src/index.ts") },

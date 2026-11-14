@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEMO_NOW, FixturesAdapter, OhmailEngine, addressMatchKey, folderLeaf } from "@ohmail/client-engine";
+import { OhmailEngine, addressMatchKey, folderLeaf } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * ═══ ALL THE MAIL FROM AND TO ONE ADDRESS — the device half of the address view ══════════

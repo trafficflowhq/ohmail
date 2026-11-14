@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { OhmailEngine } from "../src/engine.js";
-import { FixturesAdapter } from "../src/adapters/fixtures-adapter.js";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import type { AttachmentWire, EngineAdapter } from "../src/adapters/adapter.js";
 
 /**

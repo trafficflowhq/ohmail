@@ -2,8 +2,8 @@
  * @ohmail/client-engine — the delta-first client spine (brief §4):
  *   MirrorStore  — IndexedDB (web) / in-memory (SSR, tests) local mirror
  *                  with the idempotent, seq-guarded apply;
- *   Adapters     — FixturesAdapter (?demo + UI tests) and HttpAdapter (the
- *                  real /sync + mutation protocol) behind one interface;
+ *   Adapters     — HttpAdapter (the real /sync + mutation protocol) behind
+ *                  one interface; the sample world's adapter is test support, not here;
  *   OhmailEngine — bootstrap → drain → apply, optimistic mutation queue
  *                  (user-always-wins), wake-signal hook, local search.
  */
@@ -645,12 +645,11 @@ export {
 
 // Adapters.
 export type {
-  CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
+  AttachmentWire, CreatedDraftRow, EngineAdapter, MutationAnswer, MutationOutcome, MutationQueued, ReadIntent, SyncParams,
   ScreenerWaitingItemWire, ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedPileWire,
   AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire,
   WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
 } from "./adapters/adapter.js";
-export { DEMO_NOW, FixturesAdapter, parseFixtureTime, type FixturesAdapterOptions } from "./adapters/fixtures-adapter.js";
 export {
   HttpAdapter,
   // The deadline a body fetch runs under. Exported so a SURFACE that says "still coming" can

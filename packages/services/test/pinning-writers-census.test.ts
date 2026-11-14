@@ -28,7 +28,7 @@ import ts from "typescript";
 
 const REPO = resolve(join(import.meta.dirname, "..", "..", ".."));
 const SERVICES = join(REPO, "packages/services/src");
-const ENGINE = join(REPO, "packages/client-engine/src/engine.ts");
+const ENGINE = join(REPO, "packages/client-engine/src/engine/windowed.ts");
 
 /**
  * THE PIN KINDS, DERIVED FROM THE PIN SET ITSELF rather than restated. `pinnedMessageIds()` reads

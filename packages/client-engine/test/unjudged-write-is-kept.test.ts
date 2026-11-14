@@ -1,16 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   MutationRejectedError,
   OhmailEngine,
   OUTBOX_TYPE,
-  DEMO_NOW,
   type EngineAdapter,
   type EngineMutation,
   type FetchLike,
 } from "@ohmail/client-engine";
+import { FixturesAdapter, DEMO_NOW } from "@ohmail/testing/adapter";
 import { classifyRefusal, UNJUDGED_WRITE_CODES } from "../src/adapters/refusal-shape.js";
 
 /**

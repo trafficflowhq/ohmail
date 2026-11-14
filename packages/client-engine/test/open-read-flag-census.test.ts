@@ -9,14 +9,14 @@ import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from
  * `Engine.enrich` alone sets it — from the held row and the ids' conversations. A surface that put
  * the flag on its own literal would place rows by its own rule, which is the device-dependent order
  * the 2026-09-18 ruling ended. Parsed for the CALL: every object literal carrying
- * `kind: "mark_seen"` under the app sources and the engine's own `src`, `engine.ts` excepted, is
+ * `kind: "mark_seen"` under the app sources and the engine's own `src`, `enrich`'s file excepted, is
  * walked by brace and refused if it names `openRead`. (`enrich` also strips a passed flag.)
  */
 const REPO = join(fileURLToPath(new URL(".", import.meta.url)), "..", "..", "..");
 const ROOTS = [
   "apps/webapp/app", "packages/app-logic/src", "apps/mobile/src", "apps/desktop/src", "apps/sidecar/src", "packages/client-engine/src", "packages/ui/src",
 ];
-const EXEMPT = new Set(["packages/client-engine/src/engine.ts"]);
+const EXEMPT = new Set(["packages/client-engine/src/engine/optimistic-mutations.ts"]);
 
 function sources(dir: string, into: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -58,7 +58,7 @@ describe("no surface passes the open-read flag", () => {
     expect(flaggedMarkSeen(`// { kind: "mark_seen", openRead: true }\nconst x = 1;`)).toEqual({ literals: 0, flagged: [] });
   });
 
-  it("every mark_seen literal outside engine.ts carries no openRead — and the scan found them", () => {
+  it("every mark_seen literal outside the file of enrich carries no openRead — and the scan found them", () => {
     let literals = 0;
     const offenders: string[] = [];
     for (const root of ROOTS) {

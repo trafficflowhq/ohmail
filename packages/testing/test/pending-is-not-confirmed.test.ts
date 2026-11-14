@@ -5,7 +5,7 @@ import {
   ORGANIZER_REQUEST_SLOW_MS,
   type EngineMessage,
   type Folder,
-} from "../src/index.js";
+} from "@ohmail/client-engine";
 
 /**
  * A 202 IS A REQUEST RECORDED, NOT A MOVE MADE.

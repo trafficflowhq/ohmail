@@ -154,7 +154,7 @@ const ALIASES: Record<string, string> = {
   "@ohmail/sidecar": r("apps/sidecar/src/index.ts"),
   "@ohmail/db-mail": r("packages/db-mail/src/index.ts"),
   "@ohmail/client-engine": r("packages/client-engine/src/index.ts"),
-  "@ohmail/fixtures": r("packages/fixtures/src/index.ts"),
+  "@ohmail/testing": r("packages/testing/src/index.ts"),
   /* What a client and a server exchange, as types: reached through the engine's and the services'
      type imports. It imports no package and exports no value, so it adds nodes and no reachability. */
   "@ohmail/wire": r("packages/wire/src/index.ts"),
