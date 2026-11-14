@@ -114,7 +114,7 @@ async function mount(
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView, ScreenerWarmup } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   /* `AppShell`'s door, as it resolves a target: the mirror's own row, else a resting snippet. */
   const door = (m: BodyTarget) => bodyOf(engine.read(), engine.read().get<EngineMessage>("message", m.id) ?? m);
   function Probe(): React.ReactElement {

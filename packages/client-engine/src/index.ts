@@ -837,6 +837,7 @@ export {
   PART_REASK_DELAYS_MS,
   type KeptAsNewDraft,
 } from "./engine.js";
+export { deleteIntentKey } from "./engine/trash.js";
 /** One mailbox's byte asks in line: never more at once than the API's per-mailbox door admits. */
 export { PART_FETCHES_PER_MAILBOX, BUSY_PATIENCE_MS } from "./part-lane.js";
 

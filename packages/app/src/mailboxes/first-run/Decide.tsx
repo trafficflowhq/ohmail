@@ -4,9 +4,9 @@
  * card yet says so rather than drawing nothing.
  */
 import type { KeyboardEvent, ReactNode } from "react";
-import { Button, Page, Seg } from "@ohmail/ui/base";
+import { Button, Page, Seg, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
-import { Foot, Said, StepForm, leadOf, type StepProps } from "./parts.js";
+import { Foot, StepForm, leadOf, type StepProps } from "./parts.js";
 import { PLACES } from "./words.js";
 
 export function Decide({ run, say }: StepProps): ReactNode {
@@ -32,7 +32,9 @@ export function Decide({ run, say }: StepProps): ReactNode {
             />
           }
         >
-          <Said text={say("onboarding.decideTitle")} />
+          <Sentence size="xl" level={1} end="hot">
+            {say("onboarding.decideTitle")}
+          </Sentence>
         </Page>
       </StepForm>
     );
@@ -96,7 +98,9 @@ export function Decide({ run, say }: StepProps): ReactNode {
       }
       acts={<Foot run={run} say={say} />}
     >
-      <Said text={say("onboarding.decideTitle")} />
+      <Sentence size="xl" level={1} end="hot">
+        {say("onboarding.decideTitle")}
+      </Sentence>
     </Page>
   );
 }

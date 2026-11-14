@@ -58,7 +58,8 @@ export function ReadingHead({
       data-sentence={sentence ? "" : undefined}
       data-under={under ? "" : undefined}
     >
-      {subject ? <h1 className="oh-text oh-readinghead-subject">{subject}</h1> : null}
+      {/* A part of the place it stands in: the place's head is the page's one level-1 heading. */}
+      {subject ? <h2 className="oh-text oh-readinghead-subject">{subject}</h2> : null}
       {sentence ? <Sentence>{sentence}</Sentence> : null}
       {lines}
       {!told ? null : squares ? (

@@ -37,7 +37,7 @@ import {
   type MirrorStore, type SyncChange,
 } from "@ohmail/client-engine";
 import en from "../../messages/en.json";
-import { act, consentTransport, msg, NOW, S, setup, storeWith, teardown, waitFor } from "../_view-shell";
+import { act, consentTransport, msg, NOW, S, setup, storeWith, teardown, tombstone, waitFor } from "../_view-shell";
 import { stubThreadLayout } from "../fixtures/thread-layout";
 
 const seen = vi.hoisted(() => ({
@@ -47,8 +47,9 @@ const seen = vi.hoisted(() => ({
   held: [] as string[],
 }));
 
-vi.mock("@ohmail/app/ohbox", async (load) => {
-  const real = await load<typeof import("@ohmail/app/ohbox")>();
+/* What the Ohbox's own seat stands above its columns, by the file the seat itself reads it from. */
+vi.mock("../../../../packages/app/src/ohbox/OhboxAbove", async (load) => {
+  const real = await load<typeof import("../../../../packages/app/src/ohbox/OhboxAbove")>();
   const React = await import("react");
   const { useFrame } = await import("@ohmail/app/frame");
   return {
@@ -64,8 +65,9 @@ vi.mock("@ohmail/app/ohbox", async (load) => {
   };
 });
 
-vi.mock("../../app/shell/attachments", async (load) => {
-  const real = await load<typeof import("../../app/shell/attachments")>();
+/* The one file door, where the mail ground mounts it. */
+vi.mock("@ohmail/app-logic/reader/attachments", async (load) => {
+  const real = await load<typeof import("@ohmail/app-logic/reader/attachments")>();
   return {
     ...real,
     useMessageAttachments: (...args: Parameters<typeof real.useMessageAttachments>) => {
@@ -97,6 +99,7 @@ interface Seated {
   readonly sent: EngineMutation[];
   /** Every letter whose text the mirror asked the server for. */
   readonly asked: string[];
+  readonly changeScope: (scope: string) => Promise<void>;
 }
 
 /** The real old shell over a memory mirror, at the address named. */
@@ -149,18 +152,19 @@ async function seat(o: {
   document.body.appendChild(container);
   const root = createRoot(container);
   S.roots.push(root);
-  await act(async () => {
+  const draw = (scope?: string) => act(async () => {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages: en, timeZone: "UTC", now: NOW,
       children: h(ThemeProvider, { children: h(ToastHost, {
         children: h(AppShell as never, {
-          demo: o.demo === true, engine, consentTransport: o.consent ?? consentTransport,
+          scope, demo: o.demo === true, engine, consentTransport: o.consent ?? consentTransport,
           mailboxFacts: async () => o.roster ?? ROSTER, ...(o.stageCard ? { stageCard: o.stageCard } : {}),
         } as never),
       }) }),
     } as never));
   });
-  return { sent, asked };
+  await draw();
+  return { sent, asked, changeScope: draw };
 }
 
 const width = { w: 0, h: 0 };
@@ -495,12 +499,16 @@ describe("under 700 wide a menu is a sheet, and closing it gives the keyboard ba
 
     await press(row("m1"), "the row of m1");
     await waitFor(() => letterShown("m1"), "m1 over the list");
+    const readingSheet = screen.getByRole("dialog");
+    expect(readingSheet.contains(reader())).toBe(true);
+    expect(menus()).toEqual([readingSheet]);
     const more = (): HTMLElement => within(reader()).getByRole("button", { name: "More" });
     await act(async () => { more().focus(); });
     await press(more(), "More on the panel");
-    await waitFor(() => menus().length === 1, "More as a sheet");
+    await waitFor(() => screen.queryByRole("menu", { name: "More" }) !== null, "More as a sheet");
+    expect(menus()).toEqual([screen.getByRole("menu", { name: "More" }), readingSheet]);
     await typed("Escape");
-    await waitFor(() => menus().length === 0, "Escape closed it");
+    await waitFor(() => menus().length === 1 && menus()[0] === readingSheet, "Escape closed only More");
     await rounds(4);
     expect(letterShown("m1"), "the letter stays over the list: one Escape closes one thing").toBe(true);
     expect(document.activeElement, "the keyboard is back on More").toBe(more());
@@ -751,7 +759,7 @@ describe("the keyboard at the seated Ohbox", () => {
     await waitFor(() => screen.queryByRole("dialog", { name: "More" }) === null, "the rail stands at the side once the window is wide");
     await act(async () => { row("m1").focus(); });
     await key("h");
-    const rail = screen.getByRole("navigation", { name: "Main" });
+    const rail = screen.getByRole("navigation", { name: "Places" });
     await waitFor(() => rail.contains(document.activeElement), "h walked into the rail");
     await key("Escape");
     await waitFor(() => !rail.contains(document.activeElement), "Escape left the rail");
@@ -880,10 +888,14 @@ describe("a verb that takes the open row follows the stored choice", () => {
 
 describe("the composer, closed, gives the keyboard back to the list it left", () => {
   /** `c` leaves the Ohbox for the composer, and Escape comes back to a list drawn again. */
-  async function composeAndBack(n: number): Promise<void> {
+  async function openComposer(): Promise<void> {
     await typed("c");
     await waitFor(() => window.location.hash.startsWith("#/compose"), "c reached the composer");
     await rounds(6);
+  }
+  async function composeAndBack(n: number, whileWriting?: () => Promise<void>): Promise<void> {
+    await openComposer();
+    await whileWriting?.();
     await typed("Escape");
     await waitFor(() => window.location.hash.startsWith("#/ohbox") && rows().length === n, "Escape came back to the Ohbox");
     await rounds(12);
@@ -919,6 +931,91 @@ describe("the composer, closed, gives the keyboard back to the list it left", ()
     expect(document.activeElement, "the premise: the row holds the keyboard").toBe(row(third));
     await composeAndBack(4);
     expect(keyboardOn(), "after the composer closed the keyboard is on the row it left").toBe(`option ${row(third).getAttribute("aria-label")}`);
+  }, 30_000);
+
+  async function threeRows(): Promise<Seated> {
+    sized(1440, 900);
+    const host = await seat({ letters: [msg("m1"), msg("m2"), msg("m3")], hash: "#/ohbox" });
+    await waitFor(() => rows().length === 3, "the seated list");
+    return host;
+  }
+
+  it("returns to the focused row when a different letter is open", async () => {
+    await threeRows();
+    const [open, origin] = order();
+    await press(row(open!), "the first row");
+    await waitFor(() => openId() === open, "its letter open");
+    await act(async () => { row(origin!).focus(); });
+    await composeAndBack(3);
+    expect(document.activeElement).toBe(row(origin!));
+  }, 30_000);
+
+  it("returns to the next row when the original row disappears while writing", async () => {
+    await threeRows();
+    const [, origin, next] = order();
+    await act(async () => { row(origin!).focus(); });
+    await composeAndBack(2, () => tombstone(origin!));
+    expect(document.activeElement).toBe(row(next!));
+  }, 30_000);
+
+  it("returns from the letter's foot to the row that opened it", async () => {
+    await threeRows();
+    const origin = order()[1]!;
+    await act(async () => { row(origin).focus(); });
+    await composeAndBack(3, async () => {
+      const discard = screen.getByRole("button", { name: "Discard" });
+      await act(async () => { discard.focus(); });
+      expect(document.activeElement).toBe(discard);
+    });
+    expect(document.activeElement).toBe(row(origin));
+  }, 30_000);
+
+  it("preserves a deliberate move from the letter to the rail", async () => {
+    await threeRows();
+    await act(async () => { rows()[1]!.focus(); });
+    await openComposer();
+    const rail = screen.getByRole("navigation", { name: "Places" });
+    const control = within(rail).getAllByRole("button")[0]!;
+    await act(async () => { control.focus(); });
+    expect(document.activeElement).toBe(control);
+    await visit("#/ohbox");
+    await waitFor(() => rows().length === 3, "the list returned");
+    await rounds(12);
+    expect(document.activeElement).toBe(control);
+  }, 30_000);
+
+  it("leaves the originating row behind when the host switches accounts", async () => {
+    const host = await threeRows();
+    const origin = order()[1]!;
+    await act(async () => { row(origin).focus(); });
+    await openComposer();
+    await act(async () => {
+      window.location.hash = "#/ohbox";
+      await host.changeScope("other-account");
+    });
+    await waitFor(() => rows().length === 3, "the next account has the same message ids");
+    await rounds(12);
+    expect(document.activeElement).not.toBe(row(origin));
+  }, 30_000);
+
+  it("leaves the keyboard in a host dialog that stays open as the letter closes", async () => {
+    await threeRows();
+    await act(async () => { rows()[1]!.focus(); });
+    await openComposer();
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    const close = dialog.appendChild(document.createElement("button"));
+    close.textContent = "Close";
+    document.body.append(dialog);
+    try {
+      await visit("#/ohbox");
+      await waitFor(() => rows().length === 3, "the list returned under the dialog");
+      await rounds(12);
+      expect(document.activeElement).toBe(close);
+    } finally {
+      dialog.remove();
+    }
   }, 30_000);
 
   it("from a control of the list's head with a letter open: on the cursor's row", async () => {

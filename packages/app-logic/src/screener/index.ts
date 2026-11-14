@@ -16,8 +16,14 @@ export {
 export { nextAfterDecision } from "./next-sender.js";
 export { emptyOf, type ScreenerEmpty, type ScreenerFacts } from "./empty.js";
 export { defaultScopeOf, isSharedDomain } from "./reach.js";
-export { suggestionWords, type SuggestionWords, type WordsLine } from "./words.js";
-export { screenerKeys, type KeySegment, type ScreenerKeysInput, type ScreenerKeyWords } from "./keys.js";
+export { NO_RUN, suggestionWords, type NoAdvice, type SuggestionWords, type WordsLine } from "./words.js";
+export {
+  screenerKeys,
+  screenerListSteps,
+  type KeySegment,
+  type ScreenerKeysInput,
+  type ScreenerKeyWords,
+} from "./keys.js";
 export {
   useScreenerView,
   viewRowId,

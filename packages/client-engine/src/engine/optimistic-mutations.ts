@@ -315,7 +315,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
      * So a send whose durable record was refused is rolled back and says so; the composer still holds the text.
      */
     // A press under a key whose send just confirmed sends the row that send made, never a second one.
-    const confirmedRow = enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key) : undefined;
+    const confirmedRow = enriched.kind === "mail_send" && opts.key !== undefined ? this.confirmedRows.get(key)?.saved : undefined;
     const pending: PendingMutation = {
       id, key, mutation: enriched, at: this.now().getTime(), n: this.outboxSeq++,
       ...(superseded.retired.length > 0 ? { retire: superseded.retired } : {}),
@@ -635,6 +635,7 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
      * come back and re-queue itself. The entry is removed when the ATTEMPT settles.
      */
     const attempt = this.dispatch(p, opts);
+    if (p.mutation.kind === "draft_save" && p.mutation.draftId === null) p.createAttempt = attempt;
     this.inFlight.set(p.id, p);
     void attempt.then(() => this.inFlight.delete(p.id), () => this.inFlight.delete(p.id));
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -1546,12 +1547,28 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
   ): Promise<MutationResult> {
     const r = await this.dispatchOnce(p, opts);
     this.noteKeptRow(p.key, r);
-    if (p.mutation.kind === "mail_send" && r.status === "confirmed" && p.createdRow !== undefined) {
+    if (p.mutation.kind === "mail_send" && r.status === "confirmed" && (p.createdRow || r.sentDraftId)) {
+      const prior = this.confirmedRows.get(p.key);
+      const through = r.seq ?? r.sentDraftThrough;
+      const delivered = r.sentDraftId && through !== undefined && Number.isSafeInteger(through) && through > 0
+        ? { id: r.sentDraftId, seq: through } : prior?.delivered;
       this.confirmedRows.delete(p.key);
-      this.confirmedRows.set(p.key, p.createdRow);
+      this.confirmedRows.set(p.key, { saved: p.createdRow ?? prior?.saved, delivered });
       if (this.confirmedRows.size > 64) this.confirmedRows.delete(this.confirmedRows.keys().next().value!);
     }
     return p.mutation.kind === "mail_send" ? await this.oneSpeaker(p, r) : r;
+  }
+
+  /** Only the sending version of the delivered row is stale. An optimistic retry or a later
+   * server version on the same id has its own outcome. The record belongs to this engine's account. */
+  confirmedReplyDraft(draft: EngineDraft): boolean {
+    if (draft.status !== "sending") return false;
+    const row = this.store.record("draft", draft.id);
+    if (!row || row.entity !== draft || row.seq <= 0) return false;
+    for (const { delivered } of this.confirmedRows.values()) {
+      if (delivered?.id === draft.id && row.seq <= delivered.seq) return true;
+    }
+    return false;
   }
 
   /** Queued edits kept as new drafts this session — see {@link KeptAsNewDraft}. Newest last. */
@@ -1947,6 +1964,8 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
       // rolled-back one has no answer from the organizer to report.
       return {
         id: p.id, key: p.key, status: "confirmed", seq: outcome.seq,
+        ...(outcome.sentDraftId ? { sentDraftId: outcome.sentDraftId } : {}),
+        ...(outcome.sentDraftThrough === undefined ? {} : { sentDraftThrough: outcome.sentDraftThrough }),
         ...(outcome.entityId ? { entityId: outcome.entityId } : {}),
         ...(outcome.revision ? { revision: outcome.revision } : {}),
         ...(outcome.pendingWith ? { pendingWith: outcome.pendingWith } : {}),
@@ -2439,6 +2458,16 @@ export abstract class EngineOptimisticMutations extends EngineAttachments {
    */
   inFlightMutations(): ReadonlyArray<{ id: string; key: string; mutation: EngineMutation; andDone?: SendAndDonePlan; confirmed?: true }> {
     return [...this.inFlight.values()];
+  }
+
+  /** The canonical row of a first save already on the wire, if that attempt actually confirmed. */
+  async settledDraftCreate(key: string): Promise<string | null> {
+    for (const p of this.inFlight.values()) {
+      if (p.key !== key || !p.createAttempt) continue;
+      const result = await p.createAttempt;
+      return result.status === "confirmed" ? result.entityId ?? null : null;
+    }
+    return this.createdDraftOf(key)?.id ?? null;
   }
 
   /**

@@ -7,7 +7,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { shellFrameOf } from "./source-anchor.js";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { WithListGone } from "./_list-gone";
 import { FoldersRailGroup } from "../app/shell/FoldersRailGroup";
 import {
@@ -574,7 +574,7 @@ const olderNone = {
 
 describe("search hits route to the folder view only when it can show them", () => {
   it("openTargetFor: a held row targets the folder; an off-mirror row keeps the reader", async () => {
-    const { openTargetFor } = await import("../app/shell/AppShell");
+    const { openTargetFor } = await import("@ohmail/app-logic/search/open-target");
     const hit = {
       id: "m1", mailboxId: "mb1", folder: "Projects/Acme",
       from: { name: null, address: "a@x.example" },

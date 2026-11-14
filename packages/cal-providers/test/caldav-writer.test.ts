@@ -5,7 +5,7 @@
  * The writer runs over the real request port, on the own-network policy a person's own server is
  * reached on. The live run at the bench's own server is `caldav.live.ts`'s.
  */
-import { intlZones, readCalendar, DEFAULT_LIMITS, wall, zoned, parseRRule } from "@ohmail/cal-core";
+import { intlZones, plainDate, expandSeries, seriesOf, readCalendar, DEFAULT_LIMITS, wall, zoned, parseRRule } from "@ohmail/cal-core";
 import type { HostResolver } from "@trafficflow/core/net";
 import { afterEach, describe, expect, it } from "vitest";
 import { makeWriter } from "../src/caldav/index.js";
@@ -68,6 +68,89 @@ const textOf = (dav: StandIn, name: string): string => {
 };
 
 describe("CalDAV's writer", () => {
+  const personalText = (extra: string[] = []) => ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN", "BEGIN:VEVENT",
+    "UID:pottery", "DTSTAMP:20261101T000000Z", "DTSTART;VALUE=DATE:20261116", "DTEND;VALUE=DATE:20261117",
+    "RRULE:FREQ=DAILY;COUNT=5", "SUMMARY:Kiln check", ...extra, "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+  const cut = plainDate(2026, 11, 18);
+  const continuation = {
+    key: { hex: KEY }, start: cut, end: plainDate(2026, 11, 19), rule: parseRRule("FREQ=DAILY;COUNT=3")!,
+    change: { summary: "New firing" },
+  };
+
+  it("keeps both halves of a personal series edit untouched if the provider copy names an unlisted guest", async () => {
+    const b = await bench({ autoSchedule: true });
+    const text = personalText(["ATTENDEE:urn:uuid:aa"]);
+    b.dav.put("studio", "kiln.ics", text, '"one"');
+    const target = { id: b.member("kiln.ics"), version: '"one"', text, occurrence: cut, personalSeries: true as const };
+    expect(word(await b.writer.change(b.connection, b.cal, target, { summary: "New firing" }, never))).toBe("version_stale");
+    expect(word(await b.writer.endSeries(b.connection, b.cal, target, { then: continuation, mayBeDone: false }, never))).toBe("version_stale");
+    const ended = text.replace("COUNT=5", "UNTIL=20261117");
+    b.dav.put("studio", "kiln.ics", ended, target.version);
+    expect(word(await b.writer.continueSeries(b.connection, b.cal, { ...continuation, from: { ...target, text: ended } }, never))).toBe("version_stale");
+    expect(b.writes()).toHaveLength(0);
+  });
+
+  it("keeps a continued series unmade if its provider has since restored the original days", async () => {
+    const b = await bench();
+    const original = personalText();
+    const ended = original.replace("COUNT=5", "UNTIL=20261117");
+    b.dav.put("studio", "kiln.ics", original, '"restored"');
+    const from = { id: b.member("kiln.ics"), version: '"ended"', text: ended, occurrence: cut, personalSeries: true as const };
+    expect(word(await b.writer.continueSeries(b.connection, b.cal, { ...continuation, from }, never))).toBe("version_stale");
+    expect(b.writes()).toHaveLength(0);
+  });
+
+  it.each(["all", "one"])("checks the series membership on a retried %s edit even when the title matches", async (scope) => {
+    const b = await bench();
+    const text = personalText();
+    b.dav.put("studio", "kiln.ics", text, '"one"');
+    const target = { id: b.member("kiln.ics"), version: '"one"', text, occurrence: scope === "all" ? null : cut, personalSeries: true as const };
+    const change = { summary: "New firing" };
+    expect(word(await b.writer.change(b.connection, b.cal, target, change, never))).toBe("ok");
+    const applied = textOf(b.dav, "kiln.ics");
+    expect(word(await b.writer.change(b.connection, b.cal, target, change, never))).toBe("ok");
+    b.dav.put("studio", "kiln.ics", applied.replace("END:VEVENT", "ATTENDEE:urn:uuid:aa\r\nEND:VEVENT"), '"new"');
+    expect(word(await b.writer.change(b.connection, b.cal, target, change, never))).toBe("version_stale");
+  });
+
+  it.each(["one", "following", "all"])("changes the selected dates of a personal series for %s", async (scope) => {
+    const b = await bench();
+    const text = personalText();
+    b.dav.put("studio", "kiln.ics", text, '"one"');
+    const target = { id: b.member("kiln.ics"), version: '"one"', text, occurrence: cut, personalSeries: true as const };
+    if (scope === "following") {
+      const ended = await b.writer.endSeries(b.connection, b.cal, target, { then: continuation, mayBeDone: false }, never);
+      expect(word(ended)).toBe("ok");
+      const item = ended.ok && ended.items[0];
+      if (!item || item.kind !== "upsert") throw new Error("missing ended series");
+      expect(word(await b.writer.continueSeries(b.connection, b.cal, {
+        ...continuation, from: { ...target, text: item.text, version: item.version },
+      }, never))).toBe("ok");
+    } else {
+      expect(word(await b.writer.change(b.connection, b.cal, { ...target, occurrence: scope === "one" ? cut : null }, continuation.change, never))).toBe("ok");
+    }
+    const titles = b.writes().flatMap((w) => {
+      const read = readCalendar(w.body, DEFAULT_LIMITS);
+      if (!read.ok) throw new Error("invalid written series");
+      return seriesOf(read.calendar.events, ZONES).flatMap((series) =>
+        expandSeries(series, { startMs: Date.UTC(2026, 10, 16), endMs: Date.UTC(2026, 10, 21), viewerZone: "UTC" }, ZONES)
+          .occurrences.map((occurrence) => occurrence.event.summary));
+    });
+    expect(titles).toEqual([16, 17, 18, 19, 20].map((d) =>
+      (scope === "all" || (scope === "following" ? d >= 18 : d === 18)) ? "New firing" : "Kiln check"));
+  });
+
+  it("does not send an update when the member carries a guest missing from the confirmation", async () => {
+    const b = await bench();
+    const made = await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event: draft() }, never);
+    const item = made.ok ? made.items[0] : null;
+    if (item?.kind !== "upsert") throw new Error("missing test event");
+    const target = { id: item.id, version: item.version, text: item.text, occurrence: null,
+      audience: { organizer: "studio@example.invalid", guests: ["clay@example.invalid"] } };
+    expect(word(await b.writer.change(b.connection, b.cal, target, { summary: "Moved firing" }, never))).toBe("version_stale");
+    expect(b.writes()).toHaveLength(1);
+  });
+
   it("makes a new member named from the write's key, with that UID, only if it is new, and answers it as a reading would", async () => {
     const b = await bench();
     const made = await b.writer.create(b.connection, b.cal, { key: { hex: KEY }, event: draft() }, never);

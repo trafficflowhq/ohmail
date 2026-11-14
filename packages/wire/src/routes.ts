@@ -98,6 +98,10 @@ export interface SendRequestBody {
  */
 export interface SendAnswer {
   status: "sent" | "unverified" | "failed" | "in_flight" | "queued";
+  /** The draft the reservation delivered, including on a replay under its original key. */
+  sentDraftId?: string;
+  /** On a settled replay, the draft was still sent at this account sequence. The replay emitted no change. */
+  sentDraftThrough?: number;
   providerMessageId?: string | null;
   message?: string;
   /** The send this key already held: this press delivered nothing new. */

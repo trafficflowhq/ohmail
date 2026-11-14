@@ -21,3 +21,17 @@ export {
   type SearchBy,
   type SearchNarrowing,
 } from "./question.js";
+
+export { useSearchLive, type SearchLive, type SearchLiveOwn } from "./live.js";
+export {
+  useSearchOpen,
+  type SearchOpenGround,
+  type SearchOpenOwn,
+  type SearchScreenerRow,
+} from "./live-open.js";
+export {
+  openTargetOf,
+  type SearchOpenFacts,
+  type SearchOpenTarget,
+  type SearchScreenerSegment,
+} from "./open-target.js";

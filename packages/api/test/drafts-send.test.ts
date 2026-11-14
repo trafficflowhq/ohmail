@@ -57,6 +57,7 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
     expect(res.headers.get("x-sync-seq")).toBeTruthy();
     const body = await res.json();
     expect(body.status).toBe("sent");
+    expect(body.sentDraftId).toBe(draftId);
     expect(body.providerMessageId).toMatch(/^<.+@/);
     expect(state.sendCalls).toBe(1);
 
@@ -90,7 +91,20 @@ describe("POST /drafts/:id/send — gated idempotent send (Phase 3c)", () => {
     expect(one.status).toBe(200);
     expect(two.status).toBe(200);
     expect(state.sendCalls).toBe(1);
-    expect((await one.json()).providerMessageId).toBe((await two.json()).providerMessageId);
+    const replay = await two.json();
+    expect((await one.json()).providerMessageId).toBe(replay.providerMessageId);
+    expect(two.headers.get("x-sync-seq")).toBeNull();
+    expect(replay.sentDraftId).toBe(draftId);
+    expect(replay.sentDraftThrough).toBeGreaterThanOrEqual(Number(one.headers.get("x-sync-seq")));
+
+    // The old reservation still proves delivery, even if the draft now carries another send.
+    await db.update(drafts).set({ status: "sending" }).where(eq(drafts.id, draftId));
+    const later = await H(req("POST", `/drafts/${draftId}/send`, { bearer: s.token, headers: { "idempotency-key": "same" } }), deps);
+    expect(later.status).toBe(200);
+    const old = await later.json();
+    expect(old.status).toBe("sent");
+    expect(old.sentDraftThrough).toBeUndefined();
+    expect(state.sendCalls).toBe(1);
   });
 
   it("missing Idempotency-Key → 400", async () => {

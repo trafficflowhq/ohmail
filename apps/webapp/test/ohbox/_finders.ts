@@ -72,14 +72,22 @@ export const lettersShown = (root: ParentNode): string[] =>
   [...(openLetter(root)?.querySelectorAll<HTMLElement>("[data-conv-id]") ?? [])].map((el) => el.dataset.convId!);
 
 /** The open letter's subject, as its head says it; "" with nothing open. */
-export const openSubject = (root: ParentNode): string => openLetter(root)?.querySelector("h1")?.textContent?.trim() ?? "";
+export const openSubject = (root: ParentNode): string => openLetter(root)?.querySelector("h2")?.textContent?.trim() ?? "";
 
 /** A verb on the open letter's action panel by its name ("Reply", "Forward", "Later", "Park", "Resurface", "Tag"). */
 export const barVerb = (root: ParentNode, name: string): HTMLButtonElement | null =>
-  root.querySelector<HTMLButtonElement>(`${READING} ${PANEL} button[aria-label="${name}"]`);
+  /* The name is compared, not put into the selector: jsdom's selector engine matches no value that holds " + ". */
+  [...root.querySelectorAll<HTMLButtonElement>(`${READING} ${PANEL} button[aria-label]`)].find(
+    (b) => b.getAttribute("aria-label") === name,
+  ) ?? null;
 
-/** The read slot on the panel: Mark read or Mark unread, whichever it offers now; null where it stands behind More. */
-export const readSlot = (root: ParentNode): HTMLButtonElement | null => barVerb(root, "Mark read") ?? barVerb(root, "Mark unread");
+/**
+ * The read slot on the panel: Mark read or Mark unread, whichever it offers now; null where it stands behind More.
+ * Found by its place (the kit's verb `read`), not by its name: over a conversation of several unread letters its name
+ * says how many it marks ("Mark 2 unread messages as read"), its word stays "Mark read".
+ */
+export const readSlot = (root: ParentNode): HTMLButtonElement | null =>
+  root.querySelector<HTMLButtonElement>(`${READING} ${PANEL} button[data-id="read"]`);
 
 /** What the read slot offers now: "Mark read", "Mark unread", or "" where no letter is open or it stands behind More. */
 export const readSlotSays = (root: ParentNode): string => readSlot(root)?.getAttribute("aria-label") ?? "";

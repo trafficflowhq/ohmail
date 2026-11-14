@@ -400,6 +400,14 @@
     max-width: none;
   }
 
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-composer-text:has(.oh-lettertext) {
+    display: grid;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-composer[data-fill] .oh-lettertext {
+    min-height: 100%;
+  }
+
   /* Under a finger the marks are a line that travels sideways, its far end fading where more waits. */
   :root[data-touch="1"] .oh-composer-marks {
     --oh-composer-fade: 28px;

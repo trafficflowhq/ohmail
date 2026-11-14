@@ -1,11 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineDraft } from "@ohmail/wire";
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { DraftsView } from "../app/views/DraftsView";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { act, mountShell, stubDom, unmountAll, waitFor } from "./_draft-shell.js";
 import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
@@ -15,11 +11,6 @@ import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
  * row at its place, and a walk to the end mounts every row once in order. jsdom lays nothing out,
  * so the window runs on its estimate — which is what makes the slot arithmetic checkable here.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
 const NOW = new Date("2026-08-07T15:00:00.000Z");
 const draft = (i: number, over: Partial<EngineDraft> = {}): EngineDraft => ({
@@ -35,40 +26,21 @@ const draft = (i: number, over: Partial<EngineDraft> = {}): EngineDraft => ({
   rationale: null,
   status: "draft",
   createdAt: "2026-08-07T09:00:00.000Z",
-  updatedAt: "2026-08-07T14:02:00.000Z",
+  updatedAt: new Date(NOW.getTime() - i * 1000).toISOString(),
   ...over,
 });
 const drafts = (n: number) => Array.from({ length: n }, (_, i) => draft(i));
 const scheduled = (n: number) =>
-  Array.from({ length: n }, (_, i) => draft(10_000 + i, { status: "scheduled", sendAt: "2026-08-09T08:00:00.000Z" }));
+  Array.from({ length: n }, (_, i) => draft(10_000 + i, { status: "scheduled", sendAt: new Date(NOW.getTime() + (i + 1) * 60_000).toISOString() }));
 
-let roots: Root[] = [];
-afterEach(async () => {
-  for (const r of roots) await act(() => r.unmount());
-  roots = [];
-  document.body.innerHTML = "";
-});
+beforeEach(() => { localStorage.clear(); stubDom(); });
+afterEach(unmountAll);
 
 async function mount(d: EngineDraft[], s: EngineDraft[]): Promise<{ host: HTMLElement; scroller: HTMLElement }> {
-  const host = document.createElement("div");
-  document.body.appendChild(host);
-  const root = createRoot(host);
-  roots.push(root);
-  await act(async () => {
-    root.render(
-      h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC", now: NOW,
-        children: h(DraftsView, {
-          settled: true,
-          owed: false,
-          drafts: d, scheduled: s, now: NOW,
-          onOpen: () => {}, onDiscard: () => {}, onResolve: () => {}, onSendAgain: () => {},
-          onCancelSchedule: () => {}, onEditScheduled: () => {}, repliesHere: () => false,
-        }),
-      }),
-    );
-  });
-  return { host, scroller: host.querySelector(".scroller") as HTMLElement };
+  const shell = await mountShell("#/drafts", [], [...s, ...d]);
+  await waitFor(() => shell.el.querySelector(".pl-scroll") !== null, "the Drafts list");
+  const scroller = shell.el.querySelector<HTMLElement>(".pl-scroll")!;
+  return { host: scroller, scroller };
 }
 
 async function scrollTo(scroller: HTMLElement, px: number): Promise<void> {
@@ -83,8 +55,13 @@ async function scrollTo(scroller: HTMLElement, px: number): Promise<void> {
 const items = (host: HTMLElement) =>
   [...host.querySelectorAll<HTMLElement>("[data-index]")].map((n) => ({
     slot: Number(n.dataset.index),
-    what: n.classList.contains("drafts-group-head") ? `head:${n.textContent}` : n.dataset.id!,
+    what: n.dataset.id ?? `head:${n.closest("section")?.getAttribute("aria-label")}`,
   }));
+
+/** The last row in its whole group, including the rows outside this screenful. */
+const groupEnds = (host: HTMLElement) =>
+  [...host.querySelectorAll<HTMLElement>('[role="option"]')].filter(row =>
+    row.hasAttribute("aria-setsize") && row.getAttribute("aria-posinset") === row.getAttribute("aria-setsize"));
 
 describe("Drafts is a window over its scheduled sends and its drafts", () => {
   it("mounts a screenful of a long list, both headings in the index space", async () => {
@@ -92,7 +69,7 @@ describe("Drafts is a window over its scheduled sends and its drafts", () => {
     const first = items(host);
     expect(first.length, "every row was mounted — this list is not a window").toBeLessThan(60);
     expect(first[0]).toEqual({ slot: 0, what: "head:Scheduled" });
-    expect(host.querySelectorAll(".draft-row").length).toBe(first.length - 1);
+    expect(host.querySelectorAll("[role=option]").length).toBe(first.length - 1);
   });
 
   it("a walk to the end mounts every row once, in order, each at its slot", async () => {
@@ -125,34 +102,37 @@ describe("Drafts is a window over its scheduled sends and its drafts", () => {
   it("with nothing scheduled there is no heading: slot 0 is the first draft", async () => {
     const { host } = await mount(drafts(200), []);
     expect(items(host)[0]).toEqual({ slot: 0, what: "d0" });
-    expect(host.querySelector(".drafts-group-head")).toBeNull();
+    expect(host.querySelector("h2")).toBeNull();
   });
 
   it("an empty drafts group keeps its heading and its empty state below the scheduled sends", async () => {
     const { host } = await mount([], scheduled(3));
     expect(items(host).map((i) => i.what)).toEqual(["head:Scheduled", "d10000", "d10001", "d10002", "head:Drafts"]);
-    const heads = [...host.querySelectorAll(".drafts-group-head")];
-    const empty = host.querySelector(".empty");
+    const heads = [...host.querySelectorAll("h2")];
+    const empty = host.querySelector(".oh-empty");
     expect(empty).not.toBeNull();
     expect(heads[1]!.compareDocumentPosition(empty!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("an empty Drafts with nothing scheduled says so", async () => {
     const { host } = await mount([], []);
-    expect(host.querySelector(".empty")).not.toBeNull();
+    expect(host.querySelector(".oh-empty")).not.toBeNull();
     expect(items(host)).toEqual([]);
   });
 
   it("the last row of each group is marked, not the last one mounted", async () => {
     const { host, scroller } = await mount(drafts(300), scheduled(120));
-    expect(host.querySelectorAll(".draft-row-last").length).toBe(0);
+    expect(groupEnds(host).length).toBe(0);
     // Mid-way through each group the last MOUNTED row is not the group's last row.
     for (const slot of [60, 250]) {
       await scrollTo(scroller, slot * ESTIMATED_ROW_PX);
-      expect(host.querySelectorAll(".draft-row-last").length, `at slot ${slot}`).toBe(0);
+      expect(groupEnds(host).length, `at slot ${slot}`).toBe(0);
     }
+    await scrollTo(scroller, 119 * ESTIMATED_ROW_PX);
+    expect(groupEnds(host).map((row) => [row.dataset.id, row.getAttribute("aria-setsize")])).toEqual([["d10119", "120"]]);
     await scrollTo(scroller, 440 * ESTIMATED_ROW_PX);
-    const last = [...host.querySelectorAll<HTMLElement>(".draft-row-last")].map((n) => n.dataset.id);
+    expect(groupEnds(host)[0]?.getAttribute("aria-setsize")).toBe("300");
+    const last = groupEnds(host).map((n) => n.dataset.id);
     expect(last).toEqual(["d299"]);
   });
 });

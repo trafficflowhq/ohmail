@@ -1,4 +1,4 @@
-import type { ChangeEvent, ReactNode, Ref } from "react";
+import type { ChangeEvent, MouseEventHandler, ReactNode, Ref } from "react";
 import { Avatar, Button, Slot, Switch, type SuggestionField } from "../../base/index.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { CalendarSquare } from "../Grids/CalendarSquare.js";
@@ -15,7 +15,7 @@ export type EventFormItem =
       label: string;
       state?: "fill" | "none";
       expanded?: boolean;
-      onPress?: () => void;
+      onPress?: MouseEventHandler<HTMLButtonElement>;
     }
   /** A proposal you take by pressing it: an invitee the typed line named. It opens no menu. */
   | { kind: "take"; value: string; label: string; onPress?: () => void }
@@ -86,7 +86,7 @@ export interface EventFormProps {
   /** The rest of what can be added, behind one glyph. */
   more?: { label: string; expanded?: boolean; onPress?: () => void };
   /** A new event only: Add, at the last line's end. An edit takes effect at once and has none. */
-  submit?: { label: string; keyHint?: string; onPress?: () => void };
+  submit?: { label: string; keyHint?: string; disabled?: boolean; onPress?: () => void };
 }
 
 function remove(r: { label: string; onPress?: () => void }, key?: number): ReactNode {
@@ -313,7 +313,13 @@ export function EventForm({ rows, adds, more, submit }: EventFormProps) {
             ) : null}
           </div>
           {submit ? (
-            <Button size="s" keyHint={submit.keyHint} keyShown onPress={submit.onPress}>
+            <Button
+              size="s"
+              disabled={submit.disabled}
+              keyHint={submit.keyHint}
+              keyShown
+              onPress={submit.onPress}
+            >
               {submit.label}
             </Button>
           ) : null}

@@ -4,9 +4,9 @@
  * may be about a mailbox another install organizes.
  */
 import type { ReactNode } from "react";
-import { Button, Page } from "@ohmail/ui/base";
+import { Button, Page, Sentence } from "@ohmail/ui/base";
 import { SettingNote } from "@ohmail/ui/mail";
-import { Foot, Next, Said, StepForm, type StepProps } from "./parts.js";
+import { Foot, Next, StepForm, type StepProps } from "./parts.js";
 import type { Say } from "./words.js";
 import type { FirstRun } from "@ohmail/app-logic/mailboxes/first-run/use-first-run";
 
@@ -33,7 +33,9 @@ export function Consent({ run, say }: StepProps): ReactNode {
             <Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} disabled />} />
           }
         >
-          <Said text={say("onboarding.resumeCheckingTitle")} />
+          <Sentence size="xl" level={1} end="hot">
+            {say("onboarding.resumeCheckingTitle")}
+          </Sentence>
         </Page>
       </StepForm>
     );
@@ -45,7 +47,9 @@ export function Consent({ run, say }: StepProps): ReactNode {
         material={<SettingNote>{say("onboarding.consentNothingYet")}</SettingNote>}
         acts={<Foot run={run} say={say} back primary={<Next label={say("onboarding.continue")} />} />}
       >
-        <Said text={say("onboarding.consentTitle")} />
+        <Sentence size="xl" level={1} end="hot">
+          {say("onboarding.consentTitle")}
+        </Sentence>
       </Page>
     </StepForm>
   );

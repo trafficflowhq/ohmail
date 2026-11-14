@@ -22,11 +22,11 @@ import { go, parseHash } from "../../app/shell/routing";
 import { useShellCompose, type ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { TODAYS_COMPOSER_WORDS } from "../../app/shell/mail-send-text";
-import { fileSize } from "@ohmail/app/mail/ground";
+import { fileSize } from "../../../../packages/app/src/mail/ground/writing-words.js";
 import { writeBesideOf, writingOf } from "@ohmail/app-logic/writing/writing-of";
 import { TextProvider } from "@ohmail/app/text";
 import { WriteAbove, writeEntry, type WriteBeside } from "@ohmail/app/write";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { ActionPanel } from "@ohmail/ui/mail";
 import { plainEditor } from "@ohmail/app/write/plain";
 import { act, engineOver, NOW, ROSTER, storeWith, type DraftShell } from "../_draft-shell.js";
@@ -169,7 +169,7 @@ function Bare({
   });
   if (!view && sheet === undefined) return null;
   const options = optionsFromFacts(roster);
-  const derived = writingOf(seen.current, { engine, scope, replyTo, options, consent: consent as never, drafts, noCredits, t });
+  const derived = writingOf(seen.current, { engine, scope, replyTo, options, consent: consent as never, drafts, noCredits, t, presented: reader });
   const writing = send === undefined ? derived : { ...derived, composeSend: send };
   const route = { place: "write", sub: null, open: null, stage: null, words: {} } as const;
   return h(KeymapProvider, {

@@ -10,26 +10,13 @@
  * and the desktop bundle carries only the namespaces the shell already reads.
  */
 
-import { useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { DURABILITY_LOST_EVENT, dismissDurabilityLost, durabilityLost } from "@ohmail/app-logic/storage/durable";
+import { dismissDurabilityLost } from "@ohmail/app-logic/storage/durable";
+// The reader moved beside the latch, so the mail ground's notice reads the same one on every host.
+import { useDurabilityLost } from "@ohmail/app-logic/storage/durability-lost";
 
-/**
- * Adopt what the module already knows at mount, then listen. Not the current value as the
- * initial state: a server render has none, and reading one during render would be a hydration
- * mismatch — `useUpdateOffer`'s own reason.
- */
-export function useDurabilityLost(): boolean {
-  const [lost, setLost] = useState(false);
-  useEffect(() => {
-    const read = () => { setLost(durabilityLost()); };
-    read();
-    window.addEventListener(DURABILITY_LOST_EVENT, read);
-    return () => { window.removeEventListener(DURABILITY_LOST_EVENT, read); };
-  }, []);
-  return lost;
-}
+export { useDurabilityLost };
 
 export function DurabilityNotice() {
   const t = useTranslations("session");

@@ -8,7 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import { barVerb, cursorRow, menuItem, openLetter, reportPress } from "./ohbox/_finders.js";
+import { barVerb, cursorRow, menuItem, openRow, replyEditor, reportPress } from "./ohbox/_finders.js";
 
 /**
  * SEND IS NOT DONE — through the whole shell (the desktop mounts this same AppShell).
@@ -106,15 +106,19 @@ function idsInGroup(label: string): string[] {
   if (!box) return [];
   return [...box.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
-const editors = (): HTMLElement[] =>
-  [...(openLetter(host!) ? [openLetter(host!)!] : []), ...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
+/** The reply's editor under the open letter, by its role and name (`write.reply.text`). */
+const editors = (): HTMLElement[] => {
+  const editor = replyEditor(host!);
+  return editor ? [editor] : [];
+};
+/** The open reply's verbs stand on the reading sheet's panel: Send, and the second action, by their names. */
 const doneButton = (): HTMLButtonElement | null =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .reply-send-done");
+  barVerb(host!, messages.reply.sendAndDone) ?? (menuItem(messages.reply.sendAndDone) as HTMLButtonElement | null);
 const sendButton = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
+  barVerb(host!, messages.write.send)!;
+/** The message the open editor answers: the open letter's, while a reply's editor stands under it. */
 const replyFor = (): string =>
-  host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
+  editors().length > 0 ? (openRow(host!)?.dataset.id ?? "") : "";
 
 /**
  * The pill's Undo: today's capsule's, or at a seated place the frame's report's press (declared), whose

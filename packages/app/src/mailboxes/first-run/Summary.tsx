@@ -5,13 +5,13 @@
  * the pairing is a second verb, offered where this shell pairs. The pairing step ends the run too.
  */
 import type { ReactNode } from "react";
-import { Button, Page } from "@ohmail/ui/base";
+import { Button, Page, Sentence } from "@ohmail/ui/base";
 import { SettingLine, SettingNote } from "@ohmail/ui/mail";
 import { holderName } from "@ohmail/app-logic/mailboxes/first-run/rules";
 import { readerHolder } from "@ohmail/app-logic/reading/reader-holder";
 import { NONE } from "../../host/index.js";
 import { holderLines } from "./Elsewhere.js";
-import { Foot, Next, Said, StepForm, leadOf, type StepProps } from "./parts.js";
+import { Foot, Next, StepForm, leadOf, type StepProps } from "./parts.js";
 import { HOLDER_MANAGED } from "./words.js";
 
 /** Work, by an organizer; a relationship, by a reader; the takeover under way, while it is. */
@@ -116,7 +116,9 @@ export function Summary(props: StepProps): ReactNode {
           />
         }
       >
-        <Said text={say(organizing ? "onboarding.doneTitle" : "onboarding.doneReaderTitle")} dot="ink" />
+        <Sentence size="xl" level={1} end="ink">
+          {say(organizing ? "onboarding.doneTitle" : "onboarding.doneReaderTitle")}
+        </Sentence>
       </Page>
     </StepForm>
   );
@@ -142,7 +144,9 @@ export function Pair({ run, say, slots }: StepProps): ReactNode {
           />
         }
       >
-        <Said text={say("onboarding.pairTitle")} dot="ink" />
+        <Sentence size="xl" level={1} end="ink">
+          {say("onboarding.pairTitle")}
+        </Sentence>
       </Page>
     </StepForm>
   );

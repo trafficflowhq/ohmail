@@ -3,6 +3,19 @@
  * A shell that shows mail takes its places from here and adds none of its own for an id this list names.
  */
 import type { PlaceEntry, PlaceId } from "../frame/contract.js";
+import { historyPlace } from "../history/place.js";
+import { tagsPlace } from "../tags/place.js";
+import { newsPlace } from "../news/place.js";
+import { laterPlace, parkedPlace, resurfacePlace } from "../piles/place.js";
+import { receiptsPlace } from "../receipts/place.js";
+import { screenerPlace } from "../screener/place.js";
+import { searchPlace } from "../search/place.js";
+import { ohboxPlace } from "../ohbox/place.js";
+import { writePlace } from "../write/place.js";
+import { draftsPlaceOn } from "../drafts/place.js";
+import { DraftsList } from "../drafts/DraftsList.js";
+import { DraftsSeat } from "../drafts/Seat.js";
+import { WRITE } from "./write-entry.js";
 
 /**
  * The seated places by id. An id that is absent is not seated yet: a host answers it with what it mounted before, or
@@ -18,7 +31,20 @@ import type { PlaceEntry, PlaceId } from "../frame/contract.js";
  */
 export type MailPlaces = Readonly<Partial<Record<PlaceId, PlaceEntry>>>;
 
-const SEATED: MailPlaces = {};
+const SEATED: MailPlaces = {
+  ohbox: ohboxPlace,
+  news: newsPlace,
+  receipts: receiptsPlace,
+  later: laterPlace,
+  parked: parkedPlace,
+  resurface: resurfacePlace,
+  search: searchPlace,
+  screener: screenerPlace,
+  drafts: draftsPlaceOn(DraftsSeat),
+  history: historyPlace,
+  tags: tagsPlace,
+  write: writePlace(WRITE, DraftsList, DraftsSeat),
+};
 
 /** The seated mail places: the same record at every call. */
 export function mailPlaces(): MailPlaces {

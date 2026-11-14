@@ -1,8 +1,11 @@
 /**
- * Settings › Account. A shell's registration draws it over an {@link AccountDoor} and a {@link PasswordDoor} it
- * fills and its factor slot, in the body its host's answer about the account asks for.
+ * Settings › Account. Its registration (`accountPane`) draws it over what a host alone hands it ({@link
+ * AccountPaneParts}: the hooks that answer its {@link AccountDoor} and its {@link PasswordDoor}, and the factor's
+ * slot), in the body the host's answer about the account asks for. A host names those parts; the mail's panes record
+ * makes the registration.
  */
 export { AccountPane, type AccountPaneProps } from "./AccountPane.js";
+export { accountPane, type AccountPaneParts } from "./pane.js";
 export {
   accountStart,
   accountStep,

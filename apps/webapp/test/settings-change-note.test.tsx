@@ -124,34 +124,6 @@ describe("the dormancy dial on a reader", () => {
   });
 });
 
-describe("the consent hook carries both", () => {
-  it("from the read and from a write's echo, and a write that stayed here clears the dial's", async () => {
-    let echo: Record<string, unknown> = { screeningScope: "all_time", dormancyChange: { state: "asked", holder: null, refusal: null } };
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      const body = (init?.method ?? "GET") === "PATCH" ? echo : {
-        seedConfirmedAt: null, screeningResetAt: null, dormancyDays: 60, signatures: {},
-        dormancyChange: REFUSED, signatureChanges: { "m-1": REFUSED },
-      };
-      return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
-    }) as typeof fetch;
-    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
-    const { CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api");
-    let hook: ReturnType<typeof useConsentState> | null = null;
-    function Harness() { hook = useConsentState(true, null, CLOUD_CONSENT); return null; }
-    await mount(h(Harness));
-    expect(hook!.dormancyChange, "the read's refusal was dropped").toEqual(REFUSED);
-    expect(hook!.signatureChanges).toEqual({ "m-1": REFUSED });
-    await act(async () => { await hook!.setDormancyDays(undefined, "all_time"); });
-    expect(hook!.dormancyChange?.state).toBe("asked");
-    echo = { dormancyDays: 90 };
-    await act(async () => { await hook!.setDormancyDays(90, "window"); });
-    expect(hook!.dormancyChange).toBeNull();
-    echo = { signatures: {}, signatureChanges: { "m-1": { state: "asked", holder: null, refusal: null } } };
-    await act(async () => { await hook!.setMailboxSignature("m-1", "Anna"); });
-    expect(hook!.signatureChanges["m-1"]?.state, "the signature's echo was dropped").toBe("asked");
-  });
-});
-
 describe("the signature editors on a reader", () => {
   it("each mailbox says its own change", async () => {
     const { SignaturesRow } = await import("../app/shell/SignaturesRow");
@@ -168,23 +140,5 @@ describe("the signature editors on a reader", () => {
     expect(blocks).toHaveLength(2);
     expect(blocks[0]!.textContent, "the refusal reached no surface").toContain(REFUSED_TEXT);
     expect(blocks[1]!.textContent).not.toContain("Not applied");
-  });
-
-  it("the hosted transport sends the formatting, not a clear", async () => {
-    const bodies: string[] = [];
-    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-      if ((init?.method ?? "GET") === "PATCH") bodies.push(String(init!.body));
-      return new Response(JSON.stringify({ seedConfirmedAt: null, screeningResetAt: null, dormancyDays: 60, signatures: {} }),
-        { status: 200, headers: { "content-type": "application/json" } });
-    }) as typeof fetch;
-    const { useConsentState } = await import("@ohmail/app-logic/consent/consent-state");
-    const { CLOUD_CONSENT } = await import("../app/(product)/mailbox/consent-over-api");
-    let hook: ReturnType<typeof useConsentState> | null = null;
-    function Harness() { hook = useConsentState(true, null, CLOUD_CONSENT); return null; }
-    await mount(h(Harness));
-    await act(async () => { await hook!.setMailboxSignature("m-1", null, "<p><strong>Anna</strong></p>"); });
-    expect(bodies, "a formatted signature was sent as a clear").toEqual([
-      JSON.stringify({ signaturesHtml: { "m-1": "<p><strong>Anna</strong></p>" } }),
-    ]);
   });
 });

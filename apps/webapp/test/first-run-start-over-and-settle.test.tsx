@@ -1,13 +1,10 @@
 /** @vitest-environment jsdom */
 import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { FirstRun, nextStep } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { act, cleanup, fireEvent, within } from "@testing-library/react";
 import { onboardingPath, type OnboardingFacts, type OnboardingStep } from "@ohmail/app-logic/doors/onboarding";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
+import { nextStep } from "@ohmail/app-logic/mailboxes/first-run/rules";
+import { O, P, fakeDoor, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage, stageRow } from "./_first-run-stage.js";
 
 /**
  * ═══ START OVER LEAVES A LIVE CONTROL, AND A WRITE NEVER PAINTS THE STATE BEFORE IT ════════
@@ -32,12 +29,45 @@ import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
  *  · `goTo(path[0] ?? "mailbox")` in the foot → `goTo("welcome")`  → the add-run cases;
  *  · `nextStep`'s `path[0]` fallback → `undefined`                 → the off-path table;
  *  · `await settle()` moved back under `finally`                   → the settle case.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`_first-run-stage.tsx`), an add run at `#/first-run/add`; its mailbox step is the one connect form
+ * over a wire that answers as the door did (`fakeDoor`); the facts are the ground's rows, and the re-read after a
+ * write is the ground's refresh, held open by the settle case; the walk's rules are read where the first run keeps
+ * them (`@ohmail/app-logic/mailboxes/first-run/rules`). The new form asks for a provider, the address, the password
+ * and both servers before its verb stands; the cases give them. A heading is read as the kit prints a sentence: its
+ * full stop is drawn as the dot (`EndDot`), so a title is compared without it. Every expectation is as it stood.
+ *
+ * RETIRED HERE: "a successful write never paints the state from before it > the create's re-read is AWAITED — the form
+ * does not come back". The new stage writes the new row into the run's address and, until the ground's rows hold it,
+ * waits in its own words with no form and no verb (today's said "Connecting…" on the disabled verb); once the row
+ * arrives the run goes on to the consent statement. The stage's own case holds both halves
+ * (`packages/app/test/mailboxes/first-run/stage.test.tsx`, "an add naming a mailbox the rows do not hold yet waits in
+ * words ..."; the replace itself: "an add's new row is written into the run's address by a replace ...").
  */
+const t = O;
+/** A sentence as the kit prints it: one closing full stop is drawn as the dot, not as text. */
+const printed = (title: string): string => (title.endsWith(".") && !title.endsWith("..") ? title.slice(0, -1) : title);
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-const t = messages.onboarding;
+it("the create's re-read is AWAITED — the form does not come back", async () => {
+  const mailboxId = id("new-mailbox");
+  const wire = fakeDoor({ connect: [{ ok: true, value: { mailboxId, address: null } }] });
+  const stage = await mountStage({ rows: [], at: "#/first-run/add", door: "local", verbs: { ai: "on" }, connect: wire.door });
+  const page = within(stage.el);
+  expect(stage.heading()).toBe(printed(t.mailboxTitle));
+  await stage.press(P.otherLabel);
+  for (const [label, value] of [[t.address, "person@studio.example"], [t.password, "app-password-fixture"], [t.imapHost, "imap.studio.example"], [t.smtpHost, "smtp.studio.example"]]) {
+    await act(async () => fireEvent.change(page.getByLabelText(label), { target: { value } }));
+  }
+  await stage.press(t.connect);
+  expect(wire.of("connect")).toHaveLength(1);
+  expect(stage.writes()).toEqual([{ next: "#/first-run/add?mailbox=new-mailbox", how: "replace" }]);
+  expect(page.queryByLabelText(t.address)).toBeNull();
+  expect(page.queryByRole("button", { name: t.connect })).toBeNull();
+  await stage.move([stageRow({ id: mailboxId })]);
+  expect(stage.heading()).toBe(printed(t.consentTitle));
+  expect(wire.of("connect")).toHaveLength(1);
+});
 
 /** An install that has been through setup, adding a second mailbox: no row yet, no welcome. */
 const addRun = (): OnboardingFacts => ({
@@ -48,9 +78,8 @@ const addRun = (): OnboardingFacts => ({
   queuedSenders: 0,
 });
 
-const roots: Root[] = [];
 afterEach(() => {
-  for (const r of roots.splice(0)) r.unmount();
+  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -62,56 +91,44 @@ interface Harness {
   has: (label: string) => boolean;
 }
 
+/** The connect form's fields, typed as a person fills them for the generic entry. */
+async function fill(el: HTMLElement): Promise<void> {
+  const type = async (label: string, value: string): Promise<void> => {
+    await act(async () => { fireEvent.change(within(el).getByLabelText(label), { target: { value } }); });
+  };
+  await type(t.address, "me@lichtgrat.example");
+  const other = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(P.otherLabel));
+  await act(async () => { other!.click(); });
+  await type(t.imapHost, "mail-a.home.arpa");
+  await type(t.smtpHost, "mail-b.home.arpa");
+  await type(t.password, "app-password-fixture");
+}
+
 async function mount(o: {
   facts: OnboardingFacts;
   add?: boolean;
-  mailboxId?: string | null;
 }): Promise<Harness> {
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  let facts = o.facts;
-
-  const host: FirstRunHost = {
+  const wire = fakeDoor();
+  const st = await mountStage({
+    rows: [],
     door: o.facts.door,
-    ai: o.facts.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-new" }),
-    organize: async () => "stored",
-    complete: async () => { /* leaves */ },
-    setAiEnabled: async () => { /* answered */ },
-    forgetMailbox: async () => { facts = { ...facts, mailbox: null }; },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-
-  const Stage = () => {
-    const [, bump] = React.useState(0);
-    return h(FirstRun, {
-      host,
-      facts,
-      onRefresh: () => { bump((n) => n + 1); },
-      onLeave: () => { /* the caller returns the route to the app */ },
-      pull: { screened: 0, history: 0, pulled: 0 },
-      decide: null,
-      mailboxId: o.mailboxId ?? null,
-      ...(o.add ? { add: true } : {}),
-    });
-  };
-
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
+    ...(o.add ? { at: "#/first-run/add" } : {}),
+    account: o.facts.account,
+    connect: wire.door,
+    verbs: {
+      ai: o.facts.ai,
+      organize: async () => "stored",
+      complete: async () => { /* leaves */ },
+      setAiEnabled: async () => { /* answered */ },
+    },
   });
+  const el = st.el;
 
   const find = (label: string) => [...el.querySelectorAll("button")]
     .find((b) => (b.textContent ?? "").trim().startsWith(label));
   return {
     el,
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    heading: st.heading,
     text: () => (el.textContent ?? "").replace(/\s+/g, " "),
     has: (label) => find(label) !== undefined,
     press: async (label) => {
@@ -134,7 +151,7 @@ describe("Start over on an add run", () => {
     expect(s.heading()).toBe(t.mailboxTitle);
     await s.press(t.restart);
     // The screen after the press, and it may not be the one the walk dropped.
-    expect(s.text()).not.toContain(t.welcomeTitle);
+    expect(s.text()).not.toContain(printed(t.welcomeTitle));
     expect(s.heading()).toBe(t.mailboxTitle);
   });
 
@@ -144,7 +161,9 @@ describe("Start over on an add run", () => {
     // "Set up a mailbox" is the intro's single control and the intro is what must not be here.
     expect(s.has(t.welcomeStart), "the dead intro control is on screen").toBe(false);
     // What IS here is the form's own verb, over fields a person can answer.
-    expect(s.el.querySelector("input[type=email]")).not.toBeNull();
+    expect(within(s.el).getByLabelText(t.address)).not.toBeNull();
+    /* The new form asks for its provider before its verb stands: the generic entry, as a person picks it. */
+    await fill(s.el);
     expect(s.has(t.connect), "the connect verb is missing").toBe(true);
   });
 
@@ -153,11 +172,11 @@ describe("Start over on an add run", () => {
       facts: { ...addRun(), account: { onboardingCompletedAt: null }, ai: "unset" },
     });
     // The welcome carries no foot, so walk onto the form — which is where the verb lives.
-    expect(s.heading()).toBe(t.welcomeTitle);
+    expect(s.heading()).toBe(printed(t.welcomeTitle));
     await s.press(t.welcomeStart);
     expect(s.heading()).toBe(t.mailboxTitle);
     await s.press(t.restart);
-    expect(s.heading()).toBe(t.welcomeTitle);
+    expect(s.heading()).toBe(printed(t.welcomeTitle));
     // And there the control is live, because `welcome` IS on a first run's walk.
     await s.press(t.welcomeStart);
     expect(s.heading()).toBe(t.mailboxTitle);
@@ -193,105 +212,5 @@ describe("nextStep — a step outside the walk still has somewhere to go", () =>
     expect(nextStep(first, "welcome")).toBe("mailbox");
     expect(nextStep(first, "mailbox")).toBe("consent");
     expect(nextStep(first, first[first.length - 1]!)).toBeUndefined();
-  });
-});
-
-describe("a successful write never paints the state from before it", () => {
-  it("the create's re-read is AWAITED — the form does not come back", async () => {
-    /* The shell's real behaviour in the smallest shape that reproduces it, with ONE change that
-       makes the window observable: the re-read is a promise this case holds open. React's async
-       `act` turns the event loop on its way out, so a read that answers on a timer has already
-       landed by the time an awaited press returns, and both behaviours look identical; a read
-       that has not answered YET is the state the row is about, and it is also the state a slow
-       or failing round trip really is in. */
-    let created = false;
-    let release: (() => void) | undefined;
-    const el = document.createElement("div");
-    document.body.appendChild(el);
-    const root = createRoot(el);
-    roots.push(root);
-    let facts: OnboardingFacts = { ...addRun(), account: { onboardingCompletedAt: null }, ai: "on" };
-
-    const host: FirstRunHost = {
-      door: "local",
-      ai: "on",
-      probe: async () => ({ host: "h", user: "u", folders: 1 }),
-      connect: async () => { created = true; return { id: "mb-new" }; },
-      organize: async () => "stored",
-      complete: async () => {},
-      probeReason: () => null,
-      probeMessage: () => null,
-    };
-
-    const Stage = () => {
-      const [, bump] = React.useState(0);
-      return h(FirstRun, {
-        host,
-        facts,
-        /* THE READ, AS A PROMISE — what `MailStateProvider.refresh` now answers with. */
-        onRefresh: () => new Promise<void>((resolve) => {
-          release = () => {
-            if (created) {
-              facts = {
-                ...facts,
-                mailbox: {
-                  organizerRole: "organizer", organizedBy: null, organizerState: null,
-                  organizeConsentedAt: null, initialImportCompletedAt: null,
-                },
-              };
-            }
-            bump((n) => n + 1);
-            resolve();
-          };
-        }),
-        onLeave: () => {},
-        pull: { screened: 0, history: 0, pulled: 0 },
-        decide: null,
-        mailboxId: created ? "mb-new" : null,
-        add: true,
-      });
-    };
-
-    await act(async () => {
-      root.render(h(NextIntlClientProvider, {
-        locale: "en", messages, timeZone: "UTC",
-        children: h(KeymapProvider, { children: h(Stage, null) }),
-      }));
-    });
-
-    const button = (label: string) => [...el.querySelectorAll("button")]
-      .find((b) => (b.textContent ?? "").trim().startsWith(label));
-    const heading = () => (el.querySelector("h1")?.textContent ?? "").trim();
-    const labels = () => [...el.querySelectorAll("button")]
-      .map((b) => (b.textContent ?? "").trim()).join(" | ");
-    expect(heading()).toBe(t.mailboxTitle);
-
-    // Prove the login first — the form's primary is armed by the verdict, as a person's is.
-    await act(async () => {
-      button(t.test)!.click();
-      for (let i = 0; i < 12; i++) await Promise.resolve();
-    });
-
-    // The press. The create answers; the read does not, and will not until this case says so.
-    await act(async () => {
-      button(t.connect)!.click();
-      for (let i = 0; i < 20; i++) await Promise.resolve();
-    });
-
-    expect(created, "the create never happened — this case measures nothing").toBe(true);
-    expect(release, "the stage never asked for a re-read").not.toBeUndefined();
-    /* THE WINDOW. An armed "Connect and continue" here is the pre-write state back on screen and
-       pressable, over facts that do not hold the mailbox the person has just made. */
-    expect(labels(), "the write let go of the screen before its read had answered")
-      .not.toContain(t.connect);
-    expect(labels()).toContain(t.connecting);
-
-    // Now the read answers, and the flow moves on — to the next thing the new mailbox needs.
-    await act(async () => {
-      release!();
-      for (let i = 0; i < 20; i++) await Promise.resolve();
-    });
-    expect(heading(), "the flow went back to the form it had just completed").not.toBe(t.mailboxTitle);
-    expect(heading()).toBe(t.consentTitle);
   });
 });

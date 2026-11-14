@@ -24,8 +24,13 @@ export interface HostCapabilities {
   readonly unsubscribeFrom: "service" | "computer" | None;
   /** Whether the choice to use folders can be stored here. */
   readonly foldersStorable: boolean;
-  /** Which suggest control the Screener draws. Replaces `screenerSuggest`. */
-  readonly suggest: "priced" | "ownModel" | None;
+  /**
+   * Which suggest control the Screener draws, and whether anything is bought here that nobody pressed for.
+   * `priced`: the shared control, and the batch an account opted into is bought when its Screener opens.
+   * `pressed`: the shared control, and nothing is ever bought here without a press, whatever the account's row says.
+   * `ownModel`: the host's own control over the person's own model. Replaces `screenerSuggest`.
+   */
+  readonly suggest: "priced" | "pressed" | "ownModel" | None;
   /** How another device is paired from here. */
   readonly pairing: "hostMode" | "account" | "inBrowser" | None;
   /** What the Account pane is: the whole pane, a way out to the browser, or sign-out alone. */

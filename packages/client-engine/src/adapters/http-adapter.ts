@@ -45,6 +45,7 @@ import type {
   CalendarEventAct,
   CalendarPatchBody,
   CalendarRecord,
+  CalendarSettingsWire,
   CalendarSignInBody,
   CalendarWay,
   CalendarWriteAnswer,
@@ -901,6 +902,12 @@ export class HttpAdapter implements EngineAdapter {
       over = true;
       if (timer !== undefined) clearTimeout(timer);
     }
+  }
+
+  async calendarSettings(): Promise<CalendarSettingsWire> {
+    const res = await this.call("GET /calendar/settings", {});
+    if (!res.ok) throw await this.rejectionOf(res);
+    return this.readAnswer<"GET /calendar/settings">(res);
   }
 
   /**
@@ -3253,6 +3260,8 @@ export class HttpAdapter implements EngineAdapter {
         ? Date.parse(wire.sentCopyUntil) : NaN;
       return {
         changes: [], seq, providerMessageId: wire.providerMessageId ?? null,
+        ...(typeof wire.sentDraftId === "string" && wire.sentDraftId.length > 0 ? { sentDraftId: wire.sentDraftId } : {}),
+        ...(typeof wire.sentDraftThrough === "number" ? { sentDraftThrough: wire.sentDraftThrough } : {}),
         ...(firstSend ? { firstSend } : {}),
         ...(sentCopy ? { sentCopy } : {}),
         ...(sentCopyReason ? { sentCopyReason } : {}),

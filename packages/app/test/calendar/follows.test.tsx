@@ -17,6 +17,7 @@ import calendarEn from "../../messages/calendar.en.json" with { type: "json" };
 import calsearchEn from "../../messages/calsearch.en.json" with { type: "json" };
 import dayEn from "../../messages/day.en.json" with { type: "json" };
 import eventEn from "../../messages/event.en.json" with { type: "json" };
+import calmailEn from "../../messages/calmail.en.json" with { type: "json" };
 import monthEn from "../../messages/month.en.json" with { type: "json" };
 import weekEn from "../../messages/week.en.json" with { type: "json" };
 import yearEn from "../../messages/year.en.json" with { type: "json" };
@@ -34,6 +35,7 @@ const WORDS = {
   ...FRAME_WORDS.en,
   ...agendaEn,
   ...calendarEn,
+  ...calmailEn,
   ...calsearchEn,
   ...dayEn,
   ...eventEn,
@@ -198,6 +200,61 @@ describe("the calendar's body", () => {
     act(() => put("calendar_event", "ev-1", null));
     expect(screen.queryByText(/Kiln check/)).toBeNull();
     expect(screen.getAllByText(/Glaze firing/).length).toBeGreaterThan(0);
+  });
+
+  it("searches the calendar from its week with the search key", () => {
+    const { engine, port } = mirror();
+    const { address } = mount(engine, port, "#/cal/week");
+    fireEvent.keyDown(document.body, { key: "/" });
+    expect(address.read()).toBe("#/cal/find");
+  });
+
+  it("returns to each product's previous place and leaves the browser history intact", () => {
+    const { engine, port } = mirror();
+    const made = mount(engine, port, "#/cal/month/2026-11-16");
+    const address = made.host.device.address;
+    fireEvent.click(screen.getByRole("button", { name: "Mail" }));
+    expect(address.read()).toBe("#/ohbox");
+    fireEvent.click(screen.getByRole("button", { name: "Calendar" }));
+    expect(address.read()).toBe("#/cal/month/2026-11-16");
+  });
+
+  it("opens the event details from the week and closes them without leaving that week", () => {
+    const { engine, port, put } = mirror();
+    put("calendar_connection", connection.id, connection);
+    put("calendar", studio.id, studio);
+    put("calendar_event", "ev-1", event("ev-1", "Kiln check", "20261116", { notes: "Inspect the glaze" }));
+    const made = mount(engine, port, "#/cal/week/2026-11-16");
+    fireEvent.click(screen.getByRole("button", { name: /Kiln check/ }));
+    const details = screen.getByRole("dialog", { name: "Kiln check" });
+    expect(within(details).getByText("Inspect the glaze")).toBeTruthy();
+    expect(document.documentElement.dataset.product).toBe("cal");
+    fireEvent.click(within(details).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog", { name: "Kiln check" })).toBeNull();
+    expect(made.host.device.address.read()).toBe("#/cal/week/2026-11-16");
+  });
+
+  it("keeps an open event's details private when its calendar changes to availability only", () => {
+    const { engine, port, put } = mirror();
+    put("calendar_connection", connection.id, connection);
+    put("calendar", studio.id, studio);
+    put(
+      "calendar_event",
+      "ev-1",
+      event("ev-1", "Kiln check", "20261116", {
+        notes: "Inspect the glaze",
+        place: "Studio loft",
+        organizer: { name: "Kiln organizer", address: "organizer@example.test" },
+      }),
+    );
+    mount(engine, port, "#/cal/week/2026-11-16");
+    fireEvent.click(screen.getByRole("button", { name: /Kiln check/ }));
+    expect(screen.getByRole("dialog", { name: "Kiln check" })).toBeTruthy();
+    act(() => put("calendar", studio.id, { ...studio, access: "busy" }));
+    expect(screen.getByRole("dialog", { name: "Busy" })).toBeTruthy();
+    for (const detail of ["Kiln check", "Inspect the glaze", "Studio loft", "Kiln organizer"]) {
+      expect(screen.queryAllByText(detail, { exact: false })).toHaveLength(0);
+    }
   });
 
   it("follows a calendar that is hidden and shown again", () => {

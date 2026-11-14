@@ -62,9 +62,10 @@ export function Sender({ view }: { view: ScreenerView }) {
   );
   const open = view.open;
   const held = open === null ? [] : viewSender(open).held;
+  const entered = held.find((letter) => letter.id === view.enteredLetter)?.id;
   const scroller = useNewestFirst(
-    `${view.segment}:${view.openId ?? ""}`,
-    held.length > 1 ? (held[held.length - 1]?.id ?? null) : null,
+    `${view.segment}:${view.openId ?? ""}:${entered ?? ""}`,
+    entered ?? (held.length > 1 ? (held[held.length - 1]?.id ?? null) : null),
   );
   if (open === null) return null;
   const sender = viewSender(open);

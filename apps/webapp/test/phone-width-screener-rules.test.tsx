@@ -187,7 +187,7 @@ async function mountScreener(mail: EngineMessage[], facts: MailboxLabelFact[] | 
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith(mail);
   const labels = mailboxLabelResolver(facts);
   function Probe(): React.ReactElement {

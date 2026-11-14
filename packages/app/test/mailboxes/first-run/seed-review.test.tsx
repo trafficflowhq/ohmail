@@ -2,6 +2,10 @@
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useSeedOffer, type SeedOffer } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
+import {
+  useSeedReview,
+  type SeedReviewWireLike,
+} from "@ohmail/app-logic/mailboxes/first-run/use-seed-review";
 import { SeedReview } from "../../../src/mailboxes/first-run/SeedReview.js";
 import { sayOf } from "../../../src/mailboxes/first-run/words.js";
 import { TextProvider, useTextLookup } from "../../../src/text/index.js";
@@ -39,10 +43,16 @@ const offer = (over: Partial<SeedOffer> = {}): SeedOffer => ({
   done: vi.fn(),
   ...over,
 });
-function Review(p: { wire: Parameters<typeof SeedReview>[0]["wire"]; offer: SeedOffer }) {
-  return <SeedReview {...p} say={sayOf(useTextLookup())} />;
+/* The review read as the mail ground reads it (`first-run-owed.ts`), drawn by the stage's step. */
+function Review(p: { wire: SeedReviewWireLike; offer: SeedOffer }) {
+  const review = useSeedReview({
+    wire: p.wire,
+    onDone: p.offer.done,
+    ...(p.offer.reopened ? {} : { onNothingToDecide: p.offer.nothingToDecide }),
+  });
+  return <SeedReview review={review} offer={p.offer} say={sayOf(useTextLookup())} />;
 }
-const draw = (wire: Parameters<typeof SeedReview>[0]["wire"], o: SeedOffer) =>
+const draw = (wire: SeedReviewWireLike, o: SeedOffer) =>
   render(
     <TextProvider locale="en" messages={screener as never} timeZone="UTC">
       <Review wire={wire} offer={o} />

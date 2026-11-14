@@ -48,7 +48,7 @@ export function TagsList({ plan }: PaneProps) {
     />
   );
   return (
-    <ListColumn head={head} plan={plan}>
+    <ListColumn head={head} plan={plan} cursor={model.list.cursor}>
       {tag !== null ? <OneTag model={model} t={t} /> : <EveryTag model={model} t={t} />}
       {model.loading ? <Empty label={t("loading")} /> : null}
       {model.empty ? <Empty label={tag === null ? t("empty.none") : t("empty.tag")} /> : null}
@@ -69,7 +69,7 @@ function OneTag({ model, t }: { model: TagsModel; t: Text }) {
     <LetterRows
       label={model.tag?.name ?? t("title")}
       rows={model.list.rows}
-      openId={model.list.openId}
+      cursor={model.list.cursor}
       press={model.list.press}
       stamp={model.stamp}
       file={t("row.file")}
@@ -95,7 +95,7 @@ function EveryTag({ model, t }: { model: TagsModel; t: Text }) {
             <LetterRows
               label={g.tag.name}
               rows={g.rows}
-              openId={model.list.openId}
+              cursor={model.list.cursor}
               press={model.list.press}
               stamp={model.stamp}
               file={t("row.file")}

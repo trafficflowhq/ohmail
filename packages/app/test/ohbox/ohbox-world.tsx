@@ -8,7 +8,10 @@ import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import { DEFAULT_AFTER_VERB } from "@ohmail/app-logic/press/after-verb";
 import type { LayoutPlan, PaneProps, Route } from "../../src/frame/contract.js";
 import { NONE } from "../../src/host/index.js";
-import { OhboxAbove, OhboxList, type OhboxBeside } from "../../src/ohbox/index.js";
+/* The list's parts from their own files, as the seat imports them (`ohbox/Seat.tsx`). */
+import { OhboxAbove } from "../../src/ohbox/OhboxAbove.js";
+import { OhboxList } from "../../src/ohbox/OhboxList.js";
+import type { OhboxBeside } from "../../src/ohbox/beside.js";
 import { TextProvider, type Messages } from "../../src/text/index.js";
 import ohboxDe from "../../messages/ohbox.de.json" with { type: "json" };
 import ohboxEn from "../../messages/ohbox.en.json" with { type: "json" };

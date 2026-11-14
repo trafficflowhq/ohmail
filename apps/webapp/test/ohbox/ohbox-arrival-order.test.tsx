@@ -1,9 +1,10 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { act, cleanup } from "@testing-library/react";
+import { ohboxListRedrawable } from "../_ohbox-2-list.js";
+import { fakeMail, type FakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * WHERE A LIVE ARRIVAL ENTERS "NEW FOR YOU".
@@ -29,16 +30,13 @@ import messages from "../../messages/en.json";
  * used to lead New for the session, and the pressing surface disagreed with every other);
  * `ohbox-mark-unread.test.tsx` pins it, and here its interplay with arrivals in the same render
  * and on a later sync.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's harness (`./_today.js` `prepareSeated` under
+ * today's `KeymapProvider`) to the Ohbox's own list drawn from its model and redrawn with each delta's groups
+ * (`../_ohbox-2-list.tsx`). The two cases that press `u` stand the Ohbox's own seat over the mail ground instead
+ * (`../_ohbox-1-seat.tsx`: the seat binds the list's keys), each delta written into its engine's rows and what `u`
+ * marked read off what the seam sent. Every expectation is as it stood.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** Desktop split width — the reading column exists and the mobile-only paths stay away. */
 function setViewport(): void {
@@ -63,34 +61,61 @@ function msg(m: Row): Record<string, unknown> {
   };
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
+let redraw: ((p: Props) => Promise<void>) | null = null;
 const marked: Array<{ ids: string[]; unread: boolean }> = [];
 
 interface Props { newForYou: Row[]; previouslySeen?: Row[]; selectedId?: string | null }
 
+const inputOf = (props: Props) => ({
+  // Always handed down the way `ohboxView` orders the group: date desc.
+  newForYou: props.newForYou.map(msg) as unknown as EngineMessage[],
+  previouslySeen: (props.previouslySeen ?? []).map(msg) as unknown as EngineMessage[],
+  tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
+  selectedId: props.selectedId ?? null,
+  onMarkSeen: (ids: string[], unread: boolean) => { marked.push({ ids, unread }); },
+});
+
 async function render(props: Props): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      // Always handed down the way `ohboxView` orders the group: date desc.
-      newForYou: props.newForYou.map(msg),
-      previouslySeen: (props.previouslySeen ?? []).map(msg),
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      selectedId: props.selectedId ?? null, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: (ids: string[], unread: boolean) => { marked.push({ ids, unread }); },
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    } as never) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  if (redraw === null) {
+    const drawn = ohboxListRedrawable(inputOf(props));
+    host = drawn.view.container;
+    redraw = (p) => drawn.redraw(inputOf(p));
+    await act(async () => { await Promise.resolve(); });
+  } else await redraw(props);
 }
+
+/**
+ * THE SEAT's ROUTE for a case that presses a key: the first call stands the seat over an engine of these rows (the
+ * selected row's letter in the address); a later call writes the delta into the engine's rows, as a sync would.
+ */
+let mail: FakeMail | null = null;
+/** The seat's letters come from one admitted sender (named as the row), so a letter a later delta delivers is let in too. */
+const SENDER = "sender@ex.example";
+const seatMsg = (r: Row): EngineMessage => ({ ...msg(r), from: { name: r.id, address: SENDER } }) as unknown as EngineMessage;
+async function seatRender(props: Props): Promise<void> {
+  const rows = [...props.newForYou, ...(props.previouslySeen ?? [])];
+  if (mail === null) {
+    mail = fakeMail(rows.map(seatMsg), [], {}, admitting([SENDER]));
+    const seat = mountSeat(mail.engine, { first: props.selectedId ? `#/ohbox/m/${props.selectedId}` : "#/ohbox" });
+    host = seat.container;
+  } else {
+    const m = mail;
+    await act(async () => {
+      for (const r of rows) {
+        if (m.engine.read().get("message", r.id) === undefined) m.add(seatMsg(r));
+        else m.patch(r.id, { unread: r.unread });
+      }
+    });
+  }
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+}
+/** What `u` marked, read off what the seat's seam sent: a `mark_seen` of the letters, in its direction. */
+const seatMarked = (): Array<{ ids: string[]; unread: boolean }> =>
+  (mail?.mutations ?? []).flatMap((x) => {
+    const r = x as { kind: string; messageIds?: string[]; messageId?: string; unread?: boolean };
+    return r.kind === "mark_seen" ? [{ ids: r.messageIds ?? [r.messageId!], unread: r.unread === true }] : [];
+  });
 
 /** Press a chord the way the registry's dispatcher sees it. */
 async function press(key: string): Promise<void> {
@@ -106,9 +131,10 @@ function idsInGroup(label: string): string[] {
   return [...box.querySelectorAll("[role=option][data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove(); root = null; host = null; marked.length = 0;
+afterEach(() => {
+  if (mail !== null) unmountSeat();
+  cleanup();
+  host = null; redraw = null; mail = null; marked.length = 0;
 });
 
 const at = (hour: number): string => `2026-08-02T${String(hour).padStart(2, "0")}:00:00.000Z`;
@@ -240,16 +266,16 @@ describe("where a live arrival enters New for you", () => {
     /* `u` decides that the row is unread, not where it stands: it merges by its date like the
        arrival beside it, so this surface and every surface that received the flip agree. */
     setViewport();
-    await render({
+    await seatRender({
       newForYou: [{ id: "n1", unread: true, date: at(10) }],
       previouslySeen: [{ id: "old", unread: false, date: at(8) }],
       selectedId: "old",
     });
     await press("u");
-    expect(marked).toEqual([{ ids: ["old"], unread: true }]);
+    expect(seatMarked()).toEqual([{ ids: ["old"], unread: true }]);
 
     // The flip and a fresh arrival land in one delta, selector order: f(11), n1(10), old(8).
-    await render({
+    await seatRender({
       newForYou: [
         { id: "f", unread: true, date: at(11) },
         { id: "n1", unread: true, date: at(10) },
@@ -265,13 +291,13 @@ describe("where a live arrival enters New for you", () => {
     /* Once placed, the row is a kept row like any other, and new mail is always at the top — the
        owner's rule, and exactly how any inbox treats mail that arrives after a mark-unread. */
     setViewport();
-    await render({
+    await seatRender({
       newForYou: [{ id: "n1", unread: true, date: at(10) }],
       previouslySeen: [{ id: "old", unread: false, date: at(8) }],
       selectedId: "old",
     });
     await press("u");
-    await render({
+    await seatRender({
       newForYou: [{ id: "n1", unread: true, date: at(10) }, { id: "old", unread: true, date: at(8) }],
       previouslySeen: [],
       selectedId: "old",
@@ -279,7 +305,7 @@ describe("where a live arrival enters New for you", () => {
     expect(idsInGroup("New")).toEqual(["n1", "old"]);
 
     // The NEXT sync delivers `f`, newer than everything — it goes above both.
-    await render({
+    await seatRender({
       newForYou: [
         { id: "f", unread: true, date: at(11) },
         { id: "n1", unread: true, date: at(10) },

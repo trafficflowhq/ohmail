@@ -5,6 +5,7 @@ import {
 } from "./fixtures/live-walk-shell.js";
 import { COMMIT_MS } from "@ohmail/app-logic/screener/screener-state";
 import en from "../messages/en.json";
+import { barVerb, letterShown, lettersShown, menuItem, moreButton } from "./ohbox/_finders.js";
 
 /**
  * TRIAGE VERBS ON AN ANSWERED CONVERSATION ACT AT THE LETTER, through the shipped shell and the
@@ -113,20 +114,34 @@ const openRow = async (host: HTMLElement): Promise<void> => {
   await click(theRow(host));
   await click(theRow(host));
 };
+/**
+ * A verb on the open letter's action panel, by the name the new reader's panel gives it (`barVerb` of the seated
+ * Ohbox's finders): today's bar found it by its class (`abar-later`, `abar-aside`, `abar-resurface`, ...).
+ */
+const BAR_NAMES: Readonly<Record<string, string>> = {
+  "abar-later": "Later", "abar-aside": "Park", "abar-resurface": "Resurface", "abar-done": "Done", "abar-move": "Move",
+};
 const bar = (host: HTMLElement, cls: string): HTMLElement => {
-  const b = host.querySelector<HTMLElement>(`.read-col .${cls}`);
+  const b = barVerb(host, BAR_NAMES[cls] ?? cls);
   expect(b, `the bar's ${cls}`).toBeTruthy();
   return b!;
 };
-const focusedPanel = (host: HTMLElement): string | null =>
-  host.querySelector<HTMLElement>(".read-col article.pm[aria-current]")?.dataset.convId ?? null;
+/**
+ * The focused panel: the letter of the open conversation the address names (`#/ohbox/m/<id>`), as
+ * `conversation-bar-acts-on-the-opened-panel` reads the ringed panel at the seated Ohbox; a single letter rings none.
+ */
+const focusedPanel = (host: HTMLElement): string | null => {
+  const id = /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? null;
+  return lettersShown(host).length > 1 && id !== null && letterShown(host, id) !== null ? id : null;
+};
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => { installShellEnv(); seq = 0; window.location.hash = "#/ohbox"; });
 afterEach(async () => {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 1024 });
   delete (document as { elementFromPoint?: unknown }).elementFromPoint;
   await teardownShellEnv();
 });
@@ -181,8 +196,8 @@ describe("an answered conversation's row in the shipped shell", () => {
     const host = await mount(answered());
     await openRow(host);
     await click(bar(host, "abar-resurface"));
-    const tomorrow = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")]
-      .find((b) => b.textContent?.trim() === en.ohbox.resurfaceTomorrow);
+    /* The new reader's Resurface opens its menu of days (an item a day, its time beside it). */
+    const tomorrow = menuItem(en.ohbox.resurfaceTomorrow);
     expect(tomorrow, "the strip's Tomorrow").toBeTruthy();
     await click(tomorrow!);
     expect(sortedPosts()).toEqual([["a1", "bubbled_up"], ["x2", "bubbled_up"]]);
@@ -201,9 +216,11 @@ describe("an answered conversation's row in the shipped shell", () => {
         };
       },
     });
+    /* The frame reads a phone's width off the window's own width, not only the media query. */
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
     const host = await mount(answered());
     await openRow(host);
-    const later = document.querySelector<HTMLElement>(".reader .abar-later");
+    const later = barVerb(document, "Later");
     expect(later, "the sheet's Later").toBeTruthy();
     await click(later!);
     expect(sortedPosts()).toEqual([["a1", "reply_later"], ["x2", "reply_later"]]);
@@ -725,9 +742,21 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
   }));
   const resurfacedRows = (host: HTMLElement): HTMLElement[] =>
     [...host.querySelectorAll<HTMLElement>(`[role="listbox"][aria-label="${en.ohbox.resurfacedGroup}"] :is(.row, [role=option])[data-id]`)];
+  /**
+   * A Resurfaced row's Done: the new reader offers no Done beside a list's visit (a letter that came back reads as
+   * its release, which the ROW offers: `reader/actions/use-verbs.ts`, `readSlot`), so the press is the row's own
+   * Done, beside the open row. Today's shell offered it on the reader's bar (`abar-done`) too.
+   */
+  const rowDone = (host: HTMLElement): HTMLElement => {
+    const slot = resurfacedRows(host)[0]?.parentElement;
+    const done = [...(slot?.querySelectorAll<HTMLElement>("button") ?? [])].find((b) => b.textContent?.trim() === "Done");
+    expect(done, "the row's Done").toBeTruthy();
+    return done!;
+  };
   const strip = async (host: HTMLElement, label: string): Promise<void> => {
     await click(bar(host, "abar-resurface"));
-    const b = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((x) => x.textContent?.trim() === label);
+    /* The new reader's Resurface opens its menu of days. */
+    const b = menuItem(label);
     expect(b, `the strip's ${label}`).toBeTruthy();
     await click(b!);
   };
@@ -811,7 +840,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(resurfacedRows(host).map((r) => r.dataset.id)).toEqual(["m6"]);
     expect(resurfacedRows(host)[0]!.dataset.ids?.split(" ").sort()).toEqual([...IDS].sort());
     await openRow(host);
-    await click(bar(host, "abar-done"));
+    await click(rowDone(host));
     expect(reads()).toEqual([[...IDS].sort()]);
     expect(resurfacedRows(host)).toEqual([]);
   }, 180_000);
@@ -839,8 +868,10 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     expect(posted("none").map(([id]) => id), "our reply's pin is spent").toContain("x7");
   };
   const moveToReceipts = async (host: HTMLElement): Promise<void> => {
-    await click(bar(host, "abar-move"));
-    const receipts = [...host.querySelectorAll<HTMLElement>(".read-col .abar-panel button")].find((b) => (b.textContent ?? "").includes("→ Receipts"));
+    /* The new reader keeps Move in More (FOR-S3-TO-S8 point 63 (d)): More, Move, then the place. */
+    await click(moreButton(host)!);
+    await click(menuItem("Move")!);
+    const receipts = menuItem("Receipts") ?? undefined;
     expect(receipts, "the strip's Receipts").toBeTruthy();
     await click(receipts!);
   };
@@ -1056,7 +1087,7 @@ describe("Answer later, Parked and Resurface hold a conversation as one row", ()
     const one = await mount(seven((id) => (id === "m6" ? "resurfaced" : null)));
     expect(resurfacedRows(one).map((r) => r.dataset.id)).toEqual(["m6"]);
     await openRow(one);
-    await click(bar(one, "abar-done"));
+    await click(rowDone(one));
     expect(reads()).toEqual([["m6"]]);
     expect(triagePosts()).toEqual([]);
   }, 120_000);

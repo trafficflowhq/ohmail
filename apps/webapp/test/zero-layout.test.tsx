@@ -63,6 +63,8 @@ function mkMatchMedia(px: number) {
 }
 async function resize(px: number): Promise<void> {
   widthNow = px;
+  // The frame's plan reads the window's own width, as a browser hands it on a resize.
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: px });
   await act(async () => {
     for (const l of lists) {
       const next = answer(l.query, px);
@@ -70,11 +72,13 @@ async function resize(px: number): Promise<void> {
       l.matches = next;
       for (const fn of l.listeners) fn({ matches: next });
     }
+    window.dispatchEvent(new Event("resize"));
   });
 }
 
 function setup(px: number): void {
   window.location.hash = "";
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: px });
   Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
@@ -113,8 +117,19 @@ afterEach(async () => {
   window.localStorage.clear();
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   vi.restoreAllMocks();
 });
+
+/*
+ * THE NEW SHELL's PROBES (one layout): under 700 the frame stands an open letter over the list (its root then says
+ * `data-letter`), from 700 in the reading column beside it. Found by role and name where the part has them.
+ */
+const OPEN_ROW = 'section[aria-label="Messages"] [role=option][data-open][data-id]';
+const letterOver = (): Element | null => document.querySelector(".fr-frame[data-letter]");
+const letterOpen = (): Element | null => document.querySelector('[role="region"][aria-label="Open message"]');
+const replyBody = (root: ParentNode = document): HTMLElement | null =>
+  root.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"]');
 
 async function shell(opts: { zero?: boolean } = {}): Promise<HTMLElement> {
   if (opts.zero) {
@@ -165,6 +180,17 @@ const tick = async (): Promise<void> => {
     await new Promise((r) => setTimeout(r, 25));
   });
 };
+
+/** `j` then Enter, as a person opens the first letter; resolves once the letter stands where `shown` looks. */
+async function openLetter(container: HTMLElement, shown: () => Element | null): Promise<void> {
+  await key("j");
+  const deadline = Date.now() + 4000;
+  while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
+  await key("Enter");
+  const until = Date.now() + 4000;
+  while (Date.now() < until && !shown()) await tick();
+  expect(shown(), "the reader sheet never rose").toBeTruthy();
+}
 
 describe("`w` — the layout cycle through the one provider", () => {
   it("stamps zero, persists the device choice, and cycles back", async () => {
@@ -326,10 +352,10 @@ describe("the fix round — reconcile, exits, names", () => {
   it("classic's sheet still cedes `h` — the exit stays Escape", async () => {
     setup(600);
     const container = await shell();
-    await openSheet(container);
+    await openLetter(container, letterOver);
     await key("h");
     await tick();
-    expect(document.querySelector(".reader"), "classic behavior moved").toBeTruthy();
+    expect(letterOver(), "classic behavior moved").toBeTruthy();
   });
 
   /* Under 840 px the frame's rail is More's sheet: the summon opens it with focus inside, its toggle stays More (it opens
@@ -396,10 +422,10 @@ describe("the fix round, round 2 — tiers, transitions, the drawer's zone", () 
   it("the floating tier's modal sheet cedes `h` — Escape stays its one exit", async () => {
     setup(390);
     const container = await shell({ zero: true });
-    await openSheet(container);
+    await openLetter(container, letterOver);
     await key("h");
     await tick();
-    expect(document.querySelector(".reader"), "`h` dismissed the modal sheet").toBeTruthy();
+    expect(letterOver(), "`h` dismissed the modal sheet").toBeTruthy();
   });
 
   it("a narrow→narrow cycle keeps the sheet, and its ARIA claim follows the layout live", async () => {
@@ -495,12 +521,12 @@ describe("crossing 700 with a message open — the overlay and the column trade 
   const openOverlay = async (container: HTMLElement): Promise<string> => {
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) await tick();
-    const id = container.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])[data-id]")!.dataset.id!;
+    while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
+    const id = container.querySelector<HTMLElement>(OPEN_ROW)!.dataset.id!;
     await key("Enter");
     const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reader")) await tick();
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
+    while (Date.now() < until && !letterOver()) await tick();
+    expect(letterOver(), "the reader sheet never rose").toBeTruthy();
     return id;
   };
 
@@ -512,18 +538,18 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     const { typeInto } = await import("./fixtures/rich-editor-driver.js");
     await key("r");
     const until = Date.now() + 4000;
-    while (Date.now() < until && !document.querySelector(".reply-editor .rte-surface")) await tick();
-    const surface = document.querySelector<HTMLElement>(".reply-editor .rte-surface");
+    while (Date.now() < until && !replyBody()) await tick();
+    const surface = replyBody();
     expect(surface, "`r` did not open the inline reply in the overlay").not.toBeNull();
     await act(async () => { typeInto(surface!, "typed before the unfold"); });
 
     await resize(821);
     await tick();
-    expect(document.querySelector(".reader"), "the overlay stood over the two panes").toBeNull();
-    const col = container.querySelector(".read-col");
+    expect(letterOver(), "the overlay stood over the two panes").toBeNull();
+    const col = container.querySelector('section[aria-label="Reading"]');
     expect(col, "no reading column at 821").not.toBeNull();
-    expect(container.querySelector(`.view :is(.row.sel, [role=option][data-open])[data-id="${id}"]`), "the column lost the message").not.toBeNull();
-    const colSurface = col!.querySelector<HTMLElement>(".reply-editor .rte-surface");
+    expect(container.querySelector(`${OPEN_ROW.replace("[data-id]", `[data-id="${id}"]`)}`), "the column lost the message").not.toBeNull();
+    const colSurface = replyBody(col!);
     expect(colSurface, "the reply did not move into the column").not.toBeNull();
     expect(colSurface!.textContent).toContain("typed before the unfold");
     // the keyboard stays in the reply: a key typed through the unfold is text, never a list command
@@ -531,9 +557,9 @@ describe("crossing 700 with a message open — the overlay and the column trade 
 
     await resize(650);
     await tick();
-    const sheet = document.querySelector(".reader");
+    const sheet = letterOver();
     expect(sheet, "folding back raised no overlay on the column's message").not.toBeNull();
-    expect(sheet!.querySelector(".reply-editor .rte-surface")?.textContent ?? "").toContain("typed before the unfold");
+    expect(replyBody(sheet!)?.textContent ?? "").toContain("typed before the unfold");
   });
 
   it("the column's ✕ on a fallback column rests the column — it never swaps in the first row", async () => {
@@ -569,14 +595,14 @@ describe("crossing 700 with a message open — the overlay and the column trade 
     const container = await shell();
     await key("j");
     const deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !container.querySelector(".view :is(.row.sel, [role=option][data-open])[data-id]")) await tick();
+    while (Date.now() < deadline && !container.querySelector(OPEN_ROW)) await tick();
     await key("Enter");
     await tick();
-    expect(document.querySelector(".reader")).toBeNull();
+    expect(letterOver()).toBeNull();
     await resize(1023);
     await tick();
-    expect(document.querySelector(".reader")).toBeNull();
-    expect(container.querySelector(".read-col")).not.toBeNull();
+    expect(letterOver()).toBeNull();
+    expect(letterOpen()).not.toBeNull();
   });
 });
 
@@ -620,11 +646,11 @@ describe("the drawer in the frame — summon, Escape, the keys", () => {
     await shell({ zero: true });
     await press("j");
     let deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !document.querySelector(".view .row.sel[data-id]")) await tick();
+    while (Date.now() < deadline && !document.querySelector(OPEN_ROW)) await tick();
     await press("Enter");
     deadline = Date.now() + 4000;
-    while (Date.now() < deadline && !document.querySelector(".reader")) await tick();
-    expect(document.querySelector(".reader"), "the reader sheet never rose").toBeTruthy();
+    while (Date.now() < deadline && !letterOpen()) await tick();
+    expect(letterOpen(), "the reader sheet never rose").toBeTruthy();
     // The pointer path: the dock's More stays operable beside the re-housed reader.
     const toggle = [...document.querySelectorAll<HTMLElement>("button")].find((b) => b.getAttribute("aria-label") === "More");
     await act(async () => { toggle!.click(); });
@@ -636,7 +662,7 @@ describe("the drawer in the frame — summon, Escape, the keys", () => {
     expect(currentZone(), "focus in an open drawer is the rail zone, sheet or no sheet").toBe("rail");
     await press("h");
     await tick();
-    expect(document.querySelector(".reader"), "`h` in the drawer must not close the reader behind it").toBeTruthy();
+    expect(letterOpen(), "`h` in the drawer must not close the reader behind it").toBeTruthy();
   });
 
   it("zero at 800px: h summons the full drawer, esc re-docks it", async () => {

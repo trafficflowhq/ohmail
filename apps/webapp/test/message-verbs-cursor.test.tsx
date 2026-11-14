@@ -78,7 +78,7 @@ interface Recorded {
  */
 async function mount(ids: string[], toastHost = true): Promise<{ el: HTMLElement; rec: Recorded }> {
   const { useCursorPlacer } = await import("@ohmail/app-logic/keys/keymap");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const { useMessageVerbs } = await import("../app/shell/message-verbs.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const rows = ids.map(msg);

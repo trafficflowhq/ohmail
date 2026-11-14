@@ -545,6 +545,7 @@
     "search": "Search",
     "settings": "Settings",
     "mailboxes": "Mailboxes",
+    "mailboxCount": "{count, plural, one {1 mailbox} other {# mailboxes}}",
     "ariaMain": "Main",
     "ohboxTitle": "{unread, number} unread",
     "readsTitle": "{count, plural, =0 {Nothing new} one {# new} other {# new}} since you were here",
@@ -554,7 +555,7 @@
     "draftsTitle": "{count, plural, one {1 draft} other {# drafts}}",
     "getDesktop": "Get ohmail for desktop",
     "getDesktopDismiss": "Dismiss",
-    "getDesktopOpen": "Download"
+    "getDesktopOpen": "Get it"
   },
   "ohbox": {
     "title": "Ohbox",
@@ -1975,6 +1976,7 @@
     "notifyUnsupported": "This device has no notification centre, so there is nothing to send here.",
     "notifyOsHeld": "This switch decides whether ohmail asks your computer to show a notice. Whether it then appears is your computer's decision, and it is changed in the system settings rather than here.",
     "notifyClosedBody": "New mail.",
+    "notifyWakeUnsupported": "This browser can show notifications only while ohmail is open.",
     "notifyNoServerKey": "This server has not set up a signing key, so it cannot wake this browser. The switches above still apply while ohmail is open.",
     "notifyRowRemains": "This browser will not be woken any more, but the server still has a registration for it. It is removed the next time you turn this off.",
     "notifyNotRegistered": "This browser could not be registered for wakes just now. It is retried the next time you open these settings.",
@@ -2233,6 +2235,7 @@
   "reader": {
     "gone": "This message was moved or deleted elsewhere.",
     "goneTrash": "Look in Trash",
+    "trashAsk": "Move to Trash",
     "goneShort": "Moved or deleted elsewhere",
     "hint": "to return",
     "back": "Back",
@@ -2259,6 +2262,7 @@
       "replyAll": "Reply all",
       "markUnread": "Mark unread",
       "markRead": "Mark read",
+      "markReadCount": "Mark {count, plural, one {1 unread message} other {# unread messages}} as read",
       "more": "More",
       "aside": "Park",
       "later": "Later",
@@ -2375,6 +2379,7 @@
     "moreRecipientsAriaFolder": "Show every recipient and where this message sits",
     "contactAria": "Options for {who}",
     "copyAddress": "Copy address",
+    "addressOpen": "Everything from and to this address",
     "write": "Write",
     "screenerSettings": "Screener settings",
     "expand": "Read {sender}'s message",
@@ -3490,6 +3495,9 @@
     "noticeRowUnknown": "another ohmail install",
     "noticeRowStopped": "{name} · stopped",
     "noticeRowStoppedUnknown": "stopped",
+    "noticeMailboxRow": "{address} · {holder}",
+    "noticeOtherMailboxes": "{count, plural, one {# other mailbox} other {# other mailboxes}}",
+    "noticeMailboxList": "{list}.",
     "noticeDismiss": "Dismiss",
     "noticeOpenMailboxes": "Mailboxes",
     "noticeDismissOffline": "Couldn't dismiss it — you're offline.",
@@ -3613,6 +3621,7 @@
     "rail_pull": "First pull",
     "rail_decide": "First decision",
     "rail_done": "Done",
+    "railSaid": "Step {n} of {total}, {phase}",
     "cancel": "Cancel setup",
     "restart": "Start over",
     "back": "Back",
@@ -5867,6 +5876,10 @@
     "byHandLabel": "Key"
   },
   "accountOwn": {
+    "signedInLabel": "Signed in as",
+    "managed": "ohmail Cloud",
+    "self": "Your own server",
+    "ownComputer": "This computer",
     "signedIn": "Signed in",
     "thisBrowser": "This browser",
     "changeLabel": "Password",
@@ -5965,6 +5978,11 @@
     "elsewhere": "Another install organizes this mailbox now. Nothing was changed."
   },
   "frame": {
+    "products": {
+      "label": "Mail or Calendar",
+      "mail": "Mail",
+      "cal": "Calendar"
+    },
     "landmark": {
       "places": "Places",
       "fedRail": "Main",
@@ -5986,7 +6004,8 @@
     },
     "notice": {
       "more": "{count} more",
-      "moreName": "{count, plural, one {# more notice} other {# more notices}}"
+      "moreName": "{count, plural, one {# more notice} other {# more notices}}",
+      "moreClose": "Close"
     },
     "systemNotice": {
       "ohboxTitle": "New mail",
@@ -6558,7 +6577,48 @@
     "coming": "Coming up with {name}"
   },
   "calendar": {
+    "edit": {
+      "whichEvents": "Which events will change?",
+      "thisEvent": "This event",
+      "following": "This and following",
+      "allEvents": "All events",
+      "tell": "Tell {guests}",
+      "others": "{count, plural, one {# other} other {# others}}",
+      "tells": "Your calendar will send them the update to “{title}”.",
+      "sendUpdate": "Send update",
+      "cancel": "Cancel",
+      "action": "Edit",
+      "event": "Edit event",
+      "keepMine": "Keep mine",
+      "keepTheirs": "Keep theirs",
+      "discard": "Discard changes"
+    },
+    "create": {
+      "title": "New event",
+      "name": "Event title",
+      "date": "Event date",
+      "to": "End time",
+      "toWord": "to",
+      "allDay": "All day",
+      "calendar": "Calendar",
+      "choose": "Choose a calendar",
+      "busy": "Busy",
+      "private": "Private",
+      "place": "Place",
+      "notes": "Notes",
+      "add": "Add",
+      "noCalendar": "Choose a calendar that allows new events.",
+      "from": "Start time"
+    },
     "landmark": "Calendar",
+    "closeEvent": "Close",
+    "places": "Calendar places",
+    "invitations": "Invitations",
+    "fromMail": "From mail",
+    "more": "More",
+    "people": "People",
+    "atTime": "{day}, {time}",
+    "interval": "{first} – {last}",
     "unreadable": "The calendar cannot be read on this device.",
     "noZone": "The calendar cannot be drawn: this device does not know its time zone.",
     "notHere": "This part of the calendar is not here yet.",
@@ -6679,6 +6739,7 @@
       "itWasSent": "It was sent — dismiss"
     },
     "letter": "New message",
+    "back": "Ohbox",
     "foot": "Formatting and files",
     "text": "Message",
     "placeholder": "Write your message",
@@ -6690,6 +6751,8 @@
     "subjectPlaceholder": "Subject",
     "remove": "Remove {name}",
     "refused": "Not an address: {list}",
+    "suggestions": "Address suggestions",
+    "wroteToYou": "wrote to you",
     "verbs": "Send or discard",
     "send": "Send",
     "discard": "Discard",
@@ -6824,6 +6887,7 @@
       }
     },
     "draft": {
+      "placeholder": "Write, or a few words to draft from",
       "verb": "Draft reply",
       "again": "Draft again",
       "running": "Drafting…",

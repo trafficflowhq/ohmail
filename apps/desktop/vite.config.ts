@@ -887,13 +887,15 @@ export default defineConfig({
       { find: "@ohmail/ui/squares-window", replacement: r("../../packages/ui/src/squares-window.ts") },
       // The kit's calendar parts: the reader's return menu picks its day with them.
       { find: "@ohmail/ui/calendar", replacement: r("../../packages/ui/src/calendar/index.ts") },
+      { find: "@ohmail/ui/theme", replacement: r("../../packages/ui/src/theme/ThemeProvider.tsx") },
       { find: "@ohmail/ui", replacement: r("../../packages/ui/src/index.ts") },
       /* Behaviour without a screen: a folder's door, then a file by its own name. `tsconfig.json`'s
          `paths` carries the same pair, and the host contract's line under it. */
-      // The calendar's alerts: a folder's door two deep, above the rule that would read it as a file.
+      // Calendar directories two levels down need explicit entries before the file pattern.
       { find: "@ohmail/app-logic/calendar/alerts", replacement: r("../../packages/app-logic/src/calendar/alerts/index.ts") },
+      { find: "@ohmail/app-logic/calendar/beside", replacement: r("../../packages/app-logic/src/calendar/beside/index.ts") },
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1/index.ts` },
-      { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
+      { find: /^@ohmail\/app-logic\/([a-z-]+(?:\/[a-z-]+)*\/[A-Za-z0-9-]+)$/, replacement: `${r("../../packages/app-logic/src")}/$1.ts` },
       // The letter's body: its three leaves ABOVE its door, each by its own file. `tsconfig.json`'s `paths` carries the same four.
       { find: "@ohmail/letter-body/links", replacement: r("../../packages/letter-body/src/rendered-links.ts") },
       { find: "@ohmail/letter-body/cache", replacement: r("../../packages/letter-body/src/mail-doc-cache.ts") },
@@ -902,10 +904,9 @@ export default defineConfig({
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
       { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
-      { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
-      { find: "@ohmail/app/mail/ground", replacement: r("../../packages/app/src/mail/ground/index.ts") },
       { find: "@ohmail/app/mail", replacement: r("../../packages/app/src/mail/index.ts") },
+      { find: /^@ohmail\/app\/mailboxes$/, replacement: r("../../packages/app/src/mailboxes/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
       // The reader the seated Ohbox mounts, its letter's body above its door: the web shell's reader parts read both.
       { find: "@ohmail/app/reader/body", replacement: r("../../packages/app/src/reader/body/index.ts") },

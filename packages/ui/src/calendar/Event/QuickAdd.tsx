@@ -21,6 +21,7 @@ export interface QuickAddProps {
   close: { label: string; onPress?: MouseEventHandler<HTMLButtonElement> };
   /** Enter in the line or in a field of the form adds the event. In the notes it is a new line; on a control it presses the control. */
   onAdd?: () => void;
+  busy?: boolean;
   /** The form under the line, with what can still be added and Add. */
   children: ReactNode;
   /** It stood already: it does not arrive again. */
@@ -52,7 +53,7 @@ function marked(value: string, found: readonly (readonly [number, number])[]): R
  * same draft; the words that filled a field are marked in the line. Esc and the close leave it;
  * what becomes of the typed words is the app's to say.
  */
-export function QuickAdd({ label, tone, line, close, onAdd, children, still }: QuickAddProps) {
+export function QuickAdd({ label, tone, line, close, onAdd, children, still, busy }: QuickAddProps) {
   const own = toneOf(tone);
   const keys = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -83,6 +84,7 @@ export function QuickAdd({ label, tone, line, close, onAdd, children, still }: Q
         style={toneStyle(tone)}
         role="dialog"
         aria-label={label}
+        aria-busy={busy || undefined}
         onKeyDown={keys}
       >
         <div className="oh-display oh-qa-line">
@@ -93,6 +95,7 @@ export function QuickAdd({ label, tone, line, close, onAdd, children, still }: Q
             ref={line.ref}
             className="oh-control oh-qa-input"
             type="text"
+            readOnly={busy}
             value={line.value}
             placeholder={line.placeholder}
             aria-label={line.label}
@@ -105,7 +108,7 @@ export function QuickAdd({ label, tone, line, close, onAdd, children, still }: Q
             <Button kind="quiet" size="s" icon="x" label={close.label} onPress={close.onPress} />
           </span>
         </div>
-        {children}
+        {busy ? <div inert>{children}</div> : children}
       </div>
     </div>
   );

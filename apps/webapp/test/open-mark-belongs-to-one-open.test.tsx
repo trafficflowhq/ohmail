@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui-vitals";
+import { openSubject as subjectOpen } from "./ohbox/_finders.js";
 
 /**
  * AN OPEN IS TIMED FROM ITS OWN PRESS, THROUGH THE WHOLE SHELL. The pane ends the mark in a
@@ -13,6 +14,10 @@ import { resetUiVitalsForTest, takeUiVitals } from "@ohmail/app-logic/session/ui
  * end ran first and the mark stood until that message was opened again: 0.24.0 read an open p95
  * of 6 816 173 ms on Windows. Demo bodies are all in the mirror, so every open here is that case —
  * and each is one reading, from the key to the paint (0.25.2 read `openCount 0` over 15 opens).
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): the shell is the one there is (`_mail-shell.tsx`: the frame
+ * over the mail ground, the seated Ohbox and the reader), and the open letter's subject is read where the reader
+ * says it (the open letter's head, by role and name). Expectations as they stood.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -57,13 +62,10 @@ const key = async (k: string): Promise<void> => {
   });
 };
 
-const openSubject = (): string =>
-  host!.querySelector(".reader .msg .msg-subject")?.textContent
-  ?? host!.querySelector(".read-col .msg .msg-subject")?.textContent
-  ?? "";
+const openSubject = (): string => subjectOpen(host!);
 
 async function mountShell(): Promise<void> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

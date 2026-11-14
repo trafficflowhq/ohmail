@@ -30,6 +30,7 @@ export interface DiscardWindow {
 }
 
 interface Open {
+  readonly remove: () => ReturnType<DraftsDoor["discard"]>;
   readonly timer: ReturnType<typeof setTimeout>;
   readonly ends: AbortController;
   readonly withdrew: boolean;
@@ -94,11 +95,16 @@ export function useDiscardWindow(door: DraftsDoor, report: UndoToastFn, words: D
       open.current.delete(id);
       clearTimeout(held.timer);
       held.ends.abort();
-      void latest.current.door
-        .discard(id)
+      void held
+        .remove()
         .catch((): PressVerdict => ({ kind: "refused", refusal: undefined }))
         .then((verdict) => {
           const { report: say, words: w } = latest.current;
+          if (verdict.kind === "blocked") {
+            show(id, false);
+            if (mounted.current) setRefusal({ draftId: id, why: verdict.why, at: Date.now() });
+            return;
+          }
           sayVerdict(verdict, held.withdrew, w, say, (on) => show(id, on));
         });
     },
@@ -142,9 +148,18 @@ export function useDiscardWindow(door: DraftsDoor, report: UndoToastFn, words: D
             return;
           }
           if (!mounted.current) return;
+          if (answer === "placeholder-withdrawn") {
+            latest.current.report(latest.current.words.notSent);
+            return;
+          }
           const ends = new AbortController();
           const timer = setTimeout(() => commit(id), UNDO_MS);
-          open.current.set(id, { timer, ends, withdrew: answer === "withdrawn" });
+          open.current.set(id, {
+            timer,
+            ends,
+            remove: () => d.discard(id),
+            withdrew: answer === "withdrawn",
+          });
           show(id, true);
           const { report: say, words: w } = latest.current;
           say(w.discarded, {

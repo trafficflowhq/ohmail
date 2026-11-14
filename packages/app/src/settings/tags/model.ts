@@ -34,7 +34,7 @@ export interface TagsModel {
  * is refused before the write, because the server's unique index is on the lower-cased name and would answer 409.
  */
 export function newTagName(
-  tags: readonly TagsModelTag[],
+  tags: readonly Pick<TagsModelTag, "name">[],
   draft: string,
 ): { name: string; taken: boolean } | null {
   const name = draft.trim();

@@ -44,9 +44,7 @@ export type ScreenerSuggested = unknown;
 /** A draft reply as it is read back. */
 export type DraftReplyRead = unknown;
 
-/** The first run: a mailbox as typed in, and what probing and organizing it answer. */
-export type FirstRunMailbox = unknown;
-export type FirstRunProbed = unknown;
+/** What organizing and counting answer during the first run. */
 export type FirstRunOrganizeIntent = unknown;
 export type FirstRunOrganized = unknown;
 export type FirstRunCount = unknown;

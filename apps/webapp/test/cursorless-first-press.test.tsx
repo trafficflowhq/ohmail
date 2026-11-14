@@ -13,7 +13,8 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import { CURSOR_HINT_MS } from "../app/shell/AppShell";
+import { CURSOR_HINT_MS } from "@ohmail/app-logic/keys";
+import { reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════════
@@ -86,6 +87,8 @@ beforeEach(() => {
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
   el.scrollTo = () => {};
+  /* The frame's report animates its way out (the kit's motion): jsdom has no Web Animations. */
+  Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
   (globalThis as Record<string, unknown>).IntersectionObserver = class {
     observe(): void {}
     unobserve(): void {}
@@ -114,7 +117,7 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: "2026-09-08T09:00:00.000Z", unread: false,
+  to: [], cc: [], labels: [], date: "2026-09-08T09:00:00.000Z", unread: false,
   updatedAt: "2026-09-08T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -206,7 +209,7 @@ const ORGANIZER_ROSTER: MailboxFacts[] = [{
 }];
 
 async function shell(ids: string[]): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(ids));
   const container = document.createElement("div");
@@ -259,7 +262,8 @@ const rowIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
 const selectedIds = (el: HTMLElement): string[] =>
   [...el.querySelectorAll(":is(.row.sel, [role=option][data-open])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
-const toastText = (): string => document.querySelector(".toast")?.textContent ?? "";
+/** What the press answered: the frame's report at a seated place (today's shell said it in its toast). */
+const toastText = (): string => reportSays();
 const deletes = (): EngineMutation[] => sent.filter((m) => m.kind === "message_delete");
 
 /**
@@ -356,17 +360,15 @@ describe("a list with rows and no cursor", () => {
        or timing change is visible here rather than silently disagreeing. */
     await shell(["m1", "m2", "m3"]);
     await key("Backspace");
-    expect(document.querySelector(".toast .toast-act"), "the hint offers an action").toBeNull();
+    /* The premise: the hint stands (in the frame's report at a seated place), so its offering nothing means something. */
+    expect(toastText()).toBe(hintFor(messages.shortcuts.deleteKey));
+    expect(reportPress(), "the hint offers an action").toBeNull();
     expect(CURSOR_HINT_MS).toBe(2400);
   }, 30000);
 
-  it("the hint is ANNOUNCED — the toast's own live region, asserted rather than assumed", async () => {
-    await shell(["m1", "m2", "m3"]);
-    await key("Backspace");
-    const toast = document.querySelector(".toast");
-    expect(toast?.getAttribute("role")).toBe("status");
-    expect(toast?.getAttribute("aria-live")).toBe("polite");
-  }, 30000);
+  /* "the hint is ANNOUNCED": the hint is said in the frame's report (the seat's own cursor cases read it by its role,
+     `status`), and the report is said when it appears by the kit's own case: `packages/ui/test/base/feedback.test.tsx`,
+     "a region that is said when it appears". */
 
   it("focus does NOT move to the row — the ring is the indicator, the keyboard stays where it is", async () => {
     const container = await shell(["m1", "m2", "m3"]);

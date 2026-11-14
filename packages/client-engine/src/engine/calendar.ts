@@ -15,9 +15,11 @@
  * the prune holds what a loaded span covers. Which spans to ask for, and when to let them go, is
  * the views' to decide.
  */
-import type { Assert, CalendarRecordKind, Complete, PlaceSuggestBody, SyncSnapshotPage } from "@ohmail/wire";
+import type { Assert, CalendarRecordKind, CalendarWindow, Complete, PlaceSuggestBody, SyncSnapshotPage } from "@ohmail/wire";
 import { askPlaces, type PlaceSuggestOutcome, type PlaceSuggestTransport } from "../place-suggest.js";
+import type { CalendarHostTransport } from "../calendar-writes.js";
 import type { SyncChange } from "../types.js";
+import type { CalendarSpan } from "./calendar-span.js";
 import { EngineLifecycle } from "./lifecycle.js";
 
 /** The calendar's record kinds as this engine stores them. */
@@ -39,6 +41,23 @@ function switchOf(entity: unknown): string | null {
 }
 
 export abstract class EngineCalendar extends EngineLifecycle {
+  /** The calendar doors this engine actually received, including the browser's account guard. */
+  calendarTransport(): CalendarHostTransport | null {
+    const adapter = this.adapter as Partial<CalendarHostTransport>;
+    if (!adapter.calendarSettings || !adapter.writeCalendar || !adapter.retryCalendarWrite || !adapter.dismissCalendarWrite) return null;
+    return {
+      calendarSettings: adapter.calendarSettings.bind(adapter),
+      writeCalendar: adapter.writeCalendar.bind(adapter),
+      retryCalendarWrite: adapter.retryCalendarWrite.bind(adapter),
+      dismissCalendarWrite: adapter.dismissCalendarWrite.bind(adapter),
+    };
+  }
+
+  /** The served window and the additional spans this mirror has actually read. */
+  calendarHeld(): { window: CalendarWindow; loaded: readonly CalendarSpan[] } {
+    return { window: this.calendarWindow, loaded: this.calendarLoaded };
+  }
+
   /** The switch the held settings record states, kept from the pages; `undefined` until read once. */
   private heldSwitch: string | null | undefined;
 

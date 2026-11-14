@@ -14,7 +14,7 @@ import { settleFirstPaint } from "./_first-paint.js";
 import { organizerNotices, type OrganizerNotice as NoticeFact } from "@ohmail/app-logic/mail-state/mail-state";
 import { OrganizerNotice } from "../app/shell/OrganizerNotice";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import type { PendingDecision, ScreenerState } from "@ohmail/app-logic/screener/screener-state";
 
 /**

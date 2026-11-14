@@ -27,14 +27,18 @@ const read = (p: string): string => readFileSync(fileURLToPath(new URL(p, import
 const code = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 const railNav = code(read("../../../packages/ui/src/composites/RailNav.tsx"));
-const shell = read("../app/shell/AppShell.tsx");
 const persisted = code(read("../../../packages/app-logic/src/storage/persisted-ui.ts"));
 
 describe("the Tags group remembers its collapse state", () => {
 
   it("the shared UI package never touches browser storage", () => {
     // The whole reason the component is controlled-optional. If this ever fails, the desktop
-    // shell has inherited a web-only storage decision it cannot satisfy.
+    // shell has inherited a web-only storage decision it cannot satisfy. The rail every host's
+    // frame draws is the kit's (`@ohmail/ui/mail`: the rail and its entries, the Tags group a
+    // place draws itself among them), read here beside the older `RailNav`.
+    const rails = ["Rail.tsx", "RailEntry.tsx", "RailFoot.tsx"]
+      .map((f) => code(read(`../../../packages/ui/src/mail/Shell/${f}`))).join("\n");
+    expect(rails).not.toMatch(/localStorage|sessionStorage/);
     expect(railNav).not.toMatch(/localStorage|sessionStorage/);
   });
 

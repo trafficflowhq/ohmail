@@ -4,7 +4,7 @@
  *
  * The renderer-peak rig reads the MAGNITUDE (megabytes of resident peak per shell re-render,
  * independent of the row count, on a real WebKit web process). It cannot say WHICH components
- * ran or WHY. This file is the other half: the real `AppShell` over an engine whose publishes
+ * ran or WHY. This file is the other half: the mail frame over an engine whose publishes
  * are scripted one at a time, with every view and pane wrapped in a counter, so a publish's cost
  * is a number rather than an impression.
  *
@@ -32,29 +32,23 @@ function counted<P>(name: string, Real: React.ComponentType<P>): React.Component
   return Wrapped as React.ComponentType<P>;
 }
 
-vi.mock("../app/shell/TodaysOhbox", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/TodaysOhbox")>();
-  return { ...actual, TodaysOhbox: counted("TodaysOhbox", actual.TodaysOhbox) };
+/* A publish can update the address book and reach Write's people line without redrawing the letter.
+   Count both. The kit's Recipients owns the open chip list and its cursor. */
+vi.mock("../../../packages/app/src/write/Letter", async (orig) => {
+  const actual = await orig<typeof import("../../../packages/app/src/write/Letter")>();
+  return { ...actual, Letter: counted("ComposeView", actual.Letter) };
 });
-vi.mock("../app/shell/MessagePane", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/MessagePane")>();
-  return { ...actual, MessagePane: counted("MessagePane", actual.MessagePane) };
-});
-vi.mock("../app/shell/FoldersRailGroup", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/FoldersRailGroup")>();
-  return { ...actual, FoldersRailGroup: counted("FoldersRailGroup", actual.FoldersRailGroup) };
-});
-vi.mock("../app/views/ComposeView", async (orig) => {
-  const actual = await orig<typeof import("../app/views/ComposeView")>();
-  return { ...actual, ComposeView: counted("ComposeView", actual.ComposeView) };
+vi.mock("../../../packages/app/src/write/head/People", async (orig) => {
+  const actual = await orig<typeof import("../../../packages/app/src/write/head/People")>();
+  return { ...actual, People: counted("ComposeView", actual.People) };
 });
 /* THE CHIP FIELD ITSELF, and not only the view above it. A loop in this component's own state
    re-renders THIS subtree and nothing higher, so a counter on `ComposeView` cannot see it —
    measured: the loop ran the file past five minutes while the view's count sat at its ordinary
    number. The instrument has to sit where the state does. */
-vi.mock("../app/shell/RecipientField", async (orig) => {
-  const actual = await orig<typeof import("../app/shell/RecipientField")>();
-  return { ...actual, RecipientField: counted("RecipientField", actual.RecipientField) };
+vi.mock("@ohmail/ui/mail", async (orig) => {
+  const actual = await orig<typeof import("@ohmail/ui/mail")>();
+  return { ...actual, Recipients: counted("RecipientField", actual.Recipients) };
 });
 
 import {
@@ -234,7 +228,10 @@ describe("fifty deltas under an open composer", () => {
     });
     await tick(300);
 
-    const to = el.querySelector<HTMLInputElement>("#compose-to");
+    /** Write's new letter's To line (today's `#compose-to`). */
+    const toLine = (): HTMLInputElement | null =>
+      el.querySelector<HTMLInputElement>('[role="region"][aria-label="New message"] [role="combobox"][aria-label="To"]');
+    const to = toLine();
     expect(to, "the composer never rendered its To field, so nothing below measures anything")
       .not.toBeNull();
 
@@ -277,6 +274,6 @@ describe("fifty deltas under an open composer", () => {
     }
     // And the form is still on screen — a composer that unmounted under the deltas would be a
     // worse failure than a loud one, and it would pass the ceiling.
-    expect(el.querySelector("#compose-to"), "the composer left the screen").not.toBeNull();
+    expect(toLine(), "the composer left the screen").not.toBeNull();
   });
 });

@@ -233,7 +233,8 @@ async function until(seen: () => boolean, from: number, max: number, step = 25):
 async function mountAndSettle(): Promise<void> {
   await shell.mountCloudShell();
   await shell.tick(30_000);
-  expect(document.body.querySelector(".today"), "the premise: the mail opened").not.toBeNull();
+  /* The mail itself: the new shell's frame root (today's `.today` is mounted by no host). */
+  expect(document.body.querySelector(".fr-root"), "the premise: the mail opened").not.toBeNull();
 }
 
 /** Hide for `ms`, then come back as a browser does: visible, then focus. Returns the return's time. */
@@ -263,11 +264,33 @@ describe("a web tab's mount and its return, on the wire", () => {
     expect(beside, `went beside the first read:\n${show(rows, t0)}`).toEqual([]);
     expect(peak(rows), show(rows, t0)).toBeLessThanOrEqual(SLOTS);
     const paths = new Set(reads(rows).map((r) => r.path));
-    for (const p of ["/api/hello", "/api/account/access", "/api/account/ai", "/api/auth/session", "/api/organizer-requests",
-      "/api/consent", "/api/screener", "/api/screener/held-releases", "/api/screener/unscreened", "/api/away-responder",
-      "/api/mailboxes", "/api/messages/timeline", "/api/sync"]) {
+    /* The reads of the places the mail mounts. Three of today's mount's reads belong to places not mounted yet and
+       stand in cases of their own below, each waiting for its place's mount. */
+    for (const p of ["/api/hello", "/api/account/access", "/api/account/ai", "/api/auth/session",
+      "/api/consent", "/api/screener", "/api/screener/held-releases", "/api/screener/unscreened",
+      "/api/mailboxes", "/api/sync"]) {
       expect(paths.has(p), `${p} was never read:\n${show(rows, t0)}`).toBe(true);
     }
+  });
+
+  /* MOVED OUT OF THE MOUNT's CASE ABOVE, one a place: what today's shell read at the mount for a place the new shell
+     does not mount yet (the Rules pane's group of requests waiting on the organizer, the away line and its pane,
+     History's months). Red until that place's mount, which says whether its read belongs to the mount. */
+  /** Mounts the mail and asserts that `path` was read in the mount's burst. */
+  async function readAtMount(path: string): Promise<void> {
+    const t0 = Date.now();
+    await mountAndSettle();
+    const rows = since(t0);
+    expect(new Set(reads(rows).map((r) => r.path)).has(path), `${path} was never read:\n${show(rows, t0)}`).toBe(true);
+  }
+  it("MOUNT: the Rules pane's requests waiting on the organizer are read, beside the rest", { timeout: 120_000 }, async () => {
+    await readAtMount("/api/organizer-requests");
+  });
+  it("MOUNT: the away responder is read, beside the rest", { timeout: 120_000 }, async () => {
+    await readAtMount("/api/away-responder");
+  });
+  it("MOUNT: History's months are read, beside the rest", { timeout: 120_000 }, async () => {
+    await readAtMount("/api/messages/timeline");
   });
 
   it("RETURN AFTER 2 MIN: GET /sync goes first and alone, and the stream is dialled after its answer", { timeout: 120_000 }, async () => {

@@ -6,12 +6,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { FEATURE_NAMES, NONE, panesOf, type FeatureName, type HostContract } from "@ohmail/app/host";
-import { webHost, type WebFacts, type WebSupplies } from "../app/(product)/mailbox/host";
+import { DESKTOP_DOWNLOAD_URL, webHost, type WebFacts, type WebSupplies } from "../app/(product)/mailbox/host";
 
 const WIRES = [
   "organizerNotice", "gapLetters", "liveBody", "away", "profileImport", "consent", "images", "olderBody", "junk",
   "trash", "suggest", "draftReply", "firstRun", "screening", "autoFiled", "seedReview", "folderSummary", "connect",
-  "mailboxes",
+  "mailboxes", "calendar",
 ] as const;
 /** A stand-in that is only ever compared: which thing was handed on, not what it does. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
@@ -22,6 +22,8 @@ const has: WebSupplies = {
   wires: Object.fromEntries(WIRES.map((wire) => [wire, named(wire)])) as WebSupplies["wires"],
   features: Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, named(feature)])) as WebSupplies["features"],
   notifications: named("notifications"),
+  language: named("language"),
+  openLink: named("openLink"),
   frame: {
     places: named("places"), stages: named("stages"), reader: named("reader"), above: named("above"), overs: named("overs"), address: named("address"),
     window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
@@ -45,6 +47,19 @@ const managed: WebFacts = {
 /** A self-hosted server, as it was read: the same server words, invitations, and a staged send. */
 const selfHosted: WebFacts = { ...managed, selfHost: true, invites: true, sendSurface: 20 * 1024 * 1024 };
 
+it("offers Calendar only for the advertised service and the confirmed mirror's port", () => {
+  const port = named<Exclude<HostContract["wires"]["calendar"], typeof NONE>>("calendar-port");
+  const supplies = { ...has, wires: { ...has.wires, calendar: port } };
+  const enabled = { ...managed, server: { ...managed.server, calendar: true } };
+  expect(webHost(engine, enabled, supplies).capabilities.products).toBe("both");
+  expect(webHost(engine, enabled, supplies).wires.calendar).toBe(port);
+  for (const facts of [managed, { ...enabled, account: null }, { ...enabled, account: "another-account" }]) {
+    const host = webHost(engine, facts, supplies);
+    expect(host.capabilities.products).toBe(NONE);
+    expect(host.wires.calendar).toBe(NONE);
+  }
+});
+
 const listed = (host: HostContract) => Object.entries(panesOf(host)).filter(([, shown]) => shown).map(([pane]) => pane).sort();
 const withheld = (host: HostContract) => Object.entries(host.wires).filter(([, wire]) => wire === NONE).map(([wire]) => wire).sort();
 /** The whole record of features: the entry supplied under each name handed on, `none` under every other. */
@@ -58,11 +73,11 @@ const entries = (...handedOn: FeatureName[]) =>
     above: has.frame.above,
     calendar: has.frame.calendar,
   });
-/** A page in a browser: its own notification reader, a mailto that leaves, no badge, and no verb or signal wired yet. */
+/** A page in a browser: its own notification reader and language controls, a mailto that leaves, no badge, and no other verb or signal wired yet. */
 const BROWSER_DEVICE = {
-  build: { surface: "web", version: "1.0.11", commit: "abc", mailtoLeaves: true },
+  build: { surface: "web", version: "1.0.11", commit: "abc", mailtoLeaves: true, desktopDownload: DESKTOP_DOWNLOAD_URL },
   notifications: has.notifications,
-  badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
+  badge: NONE, language: has.language, openLink: has.openLink, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
   textSize: NONE, fold: NONE, liveTheme: NONE,
   address: has.frame.address, window: has.frame.window, appearance: has.frame.appearance,
 };
@@ -98,7 +113,7 @@ describe("the web shell's answers on the managed service", () => {
   });
 
   it("is the account's own page: a live session under the account's scope, and a browser's device", () => {
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", recover: has.frame.recover });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
     expect(host.engine).toBe(engine);
@@ -161,7 +176,7 @@ describe("the web shell's answers on a self-hosted server", () => {
     expect(host.features).toEqual(entries(...THE_ACCOUNT, "devices", "invites"));
     expect(host.device).toEqual(BROWSER_DEVICE);
     expect(host.signals).toEqual(NO_SIGNAL);
-    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", recover: has.frame.recover });
+    expect(host.session).toEqual({ ...has.session, state: "live", scope: "an-account", account: "an-account", accountAddress: null, recover: has.frame.recover, today: NONE });
     expect(host.reads).toEqual({ mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access });
   });
 
@@ -177,6 +192,13 @@ describe("the web shell's account and pictures, in every setting", () => {
     ["a server that pairs nothing and fetches no picture", { ...managed, server: { pairing: false, remoteImages: false, searchPeople: false } }],
     ["before the account is confirmed", { ...managed, account: null }],
   ];
+
+  it("hands the verified address only to the frame for the same account", () => {
+    const facts = { ...managed, accountAddress: "person@example.invalid" };
+    expect(webHost(engine, facts, has).session.accountAddress).toBe(facts.accountAddress);
+    expect(webHost(engine, { ...facts, account: "another-account" }, has).session.accountAddress).toBeNull();
+    expect(webHost(engine, { ...facts, account: null }, has).session.accountAddress).toBeNull();
+  });
 
   it.each(SETTINGS)("%s: the session names the account the server confirmed, and nothing else", (_, facts) => {
     expect(webHost(engine, facts, has).session.account).toBe(facts.account);

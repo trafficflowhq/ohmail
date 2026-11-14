@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { typeInto } from "./fixtures/rich-editor-driver";
-import { openLetter, reportPress } from "./ohbox/_finders.js";
+import { openRow, replyEditor, reportPress } from "./ohbox/_finders.js";
 
 /**
  * SEND + DONE — THE SECOND SEND ACTION, driven through the WHOLE shell.
@@ -104,9 +104,9 @@ const drain = async (): Promise<void> => {
   for (let i = 0; i < 10; i++) await act(async () => { await Promise.resolve(); });
 };
 
+/** The reply's editor under the open letter, by its role and name (`write.reply.text`), in either catalogue. */
 const editors = (): HTMLElement[] =>
-  [...[openLetter(host!), openLetterDe(host!)].filter((x): x is HTMLElement => x !== null), ...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
+  [replyEditor(host!), replyEditorDe(host!)].filter((x): x is HTMLElement => x !== null);
 
 async function type(text: string): Promise<void> {
   const editor = editors()[0]!;
@@ -120,18 +120,23 @@ async function type(text: string): Promise<void> {
 const undoPress = (): HTMLButtonElement | undefined =>
   [...host!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === "Undo")
   ?? ((reportPress()?.textContent ?? "").trim().startsWith("Undo") ? reportPress()! : undefined);
-/* ASKED OF THE HELPER: the open letter's region in the German catalogue's names (the helper's are the English). */
-const openLetterDe = (root: ParentNode): HTMLElement | null =>
-  root.querySelector<HTMLElement>(`section[aria-label="${de.frame.landmark.reading}"] [role="region"][aria-label="${de.reader.pane}"]`);
+/* ASKED OF THE HELPER: the reply's editor in the German catalogue's names (the helper's are the English). */
+const replyEditorDe = (root: ParentNode): HTMLElement | null =>
+  root.querySelector<HTMLElement>(`section[aria-label="${de.frame.landmark.reading}"] [role="textbox"][aria-label="${de.write.reply.text}"]`);
 
-/** The second action, found by the class the shell gives it — never by its words. */
+/** A verb of the reading sheet's panel, or of the menu it opened, by its name: the open reply stands its verbs there. */
+const panelVerb = (name: string): HTMLButtonElement | null =>
+  /* The name is compared, not put into the selector: jsdom's selector engine matches no value that holds " + ". */
+  [...host!.querySelectorAll<HTMLButtonElement>('[role="toolbar"] button[aria-label]')].find((b) => b.getAttribute("aria-label") === name)
+  ?? ([...document.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]')].find((b) => (b.textContent ?? "").trim() === name) ?? null);
+/** The second action, found by its name in the catalogue the shell runs in. */
 const doneButton = (): HTMLButtonElement | null =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .reply-send-done");
+  panelVerb(messages.reply.sendAndDone) ?? panelVerb(de.reply.sendAndDone);
 const sendButton = (): HTMLButtonElement =>
-  host!.querySelector<HTMLButtonElement>(".reply-actions .btn.primary")!;
-/** The message the open editor answers. */
+  panelVerb(messages.write.send)!;
+/** The message the open editor answers: the open letter's, while a reply's editor stands under it. */
 const replyFor = (): string =>
-  host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
+  editors().length > 0 ? (openRow(host!)?.dataset.id ?? "") : "";
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) await act(async () => { await vi.advanceTimersByTimeAsync(1); });
@@ -174,7 +179,7 @@ describe("the second action is offered exactly where the engine offers a plan", 
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
     await settle();
-    expect(host!.querySelector(".reply-send-done")).toBeNull();
+    expect(doneButton()).toBeNull();
   });
 
   /**
@@ -365,16 +370,11 @@ describe("the offer reads the Ohbox ON SCREEN", () => {
     const { resolve } = await import("node:path");
     /* The root run and the package run are both what CI does — jsdom has no file `import.meta`,
        so the path is resolved from the working directory, as `reply-panel.test.tsx` does. */
-    /* THE THREE SITES ARE THREE FILES NOW (ARCH-022). The shell's press went to `shell-compose.ts`
-       with the editor and the chord to `shell-keys.tsx` with the keymap; only the per-render offer
-       stayed. Counting one file read 2 and said the rule had lost a site. So the census names the
-       files it covers and asks the WHOLE set — the claim was never "three in AppShell", it was
-       "every site, and every one of them asks the projection". A file that cannot be read is a
-       refusal, not a zero. */
+    // The composer checks the projected list again at the press. Write's displayed offer
+    // checks it at render, and the keyboard uses that same offer.
     const rels = [
-      "apps/webapp/app/shell/AppShell.tsx",
+      "packages/app-logic/src/writing/writing-of.ts",
       "packages/app-logic/src/writing/shell-compose.ts",
-      "apps/webapp/app/shell/shell-keys.tsx",
     ];
     const read = (rel: string): string => {
       try { return readFileSync(resolve(process.cwd(), rel), "utf8"); }
@@ -386,8 +386,13 @@ describe("the offer reads the Ohbox ON SCREEN", () => {
       per.map((f) => `${f.rel}:${f.calls.length}`),
       "the rule is asked at the press, at every render and by the chord — one site in each",
     ).toEqual(rels.map((rel) => `${rel}:1`));
-    expect(calls.length, "the rule is asked at the press, at every render and by the chord").toBe(3);
+    expect(calls.length, "the rule is asked at the press, at every render and by the chord").toBe(rels.length);
     expect([...new Set(calls)]).toEqual(["sendAndDonePlanFor(presented,"]);
+    expect(
+      read("packages/app/src/mail/ground/MailKeys.tsx"),
+      "the chord asks the per-render offer (the projection's), never a rule of its own",
+    ).toMatch(/writing\.sendReplyAndDone\(replyTo\)/);
+    expect(read("packages/app/src/mail/ground/MailKeys.tsx")).not.toMatch(/sendAndDonePlanFor\(/);
   });
 });
 

@@ -12,6 +12,8 @@ export interface DockPlace {
   count?: string;
   /** Somebody is waiting: the badge is hot. */
   countHot?: boolean;
+  /** The registration's live count, read beside its own button. */
+  useCount?: () => { readonly count: string; readonly hot: boolean } | null;
   current?: boolean;
   onPress?: () => void;
 }
@@ -28,7 +30,7 @@ export interface DockProps {
   /** The way to search. Left out where the host hands no place to search: the dock draws none. */
   search?: { label: string; current?: boolean; onPress?: () => void };
   /** The way to write. Left out where the host hands no place to write: the dock draws none. */
-  write?: { label: string; onPress?: () => void };
+  write?: { label: string; icon?: IconName; onPress?: () => void };
   /** The way to the other product, where the rail stands upright: the round button, first. */
   switcher?: ReactNode;
   /**
@@ -40,6 +42,35 @@ export interface DockProps {
   shown?: number;
   /** The places that stand, whenever that changes: the app puts the others behind More. */
   onFit?: (ids: readonly string[]) => void;
+}
+
+const useNoCount = () => null;
+
+function DockEntry({ place, hidden }: { place: DockPlace; hidden: boolean }) {
+  const useCount = place.useCount ?? useNoCount;
+  const counted = useCount();
+  const count = counted?.count ?? place.count;
+  const hot = counted?.hot ?? place.countHot;
+  return (
+    <button
+      type="button"
+      className="oh-control oh-dock-entry"
+      data-place={place.id}
+      hidden={hidden}
+      aria-current={place.current ? "page" : undefined}
+      aria-label={count ? `${place.label}, ${count}` : place.label}
+      title={place.label}
+      onClick={place.onPress}
+    >
+      <Icon name={place.icon} size={20} />
+      <span className="oh-dock-word">{place.label}</span>
+      {count ? (
+        <span className="oh-dock-count" data-hot={hot ? "" : undefined}>
+          {count}
+        </span>
+      ) : null}
+    </button>
+  );
 }
 
 /** The rail on touch: the app's tabs, More, and Search and Write where the host has them. Upright on an unfolded phone, with every place that fits. */
@@ -89,25 +120,12 @@ export function Dock({
       {switcher}
       <div className="oh-dock-places">
         {places.map((place, index) => (
-          <button
-            key={place.id}
-            type="button"
-            className="oh-control oh-dock-entry"
-            data-place={place.id}
+          <DockEntry
+            /* A registered hook belongs to its own mount, separate from an entry with a supplied count. */
+            key={`${place.id}:${place.useCount !== undefined}`}
+            place={place}
             hidden={shown !== undefined && index >= Math.max(shown, floor)}
-            aria-current={place.current ? "page" : undefined}
-            aria-label={place.count ? `${place.label}, ${place.count}` : place.label}
-            title={place.label}
-            onClick={place.onPress}
-          >
-            <Icon name={place.icon} size={20} />
-            <span className="oh-dock-word">{place.label}</span>
-            {place.count ? (
-              <span className="oh-dock-count" data-hot={place.countHot ? "" : undefined}>
-                {place.count}
-              </span>
-            ) : null}
-          </button>
+          />
         ))}
         <button
           type="button"
@@ -147,7 +165,7 @@ export function Dock({
               title={write.label}
               onClick={write.onPress}
             >
-              <Icon name="write" size={22} />
+              <Icon name={write.icon ?? "write"} size={22} />
               <span className="oh-dock-word">{write.label}</span>
             </button>
           ) : null}

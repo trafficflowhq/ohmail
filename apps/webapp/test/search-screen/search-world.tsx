@@ -17,7 +17,7 @@ import {
 } from "@ohmail/client-engine";
 import { useSearchList } from "@ohmail/app-logic/search";
 import type { LayoutPlan, PaneProps, Route } from "@ohmail/app/frame";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../../test/support/keymap-provider";
 import { NONE } from "@ohmail/app/host";
 import { SearchAbove, SearchList, searchBlankOf, type SearchBeside } from "@ohmail/app/search";
 import { TextProvider, type Messages } from "@ohmail/app/text";

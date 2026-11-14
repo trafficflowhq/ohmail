@@ -30,6 +30,7 @@ export interface DraftsModel {
   readonly drafts: readonly EngineDraft[];
   /** The mirror is read and holds nothing: the one time the list may say it is empty. */
   readonly empty: boolean;
+  readonly draftsSettled: boolean;
   /** The mirror is still owed: the list says it is on its way, never that nothing is there. */
   readonly loading: boolean;
   readonly door: DraftsDoor;
@@ -61,6 +62,7 @@ export function useDraftsList(input: DraftsInput): DraftsModel {
   return {
     scheduled,
     drafts,
+    draftsSettled: input.settled && !input.owed,
     empty: nothing && input.settled && !input.owed,
     loading: nothing && (!input.settled || input.owed),
     door,

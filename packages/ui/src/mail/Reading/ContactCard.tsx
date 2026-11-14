@@ -80,7 +80,7 @@ export function ContactCard(props: ContactCardProps) {
     const n = radios.length;
     if (!n) return;
     const at = Math.max(0, radios.indexOf(document.activeElement as HTMLElement));
-    radios[(at + step + n) % n]!.focus();
+    radios[(at + step + n) % n]!.focus({ preventScroll: true });
   };
   const taken = goes?.places.some((p) => p.value === goes.value);
   return (

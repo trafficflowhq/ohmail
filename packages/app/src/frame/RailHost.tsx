@@ -1,10 +1,12 @@
 /**
  * THE RAIL, drawn with the kit: the places in the app's order, the way to write, and the foot with the one
  * notice slot, Pull new mail and the account. Where a rail stands upright or at the foot it is the kit's
- * dock; its More opens the whole rail over the app. The model is fed (today's views) or built from the
- * places' registrations.
+ * dock; its More opens the whole rail over the app. The places are the registrations': their groups in the rail's
+ * order, an entry each in the rail's order, and under them a group a place draws itself; the foot is fed apart from
+ * them. While a shell feeds the whole rail as a model (today's views), that model is drawn instead, foot and all.
  */
-import { Fragment, useLayoutEffect, useRef, type ReactNode } from "react";
+import { Fragment, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { ariaShortcut, useBinding, useModGlyph } from "@ohmail/app-logic/keys";
 import { Dock, Rail, RailEntry, RailFoot, type DockPlace } from "@ohmail/ui/mail";
 import type {
   FrameCommands,
@@ -13,14 +15,18 @@ import type {
   PlaceEntry,
   PlaceId,
   RailEntryModel,
+  RailFootModel,
   RailModel,
   Route,
 } from "./contract.js";
-import { PLACE_IDS, RAIL_GROUPS } from "./contract.js";
+import { PLACE_IDS, RAIL_GROUPS, RAIL_ORDER } from "./contract.js";
 import { isCalendarPlace } from "./product.js";
 import { useSignal } from "./feeds.js";
 import type { Signal } from "../host/index.js";
 import { useText, useTextLookup, type Text } from "../text/index.js";
+import { useRailDropState } from "./rail-drag.js";
+import { RAIL_BOX } from "./rail-keys.js";
+import { placeDigits } from "./chords.js";
 
 /**
  * A fed entry. It carries the place's id as the drop target today's rows look for (`data-rail-id`, a tag's as
@@ -61,10 +67,13 @@ function useShortcut(control: () => Element | null, shortcut: string | undefined
 function PlaceRailEntry({
   place,
   current,
+  digit,
   go,
 }: {
   place: PlaceEntry;
   current: boolean;
+  /** Its digit: drawn always, shown by the rail's sheet while the keys are within the rail. */
+  digit: string | undefined;
   go: FrameCommands["go"];
 }) {
   const t = useText(place.id);
@@ -72,13 +81,22 @@ function PlaceRailEntry({
   const rail = place.rail!;
   const counted = rail.useCount?.() ?? null;
   const label = t(rail.label);
-  /* The place's id as the drop target a dragged row looks for, as a fed entry carries it. */
+  /* Its key is said to a screen reader only while something binds it: a key that is not bound is said nowhere. */
+  const mod = useModGlyph();
+  const bound = useBinding(rail.keyHint ?? "");
+  /* A letter dragged toward the rail lights the entry where its registration takes it (`rail.drop`). The box carries
+     the place's id and what it takes: where a dragged row's gesture finds its target. */
+  const drop = useRailDropState(rail.drop === undefined ? null : { kind: "pile", action: rail.drop });
   return (
-    <span className="fr-railtarget" data-rail-id={place.id}>
+    <span className="fr-railtarget" data-rail-id={place.id} data-rail-drop={rail.drop}>
       <RailEntry
         kind="place"
+        drop={drop}
         icon={rail.icon}
         keyHint={rail.keyHint}
+        keyStands={rail.keyStands}
+        digit={digit}
+        shortcut={bound ? ariaShortcut(bound.chord, mod) : undefined}
         count={counted?.count}
         countHot={counted?.hot}
         current={current}
@@ -91,30 +109,59 @@ function PlaceRailEntry({
   );
 }
 
-/** Mail's places with a rail entry: the frame's places are mail's sixteen, each registered under its own id. */
-function registered(places: FramePlaces): (PlaceEntry & { readonly id: PlaceId })[] {
-  return Object.values(places).filter(
-    (p): p is PlaceEntry & { readonly id: PlaceId } =>
-      p !== "none" && p.rail !== null && !isCalendarPlace(p.id),
-  );
+/** A mail place as a host registers it: the frame's places are mail's sixteen, each under its own id. */
+type MailPlace = PlaceEntry & { readonly id: PlaceId };
+
+const railRank = (place: MailPlace): number => RAIL_ORDER.indexOf(place.id);
+
+/** The places a host hands, in the rail's order: never the order its record names them in. */
+function handed(places: FramePlaces): MailPlace[] {
+  return Object.values(places)
+    .filter((p): p is MailPlace => p !== "none" && !isCalendarPlace(p.id))
+    .sort((a, b) => railRank(a) - railRank(b));
+}
+/** The places that have an entry of their own: what the rail lists and a dock can show. */
+function registered(places: FramePlaces): MailPlace[] {
+  return handed(places).filter((p) => p.rail !== null);
 }
 
 export interface RailHostProps {
   readonly plan: LayoutPlan;
   /** Today's rail as it is fed: read here, so a new feed draws the rail again and nothing else. */
   readonly feed: Signal<RailModel | null>;
+  /** The foot as it is fed apart from the places: drawn where no whole rail is fed. */
+  readonly foot: Signal<RailFootModel | null>;
   readonly places: FramePlaces;
   readonly route: Route;
   readonly commands: FrameCommands;
   /** The one notice slot, drawn in the rail's foot where a rail stands. */
   readonly notice: ReactNode;
+  readonly switcher?: ReactNode;
 }
 
 /** The rail at the side: words or icons, by the plan. */
-export function SideRail({ feed, places, route, commands, notice }: Omit<RailHostProps, "plan">) {
+export function SideRail({
+  feed,
+  foot: footFeed,
+  places,
+  route,
+  commands,
+  notice,
+  switcher,
+}: Omit<RailHostProps, "plan">) {
   const model = useSignal(feed);
+  /* The way to write prints its key, and says it to a screen reader, while something binds it (the mail's own `c`). */
+  const mod = useModGlyph();
+  const writeBound = useBinding("c");
+  /* A shell that feeds the whole rail feeds its foot with it; else the foot is the one fed apart. */
+  const apart = useSignal(footFeed);
+  const fed: RailFootModel | null = model ?? apart;
   const t = useText("frame");
   const zone = useRef<HTMLDivElement>(null);
+  const all = handed(places);
+  /* The digits are bound always (`chords.tsx`) and drawn always: the rail's sheet shows them while the keys are within
+     the rail, so a focus moving in or out draws nothing again. */
+  const digits = useMemo(() => new Map(placeDigits(places).map((d) => [d.place.id, d.digit])), [places]);
   const groups: ReactNode[] = model
     ? model.groups.map((group) => (
         <Fragment key={group.id}>
@@ -125,26 +172,39 @@ export function SideRail({ feed, places, route, commands, notice }: Omit<RailHos
         </Fragment>
       ))
     : RAIL_GROUPS.map((group) => {
-        const entries = registered(places).filter((p) => p.rail!.group === group);
-        return entries.length ? (
+        const entries = all.filter((p) => p.rail?.group === group);
+        /* A group a place draws itself stands under the group's entries. */
+        const drawn = all.flatMap((p) =>
+          p.railGroup?.group === group ? [{ id: p.id, ...p.railGroup }] : [],
+        );
+        return entries.length + drawn.length ? (
           <Fragment key={group}>
             {entries.map((p) => (
-              <PlaceRailEntry key={p.id} place={p} current={p.id === route.place} go={commands.go} />
+              <PlaceRailEntry
+                key={p.id}
+                place={p}
+                current={p.id === route.place}
+                digit={digits.get(p.id)}
+                go={commands.go}
+              />
+            ))}
+            {drawn.map(({ id, Body }) => (
+              <Body key={`${id}/group`} />
             ))}
           </Fragment>
         ) : null;
       }).filter(Boolean);
-  const pull = model?.pull
+  const pull = fed?.pull
     ? {
-        label: model.pull.label,
-        keyHint: model.pull.keyHint,
-        busy: model.pull.busy,
-        onPress: model.pull.onPress,
+        label: fed.pull.label,
+        keyHint: fed.pull.keyHint,
+        busy: fed.pull.busy,
+        onPress: fed.pull.onPress,
       }
     : undefined;
   /* The kit's foot always draws an account line; where nobody is known the frame draws the notice and Pull alone. */
-  const foot = model?.account ? (
-    <RailFoot notice={notice} pull={pull} account={model.account} tools={model.tools} />
+  const foot = fed?.account ? (
+    <RailFoot notice={notice} pull={pull} account={fed.account} tools={fed.tools} />
   ) : (
     <div className="fr-railfoot">
       {notice}
@@ -164,23 +224,32 @@ export function SideRail({ feed, places, route, commands, notice }: Omit<RailHos
   );
   const rail = (
     <Rail
+      switcher={switcher}
       /* While today's rail is fed, the landmark keeps today's name: what a screen reader finds it by. */
       label={t(model ? "landmark.fedRail" : "landmark.places")}
-      write={model ? (model.write ?? undefined) : { label: t("dock.write"), onPress: () => commands.write() }}
+      write={
+        model
+          ? (model.write ?? undefined)
+          : {
+              label: t("dock.write"),
+              ...(writeBound
+                ? { keyHint: writeBound.chord, shortcut: ariaShortcut(writeBound.chord, mod) }
+                : {}),
+              onPress: () => commands.write(),
+            }
+      }
       groups={groups}
       foot={foot}
     />
   );
-  /* A fed rail stands where the feeder's own keys look for it, in a box that draws nothing. The way to write is the
-     rail's first button: the frame hands the kit no switch above it. */
+  /* The rail stands in a box that draws nothing: the zone walk finds it there (`RailKeys`), and a fed rail's feeder
+     its own mark. The write shortcut stays on Write when the product switch stands above it. */
   const writeKey = model?.write?.shortcut;
-  useShortcut(() => zone.current?.querySelector("nav button") ?? null, writeKey);
-  return model?.mark || writeKey ? (
-    <div ref={zone} className={model?.mark ? `fr-railzone ${model.mark}` : "fr-railzone"}>
+  useShortcut(() => zone.current?.querySelector(".oh-rail-write button") ?? null, writeKey);
+  return (
+    <div ref={zone} className={model?.mark ? `${RAIL_BOX} ${model.mark}` : RAIL_BOX}>
       {rail}
     </div>
-  ) : (
-    rail
   );
 }
 
@@ -207,7 +276,8 @@ export function DockRail({
   route,
   commands,
   upright,
-}: Omit<RailHostProps, "plan" | "notice"> & { upright: boolean }) {
+  switcher,
+}: Omit<RailHostProps, "plan" | "notice" | "foot"> & { upright: boolean }) {
   const model = useSignal(feed);
   const t = useText("frame");
   const words = usePlaceWords();
@@ -229,6 +299,7 @@ export function DockRail({
           id: p.id,
           label: words[p.id](p.rail!.label),
           icon: p.rail!.icon,
+          useCount: p.rail!.useCount,
           current: p.id === route.place,
           onPress: () => commands.go({ place: p.id }),
         })),
@@ -245,6 +316,7 @@ export function DockRail({
   return (
     <span ref={box} className="fr-railtarget">
       <Dock
+        switcher={switcher}
         label={t("landmark.places")}
         places={shown}
         floor={upright ? 1 : shown.length}

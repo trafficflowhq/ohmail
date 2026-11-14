@@ -7,6 +7,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
+import { cursorRow, reportPress, reportSays } from "./ohbox/_finders.js";
 
 /**
  * ONE UNDO TOAST ON EVERY VERB (the 0.20 review) — driven through the whole shell, counted at the
@@ -24,6 +25,8 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
 (globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
   escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
 };
+/* The frame's report animates its way in and out (the kit's motion): jsdom has no Web Animations. */
+Element.prototype.animate ??= () => ({ cancel() {}, finished: Promise.resolve() }) as unknown as Animation;
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -52,7 +55,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -70,6 +73,10 @@ async function mountShell(): Promise<void> {
   for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
   // The Ohbox selects nothing by itself — land the cursor on the first row.
   await key("j");
+  /* The new Ohbox names the walked-to letter in the address, and jsdom says a hash change in a task of its own,
+     which this file's fake clock holds until it runs. */
+  await act(async () => { vi.advanceTimersByTime(1); });
+  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
 }
 
 const key = async (k: string): Promise<void> => {
@@ -82,11 +89,13 @@ const flush = async (): Promise<void> => {
   for (let i = 0; i < 4; i++) await act(async () => { await Promise.resolve(); });
 };
 
-const toastText = (): string => (host!.querySelector(".toast")?.textContent ?? "").trim();
-const undoButton = (): HTMLButtonElement | null => host!.querySelector<HTMLButtonElement>(".toast .toast-act");
+/** What the press answered, and its Undo: the frame's report at a seated place (today's shell's toast). */
+const toastText = (): string => reportSays();
+const undoButton = (): HTMLButtonElement | null => reportPress();
 
 const selectedId = (): string => {
-  const id = host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])")?.dataset.id;
+  /* The row the keys are on (today's `.row.sel`): the seated list's cursor row, or its open row. */
+  const id = cursorRow(host!)?.dataset.id;
   expect(id, "no row under the cursor").toBeTruthy();
   return id!;
 };

@@ -7,6 +7,7 @@
  * view switch — until it was reloaded. Two real `CloudShell`s share one jar, one wire and Node's
  * real `BroadcastChannel` here; the leave seam stands in for a navigation jsdom cannot make.
  */
+import { fireEvent, within } from "@testing-library/react";
 import * as shell from "./fixtures/cloud-confirm-shell";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetSessionTruthForTests } from "@ohmail/app-logic/session/session-truth";
@@ -103,7 +104,7 @@ async function readFirst(el: HTMLElement): Promise<void> {
 /** Anything of the mailbox on this tab's screen. */
 function showsMail(el: HTMLElement, subject = SUBJECT): boolean {
   const text = el.textContent ?? "";
-  return el.querySelector(".today") !== null || el.querySelector(":is(.row, [role=option])[data-id]") !== null
+  return el.querySelector(".fr-root") !== null || el.querySelector(":is(.row, [role=option])[data-id]") !== null
     || text.includes(subject) || text.includes(BODY) || text.includes(`snippet of ${subject}`);
 }
 
@@ -145,7 +146,7 @@ const watchers: MutationObserver[] = [];
 function mailEverOn(el: HTMLElement): () => boolean {
   let seen = showsMail(el);
   const isMail = (n: Node): boolean => (n.textContent ?? "").includes(SUBJECT)
-    || (n instanceof Element && (n.matches(".today, :is(.row, [role=option])[data-id]") || n.querySelector(".today, :is(.row, [role=option])[data-id]") !== null));
+    || (n instanceof Element && (n.matches(".fr-root, :is(.row, [role=option])[data-id]") || n.querySelector(".fr-root, :is(.row, [role=option])[data-id]") !== null));
   const watch = new MutationObserver((records) => {
     for (const r of records) for (const n of r.addedNodes) if (isMail(n)) seen = true;
   });
@@ -205,7 +206,7 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
     expect(readAtLeave, "the tab navigated with the mail still in its DOM").toEqual([false]);
     /* The tab that signed out does not obey its own post: its pane still has its own sentence to
        say (a wipe another tab blocked), and it navigates itself. */
-    expect(tab0.querySelector(".today"), "tab 0 obeyed its own message").not.toBeNull();
+    expect(tab0.querySelector(".fr-root"), "tab 0 obeyed its own message").not.toBeNull();
   });
 
   it("tab 1 drops its rows while tab 0's door is still out", async () => {
@@ -244,6 +245,29 @@ describe("a sign-out in one tab reaches every other tab of the account", { timeo
     await oneTick();
     expect(leaves).toBe(1);
     expect(readAtLeave, "the leaving tab kept its per-tab notes").toEqual([[]]);
+  });
+
+  it("a tab that leaves on another tab's post keeps none of the account's unsent words, as its own sign-out keeps none", async () => {
+    await openTab("tab-1");
+    /* What this tab's composer and reply hold for the account (a letter, its session and row, a reply and its meta),
+       written after the other tab's sweep had run: only this tab's own sweep can take them. Another account's stay. */
+    const mine = [
+      `ohmail.ui.compose.${ACCOUNT}.composer-1`,
+      `ohmail.ui.compose.${ACCOUNT}`,
+      `ohmail.compose.session.${ACCOUNT}.composer-1`,
+      `ohmail.compose.row.${ACCOUNT}.composer-1`,
+      `ohmail.ui.reply.${ACCOUNT}:m1`,
+      `ohmail.ui.replymeta.${ACCOUNT}:m1`,
+    ];
+    const theirs = [`ohmail.ui.compose.${OTHER}.composer-2`, `ohmail.ui.reply.${OTHER}:m2`];
+    for (const key of [...mine, ...theirs]) localStorage.setItem(key, JSON.stringify({ body: "UNSENT-WORDS" }));
+    atLeave = () => [...mine, ...theirs].filter((key) => localStorage.getItem(key) !== null);
+    document.cookie = "tf_owner=signed_out_pending; Path=/";
+    setThisTabForTest("tab-0");
+    postSignedOut(ACCOUNT);
+    await oneTick();
+    expect(leaves).toBe(1);
+    expect(readAtLeave, "the leaving tab kept the account's unsent words, or took another account's").toEqual([theirs]);
   });
 
   it("CONTROL: a tab of another account is untouched by this account's sign out", async () => {
@@ -287,7 +311,7 @@ describe("which tabs hear it, and when", { timeout: 60_000 }, () => {
     shell.scriptSession(shell.db503);
     const tab1 = await shell.mountCloudShell();
     await shell.tick(1_000);
-    expect(tab1.querySelector(".today"), "the warm mirror did not open").not.toBeNull();
+    expect(tab1.querySelector(".fr-root"), "the warm mirror did not open").not.toBeNull();
 
     await signOutIn("tab-0");
     await oneTick();
@@ -397,7 +421,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     reply("refused");
     expect(await settle(done), "the sign-out never ended").toBe(true);
     expect((await done).serverRefused, "the door's refusal was read as a sign-out").not.toBeNull();
-    expect(tab0.querySelector(".today"), "the pressing tab left").not.toBeNull();
+    expect(tab0.querySelector(".fr-root"), "the pressing tab left").not.toBeNull();
     expect(leaves).toBe(1);
   });
 
@@ -511,7 +535,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     shell.scriptSession(() => new Promise<Response>((resolve) => { confirm = () => resolve(shell.sessionFull()); }));
     const tab0 = await shell.mountCloudShell();
     await shell.tick(500);
-    expect(tab0.querySelector(".today"), "the warm mirror did not open").not.toBeNull();
+    expect(tab0.querySelector(".fr-root"), "the warm mirror did not open").not.toBeNull();
     shell.scriptLogout(shell.db503);
     const { signOut } = await import("../app/sign-out");
     expect(await settle(signOut(ACCOUNT)), "the refused sign-out never ended").toBe(true);
@@ -519,7 +543,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
     confirm();
     await shell.tick(1_000);
     expect(leaves, "the pressing tab left at its own confirm").toBe(0);
-    expect(tab0.querySelector(".today")).not.toBeNull();
+    expect(tab0.querySelector(".fr-root")).not.toBeNull();
   });
 
   it("CONTROL: the demo is never sent away by a pending sign-out", async () => {
@@ -530,7 +554,7 @@ describe("a tab born while the sign-out is out", { timeout: 60_000 }, () => {
       const demo = await shell.mountCloudShell();
       await shell.tick(1_000);
       expect(leaves, "the demo left").toBe(0);
-      expect(demo.querySelector(".today"), "the demo drew nothing").not.toBeNull();
+      expect(demo.querySelector(".fr-root"), "the demo drew nothing").not.toBeNull();
     } finally {
       window.history.replaceState(null, "", "/");
     }
@@ -625,6 +649,78 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     expect(leaves).toBe(1);
   });
 
+  it.each([
+    ["letter", false], ["letter", true], ["reply", false], ["reply", true],
+  ] as const)("an open editor that resumes after an account change preserves its %s according to explicit sign-out (%s)", async (editor, signedOut) => {
+    const tab = await openTab("tab-1");
+    const words = "unsynced words in account A";
+    if (editor === "letter") {
+      await act(async () => {
+        window.location.hash = "#/compose";
+        window.dispatchEvent(new HashChangeEvent("hashchange"));
+      });
+      await oneTick();
+      const subject = within(tab).getByRole("textbox", { name: "Subject" });
+      await act(async () => { fireEvent.change(subject, { target: { value: words } }); });
+    } else {
+      await readFirst(tab);
+      await act(async () => { within(tab).getByRole("button", { name: "Reply" }).click(); });
+      await shell.tick(200);
+      const body = within(tab).getByRole("textbox", { name: "Reply body" }) as HTMLElement & {
+        editor: import("@tiptap/core").Editor;
+      };
+      await act(async () => { body.editor.chain().selectAll().insertContent(words).run(); });
+    }
+    const holding = () => Object.keys(localStorage).filter((key) => localStorage.getItem(key)?.includes(words));
+    expect(holding().some((key) => key.includes(ACCOUNT))).toBe(true);
+    await setVisibility("hidden");
+    if (signedOut) {
+      await signOutIn("tab-0");
+      expect(holding()).toEqual([]);
+    }
+    shell.rememberOwner(OTHER);
+    const nextDraft = `ohmail.ui.compose.${OTHER}.other-editor`;
+    localStorage.setItem(nextDraft, "the second account’s own words");
+    await setVisibility("visible");
+    await shell.tick(4_000);
+    expect(showsMail(tab)).toBe(false);
+    expect(holding().some((key) => key.includes(ACCOUNT))).toBe(!signedOut);
+    expect(holding().some((key) => key.includes(OTHER))).toBe(false);
+    expect(localStorage.getItem(nextDraft)).toBe("the second account’s own words");
+  });
+
+  it.each(["return", "jar watch", "session answer"])(
+    "keeps each account's unsent words when another account takes over on %s",
+    async (path) => {
+      const tab = await openTab("tab-1");
+      const draft = (owner: string) => `ohmail.ui.compose.${owner}.composer-1`;
+      const reply = (owner: string) => `ohmail.ui.reply.${owner}:m1`;
+      const words = new Map([
+        [draft(ACCOUNT), "offline draft A"], [reply(ACCOUNT), "offline reply A"],
+        [draft(OTHER), "separate draft B"], [reply(OTHER), "separate reply B"],
+      ]);
+      for (const [key, value] of words) localStorage.setItem(key, value);
+      atLeave = () => showsMail(tab);
+      if (path === "session answer") {
+        await shell.tick(SESSION_FRESH_MS + 1_000);
+        shell.scriptSession(() => shell.sessionFull(OTHER));
+      } else {
+        shell.rememberOwner(OTHER);
+      }
+      const asked = shell.sessionCalls();
+      if (path === "jar watch") await shell.tick(JAR_WATCH_MS + 1);
+      else {
+        await act(async () => { window.dispatchEvent(new Event("pageshow")); });
+        await oneTick();
+      }
+      expect(readAtLeave).toEqual([false]);
+      expect(shell.sessionCalls() - asked).toBe(path === "session answer" ? 1 : 0);
+      for (const [key, value] of words) expect(localStorage.getItem(key)).toBe(value);
+      expect(tab.textContent).not.toContain("offline draft A");
+      expect(tab.textContent).not.toContain("separate draft B");
+    },
+  );
+
   it("CONTROL: a jar that still names the account waits for the server's none", async () => {
     const tab1 = await openTab("tab-1");
     await shell.tick(SESSION_FRESH_MS + 1_000);
@@ -669,7 +765,7 @@ describe("the belt: a tab that missed the message asks when it is looked at agai
     await shell.tick(1_000);
     expect(shell.sessionCalls() - asked, "the signing-out tab asked the session door").toBe(0);
     expect(leaves, "the signing-out tab left before its pane could say how the sign-out ended").toBe(0);
-    expect(tab0.querySelector(".today")).not.toBeNull();
+    expect(tab0.querySelector(".fr-root")).not.toBeNull();
   });
 
   /* A sign-out earlier in this page, then a sign-in that mounts the mailbox in the same page (a client-side

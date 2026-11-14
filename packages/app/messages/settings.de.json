@@ -182,6 +182,7 @@
     "notifyUnsupported": "Dieses Gerät hat keine Benachrichtigungszentrale, es gibt hier also nichts zu senden.",
     "notifyOsHeld": "Dieser Schalter entscheidet, ob ohmail deinen Computer bittet, eine Meldung anzuzeigen. Ob sie dann erscheint, entscheidet dein Computer — das änderst du in den Systemeinstellungen und nicht hier.",
     "notifyClosedBody": "Neue Mail.",
+    "notifyWakeUnsupported": "Dieser Browser kann Benachrichtigungen nur anzeigen, solange ohmail geöffnet ist.",
     "notifyNoServerKey": "Dieser Server hat keinen Signaturschlüssel eingerichtet und kann diesen Browser daher nicht wecken. Die Schalter oben gelten weiterhin, solange ohmail geöffnet ist.",
     "notifyRowRemains": "Dieser Browser wird nicht mehr geweckt, aber der Server hat noch eine Registrierung dafür. Sie wird beim nächsten Ausschalten entfernt.",
     "notifyNotRegistered": "Dieser Browser konnte gerade nicht für Weckrufe registriert werden. Es wird beim nächsten Öffnen dieser Einstellungen erneut versucht.",

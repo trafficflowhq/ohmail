@@ -15,6 +15,8 @@ interface PaperProps {
 interface ReadingProps {
   /** The reading column: every message a sheet of its own on the ground, under one head. */
   kind: "reading";
+  /** The whole sheet, including its foot, for returning focus when it closes. */
+  ref?: Ref<HTMLDivElement>;
   label?: string;
   focused?: boolean;
   /**
@@ -70,6 +72,7 @@ export function Sheet(props: SheetProps) {
   const { back, top, gutter, head, foot, jump, scroller, children } = props;
   return (
     <div
+      ref={props.ref}
       className="oh-sheet"
       data-kind="reading"
       data-gutter={gutter ? "" : undefined}

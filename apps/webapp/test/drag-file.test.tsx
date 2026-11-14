@@ -76,7 +76,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -152,7 +152,9 @@ const soloRows = (): HTMLElement[] => rows().filter((r) => !(r.textContent ?? ""
 const rail = (id: string): HTMLElement | null => host!.querySelector<HTMLElement>(`[data-rail-id="${id}"]`);
 const tagRows = (): HTMLElement[] => [...host!.querySelectorAll<HTMLElement>("[data-rail-tag-id]")];
 const ghost = (): HTMLElement | null => document.body.querySelector<HTMLElement>(".drag-ghost");
-const lit = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".drop-ok")];
+/* The target the pointer is on is lit: the kit's entry says so (`data-drop="over"`) inside the box that names the target. */
+const lit = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('[data-drop="over"]')];
+const lights = (target: HTMLElement): boolean => target.querySelector('[data-drop="over"]') !== null;
 const kinds = (kind: string) => sent.filter((m) => m.kind === kind);
 
 /** Drag `row` past the threshold and leave the pointer over `over`. */
@@ -211,9 +213,9 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     sent = [];
     const row = soloRows().find((r) => r.dataset.id !== pillRowId)!;
     const dragId = row.dataset.id!;
-    await dragOver(row, rail("reads"));
+    await dragOver(row, rail("news"));
     expect(ghost(), "no drag ghost past the threshold").toBeTruthy();
-    expect(rail("reads")!.classList.contains("drop-ok"), "legal target did not light").toBe(true);
+    expect(lights(rail("news")!), "legal target did not light").toBe(true);
     await pointer("pointerup", window, 60, 60);
     await settle();
 
@@ -289,7 +291,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     expect(stated).toBeGreaterThanOrEqual(2);
 
     sent = [];
-    await dragOver(picked[0] as HTMLElement, rail("reads"));
+    await dragOver(picked[0] as HTMLElement, rail("news"));
     // The ghost badges the whole selection, not the one row under the pointer.
     expect(ghost()!.querySelector(".dg-count")?.textContent).toBe(String(stated));
     await pointer("pointerup", window, 60, 60);
@@ -309,8 +311,8 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
 
     const row = rows()[3]!;
     sent = [];
-    await dragOver(row, rail("reads"));
-    expect(rail("reads")!.classList.contains("drop-ok")).toBe(true);
+    await dragOver(row, rail("news"));
+    expect(lights(rail("news")!)).toBe(true);
     await key("Escape");
     // The drag owned that Escape: nothing cleared the selection, nothing stayed lit.
     expect(host!.querySelector(".ob-foot"), "Escape fell through to the shell's ladder").toBeTruthy();
@@ -346,7 +348,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     for (const tag of tagRows()) {
       if (tag.dataset.railTagId === pickerAssign.tagId) continue;
       await dragOver(rows().find((r) => r.dataset.id === rowId)!, tag);
-      if (tag.classList.contains("drop-ok")) { target = tag; break; }
+      if (lights(tag)) { target = tag; break; }
       // Not this one — release over it (an illegal drop dispatches nothing) and try the next.
       await pointer("pointerup", window, 60, 60);
       await settle();
@@ -369,7 +371,7 @@ describe("drag-to-file — the drop is the pill's own dispatch", () => {
     // The picker's own enablement, mirrored: already applied ⇒ not a target.
     sent = [];
     await dragOver(rows().find((r) => r.dataset.id === rowId)!, target);
-    expect(target!.classList.contains("drop-ok"), "an applied tag still lit").toBe(false);
+    expect(lights(target!), "an applied tag still lit").toBe(false);
     await pointer("pointerup", window, 60, 60);
     await settle();
     expect(kinds("tag_assign")).toHaveLength(0);

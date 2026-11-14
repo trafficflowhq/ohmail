@@ -2,15 +2,10 @@
 import type { EngineMessage, TagEntity as TagDTO } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import { KeymapProvider } from "@ohmail/app/keys";
-import { prepareToday, type TodayOhboxProps } from "./ohbox/_today";
-
-/** Today's Ohbox, as today's shell mounts it (prepared once: its mail state stands on an engine). */
-const OhboxView = await prepareToday();
-const Ohbox = (p: TodayOhboxProps) => <>{OhboxView(p)}</>;
+import { cleanup } from "@testing-library/react";
+import type { OhboxListInput } from "@ohmail/app-logic/ohbox";
+/* The Ohbox's own list, drawn from its model and redrawn with new groups (share ohbox-2's helper). */
+import { ohboxListRedrawable } from "./_ohbox-2-list.js";
 
 /**
  * THE OHBOX LIST HOLDS STILL UNDER THE READER. Reported live on 0.19.3: after a jump (the
@@ -91,7 +86,6 @@ const heightOf = (el: HTMLElement): number => {
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-let roots: Root[] = [];
 
 interface Fixture {
   newForYou: EngineMessage[];
@@ -132,34 +126,17 @@ const truthIndexAt = (f: Fixture, px: number): number => {
   return lo;
 };
 
-const ohbox = (f: Fixture): React.ReactElement => (
-  <Ohbox owed={false}
-    demo={false}
-    newForYou={f.newForYou}
-    previouslySeen={f.previouslySeen}
-    tags={tags} now={new Date(ISO)} selectedId={null} onSelect={() => {}} onEnterReader={() => {}}
-    onMarkSeen={() => {}} readerId={null} readSetFor={(id: string) => [id]} doorbellInitials={[]} doorbellCount={0} settled
-    onDoorbell={() => {}} onAction={() => {}} onAddTag={() => {}}
-    bulk={{ run: () => true, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true }}
-  />
-);
-
-function mountRoot(): { host: HTMLElement; render: (node: React.ReactNode) => Promise<void> } {
-  const host = document.createElement("div");
-  document.body.append(host);
-  const root = createRoot(host);
-  roots.push(root);
-  const render = async (node: React.ReactNode): Promise<void> => {
-    await act(() => {
-      root.render(
-        <NextIntlClientProvider locale="en" messages={messages} now={new Date(ISO)} timeZone="UTC">
-          <KeymapProvider>{node}</KeymapProvider>
-        </NextIntlClientProvider>,
-      );
-    });
-  };
-  return { host, render };
-}
+/**
+ * The Ohbox's inputs over a fixture. RE-POINTED (share ohbox-2, the switch's older tests): today's harness
+ * (`./ohbox/_today` `prepareToday` under today's `KeymapProvider`) drew today's Ohbox view; the Ohbox's own list is
+ * drawn here from its model (`./_ohbox-2-list.tsx`: the seat's `useOhboxList` fed the same two groups, redrawn with
+ * new groups where mail arrives). The rig, the invariants and every expectation are as they stood.
+ */
+const ohbox = (f: Fixture): Partial<OhboxListInput> => ({
+  newForYou: f.newForYou,
+  previouslySeen: f.previouslySeen,
+  tags, now: new Date(ISO),
+});
 
 /**
  * One frame of the reader's scrolling: set the position, let the window sample and commit. It
@@ -334,16 +311,17 @@ describe("the Ohbox list holds still under the reader while the window measures 
     });
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
-  afterEach(async () => {
-    for (const r of roots) await act(() => r.unmount());
-    roots = [];
+  afterEach(() => {
+    cleanup();
     document.body.innerHTML = "";
     vi.restoreAllMocks();
   });
 
   const mountOhbox = async (f: Fixture, name: string) => {
-    const { host, render } = mountRoot();
-    await render(ohbox(f));
+    const { view, redraw } = ohboxListRedrawable(ohbox(f));
+    const render = redraw;
+    const host = view.container;
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const scroller = host.querySelector(".ob-scroll") as HTMLElement;
     const rec = new Recorder(name, f);
     rec.record(scroller, await scrollTo(scroller, 0));

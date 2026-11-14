@@ -41,6 +41,10 @@
   white-space: nowrap;
 }
 
+.way-join-key code {
+  font: inherit;
+}
+
 /* The ten codes in two columns, set apart in the text face as the reference sets them. */
 .way-join-codes {
   display: grid;

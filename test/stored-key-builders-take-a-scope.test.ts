@@ -27,7 +27,7 @@ import { bootCacheKey } from "@ohmail/app-logic/session/boot-cache";
 import { CONSENT_BOOT_SCOPE } from "@ohmail/app-logic/consent/consent-state";
 import { foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { imageQualityKeyFor } from "../apps/webapp/app/components/image-quality.js";
-import { seedNotNowKey } from "../apps/webapp/app/shell/seed-offer.js";
+import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 
 type Scope = string | null;
 

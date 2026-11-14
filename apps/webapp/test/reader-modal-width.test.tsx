@@ -16,13 +16,12 @@
  * cross-navigation journey: a rail press with the sheet standing lands and closes the reader
  * through the route transition, instead of dying on the backdrop.
  *
- * The pointer-events half is CSS, which jsdom does not lay out — its deciding lines are
- * pinned structurally over the shipped stylesheet in `reader-rail-css` below.
+ * The pointer-events half was today's shell's stylesheet over its overlay; the new frame lays the
+ * letter beside the rail at desktop width, and a rail press with a letter open is held by the
+ * frame's own case (`packages/app/test/frame/keeps-open.test.tsx`).
  */
 import type { EngineMessage, EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
@@ -46,6 +45,12 @@ let roots: Root[] = [];
 let seq = 0;
 /** Set before `shell()`: max-width queries answer true — the narrow layout. */
 let narrow = false;
+/** The new frame plans its columns by the window's width (a phone's 390 is one column), not by a media query. */
+const WIDE = { w: window.innerWidth, h: window.innerHeight };
+function sized(w: number, hgt: number): void {
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: w });
+  Object.defineProperty(window, "innerHeight", { configurable: true, writable: true, value: hgt });
+}
 
 beforeEach(() => {
   window.location.hash = "";
@@ -85,6 +90,7 @@ afterEach(async () => {
   delete (globalThis as Record<string, unknown>).IntersectionObserver;
   delete (globalThis as Record<string, unknown>).CSS;
   vi.restoreAllMocks();
+  sized(WIDE.w, WIDE.h);
 });
 
 const address = (id: string): string => `p${id}@example.invalid`;
@@ -92,7 +98,8 @@ const address = (id: string): string => `p${id}@example.invalid`;
 const msg = (id: string): EngineMessage => ({
   id, accountId: "a1", mailboxId: "mb1", threadId: `t-${id}`, folder: "INBOX",
   subject: `Subject ${id}`, from: { address: address(id), name: `Person ${id}` },
-  to: [], date: "2026-09-03T09:00:00.000Z", unread: false,
+  /* A whole row, as the mirror hands one: its labels and its Cc are lists (FOR-S3-TO-S8 point 63 (c)). */
+  to: [], cc: [], labels: [], date: "2026-09-03T09:00:00.000Z", unread: false,
   updatedAt: "2026-09-03T09:00:00.000Z",
 } as unknown as EngineMessage);
 
@@ -159,7 +166,7 @@ const ROSTER: MailboxFacts[] = [{
 }];
 
 async function shell(): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const engine = engineOver(await storeWith(["m1", "m2"], ["h1", "h2"]));
   const container = document.createElement("div");
@@ -204,7 +211,14 @@ const settle = async (): Promise<void> => {
 };
 
 const rowIds = (el: HTMLElement): string[] =>
-  [...el.querySelectorAll(":is(.row, [role=option])[data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+  [...el.querySelectorAll("[role=option][data-id]")].map((r) => r.getAttribute("data-id") ?? "");
+
+/** The open letter's surface: the frame's reading column (its region), or the dialog that holds it. */
+const readingSurface = (): HTMLElement | null => {
+  const region = document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+  if (region === null) return null;
+  return region.closest<HTMLElement>("[role=dialog]") ?? region.querySelector<HTMLElement>("[role=dialog]") ?? region;
+};
 
 /** The modal arm's real trigger at desktop width: the route mirror's overlay arm — a URL
  *  naming a message on a view with no column to read it in (the located-search-hit shape;
@@ -219,11 +233,12 @@ async function openHistoryRow(container: HTMLElement): Promise<void> {
 describe("the reader's modal claim, by width", () => {
   it("narrow: the full-screen sheet claims aria-modal", async () => {
     narrow = true;
+    sized(390, 844);
     const container = await shell();
     await key("j");
     await key("Enter");
-    await waitFor(() => document.querySelector(".reader") != null, "the reading sheet to open");
-    expect(document.querySelector(".reader")!.getAttribute("aria-modal")).toBe("true");
+    await waitFor(() => readingSurface()?.textContent?.includes("Subject m") === true, "the reading sheet to open");
+    expect(readingSurface()!.getAttribute("aria-modal")).toBe("true");
     void container;
   });
 
@@ -240,9 +255,10 @@ describe("the reader's modal claim, by width", () => {
     await key("j");
     await key("Enter");
     await settle();
-    expect(document.querySelector(".reader")).toBeNull();
+    /* No sheet: nothing over the list claims to be a dialog. */
+    expect(document.querySelector("[role=dialog]")).toBeNull();
     // The message is on screen in the reading column, not gone with the sheet.
-    expect(container.querySelector(".read-col")).not.toBeNull();
+    expect(container.querySelector('[role="region"][aria-label="Open message"]')?.textContent ?? "").toContain("Subject m");
   });
 
   it("desktop: a rail press with the sheet standing lands, and the navigation closes the reader", async () => {
@@ -259,24 +275,5 @@ describe("the reader's modal claim, by width", () => {
     await settle();
     expect(document.querySelector(".reader"), "the sheet must be down after the navigation").toBeNull();
     await waitFor(() => rowIds(container).includes("m1"), "the Ohbox rows to be back on screen");
-  });
-});
-
-describe("reader-rail-css — the ≥1024px reading rules keep the rail operable", () => {
-  /* jsdom lays out no stylesheet, so the deciding lines are pinned over the SHIPPED file: the
-     desktop reading block must hide the stage, not the shell, and hand the rail its pointer
-     events above the overlay. Remove `pointer-events: auto` (the deciding line) and this is red. */
-  const css = readFileSync(resolve(__dirname, "../app/app.css"), "utf8");
-  const block = /@media \(min-width: 1024px\) \{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
-
-  it("hides the deck's non-rail content instead of the whole shell", () => {
-    expect(block).toContain("body.reading .deck > :not(.rail)");
-    expect(block).not.toMatch(/body\.reading div\.shell \{[^}]*opacity: 0[^.}]*\}/);
-  });
-
-  it("the rail keeps pointer events, stacked above the reading overlay", () => {
-    const rail = /body\.reading \.deck > \.rail \{([\s\S]*?)\}/.exec(block)?.[1] ?? "";
-    expect(rail).toContain("pointer-events: auto");
-    expect(rail).toContain("z-index: calc(var(--z-read) + 1)");
   });
 });

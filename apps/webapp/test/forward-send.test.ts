@@ -3,7 +3,10 @@ import { describe, expect, it } from "vitest";
 import { forwardEnvelopePlan, forwardSend } from "@ohmail/app-logic/writing/forward-send";
 import { canSend, sendKeyOf, inlineForwardKey, COMPOSE_SEND_KEY } from "@ohmail/app-logic/writing/mail-send";
 import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
-import { TODAYS_COMPOSER_WORDS } from "../app/shell/mail-send-text";
+// The composer's words as the new shell's mail ground answers them (share write-1 of the older tests' sorting:
+// today's `TODAYS_COMPOSER_WORDS` of `app/shell/mail-send-text.ts` leaves with today's shell; the ground's record reads
+// the same format words, which `setActiveFormatZone` installs).
+import { COMPOSER_WORDS } from "../../../packages/app/src/mail/ground/writing-words.js";
 
 /**
  * THE FORWARD'S PLAN AND WIRE — the pure halves of the inline forward, pinned key by key.
@@ -45,7 +48,7 @@ describe("forwardSend — the wire, key by key", () => {
     const plan = forwardEnvelopePlan({ to: "a@b.test, ", cc: "", bcc: "" }, []);
     /* The press hands the reader's clock, as the composer's words say it at that moment. */
     setActiveFormatZone("Europe/Zurich");
-    const clock = TODAYS_COMPOSER_WORDS.clock();
+    const clock = COMPOSER_WORDS.clock();
     setActiveFormatZone(null);
     const m = forwardSend(parent, { body: "note", mailboxId: "mb1", plan, clock });
     expect(m).toEqual({

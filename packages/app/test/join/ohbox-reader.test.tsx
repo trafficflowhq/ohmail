@@ -13,8 +13,9 @@ import { useCallback, useState, useSyncExternalStore, type ReactNode } from "rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useOhboxList, type OhboxListInput } from "@ohmail/app-logic/ohbox";
 import type { ShellDispatchInput } from "@ohmail/app-logic/press/shell-dispatch";
+import { PresentedMirrorContext } from "@ohmail/app-logic/reading";
 import { Frame } from "../../src/frame/Frame.js";
-import { OhboxAbove, ohboxPlace } from "../../src/ohbox/index.js";
+import { OhboxAbove, OhboxList, ohboxPlace } from "../../src/ohbox/index.js";
 import { READER_DOM, scrollerOf } from "../../src/reader/read-dom.js";
 import { readerEntry } from "../../src/reader/index.js";
 import { TextProvider } from "../../src/text/index.js";
@@ -93,7 +94,11 @@ function join(o: Joined) {
     engine: mail.engine,
     service: "self",
     scope: "acct-1",
-    places: { ohbox: ohboxPlace },
+    /* The Ohbox's registration without its seat and its rail count, which read the mail ground: this harness stands
+       the list's model above the frame itself, over a host that hands no ground. */
+    places: {
+      ohbox: { ...ohboxPlace, rail: null, panes: { kind: "columns", List: OhboxList, Reading: "reader" } },
+    },
     reader: readerEntry({
       body: bodyDouble().body,
       files: "none",
@@ -109,9 +114,12 @@ function join(o: Joined) {
   const over: Partial<OhboxListInput> = { newForYou: [...(o.listed ?? o.letters)], ...spies };
   render(
     <TextProvider locale="en" messages={WORDS.en} timeZone="Europe/Zurich">
-      <Above address={address} said={said} over={over}>
-        <Frame host={host} />
-      </Above>
+      {/* The mirror as the lists present it, handed as it stands (no hold): the reading column reads no other. */}
+      <PresentedMirrorContext.Provider value={mail.engine.read()}>
+        <Above address={address} said={said} over={over}>
+          <Frame host={host} />
+        </Above>
+      </PresentedMirrorContext.Provider>
     </TextProvider>,
   );
   return { mail, address, spies };

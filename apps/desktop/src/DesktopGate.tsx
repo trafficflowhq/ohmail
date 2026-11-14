@@ -103,8 +103,6 @@ import { draftReplyOverBridgeFor } from "./local-draft-reply.js";
 import { readAiStatus, type LocalAiStatus } from "./local-ai.js";
 import { AiProviderForm } from "./AiProviderForm.js";
 import { useLocalFirstRun } from "./local-first-run.js";
-import { LocalSuggest } from "./local-suggest.js";
-import { CloudSuggest } from "./CloudSuggest.js";
 import {
   claimMailto, offLinkAsk, offLinkRefused, onLinkAsk, onLinkRefused, onMailto, onMenuCommand, onMenuNavigate,
   setBadge, type LinkAsk as HeldPress, type LinkRefusal, type MenuCommand,

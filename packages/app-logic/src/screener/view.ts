@@ -19,7 +19,7 @@ import {
   type FilterCounts,
   type ScreenerFilterId,
 } from "./filter.js";
-import { screenerKeys, type KeySegment, type ScreenerKeyWords } from "./keys.js";
+import { screenerKeys, type KeySegment, type ScreenerKeysInput, type ScreenerKeyWords } from "./keys.js";
 import { defaultScopeOf } from "./reach.js";
 import type { ScreenerState } from "./screener-state.js";
 import type { SpamRow } from "./spam-row.js";
@@ -73,12 +73,14 @@ export interface ScreenerView {
   /** The open row's id, and the row itself. */
   readonly openId: string | null;
   readonly open: ViewRow | null;
+  /** A specific held letter to bring into view on this sender. */
+  readonly enteredLetter?: string | null;
   /** On one column, the open sender stands over the list. */
   readonly full: boolean;
   readonly shown: ScreenerShown;
   readonly show: (what: ScreenerShown) => void;
   /** Open a row; `then` opens a menu or the card of it in the same press (a right click). */
-  readonly select: (id: string, then?: ScreenerShown) => void;
+  readonly select: (id: string, then?: ScreenerShown, letter?: string) => void;
   readonly close: () => void;
   readonly scopeOf: (sender: ScreenerSenderDTO) => DecisionScope;
   readonly setScope: (sender: ScreenerSenderDTO, scope: DecisionScope) => void;
@@ -102,6 +104,8 @@ export interface ScreenerView {
   readonly openFailed: (id: string) => void;
   /** Ask a held letter's body once more: a person's press, the one way past a server that refused. */
   readonly retryBody: (id: string) => void;
+  /** The walk to the next and the previous row, as `j` and `k` take it; null where there is none. */
+  readonly step: ScreenerKeysInput["step"];
   readonly keys: KeyBinding[];
 }
 
@@ -187,13 +191,23 @@ function acceptOf(
   if (row !== undefined && dest !== null && !decided.some((d) => d.sender.id === id)) decideRow(row, dest);
 }
 
+function useDecisionScopes(): Pick<ScreenerView, "scopeOf" | "setScope"> {
+  const [scopes, setScopes] = useState<ReadonlyMap<string, DecisionScope>>(() => new Map());
+  const scopeOf = useCallback(
+    (s: ScreenerSenderDTO): DecisionScope => scopes.get(s.id) ?? defaultScopeOf(s),
+    [scopes],
+  );
+  return { scopeOf, setScope: (s, scope) => setScopes((was) => new Map(was).set(s.id, scope)) };
+}
+
 export function useScreenerView(input: ScreenerViewInput): ScreenerView {
   const { state, segment, selected, select: selectAbove, words, oneColumn } = input;
   const [filter, setFilter] = useState<ScreenerFilterId | null>(null);
-  const [scopes, setScopes] = useState<ReadonlyMap<string, DecisionScope>>(() => new Map());
+  const { scopeOf, setScope } = useDecisionScopes();
   /** A decision left no undecided row to move to: nothing is open until the person picks one. */
   const [unpicked, setUnpicked] = useState(false);
   const [full, setFull] = useState(false);
+  const [enteredLetter, setEnteredLetter] = useState<string | null>(null);
   const [failedId, setFailedId] = useState<string | null>(null);
   const { counts, active, rows, decided, ids, selectable } = useRows(state, segment, filter, selected);
   const failedOpen = segment === "waiting" ? failedOf(state, failedId) : null;
@@ -211,10 +225,6 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     failedOpen !== null ? [failedOpen.id] : open === null ? [] : senderOf(open).held.map((h) => h.id),
   );
   const engine = useEngineOrNull();
-  const scopeOf = useCallback(
-    (s: ScreenerSenderDTO): DecisionScope => scopes.get(s.id) ?? defaultScopeOf(s),
-    [scopes],
-  );
   const ask = useAllSpamAsk(state, scopeOf, segment);
   const { decide, decideRow, answerUnsub, unsub, dropUnsub } = useDecide({
     state,
@@ -242,13 +252,14 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     shown !== null && (() => setShown(null)),
     oneColumn && full && close,
   ]);
+  const step = walk(selectable, openId, (id) => {
+    setUnpicked(false);
+    selectAbove(id);
+  });
   const keys = screenerKeys({
     words,
     segment,
-    step: walk(selectable, openId, (id) => {
-      setUnpicked(false);
-      selectAbove(id);
-    }),
+    step,
     decidable: openWaiting !== null,
     decide,
     suggested: accept,
@@ -258,7 +269,6 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     undo: () => void input.undo(),
     escape,
   });
-
   return {
     segment,
     rows,
@@ -276,10 +286,12 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     },
     openId,
     open,
+    enteredLetter,
     full: oneColumn && full && (open !== null || failedOpen !== null),
     shown,
     show: setShown,
-    select: (id, then = null) => {
+    select: (id, then = null, letter) => {
+      setEnteredLetter(letter ?? null);
       setUnpicked(false);
       setFailedId(null);
       openWith(id, then);
@@ -288,7 +300,7 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
     },
     close,
     scopeOf,
-    setScope: (s, scope) => setScopes((was) => new Map(was).set(s.id, scope)),
+    setScope,
     decide,
     accept,
     acceptRow: (id) => acceptOf(state, segment, decided, id, decideRow),
@@ -303,6 +315,7 @@ export function useScreenerView(input: ScreenerViewInput): ScreenerView {
       if (oneColumn) setFull(true);
     },
     retryBody: (id) => void engine?.hydrateBody(id, { retry: true }),
+    step,
     keys,
   };
 }

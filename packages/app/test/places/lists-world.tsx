@@ -71,6 +71,23 @@ export const PHONE: LayoutPlan = {
 export const at = (day: number, hour = 9): string =>
   `2026-08-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00.000Z`;
 
+/** No hit was opened into the place: what a host that stands a list's model itself hands as the frame's one-shot. */
+export const NO_HIT = { letter: null, taken: () => undefined } as const;
+
+/**
+ * The walk's seat as such a host hands it: the columns that stand, one list, the keys' names. It binds no key, and
+ * its first letter rests on arrival: the cases over the tests' door of a mount hold the walk and the arrival.
+ */
+export const walkAt = (columns: 1 | 2 = 2) => ({
+  walk: {
+    columns,
+    list: "the list",
+    labels: { next: "Next", prev: "Previous", open: "Open" },
+    say: () => undefined,
+  },
+  arrival: "rest" as const,
+});
+
 /** An instant as a row prints it: the day and the hour, enough to tell rows apart. */
 export const stamp = (iso: string): string => iso.slice(5, 16).replace("T", " ");
 

@@ -984,6 +984,41 @@ describe("RadioLines", () => {
     fireEvent.keyDown(first!, { key: "Home" });
     expect(onChange).toHaveBeenLastCalledWith("sender");
   });
+
+  it("Enter submits through the form's default button without selecting the radio again", () => {
+    const onChange = vi.fn();
+    const onSubmit = vi.fn((event: SubmitEvent) => event.preventDefault());
+    render(
+      <form onSubmit={(event) => onSubmit(event.nativeEvent as SubmitEvent)}>
+        <RadioLines label="Whose mail" options={options} value="sender" onChange={onChange} />
+        <button>Continue</button>
+      </form>,
+    );
+    const chosen = screen.getByRole("radio", { checked: true });
+    chosen.focus();
+    expect(fireEvent.keyDown(chosen, { key: "Enter" })).toBe(false);
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0].submitter).toBe(screen.getByRole("button", { name: "Continue" }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("Enter respects a disabled default submit button", () => {
+    const onSubmit = vi.fn((event: SubmitEvent) => event.preventDefault());
+    render(
+      <form onSubmit={(event) => onSubmit(event.nativeEvent as SubmitEvent)}>
+        <RadioLines label="Whose mail" options={options} value="sender" />
+        <fieldset disabled>
+          <input type="submit" value="Continue" />
+        </fieldset>
+        <button>Save for later</button>
+      </form>,
+    );
+    const chosen = screen.getByRole("radio", { checked: true });
+    chosen.focus();
+    expect(fireEvent.keyDown(chosen, { key: "Enter" })).toBe(false);
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(document.activeElement).toBe(chosen);
+  });
 });
 
 describe("Count", () => {

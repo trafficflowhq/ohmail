@@ -77,7 +77,7 @@ function LaterCard({
   const own = useRef<HTMLFormElement | null>(null);
   const keys = useRef<(e: KeyboardEvent) => void>(() => undefined);
   keys.current = laterKeys(plan.refusal === null, plan.custom?.at ?? null, plan.presets, pick, () =>
-    own.current?.querySelector("input")?.focus(),
+    own.current?.querySelector("input")?.focus({ preventScroll: true }),
   );
   /* On the card itself, before it keeps the key from what lies under it. */
   useEffect(() => {

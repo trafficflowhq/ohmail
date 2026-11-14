@@ -1,7 +1,8 @@
 /**
  * THE READING COLUMN: the open conversation on the kit's reading sheet, its letters oldest first, the squares beside
- * them (along the head on a phone), the action panel at its foot. With nothing open, the blank. The read rule runs
- * here with the column's names; the visit is the list's where the list that opened the letter handed one.
+ * them (in the bar over the column on a phone, where they stay while the letters scroll), the action panel at its
+ * foot. With nothing open, the blank. The read rule runs here with the column's names; the visit is the list's where
+ * the list that opened the letter handed one.
  */
 import type { EngineMessage } from "@ohmail/wire";
 import {
@@ -13,32 +14,40 @@ import {
   useState,
   type MutableRefObject,
   type ReactNode,
+  type RefObject,
   type WheelEvent,
 } from "react";
 import { Button, JumpBack } from "@ohmail/ui/base";
-import { BlankColumn, ReadingHead, Sheet } from "@ohmail/ui/mail";
+import { BlankColumn, Sheet } from "@ohmail/ui/mail";
 import {
   markSeenOver,
   useColumnVisit,
   useConversationBodies,
   useOpenConversation,
+  useStoreLetter,
   useThreadWalk,
+  type ConversationShown,
   type ThreadWalk,
 } from "@ohmail/app-logic/reader";
-import { useListVisit, useThreadRead } from "@ohmail/app-logic/reading";
+import { useReplyRunState } from "@ohmail/app-logic/piles";
+import { useListBlank, useListVisit, useThreadRead } from "@ohmail/app-logic/reading";
 import { scrollByHand } from "@ohmail/app-logic/session/programmatic-scroll";
-import type { PaneProps } from "../frame/contract.js";
+import type { PaneProps, Route } from "../frame/contract.js";
 import { NONE } from "../host/index.js";
 import { useFrame } from "../frame/commands.js";
+import { useOwnGone } from "../frame/own-gone.js";
+import { fragmentOf } from "../frame/route.js";
 import { useMailboxWord, useOwnAddresses, usePress, useRoomHolds } from "../frame/room.js";
 import { useText } from "../text/index.js";
 import { ActionBar, type PanelRoom } from "./actions/ActionBar.js";
+import { RunReadingHead } from "./actions/ReplyRun.js";
 import { useVerbs } from "./actions/use-verbs.js";
 import { Blank } from "./blank/Blank.js";
-import { Contact, type ContactOf } from "./contact/Contact.js";
+import { Contact, useOpenCard } from "./contact/Contact.js";
 import { Letter } from "./Letter.js";
-import { useParts } from "./parts.js";
+import { InlineReply, useParts, useReplyVerbs } from "./parts.js";
 import { READER_DOM, scrollerOf } from "./read-dom.js";
+import { useSentInView } from "./sent-in-view.js";
 import { useLetterKeys, useReaderKeys } from "./keys.js";
 import { Squares } from "./Squares.js";
 import { Tags } from "./Tags.js";
@@ -64,6 +73,7 @@ export function Reader({ route, plan, keysHere }: PaneProps) {
   return (
     <Conversation
       key={route.open}
+      route={route}
       openId={route.open}
       phone={plan.device === "phone"}
       narrow={plan.device === "fold"}
@@ -84,6 +94,7 @@ function RestingKeys() {
 const nameOf = (m: EngineMessage): string => m.from.name?.trim() || m.from.address;
 
 function Conversation({
+  route,
   openId,
   phone,
   keysHere,
@@ -92,6 +103,8 @@ function Conversation({
   room,
   keyboard,
 }: {
+  /** Where the column stands: a link the store does not answer either is dropped from it. */
+  route: Route;
   openId: string;
   phone: boolean;
   /** The upright foldable's column: a letter's head prints its stamp short. */
@@ -106,28 +119,22 @@ function Conversation({
 }) {
   const t = useText("reader");
   const press = usePress();
-  const shown = useOpenConversation(openId);
-  /* A letter inside the room's own delete window is the person's act, not a letter gone: nothing is drawn. */
-  const { held } = useRoomHolds();
-  const heldHere = held.has(openId);
+  const { shown, opened, state } = useShownConversation(openId, route);
   const { messages, presentedIds } = shown;
-  const opened = heldHere ? null : shown.opened;
-  const state = heldHere ? "absent" : shown.state;
   useConversationBodies(opened === null ? null : openId, messages);
   const visit = useListVisit(openId);
   const markSeen = useMemo(() => markSeenOver(press), [press]);
   const column = useColumnVisit(opened, visit?.wiring ?? null, markSeen);
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
-  const columnRoot = useKeyboardStays(setRoot, keyboard);
+  const [columnRoot, columnEl] = useKeyboardStays(setRoot, keyboard);
   const scroller = useMemo(() => ({ current: scrollerOf(root) }), [root]);
   useThreadRead({ scroller, wiring: column.wiring ?? undefined, active: opened !== null, names: READER_DOM });
-  /* An open is an open: the column's own visit is entered. A list's visit is the list's to enter. */
-  const present = opened !== null;
-  const enter = useRef(column.enter);
-  enter.current = column.enter;
-  useEffect(() => {
-    if (present && column.owner === "column") enter.current();
-  }, [present, column.owner]);
+  useOwnOpen(opened !== null, column);
+  const { reply } = useParts();
+  const replyVerbs = useReplyVerbs();
+  const run = useReplyRunState();
+  const step = run?.at === openId ? run : null;
+  const sentJoined = useSentInView({ openId, messages, replying: replyVerbs !== null, column: columnEl });
   const walk = useThreadWalk({
     scroller: scroller.current,
     messages,
@@ -136,16 +143,13 @@ function Conversation({
     onEnter: column.enter,
     names: READER_DOM,
     anchor: true,
+    standsDown: sentJoined,
   });
   const verbs = useVerbs(opened, visit, column.owner === "column" ? column.wiring : null);
-  const { reply } = useParts();
-  const useReplyVerbs = reply === "none" ? noReplyVerbs : reply.useVerbs;
-  const replyVerbs = useReplyVerbs();
   useReaderKeys(keysHere && opened !== null, { verbs, visit });
-  const [person, setPerson] = useState<ContactOf | null>(null);
+  const [person, onPerson, closeCard] = useOpenCard();
   const mailboxWord = useMailboxWord();
   const people = usePeople(messages);
-
   const back = phone ? <WayBack from={from} /> : undefined;
   /* Only a letter the engine tombstoned is said to be gone; one not here yet is a sheet with nothing said. */
   if (opened === null && state === "gone") return <GoneLetter phone={phone} back={back} />;
@@ -168,19 +172,18 @@ function Conversation({
       <Sheet
         kind="reading"
         label={t("pane")}
-        top={back}
+        top={phone ? <PhoneBar back={back} squares={squares} /> : undefined}
         gutter={phone ? undefined : squares}
         head={
-          <ReadingHead
+          <RunReadingHead
+            run={step}
             subject={shown.subject}
-            people={messages.length > 1 ? people : []}
-            names={messages.length > 1 ? people.map((p) => p.name).join(", ") : undefined}
+            {...facesOf(messages.length > 1 ? people : [])}
             tags={opened.labels.length > 0 ? <Tags labels={opened.labels} /> : undefined}
             mailbox={mailboxWord(opened.mailboxId) ?? undefined}
-            squares={phone ? squares : undefined}
           />
         }
-        foot={<ActionBar verbs={verbs} room={room} keys={keysHere ? opened : null} reply={replyVerbs} />}
+        foot={<ActionBar verbs={verbs} room={room} keys={keysHere ? opened : null} reply={replyVerbs} run={step} />}
         jump={messages.length > 1 ? <WayToLatest walk={walk} last={messages.length - 1} /> : undefined}
       >
         {messages.map((m) => (
@@ -193,15 +196,50 @@ function Conversation({
             reading={reading}
             presented={presentedIds.has(m.id)}
             narrow={narrow}
-            onPerson={setPerson}
+            onPerson={onPerson}
+            card={person?.slot ?? null}
           />
         ))}
-        {/* The reply, one more sheet after the conversation's last letter: `write`'s, where the shell handed it. */}
-        {reply === "none" ? null : <reply.Sheet letters={messages.map((m) => m.id)} />}
+        <InlineReply reply={reply} letters={messages.map((m) => m.id)} keysHere={keysHere} />
       </Sheet>
-      <Contact person={person} onClose={() => setPerson(null)} />
+      <Contact person={person} onClose={closeCard} />
     </div>
   );
+}
+
+/**
+ * THE CONVERSATION SHOWN for the address's letter: the mirror's, or the store's where the mirror's window no longer
+ * holds it; nothing while the room's own delete window holds it.
+ */
+function useShownConversation(openId: string, route: Route) {
+  /* A letter this tab took away itself is the person's act: never said gone as another app's. */
+  const mirrored = useOpenConversation(openId, useOwnGone());
+  /* A letter inside the room's own delete window is the person's act, not a letter gone: nothing is drawn. */
+  const { held } = useRoomHolds();
+  const heldHere = held.has(openId);
+  /* A link to a letter the mirror's window no longer holds: the store is asked for it by id. Found, it is read off
+     the mirror, alone and not presented (it loads no picture by itself); held by no store either, the link is
+     dropped from the address in place, so the way back does not lead to it again. */
+  const stored = useStoreLetter(openId, mirrored.state === "absent" && !heldHere);
+  const shown = stored.state === "found" ? offMirror(stored.message) : mirrored;
+  const { host } = useFrame();
+  const missing = stored.state === "missing";
+  useEffect(() => {
+    if (missing) host.device.address.write(fragmentOf({ ...route, open: null }), "replace");
+  }, [missing, host, route]);
+  const opened = heldHere ? null : shown.opened;
+  const state = heldHere ? "absent" : shown.state;
+  return { shown, opened, state };
+}
+
+/** An open is an open where no list stands; under one, its visit is the list's, also before it lists the letter. */
+function useOwnOpen(open: boolean, column: ReturnType<typeof useColumnVisit>): void {
+  const ownOpen = useListBlank() === undefined && open;
+  const enter = useRef(column.enter);
+  enter.current = column.enter;
+  useEffect(() => {
+    if (ownOpen && column.owner === "column") enter.current();
+  }, [ownOpen, column.owner]);
 }
 
 /**
@@ -212,7 +250,7 @@ function Conversation({
 function useKeyboardStays(
   onRoot: (el: HTMLDivElement | null) => void,
   keyboard: MutableRefObject<boolean>,
-): (el: HTMLDivElement | null) => void {
+): readonly [(el: HTMLDivElement | null) => void, RefObject<HTMLDivElement | null>] {
   const root = useRef<HTMLDivElement | null>(null);
   useLayoutEffect(() => {
     const here = scrollerOf(root.current);
@@ -228,13 +266,15 @@ function useKeyboardStays(
     },
     [root, keyboard],
   );
-  return useCallback(
+  const ref = useCallback(
     (el: HTMLDivElement | null) => {
       root.current = el;
       onRoot(el);
     },
     [onRoot],
   );
+  /* The root as the commit sets it, for what reads it in an effect of the render that drew it. */
+  return [ref, root] as const;
 }
 
 /** Who is in a conversation, oldest voice first: the account's own addresses are not among them. */
@@ -264,8 +304,41 @@ function WayToLatest({ walk, last }: { walk: ThreadWalk; last: number }) {
   );
 }
 
-/** A reader with no reply of `write`'s: the panel is always the letter's. */
-const noReplyVerbs = (): null => null;
+/** A letter the store answered by id, as the column shows it: alone, read off no presented mirror. */
+function offMirror(message: EngineMessage): ConversationShown {
+  return {
+    state: "letters",
+    opened: message,
+    messages: [message],
+    subject: message.subject,
+    presented: false,
+    presentedIds: NOTHING_PRESENTED,
+  };
+}
+
+const NOTHING_PRESENTED: ReadonlySet<string> = new Set();
+
+/** The faces a conversation's head stands, as the studio's byline does (`ui.faces(voices, 4)`); the rest are counted. */
+const FACES = 4;
+
+/** The head's people: four faces, the count of the rest, and every name; nobody for a single letter. */
+function facesOf(people: readonly { name: string; address: string }[]) {
+  return {
+    people: people.slice(0, FACES),
+    peopleMore: people.length > FACES ? `+${people.length - FACES}` : undefined,
+    names: people.length > 0 ? people.map((p) => p.name).join(", ") : undefined,
+  };
+}
+
+/** The bar over the column on a phone: the way back, then the conversation's squares, which stay while it scrolls. */
+function PhoneBar({ back, squares }: { back: ReactNode; squares: ReactNode }) {
+  return (
+    <>
+      {back}
+      {squares}
+    </>
+  );
+}
 
 /** On a phone the column's way back, naming the place it returns to where the place has a word. */
 function WayBack({ from }: { from: string }) {

@@ -2,10 +2,10 @@
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it } from "vitest";
 import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { cleanup } from "@testing-library/react";
 import { pinnedRows } from "../_resurfaced-rows.js";
+import { ohboxListRedrawable } from "../_ohbox-2-list.js";
+import type { OhboxListInput } from "@ohmail/app-logic/ohbox";
 
 /**
  * A RESURFACED MESSAGE IS ONE ROW — through the OPTIMISTIC window, not only after a reload.
@@ -23,14 +23,12 @@ import { pinnedRows } from "../_resurfaced-rows.js";
  * id. Delete the prune (`.filter((id) => !pinnedIds.has(id))` on `newOrder`) and the duplicate
  * comes back — the first test goes red. Delete the release arm and a rolled-back pin strands or
  * doubles the row — the third test goes red.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's Ohbox view (`./_today.js`, which leaves with today's
+ * shell) to the Ohbox's own list drawn from its model (`../_ohbox-2-list.tsx`: `useOhboxList` and the list's parts,
+ * redrawn on the same tree with each publish's groups, as the shell re-rendered today's view). Expectations untouched.
  */
 
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -61,40 +59,30 @@ function msg(m: Row): EngineMessage {
   } as unknown as EngineMessage;
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
+let redraw: ((input: Partial<OhboxListInput>) => Promise<void>) | null = null;
 let live: Row[] = [];
 
 /**
  * One shell re-render over the mirror as it is NOW. The three group props are derived exactly as
  * `ohboxView` derives them: the pinned group holds every resurfaced row, and holds it OUT of the
  * other two — the dedup the selector already guarantees, so any double row on screen is this
- * view's own doing.
+ * list's own doing.
  */
 async function draw(): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      resurfacedRows: pinnedRows(live.filter((r) => r.pinned).map(msg)),
-      newForYou: live.filter((r) => !r.pinned && r.unread).map(msg),
-      previouslySeen: live.filter((r) => !r.pinned && !r.unread).map(msg),
-      replyDone: null,
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      selectedId: null,
-      onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: () => {},
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-      onMarkAllRead: () => {},
-    } as never) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  const input: Partial<OhboxListInput> = {
+    resurfacedRows: pinnedRows(live.filter((r) => r.pinned).map(msg)),
+    newForYou: live.filter((r) => !r.pinned && r.unread).map(msg),
+    previouslySeen: live.filter((r) => !r.pinned && !r.unread).map(msg),
+    replyDone: null,
+    tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
+  };
+  if (redraw === null) {
+    const drawn = ohboxListRedrawable(input);
+    host = drawn.view.container;
+    redraw = drawn.redraw;
+    await act(async () => { await Promise.resolve(); });
+  } else await redraw(input);
 }
 
 async function mount(rows: Row[]): Promise<void> {
@@ -103,11 +91,10 @@ async function mount(rows: Row[]): Promise<void> {
   await draw();
 }
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  root = null;
-  host?.remove();
+afterEach(() => {
+  cleanup();
   host = null;
+  redraw = null;
 });
 
 /** Every rendered occurrence of the message, wherever it sits. */

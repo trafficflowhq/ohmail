@@ -13,6 +13,7 @@ import { applyCode, applyList, applyQuote } from "./commands.js";
 import { linkAtCaret, nextMarks, normalizeHref } from "./marks.js";
 import { EXTENSIONS, escapeUnlessTaken, linksIn } from "./schema.js";
 import { LETTER_TEXT, LetterNames } from "./letter-names.js";
+import { PasteAsLines, readParagraphsAsLines } from "./paste.js";
 
 /** The links a body reads, handed by the shell that mounts the body (the folder imports nothing of it). */
 export interface EditorLinks {
@@ -36,8 +37,11 @@ export const RICH_MARKS: readonly MarkId[] = [
 ];
 
 const NO_LINKS: readonly string[] = [];
-/** The schema, and the names the kit's sheet reads stamped on the view alone. */
-const DRAWN = [...EXTENSIONS, LetterNames];
+/**
+ * The schema, the names the kit's sheet reads stamped on the view alone, and the paste rule (`paste.ts`): pasted
+ * text keeps its lines, and a draft's paragraphs are read as lines when it is put back.
+ */
+const DRAWN = [...EXTENSIONS, LetterNames, PasteAsLines];
 
 /** The marks that hold where the caret is: the next letter's marks with nothing selected, the selection's otherwise. */
 function activeIn(editor: Editor): ReadonlySet<MarkId> {
@@ -83,7 +87,7 @@ function marksOf(editor: Editor, asks: Set<() => void>): EditorMarks {
       set(raw) {
         const href = raw === null ? "" : normalizeHref(raw);
         if (href === null) return "refused";
-        const chain = editor.chain().focus().extendMarkRange("link");
+        const chain = editor.chain().focus(null, { scrollIntoView: false }).extendMarkRange("link");
         if (href === "") {
           chain.unsetLink().run();
           return "ok";
@@ -119,9 +123,28 @@ function inlineOf(text: string): { type: string; text?: string }[] {
     ]);
 }
 
-/** A drop of files is never text: the composer around the editor takes the files. */
-const carriesFiles = (dt: DataTransfer | null): boolean =>
-  (dt?.files?.length ?? 0) > 0 || [...(dt?.types ?? [])].includes("Files");
+/**
+ * A drop of files is never text: the composer around the editor takes the files. Three shapes: File objects, the
+ * `Files` type, and a drop whose files are withheld (a Linux file manager's: no File, `text/uri-list` listed, its
+ * data unreadable or every entry `file:`), whose URL the editor would otherwise insert.
+ */
+function carriesFiles(dt: DataTransfer | null): boolean {
+  if (!dt) return false;
+  const types = [...(dt.types ?? [])];
+  if ((dt.files?.length ?? 0) > 0 || types.includes("Files")) return true;
+  if (!types.includes("text/uri-list")) return false;
+  let data = "";
+  try {
+    data = dt.getData("text/uri-list");
+  } catch {
+    data = "";
+  }
+  const entries = data
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "" && !line.startsWith("#"));
+  return entries.every((entry) => /^file:/i.test(entry));
+}
 
 export function RichEditor({
   links,
@@ -153,6 +176,9 @@ export function RichEditor({
       editorProps: {
         handleDOMEvents: {
           keydown: (view, e) => {
+            /* Mod+Shift+Enter is Send + Done, the app's key (bound where the reply's composer is): answered here only
+               so that the editor's own Mod-Enter (a line break) does not take it, and left to reach the binding. */
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.shiftKey) return true;
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
               keys.current.onSendKey();
@@ -198,7 +224,7 @@ export function RichEditor({
     if (incoming === emitted.current) return;
     if (incoming === (editor.isEmpty ? "" : editor.getHTML())) return;
     emitted.current = incoming;
-    editor.commands.setContent(incoming, { emitUpdate: false });
+    editor.chain().setContent(incoming, { emitUpdate: false }).command(readParagraphsAsLines).run();
   }, [editor, html, text]);
 
   /* Locked while a send is in flight: the document, the caret and the history stay; no update is emitted. */
@@ -221,7 +247,7 @@ export function RichEditor({
               else
                 editor
                   .chain()
-                  .focus()
+                  .focus(null, { scrollIntoView: false })
                   .insertContent(text.html !== "" ? text.html : inlineOf(text.text))
                   .run();
             },

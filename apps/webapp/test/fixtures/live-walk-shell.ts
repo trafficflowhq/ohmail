@@ -38,6 +38,8 @@ import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ConsentTransport } from "@ohmail/app-logic/consent/consent-state";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { JunkWire } from "../../app/shell/junk-window";
+import type { NotificationHost } from "../../app/shell/notification-settings";
+import type { MailShellProps } from "../_mail-shell";
 import type { SuggestWire } from "../../app/shell/screener-suggest";
 import { settleFirstPaint } from "../_first-paint.js";
 import { resetResumeLaneForTests } from "@ohmail/app-logic/session/resume-lane";
@@ -357,9 +359,13 @@ export async function mountShell(
     firstRun?: FirstRunHost;
     /** A host's card for the stage's slot, as the desktop hands its default-mail ask over. Absent: none. */
     stageCard?: React.ReactNode;
+    /** The host's notification doors, as an entry hands them (`device.notifications`). Absent: the host hands none. */
+    notificationHost?: NotificationHost;
+    /** The doors of Settings' Account section, as the web's entry hands its own. Absent: no section, and no Settings. */
+    accountDoors?: MailShellProps["accountDoors"];
   } = {},
 ): Promise<HTMLElement> {
-  const { AppShell } = await import("../_todays-shell.js");
+  const AppShell = (await import("../_mail-shell.js")).MailShell;
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { THEME_DOOR } = await import("../../app/shell/face-mirror.js");
 
@@ -379,6 +385,8 @@ export async function mountShell(
     ...(opts.suggestWire ? { suggestWire: opts.suggestWire } : {}),
     ...(opts.firstRun ? { firstRun: opts.firstRun } : {}),
     ...(opts.stageCard ? { stageCard: opts.stageCard } : {}),
+    ...(opts.notificationHost ? { notificationHost: opts.notificationHost } : {}),
+    ...(opts.accountDoors ? { accountDoors: opts.accountDoors } : {}),
   };
 
   await act(async () => {

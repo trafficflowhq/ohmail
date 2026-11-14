@@ -9,6 +9,7 @@ import type { SyncChange } from "@ohmail/client-engine";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import { settleEditor } from "./_first-paint.js";
 import { act, press, replySurface, waitFor, type DraftShell } from "./_draft-shell.js";
+import { openLetter as openRegion } from "./ohbox/_finders.js";
 import en from "../messages/en.json";
 
 export const sends = (s: DraftShell): EngineMutation[] => s.sent.filter((m) => m.kind === "mail_send");
@@ -62,16 +63,21 @@ export const footButton = (label: string): HTMLButtonElement | null =>
 export const railCompose = (): HTMLButtonElement | null =>
   [...document.querySelectorAll<HTMLButtonElement>("nav button")].find((b) => (b.textContent ?? "").trim().startsWith(en.rail.compose)) ?? null;
 
+export const letterEditor = (root: ParentNode): HTMLElement | null =>
+  root.querySelector<HTMLElement>('[role="region"][aria-label="New message"]');
+const letterSubject = (root: ParentNode): HTMLInputElement | HTMLTextAreaElement | null =>
+  letterEditor(root)?.querySelector<HTMLInputElement | HTMLTextAreaElement>('input[aria-label="Subject"], textarea[aria-label="Subject"]') ?? null;
+export const composeLine = (root: HTMLElement): string =>
+  [...(letterEditor(root)?.querySelectorAll('[role="status"]') ?? [])].map(line => line.textContent).join(" | ");
+
 export const composeSend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".view-compose .send-row button")]
-    .find((b) => /^(Send|Sending|Sent)/.test((b.textContent ?? "").trim()) && !/later/i.test(b.textContent ?? ""));
-export const composeLine = (el: HTMLElement): string => el.querySelector(".view-compose .send-status")?.textContent ?? "";
-export const composeSubject = (el: HTMLElement): string | null =>
-  el.querySelector<HTMLInputElement>("#compose-subject")?.value ?? null;
+  [...(letterEditor(el)?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find(button => /^(?:Send|Sending|Sent)$/.test(button.getAttribute("aria-label") ?? button.textContent?.trim() ?? ""));
+export const composeSubject = (el: HTMLElement): string | null => letterSubject(el)?.value ?? null;
 export const replySend = (el: HTMLElement): HTMLButtonElement | undefined =>
-  [...el.querySelectorAll<HTMLButtonElement>(".reply .reply-actions button")]
-    .find((b) => (b.textContent ?? "").startsWith("Send"));
-export const dock = (el: HTMLElement): HTMLElement | null => el.querySelector<HTMLElement>(".read-col .reply, .reader .reply");
+  [...(openRegion(el)?.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button') ?? [])]
+    .find(button => /^(?:Send|Sending|Sent)$/.test(button.getAttribute("aria-label") ?? button.textContent?.trim() ?? ""));
+export const dock = (el: HTMLElement): HTMLElement | null => replySurface(el) ? openRegion(el) : null;
 
 /** Hold the next `mail_send` on the wire; the returned function lets it answer. */
 export const holdTheWire = (s: DraftShell): (() => void) => {
@@ -108,8 +114,8 @@ export async function key(k: string, init: KeyboardEventInit = {}): Promise<void
 
 /** Open a Drafts row into its editor (the composer, or a reply's dock), from `#/drafts`. */
 export async function openDraftRow(s: DraftShell, id: string): Promise<void> {
-  await waitFor(() => s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`) != null, `${id} in Drafts`);
-  await press(s.el.querySelector(`.draft-row[data-id='${id}'] .draft-open`), `open ${id}`);
+  await waitFor(() => s.el.querySelector(`[role=option][data-id='${id}']`) != null, `${id} in Drafts`);
+  await press(s.el.querySelector(`[role=option][data-id='${id}']`), `open ${id}`);
 }
 /** …and wait for the composer to hold it. */
 export async function composerOn(s: DraftShell, id: string, subject: string): Promise<void> {

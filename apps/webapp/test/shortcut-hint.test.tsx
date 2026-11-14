@@ -34,7 +34,7 @@ import messages from "../messages/en.json";
 
 import { ShortcutHint } from "../app/shell/ShortcutHint";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -195,16 +195,7 @@ describe("every pane-foot strip is the affordance, not a legend", () => {
     }
   });
 
-  it("the keys the legend used to teach are still BOUND in the Ohbox", () => {
-    // The fix is display-only. j/k/↵/t/x/u remain declared bindings (the dispatcher and the
-    // generated sheet both read them from `useKeyBindings`).
-    for (const chord of ['"j"', '"k"', '"Enter"', '"t"', '"x"', '"u"']) {
-      expect(
-        OHBOX_KEYS.includes(`chord: ${chord}`),
-        `OhboxView no longer binds ${chord}`,
-      ).toBe(true);
-    }
-  });
+  /* "the keys the legend used to teach are still BOUND in the Ohbox" moved to `ohbox-keys-still-bound.test.ts`. */
 });
 
 /* ── the strip's structure: one line at every width, on every theme ───────────────────── */

@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
+import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { act } from "@testing-library/react";
+import { fakeMail, type FakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * MARK-UNREAD IN THE OHBOX: THE ROW COMES BACK ABOVE THE "EARLIER" LINE.
@@ -19,16 +19,12 @@ import messages from "../../messages/en.json";
  * These drive the REAL path: the view's own `u` binding, then the prop change the shell makes when
  * the mirror flips. Delete `returnToNew([m.id])` from `markUnread` and the slide guards go red; put
  * a front block back into `reconcile` and the placement guards do.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's harness (`./_today.js` `prepareSeated`, handed
+ * cut lists, under today's `KeymapProvider`) to the Ohbox's own seat over the mail ground (`../_ohbox-1-seat.tsx`):
+ * the seat binds `u` and ⇧I, the shell's re-partition is the mirror's flip written into the engine's rows, and what the
+ * view asked the shell to write is read off what the seat's seam sent. Every expectation is as it stood.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 /** Desktop split width — the reading column exists and the mobile-only paths stay away. */
 function setViewport(): void {
@@ -53,33 +49,64 @@ function msg(m: Row): Record<string, unknown> {
   };
 }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-/** What the view asked the SHELL to write — the `onMarkSeen` seam. */
-const marked: Array<{ ids: string[]; unread: boolean }> = [];
-
-interface Props { newForYou: Row[]; previouslySeen: Row[]; selectedId?: string | null }
-
-async function render(props: Props): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
-    children: h(KeymapProvider as never, { children: h(OhboxView as never, {
-    owed: false,
-      demo: false, settled: true,
-      older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-      newForYou: props.newForYou.map(msg),
-      previouslySeen: props.previouslySeen.map(msg),
-      tags: [], now: new Date("2026-08-02T09:00:00.000Z"),
-      selectedId: props.selectedId ?? null, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: (ids: string[], unread: boolean) => { marked.push({ ids, unread }); },
-      bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-      doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    } as never) } as never),
+let host: HTMLElement | null = null;
+let mail: FakeMail | null = null;
+/** What the view asked the SHELL to write: the `mark_seen` the seat's seam sent, in its direction. */
+const marked = (): Array<{ ids: string[]; unread: boolean }> =>
+  (mail?.mutations ?? []).flatMap((x) => {
+    const r = x as { kind: string; messageIds?: string[]; messageId?: string; unread?: boolean };
+    return r.kind === "mark_seen" ? [{ ids: r.messageIds ?? [r.messageId!], unread: r.unread === true }] : [];
   });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+
+interface Props {
+  newForYou: Row[];
+  previouslySeen: Row[];
+  selectedId?: string | null;
+  /**
+   * The selected row is the CURSOR's and no reader shows its letter (today's harness: `selectedId` with `readerId`
+   * null): the seat at one column, the cursor walked onto the row with `j`, as a person puts it there.
+   */
+  cursorOnly?: boolean;
+}
+
+/** The seat's letters come from one admitted sender (named as the row). */
+const SENDER = "sender@ex.example";
+/**
+ * Today's harness was handed each group in the selector's order (arrival, newest first); the seat orders its rows by
+ * their dates, so a row without a date of its own is dated by where it first stood: each a minute older than the last.
+ */
+const dated = new Map<string, string>();
+const dateOf = (r: Row): string => {
+  if (r.date !== undefined) return r.date;
+  if (!dated.has(r.id)) dated.set(r.id, new Date(Date.parse("2026-08-02T09:00:00.000Z") - dated.size * 60_000).toISOString());
+  return dated.get(r.id)!;
+};
+const seatMsg = (r: Row): EngineMessage =>
+  ({ ...msg({ ...r, date: dateOf(r) }), from: { name: r.id, address: SENDER } }) as unknown as EngineMessage;
+
+/**
+ * The first call stands the seat over an engine of these rows (the selected row's letter in the address); a later
+ * call is the shell's re-partition: the mirror's flip written into the engine's rows, as a sync or a write lands.
+ */
+async function render(props: Props): Promise<void> {
+  const rows = [...props.newForYou, ...props.previouslySeen];
+  if (mail === null) {
+    mail = fakeMail(rows.map(seatMsg), [], {}, admitting([SENDER]));
+    if (props.cursorOnly === true) {
+      host = mountSeat(mail.engine, { room: "phone" }).container;
+      for (let i = 0; i < rows.length && cursorRow() !== props.selectedId; i++) await press("j");
+      expect(cursorRow(), "the cursor walked onto the selected row").toBe(props.selectedId);
+    } else host = mountSeat(mail.engine, { first: props.selectedId ? `#/ohbox/m/${props.selectedId}` : "#/ohbox" }).container;
+  } else {
+    const m = mail;
+    await act(async () => {
+      for (const r of rows) {
+        if (m.engine.read().get("message", r.id) === undefined) m.add(seatMsg(r));
+        else m.patch(r.id, { unread: r.unread });
+      }
+    });
+  }
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 
 /** Press a chord the way the registry's dispatcher sees it. `shift` for the ⇧ variants. */
@@ -89,6 +116,9 @@ async function press(key: string, shift = false): Promise<void> {
   });
 }
 
+/** The row the cursor stands on at one column (the list marks it open: no letter is named), or null. */
+const cursorRow = (): string | null => host?.querySelector<HTMLElement>("[role=option][data-open]")?.dataset.id ?? null;
+
 /** The data-ids of the rows in the group with this aria-label ("New", "Earlier"). */
 function idsInGroup(label: string): string[] {
   const box = host!.querySelector(`[role="listbox"][aria-label="${label}"]`);
@@ -96,9 +126,9 @@ function idsInGroup(label: string): string[] {
   return [...box.querySelectorAll("[role=option][data-id]")].map((r) => (r as HTMLElement).dataset.id!);
 }
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove(); root = null; host = null; marked.length = 0;
+afterEach(() => {
+  unmountSeat();
+  host = null; mail = null; dated.clear();
 });
 
 describe("an explicit mark-unread RE-ENTERS New for you", () => {
@@ -113,7 +143,7 @@ describe("an explicit mark-unread RE-ENTERS New for you", () => {
     expect(idsInGroup("Earlier")).toEqual(["old"]);
 
     await press("u");
-    expect(marked).toEqual([{ ids: ["old"], unread: true }]);
+    expect(marked()).toEqual([{ ids: ["old"], unread: true }]);
 
     // The shell's re-partition: the mirror flips `old` unread, so the selector files it under
     // newForYou — LAST, because that group is ordered by arrival and `old` is the oldest.
@@ -173,7 +203,7 @@ describe("an explicit mark-unread RE-ENTERS New for you", () => {
     expect(idsInGroup("Earlier")).toEqual(["t2"]);
 
     await press("u");
-    expect(marked).toEqual([{ ids: ["t2"], unread: true }]);
+    expect(marked()).toEqual([{ ids: ["t2"], unread: true }]);
 
     // The conversation is the unit of place (2026-09-28): the selector files the WHOLE
     // conversation in New once a member is unread, at its arrival rank, as ONE row.
@@ -199,22 +229,22 @@ describe("an explicit mark-unread RE-ENTERS New for you", () => {
       await render({
         newForYou: [{ id: "n1", unread: true }],
         previouslySeen: [{ id: "old", unread: false }],
-        selectedId: "old",
+        selectedId: "old", cursorOnly: true,
       });
       await press("u");
       await render({
         newForYou: [{ id: "n1", unread: true }, { id: "old", unread: true }],
         previouslySeen: [],
-        selectedId: "old",
+        selectedId: "old", cursorOnly: true,
       });
       expect(idsInGroup("New")).toEqual(["n1", "old"]);
 
       await press("I", true);
-      expect(marked).toEqual([{ ids: ["old"], unread: true }, { ids: ["old"], unread: false }]);
+      expect(marked()).toEqual([{ ids: ["old"], unread: true }, { ids: ["old"], unread: false }]);
       await render({
         newForYou: [{ id: "n1", unread: true }],
         previouslySeen: [{ id: "old", unread: false }],
-        selectedId: "old",
+        selectedId: "old", cursorOnly: true,
       });
       await act(async () => { await vi.advanceTimersByTimeAsync(400); });
       expect(idsInGroup("New")).toEqual(["n1"]);

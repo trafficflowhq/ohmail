@@ -52,6 +52,7 @@ export interface CalendarWriteContinuation {
   readonly eventId: string;
   readonly at: string;
   readonly named: readonly ContinuedField[];
+  readonly personalSeries?: true;
 }
 
 /**
@@ -203,8 +204,8 @@ function removeScopeOf(v: unknown): CalendarRemoveScope | null {
 }
 
 /** The parts every act on an existing event names, checked: its id, the copy's time, the key it follows. */
-function based(v: Obj, own: readonly string[]): { eventId: string; base: string; after?: string } | null {
-  if (!closed(v, ["kind", "eventId", "base", ...own], ["after"])) return null;
+function based(v: Obj, own: readonly string[], optional: readonly string[] = []): { eventId: string; base: string; after?: string } | null {
+  if (!closed(v, ["kind", "eventId", "base", ...own], ["after", ...optional])) return null;
   if (!isWriteUuid(v.eventId) || !isIso(v.base)) return null;
   if (Object.hasOwn(v, "after") && !isWriteKey(v.after)) return null;
   return { eventId: v.eventId, base: v.base, ...(Object.hasOwn(v, "after") ? { after: v.after as string } : {}) };
@@ -223,10 +224,24 @@ export function parseCalendarAct(v: unknown): CalendarEventAct | null {
       return event === null ? null : { kind: v.kind, eventId: v.eventId, calendarId: v.calendarId, event };
     }
     case "calendar_event_update": {
-      const b = based(v, ["scope", "change"]);
+      const b = based(v, ["scope", "change"], ["audience", "personalSeries"]);
       const scope = changeScopeOf(v.scope);
       const change = fieldsOf(v.change, false);
-      return b === null || scope === null || change === null ? null : { kind: v.kind, ...b, scope, change };
+      if (b === null || scope === null || change === null) return null;
+      if (Object.hasOwn(v, "personalSeries")) {
+        if (v.personalSeries !== true || Object.hasOwn(v, "audience") ||
+          !Object.keys(change).every((field) => ["title", "notes", "place", "busy", "private"].includes(field))) return null;
+        return { kind: v.kind, ...b, scope, change, personalSeries: true };
+      }
+      if (!Object.hasOwn(v, "audience")) return { kind: v.kind, ...b, scope, change };
+      const a = v.audience;
+      const address = (s: unknown): s is string => typeof s === "string" && s !== "" && text(s, CALENDAR_ADDRESS_MAX_BYTES) && fitsCalendarBytes(s, CALENDAR_ADDRESS_MAX_BYTES);
+      if (scope.kind !== "record" || change.invitees !== undefined || !isObject(a) || !closed(a, ["organizer", "guests"])
+        || (a.organizer !== null && !address(a.organizer)) || !Array.isArray(a.guests) || a.guests.length > CALENDAR_WRITE_LIMITS.invitees
+        || !a.guests.every(address) || (a.guests.length > 0 && a.organizer === null)) return null;
+      const guests = a.guests.map((s) => s.trim().toLowerCase());
+      if (new Set(guests).size !== guests.length || guests.includes("")) return null;
+      return { kind: v.kind, ...b, scope, change, audience: { organizer: a.organizer?.trim().toLowerCase() ?? null, guests } };
     }
     case "calendar_event_delete": {
       const b = based(v, ["scope"]);
@@ -434,10 +449,10 @@ export function endedDayOf(payload: unknown): string | null {
 }
 
 function continuationOf(v: unknown): CalendarWriteContinuation | null {
-  if (!isObject(v) || !closed(v, ["eventId", "at", "named"]) || !isWriteUuid(v.eventId) || !occurrenceKey(v.at) || !Array.isArray(v.named)) return null;
+  if (!isObject(v) || !closed(v, ["eventId", "at", "named"], ["personalSeries"]) || (Object.hasOwn(v, "personalSeries") && v.personalSeries !== true) || !isWriteUuid(v.eventId) || !occurrenceKey(v.at) || !Array.isArray(v.named)) return null;
   const allowed: ReadonlySet<string> = new Set(CONTINUED_FIELDS);
   const named = v.named.filter((n): n is ContinuedField => typeof n === "string" && allowed.has(n));
-  return named.length === v.named.length && new Set(named).size === named.length ? { eventId: v.eventId, at: v.at, named } : null;
+  return named.length === v.named.length && new Set(named).size === named.length ? { eventId: v.eventId, at: v.at, named, ...(v.personalSeries === true && { personalSeries: true }) } : null;
 }
 
 /** A row's payload as this version reads it, or `null` for one it does not know: an applied row's, another version's, a damaged one. */

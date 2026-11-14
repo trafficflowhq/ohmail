@@ -192,7 +192,7 @@ function isLock(x: unknown): x is SendLock {
  * a `JSON.parse` failure keeps `[]`.
  */
 
-function load(owner: StorageScope): SendLock[] | null {
+function load(owner: StorageScope, sweepRetired = true): SendLock[] | null {
   let raw: string | null;
   try {
     raw = window.localStorage.getItem(sendLocksKey(owner));
@@ -205,7 +205,7 @@ function load(owner: StorageScope): SendLock[] | null {
     if (!Array.isArray(parsed)) return [];
     const rows: SendLock[] = parsed.filter(isLock);
     const out = rows.filter((r) => !retired(r));
-    if (out.length !== rows.length) save(out, owner);
+    if (sweepRetired && out.length !== rows.length) save(out, owner);
     return out;
   } catch {
     return [];
@@ -830,7 +830,8 @@ export function holdOf(
 export function sendRecordNames(
   lane: string, draftId: string, session: string | null, owner: StorageScope,
 ): boolean {
-  const all = load(owner);
+  // A render can ask this: inspect the records without writing over a concurrent claim.
+  const all = load(owner, false);
   if (all === null) return true;
   const names = new Set<string>([`draft:${draftId}`]);
   if (session !== null) names.add(`compose:${session}`);

@@ -7,4 +7,5 @@ import type { OverEntry } from "../frame/contract.js";
 import { Palette } from "./Palette.js";
 
 export const paletteOver: OverEntry = { id: "palette", Body: Palette };
+export { PALETTE_CHORD } from "./Palette.js";
 export { narrow } from "./narrow.js";

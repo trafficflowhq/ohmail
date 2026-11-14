@@ -11,6 +11,7 @@ import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import { vi } from "vitest";
+import type { TodaysShellProps } from "./_mail-shell.js";
 import {
   CursorExpiredError,
   IndexedDbMirrorStore,
@@ -25,7 +26,7 @@ import {
 import { sendFingerprint } from "@ohmail/client-engine/send-fingerprint";
 import messages from "../messages/en.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import type { ReaderEntry } from "@ohmail/app/host";
+import type { GapLettersWire, OrganizerNoticeWire, ReaderEntry } from "@ohmail/app/host";
 import { announceUpdate, resetUpdateStoreForTests } from "@ohmail/app-logic/doors/app-update";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import type { ComposePrefill } from "@ohmail/app-logic/writing/compose";
@@ -305,7 +306,7 @@ export function engineOver(
   syncHeld: DraftShell["syncHeld"] = { on: false },
   sentCopy: DraftShell["sentCopy"] = {},
 ): OhmailEngine {
-  const delivered = new Set<string>();
+  const delivered = new Map<string, { sentDraftId: string; sentDraftThrough: number }>();
   return new OhmailEngine({
     store: s,
     now: () => NOW,
@@ -365,7 +366,7 @@ export function engineOver(
         sent.push(m);
         const sendKey = m.kind === "mail_send" ? o?.idempotencyKey ?? null : null;
         if (sendKey !== null && delivered.has(sendKey)) {
-          return { changes: [], seq: null, firstSend: { status: "sent", at: NOW.toISOString() } };
+          return { changes: [], seq: null, ...delivered.get(sendKey), firstSend: { status: "sent", at: NOW.toISOString() } };
         }
         const named = m.kind === "draft_save" || m.kind === "mail_send" ? m.draftId ?? null : null;
         if (named !== null && serverGone.has(named)) {
@@ -391,7 +392,8 @@ export function engineOver(
               }) as unknown as SyncChange)
             : [];
           await s.applyChanges([...local, ...served.changes]);
-          if (sendKey !== null) delivered.add(sendKey);
+          const deliveredDraft = served.changes.find((change) => change.type === "draft");
+          if (sendKey !== null && deliveredDraft) delivered.set(sendKey, { sentDraftId: deliveredDraft.id, sentDraftThrough: deliveredDraft.seq });
           return {
             changes: [...local, ...served.changes], seq: served.seq,
             ...(served.entityId ? { entityId: served.entityId } : {}), ...(served.revision ? { revision: served.revision } : {}),
@@ -483,12 +485,14 @@ export function engineOver(
           for (const c of changes) if (c.id === entityId && c.entity) (c.entity as { contentRevision?: string }).contentRevision = revision;
         }
         await s.applyChanges(changes);
-        if (sendKey !== null) delivered.add(sendKey);
+        const deliveredDraft = changes.find((change) => change.type === "draft");
+        if (sendKey !== null && deliveredDraft) delivered.set(sendKey, { sentDraftId: deliveredDraft.id, sentDraftThrough: deliveredDraft.seq });
         if (sendKey !== null && loseSendAnswer.on) {
           throw new MutationRejectedError("network failure: TypeError: Failed to fetch", { code: "network", retryable: true });
         }
         return {
           changes, seq: changes[changes.length - 1]?.seq ?? null, ...(entityId ? { entityId } : {}), ...(revision ? { revision } : {}),
+          ...(m.kind === "mail_send" && !m.sendAt && changes[0]?.type === "draft" ? { sentDraftId: changes[0].id } : {}),
           ...(m.kind === "mail_send" ? sentCopy : {}),
         };
       },
@@ -607,10 +611,17 @@ export async function mountShell(
     locks?: EngineLocks;
     /** The reader the host hands (a case that stands a place with a reading column); absent: none. */
     reader?: ReaderEntry;
+    /** The mailboxes' facts the host reads (absent: `ROSTER`), and the Mailboxes entry's notices over these wires. */
+    roster?: MailboxFacts[];
+    mailboxNotices?: { organizerNotice?: OrganizerNoticeWire; gapLetters?: GapLettersWire };
+    /** The account's strip says its notices as the web's entry does (the session's sweeps among them). */
+    accountNotices?: boolean;
+    demo?: boolean;
+    desktopOffer?: TodaysShellProps["desktopOffer"];
   } = {},
 ): Promise<DraftShell> {
   window.location.hash = hash;
-  const { AppShell } = await import("./_todays-shell.js");
+  const AppShell = (await import("./_mail-shell.js")).MailShell;
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const versions = options.versions === true ? new Map<string, string>() : null;
   if (versions !== null) for (const d of drafts) versions.set(d.id, d.contentRevision ?? `rev-${d.id}`);
@@ -646,12 +657,22 @@ export async function mountShell(
   const root = createRoot(el);
   roots.push(root);
   const shellProps = {
-    demo: false, engine, consentTransport: consentTransportWith(options.signatures),
-    mailboxFacts: async () => (options.noMailbox === true ? [] : options.secondMailbox === true
+    demo: options.demo === true, engine, consentTransport: consentTransportWith(options.signatures),
+    mailboxFacts: async () => (options.noMailbox === true ? [] : options.roster !== undefined ? options.roster
+      : options.secondMailbox === true
       ? [...ROSTER, { ...ROSTER[0]!, id: "mb2", address: "me2@example.invalid", createdAt: "2026-09-02T00:00:00.000Z" }]
       : ROSTER),
     ...(options.draftReplyWire !== undefined ? { draftReplyWire: options.draftReplyWire } : {}),
     ...(options.reader !== undefined ? { reader: options.reader } : {}),
+    ...(options.accountNotices === true ? { accountNotices: true } : {}),
+    ...(options.desktopOffer ? { desktopOffer: options.desktopOffer } : {}),
+    ...(options.mailboxNotices !== undefined
+      ? {
+          mailboxesNotices: true,
+          ...(options.mailboxNotices.organizerNotice ? { organizerNoticeTransport: options.mailboxNotices.organizerNotice } : {}),
+          ...(options.mailboxNotices.gapLetters ? { gapLettersTransport: options.mailboxNotices.gapLetters } : {}),
+        }
+      : {}),
   };
   /* The host's half of the mail-link seam, as the desktop holds it: the link in state, dropped
      once the shell says it took it. */

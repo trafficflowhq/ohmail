@@ -162,7 +162,7 @@ let curMoves: string[] = [];
 async function mountPiles(rows: Row[]): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
   const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

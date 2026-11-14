@@ -43,13 +43,55 @@ export function useReaderKeys(on: boolean, now: { verbs: Verbs; visit: ListVisit
 }
 
 /** The panel's menus a key opens as their buttons open them. */
-export type PanelMenu = "resurface" | "move" | "more";
+export type PanelMenu = "resurface" | "move" | "more" | "cardDelete";
+export const REPLY_KEY = "r";
 
 /** The open letter, its verbs and its panel's menus; null where nothing is open. */
 export interface LetterKeyDoors {
   readonly letter: EngineMessage;
   readonly verbs: Verbs;
   readonly menu: (which: PanelMenu) => void;
+}
+
+function trashKeys(t: Text, open: LetterKeyDoors | null): KeyBinding[] {
+  return deleteKeyBindings({
+    focused: open?.letter ?? null,
+    label: t("key.deleteKey"),
+    canDelete: open !== null,
+    run: () => open?.verbs.act("delete"),
+  });
+}
+
+/** A second deliberate letter is its own press, including when focus sits on a menu item. */
+export function isCardDeleteKey(e: KeyboardEvent): boolean {
+  return (
+    e.key === "d" && !e.repeat && !e.isComposing && !e.ctrlKey &&
+    !e.metaKey && !e.altKey && !e.shiftKey && outsideText(e)
+  );
+}
+
+/** The embedded panel shares the reader's Move and Delete bindings. The stream owns its other keys. */
+export function useCardKeys(on: boolean, open: LetterKeyDoors | null): void {
+  const t = useText("reader");
+  const keys: KeyBinding[] = on && open !== null ? [
+    {
+      chord: "m",
+      group: "message",
+      label: t("key.move"),
+      when: outsideText,
+      disabled: open.verbs.moves.length === 0,
+      run: () => open.menu("move"),
+    },
+    {
+      chord: "d",
+      group: "message",
+      label: t("key.deleteAsk"),
+      when: isCardDeleteKey,
+      run: () => open.menu("cardDelete"),
+    },
+    ...trashKeys(t, open),
+  ] : [];
+  useOptionalKeyBindings(keys, "global");
 }
 
 /**
@@ -83,7 +125,7 @@ export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] 
   const all = open?.verbs.replyAll === true ? "reply_all" : "reply";
   const booked = open?.letter.triage?.state === "bubbled_up";
   return [
-    verb("r", ts("key.reply"), act("reply")),
+    verb(REPLY_KEY, ts("key.reply"), act("reply")),
     verb("shift+r", ts("key.replyAll"), act(all)),
     verb("shift+f", ts("key.forward"), act("forward")),
     verb("a", ts("key.answerLater"), act("later")),
@@ -92,12 +134,7 @@ export function letterKeys(ts: Text, open: LetterKeyDoors | null): KeyBinding[] 
     verb("m", ts("key.move"), show("move"), open === null ? {} : { disabled: open.verbs.moves.length === 0 }),
     /* A held key is one press: auto-repeat never walks the ask. */
     verb("d", ts("key.deleteAsk"), show("more"), { when: (e) => !e.repeat && outsideText(e) }),
-    ...deleteKeyBindings({
-      focused: open?.letter ?? null,
-      label: ts("key.deleteKey"),
-      canDelete: open !== null,
-      run: () => open?.verbs.act("delete"),
-    }),
+    ...trashKeys(ts, open),
   ];
 }
 

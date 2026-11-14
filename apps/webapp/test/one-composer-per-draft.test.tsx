@@ -15,7 +15,8 @@ import { useComposeAutosave, AUTOSAVE_DELAY_MS } from "@ohmail/app-logic/writing
 import {
   COMPOSE_SEND_KEY, SENT_BEAT_MS, canCancel, useMailSend, type MailSendApi,
 } from "@ohmail/app-logic/writing/mail-send";
-import { useMailSendText } from "../app/shell/mail-send-text";
+// The send machine's words as the mail ground hands them (today's shell words leave with today's shell).
+import { useMailSendText } from "./_write-1-send-text.js";
 import {
   EMPTY_COMPOSE, clearComposeDraft, composeSessionId, composeSessionKey, readComposeDraft,
   readComposeRow, writeComposeDraft, writeComposeRow, type ComposeFields,

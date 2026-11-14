@@ -46,7 +46,7 @@ export function FolderList({ plan }: PaneProps) {
         <LetterRows
           label={label}
           rows={list}
-          openId={model.list.openId}
+          cursor={model.list.openId}
           press={model.list.press}
           stamp={model.stamp}
           file={t("row.file")}

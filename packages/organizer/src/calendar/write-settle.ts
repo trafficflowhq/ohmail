@@ -200,7 +200,8 @@ export async function settleApplied(
     if (version !== null && written) {
       await tx.update(calWrites).set({ baseVersionTag: version, updatedAt: sql`now()` }).where(and(
         eq(calWrites.accountId, ctx.key.accountId), eq(calWrites.eventId, w.eventId), eq(calWrites.state, "pending"),
-        sql`${calWrites.id} <> ${w.id}`, sql`${calWrites.baseVersionTag} is not distinct from ${w.provisional ? null : w.baseVersionTag}`,
+        sql`${calWrites.id} <> ${w.id}`, sql`(${calWrites.payload}->'act'->>'personalSeries') is null`,
+        sql`${calWrites.baseVersionTag} is not distinct from ${w.provisional ? null : w.baseVersionTag}`,
       ));
     }
     const stamped = await tx.update(calEvents).set({ updatedAt: sql`now()` })

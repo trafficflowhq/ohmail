@@ -9,7 +9,7 @@ import { OhmailEngine, threadOf, type EngineAdapter } from "@ohmail/client-engin
 import { useMessageAttachments } from "../../webapp/app/shell/attachments.js";
 import { desktopFileShell, enableDesktopAttachments } from "../../webapp/app/shell/open-attachment.js";
 import { AttachmentPreview } from "../../webapp/app/components/AttachmentPreview.js";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * MORE PICTURES THAN THE SHELL KEEPS, AND BACK TO THE FIRST, AND IT SHOWS. The overlay walks more

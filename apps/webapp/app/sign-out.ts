@@ -347,6 +347,24 @@ export function forgetThisTab(): { survivors: string[]; deviceCeremonySwept: boo
 }
 
 /**
+ * THE ACCOUNT'S UNSENT WORDS, as its sign-out's sweep takes them: the letter being written (its words, its session,
+ * its row) and the replies (their words, their meta), every key that names `owner`, nothing of another account's and
+ * nothing of the jar's. A TAB THAT LEARNS ITS ACCOUNT SIGNED OUT ELSEWHERE runs it once its mailbox has left
+ * (`useSignedOutElsewhere`): its composer's leaving save writes as it goes, after the signing tab's sweep ran, and a
+ * closing page hands what it holds to the account's slot. After this a composer that is gone writes nothing more:
+ * its save stands only beside its stored letter (`compose-autosave.ts`, `reply-autosave.ts`). The remembered row in
+ * this tab's memory goes with them. Answers what could not be removed.
+ */
+const UNSENT_WORDS: readonly string[] = [
+  COMPOSE_DRAFT_PREFIX, COMPOSE_SESSION_PREFIX, COMPOSE_ROW_PREFIX, OWNED_REPLY_DRAFT_PREFIX, OWNED_REPLY_META_PREFIX,
+];
+
+export function forgetUnsentWordsOf(owner: string): LocalSweep {
+  forgetComposeRows();
+  return sweepFor(owner, UNSENT_WORDS, (scope) => scope === "account");
+}
+
+/**
  * The prefixes whose keys are `<prefix><owner>…` — read off each module's key function. The rest
  * of the sweep's list names its account beside it ({@link OWNER_TAGGED}), names none (a message
  * id, an old reply key), or belongs to the jar's session.

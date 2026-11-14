@@ -8,6 +8,7 @@ export type {
   CalendarSettingsWire,
 } from "@ohmail/wire";
 export { calendarPortOf, refusalWordOf, type PortParts } from "./port-of.js";
+export { eventTimeOf } from "@ohmail/cal-core";
 export { hueOf, viewOnlyOf } from "./offers.js";
 export { calEventOf, keyTimeOf, seriesOfRecords, type RecordSeries } from "./records.js";
 export {

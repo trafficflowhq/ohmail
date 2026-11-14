@@ -1,9 +1,7 @@
 /** @vitest-environment jsdom */
 import type { EngineMessage } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { act } from "@testing-library/react";
 import {
   conversationKeyOf,
   ohboxView,
@@ -11,8 +9,8 @@ import {
   type OhmailEngine,
 } from "@ohmail/client-engine";
 import { threadedEngine } from "../../../../packages/client-engine/test/fixtures/threaded-demo.js";
-import messages from "../../messages/en.json";
 import { stubThreadLayout, type ThreadLayout } from "../fixtures/thread-layout.js";
+import { mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * ═══ NO FRAME DRAWS ONE CONVERSATION TWICE — THE SHELL (WEB AND DESKTOP), RENDERED ═════════════
@@ -26,16 +24,14 @@ import { stubThreadLayout, type ThreadLayout } from "../fixtures/thread-layout.j
  * member of a conversation above. MUTATIONS WATCHED: the filing put back to per message (the
  * position arm), the fold keyed by section or claimed last, the absorb dropped (the confirm frame
  * loses the Sent copy), and `settling` keyed on `members` (the answered row never slides).
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): today's harness (`./_today.js` `prepareToday` under today's
+ * `KeymapProvider`, fed by a hand-made shell wiring of the engine) drew today's view; here the Ohbox's own seat stands
+ * over the same engine and the mail ground (`../_ohbox-1-seat.tsx`, in the demo's world: the threaded fixture is an
+ * engine with no consent behind it, whose mail is not partitioned, as `ohboxView` reads it), the seat's own wiring
+ * (the hold, the reads, `u`, Done) in place of the hand-made one, on the fixture's clock. Every expectation is as it
+ * stood; `settling` is a mark today's row drew and the kit's row does not (it reads false throughout).
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-07-29T12:00:00.000Z");
 
@@ -43,8 +39,7 @@ interface DrawnRow { id: string; ids: string[]; key: string; group: string; sett
 /** `handed`: every message the view was given at that frame, which every frame must draw. */
 interface Frame { label: string; rows: DrawnRow[]; handed: string[] }
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
+let host: HTMLElement | null = null;
 /** The reader is laid out, so an open message's lines are on screen and the rule reads it. */
 let layout: ThreadLayout;
 
@@ -59,55 +54,23 @@ beforeEach(() => {
   vi.stubGlobal("scrollTo", () => {});
 });
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+afterEach(() => {
+  unmountSeat();
   host = null;
   layout.restore();
   vi.useRealTimers();
 });
 
 /**
- * The shell's wiring, reduced to what the Ohbox reads: the engine's lists under its hold, the
- * cursor as state, a read through the engine, the armed read as the hold, Done as the deliberate
- * read that spends the pin. The view re-renders on every engine notify, as `AppShell` does.
+ * The Ohbox's own seat over the engine, read frame by frame. The seat re-renders on every engine notify, as the
+ * ground stands it.
  */
 async function mountLive(engine: OhmailEngine, olderItems: EngineMessage[] = []) {
-  const OhboxView = await (await import("./_today.js")).prepareToday();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
   const frames: Frame[] = [];
-  const older = { available: olderItems.length > 0, items: olderItems, loading: false, error: null, exhausted: true, loadMore: () => {} };
   const lookup = (id: string): EngineMessage | undefined =>
     engine.read().get<EngineMessage>("message", id) ?? olderItems.find((m) => m.id === id);
-
-  function Live(): React.ReactElement {
-    const [sel, setSel] = React.useState<string | null>(null);
-    const [, bump] = React.useReducer((n: number) => n + 1, 0);
-    React.useEffect(() => engine.subscribe(bump), []);
-    const reader = engine.read();
-    const box = ohboxView(reader, engine.openRowHeld());
-    return h(OhboxView as never, {
-      demo: false, older, resurfacedRows: resurfacedThreads(reader),
-      newForYou: box.newForYou, previouslySeen: box.previouslySeen,
-      tags: [], now: NOW, selectedId: sel, onSelect: setSel, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-      onMarkSeen: async (ids: string[], unread: boolean, via?: "glance") => {
-        const r = await engine.mutate({ kind: "mark_seen", messageIds: ids, unread, ...(via ? { via } : {}) });
-        return r.status !== "rolled_back";
-      },
-      onHoldRow: (id: string | null) => { if (id) engine.holdOpenRow(id); else engine.releaseOpenRow(); },
-      doorbellInitials: [], doorbellCount: 0, settled: true, owed: false,
-      onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-      bulk: {
-        run: (_: string, ids: string[]) => { void engine.mutate({ kind: "mark_seen", messageIds: ids, unread: false }); return true; },
-        tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => true,
-      },
-    } as never);
-  }
-
-  host = document.createElement("div");
-  document.body.appendChild(host);
-  root = createRoot(host);
+  /* The fixture's clock, where the seat reads the wall's. */
+  vi.setSystemTime(NOW);
 
   const read = (label: string): Frame => {
     const rows: DrawnRow[] = [];
@@ -138,9 +101,7 @@ async function mountLive(engine: OhmailEngine, olderItems: EngineMessage[] = [])
     await act(async () => { await fn(); });
     return read(label);
   };
-  await step("mount", () => root!.render(h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: NOW, children: h(KeymapProvider as never, { children: h(Live) } as never),
-  })));
+  await step("mount", () => { host = mountSeat(engine, { demo: true }).container; });
   const rowOf = (id: string): HTMLElement => {
     const el = host!.querySelector<HTMLElement>(`[role=option][data-id="${id}"], [role=option][data-ids~="${id}"]`);
     if (!el) throw new Error(`no row holds ${id}`);

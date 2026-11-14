@@ -55,6 +55,8 @@ export interface ConnectCalls {
   readonly discover: ((domain: string, signal: AbortSignal) => Promise<unknown>) | None;
   readonly signIn: SignInCalls | None;
   readonly localServerWait: boolean;
+  /** The door accepts a manual incoming server without an outgoing one. */
+  readonly incomingOnly?: true;
 }
 
 /** The password field's own handle: the seal of what it holds, and forgetting it. The string never leaves the field. */

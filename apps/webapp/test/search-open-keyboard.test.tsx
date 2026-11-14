@@ -13,7 +13,7 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { ShortcutSheet } from "../app/shell/ShortcutSheet";
 
 /**

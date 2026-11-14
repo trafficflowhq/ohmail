@@ -128,7 +128,7 @@ describe("the phone shell's answers, per setting", () => {
     calendar: has.frame.calendar,
   };
   const DEVICE = {
-    build: { surface: "phone", version: "2.0.0", commit: "abc", mailtoLeaves: true },
+    build: { surface: "phone", version: "2.0.0", commit: "abc", mailtoLeaves: true, desktopDownload: null },
     notifications: has.notifications,
     badge: NONE, language: NONE, openLink: NONE, pickFile: NONE, saveFile: NONE, defaultMail: NONE,
     address: has.frame.address, window: has.frame.window, appearance: has.frame.appearance,

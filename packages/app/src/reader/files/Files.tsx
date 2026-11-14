@@ -102,7 +102,9 @@ export function LetterFiles({ messageId }: { messageId: string }) {
     );
   }
   if (list.state !== "ready") return null;
-  const items = list.items.filter((item) => !item.calendarBody);
+  /* The door already leaves out an invitation's calendar body that a listed calendar file carries (Google's pair); one
+     it lists is the event's one copy (Exchange, Outlook), a file the person can save. */
+  const items = list.items;
   if (items.length === 0) return null;
   const many = items.length > 1;
   return (

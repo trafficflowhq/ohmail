@@ -4,6 +4,7 @@
  * once per attempt under a name made from its row, settles in one transaction, and keeps the
  * queue's order, bounds and words. A real provider is never asked here.
  */
+import { DEFAULT_LIMITS, readCalendar } from "@ohmail/cal-core";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq, sql } from "drizzle-orm";
@@ -169,6 +170,43 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     expect(writer.calls.map((c) => [c.change?.summary, c.target?.version])).toEqual([["One", '"v1"'], ["Two", '"v2"']]);
     expect((await rows(a)).map((r) => r.state)).toEqual(["applied", "applied"]);
     expect((await events(a)).find((e) => e.id === a.eventId)).toMatchObject({ title: "Two", versionTag: '"v3"' });
+  });
+
+  it("keeps the selected series scope on its original version behind another edit", async () => {
+    const a = await account("caldav");
+    await w.db.update(calConnections).set({ serverUrl: BENCH_CALDAV_PLACE.replace("caldav:", "http://") }).where(eq(calConnections.id, a.connectionId));
+    const original = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Example//EN", "BEGIN:VEVENT", "UID:uid-1",
+      "DTSTAMP:20261101T000000Z", "DTSTART;VALUE=DATE:20261116", "DTEND;VALUE=DATE:20261117",
+      "RRULE:FREQ=DAILY;COUNT=5", "SUMMARY:Kiln check", "END:VEVENT", "END:VCALENDAR", ""].join("\r\n");
+    await w.db.update(calEvents).set({ original, startKind: "date", endKind: "date", startLocal: "20261116", endLocal: "20261117",
+      startsAt: new Date("2026-11-16T00:00:00Z"), endsAt: new Date("2026-11-17T00:00:00Z"), repeatRule: "FREQ=DAILY;COUNT=5" }).where(eq(calEvents.id, a.eventId));
+    await press(a.accountId, "first", update(a, "First"));
+    await press(a.accountId, "second", { ...update(a, "Second"), personalSeries: true }, "first");
+    const updated = original.replace("Kiln check", "First");
+    const read = readCalendar(updated, DEFAULT_LIMITS);
+    if (!read.ok) throw new Error("invalid series fixture");
+    const writer = scriptedWriter("caldav", { answer: (call, n) => {
+      if (n === 1) return { ok: true, written: true, items: [upsert("evt-1", '"v2"', read.calendar.events[0]!, updated)] };
+      return call.target?.version !== '"v2"' ? { ok: false, reason: "version_stale", retryAfterMs: null } : "default";
+    } });
+    await run(a, writer, { word: "caldav" });
+    expect((await rows(a)).map((row) => [row.state, row.base, row.refusal])).toEqual([
+      ["applied", '"v1"', null], ["refused", '"v1"', "version_stale"],
+    ]);
+    expect(writer.calls.at(-1)?.target).toMatchObject({ version: '"v1"', personalSeries: true });
+  });
+
+  it("keeps the confirmed recipients when a queued edit takes the provider’s newer version", async () => {
+    const a = await account();
+    const audience = { organizer: "studio@example.invalid", guests: ["clay@example.invalid"] };
+    await press(a.accountId, "press-1", update(a, "One"));
+    await press(a.accountId, "press-2", { ...update(a, "Two"), audience }, "press-1");
+    const writer = scriptedWriter("google");
+    writer.objects.set("evt-1", { version: 1, summary: "Kiln check" });
+    await run(a, writer);
+    expect(writer.calls.map((c) => [c.target?.version, c.target?.audience])).toEqual([
+      ['"v1"', undefined], ['"v2"', audience],
+    ]);
   });
 
   it("sends a change under the version it was recorded on: a newer copy a reading stored meanwhile makes it stale, never an overwrite", async () => {

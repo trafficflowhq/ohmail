@@ -1,4 +1,7 @@
 import type { ComponentType, ReactNode } from "react";
+import type { ConversationShown } from "@ohmail/app-logic/reader";
+import type { EngineMessage } from "@ohmail/wire";
+import type { MessageClip } from "@ohmail/ui/mail";
 import type { CalendarEntry, FrameNotice, FrameOvers, FramePlaces, FrameStages, PaneProps } from "../frame/contract.js";
 import type { None } from "./contract.js";
 
@@ -33,8 +36,28 @@ export interface FeatureEntry {
  */
 export interface ReaderEntry {
   readonly Reading: ComponentType<PaneProps>;
+  /** The whole letter, with its pictures and files, inside a stream card the person opened. */
+  readonly OpenCard?: ComponentType<{
+    message: EngineMessage;
+    opened: boolean;
+    clip?: MessageClip;
+    conversation?: ConversationShown;
+  }>;
   /** The action panel for one letter, where a list draws a letter in place. */
-  readonly Actions: ComponentType<{ readonly messageId: string }>;
+  readonly Actions: ComponentType<{
+    readonly messageId: string;
+    readonly keysHere?: boolean;
+    readonly markUnread?: (id: string) => void;
+  }>;
+  /** The writing surface under the selected letter where a place draws its own cards. */
+  readonly useInlineReply?: (
+    keyLetter: string | null,
+    items: readonly EngineMessage[],
+  ) => {
+    readonly messageId: string | null;
+    readonly sheet: ReactNode;
+    readonly conversations: ReadonlyMap<string, ConversationShown>;
+  } | null;
 }
 
 /**
@@ -56,17 +79,7 @@ export type HostFeatures = Readonly<Record<FeatureName, FeatureEntry | None>> & 
    * What a shell stands above every pane, once per mounted frame, under the scope: the providers its places read.
    * `none`: nothing stands there (a host with no old shell; the fake host).
    */
-  readonly above:
-    | (ComponentType<{ readonly children: ReactNode }> & {
-        /**
-         * This component hands the frame's room its own press seam (`useRoomHandOver`), so the room mounts none. Said
-         * on the component itself, statically: whose seam a frame presses through is never read off what a child did
-         * in a render. The old shell's composition alone says it. A component that does not say it brings no seam:
-         * the press seam is then the room's own, for the frame's life, and a hand-over there is refused.
-         */
-        readonly handsSeam?: true;
-      })
-    | None;
+  readonly above: ComponentType<{ readonly children: ReactNode }> | None;
   /** What stands over every place (the palette, the key sheet), each the entry it imports or `none`. */
   readonly overs: FrameOvers;
   /** The calendar's root export (`@ohmail/app/calendar`), handed in by a shell that mounts it; `none`: no calendar here. */

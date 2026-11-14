@@ -13,7 +13,7 @@ import {
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * SEARCH SAYS WHERE A PART INSIDE A WORD IS LOOKED FOR (SEARCH-PART-WORD-INSIDE-A-BODY-WORD). The

@@ -5,7 +5,7 @@
  * file's.
  */
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { letter, mountStream, said, streamInput, type StreamSaid } from "./world.js";
 
 const ITEM = 300;
@@ -188,6 +188,24 @@ describe("News is read by scrolling through it", () => {
     expect(s.leaves).toHaveLength(1);
     expect(s.leaves[0]!.upToId).toBe("n0");
     expect(s.leaves[0]!.messageIds).toEqual(["n0"]);
+  });
+
+  it("a link to an item is a preview: the stream lands on it and reads nothing, not at the landing, not at rest", () => {
+    /* jsdom scrolls nothing: the landing at the mount stands where the case lays it out. */
+    const was = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function () {} as typeof was;
+    onTestFinished(() => {
+      HTMLElement.prototype.scrollTo = was;
+    });
+    mountStream({ place: "news", input: streamInput(LETTERS, s, { fresh: 8 }), open: "n2" });
+    const scroller = layOut();
+    scroller.scrollTo = ((o: ScrollToOptions) => scrollTo(scroller, o.top ?? 0)) as typeof scroller.scrollTo;
+    firstFrame(scroller);
+    for (let i = 0; i < 5; i += 1) nextFrame();
+    scrollTo(scroller, 2 * ITEM);
+    nextFrame();
+    act(() => void vi.advanceTimersByTime(2000));
+    expect(written()).toEqual([]);
   });
 
   it("starts the leave's run where a far landing rests: what the landing carried past was never displayed", () => {

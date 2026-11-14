@@ -101,7 +101,7 @@ async function mount(door: Door, degrade: unknown = null, locale = "en", over?: 
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const { shellConsentOptions } = await import("@ohmail/app-logic/press/consent-options");
   const engine = await engineWith(door, over?.store);
   function Probe(): React.ReactElement {

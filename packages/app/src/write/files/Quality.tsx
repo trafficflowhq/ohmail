@@ -42,6 +42,9 @@ export function Quality({
             ref={anchor}
             label={t("files.qualityLabel")}
             expanded={open}
+            /* While the letter is held (on its way), the quality is held with it and says so: a word that cannot be
+               pressed now, never a live-looking button that does nothing. */
+            disabled={locked}
             onPress={locked ? undefined : () => setOpen(true)}
           >
             {word}

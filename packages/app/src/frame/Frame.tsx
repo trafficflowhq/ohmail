@@ -4,49 +4,57 @@
  * the host's registrations. It asks for no setting: everything comes from the host contract. Everything under
  * it is mounted again when the host's scope changes.
  *
- * Under the scope the order is: the root, the room (with its own press seam where the host hands a ground or a
- * reader), what the host stands above every pane (`features.above`), then everything the root holds. Nothing above
- * the columns is mounted or unmounted by a place change; only another scope mounts it again, and under a scope the
- * frame refuses none of it mounts.
+ * Under the scope the order is: the key registry, the root, the room (with its own press seam where the host hands
+ * a ground or a reader), what the host stands above every pane (`features.above`), then everything the root holds.
+ * Nothing above the columns is mounted or unmounted by a place change; only another scope mounts it again, and
+ * under a scope the frame refuses none of it mounts.
  */
 import {
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   useSyncExternalStore,
-  type ComponentType,
   type ReactNode,
 } from "react";
 import { EngineContext } from "@ohmail/app-logic/engine";
+import { FocusFollows, KeymapContext, useKeymapStore, ZoneCursor } from "@ohmail/app-logic/keys";
 import { SYNC_SETTLED } from "@ohmail/app-logic/session/sync-scheduler";
-import { NONE, type LinkedDraft, type None, type ReaderEntry } from "../host/index.js";
-import { FrameContext, NO_CONNECTION, type ConnectionFeed, type FrameInner } from "./commands.js";
+import { goCompose } from "@ohmail/app-logic/writing/compose-door";
+import { beginSwitch, placeSwitchKey } from "@ohmail/app-logic/session/ui-vitals";
+import { NONE, type LinkedDraft } from "../host/index.js";
 import {
-  PLACE_IDS,
+  FrameContext,
+  NO_CONNECTION,
+  type ConnectionFeed,
+  type EnteredTarget,
+  type FrameInner,
+} from "./commands.js";
+import {
   type CalendarEntry,
-  type ColumnsProps,
   type EventRef,
   type FrameApi,
   type FrameCommands,
   type FrameHost,
-  type FramePlaces,
+  type GoHow,
   type LayoutPlan,
   type OverId,
   type PaneProps,
-  type PlaceEntry,
+  type RailFootModel,
   type RailModel,
   type Route,
   type RouteTarget,
 } from "./contract.js";
-import { createFeed, useSignal } from "./feeds.js";
+import { createFeed, useSignal, type Feed } from "./feeds.js";
 import { FrameParts } from "./FrameParts.js";
 import { FrameRoot } from "./FrameRoot.js";
 import { layoutPlan } from "./layout-plan.js";
+import { holdsItsReading, panesOf } from "./panes-of.js";
 import { createNoticeStore } from "./notice-store.js";
 import { createOfferStore } from "./offers.js";
+import type { Dragging } from "./rail-drag.js";
 import { RoomGate } from "./room.js";
 import type { RoomSeam } from "./room-store.js";
 import { useReportSlot } from "./report-slot.js";
@@ -54,6 +62,8 @@ import { attributesOf } from "./root-attributes.js";
 import { CALENDAR_HOME, MAIL_HOME, eventRefString, isCalendarPlace, productOf } from "./product.js";
 import { fragmentOf, routeOf } from "./route.js";
 import { Scoped } from "./scope.js";
+import { owedFeed, useStageEntry } from "./stage-entry.js";
+import "../keys/touch-keys.css";
 import "./placement.css";
 import "./seam.generated.css";
 
@@ -66,12 +76,8 @@ const sameFeed = (a: ConnectionFeed, b: ConnectionFeed) =>
   a.follow === b.follow &&
   sameReason(a.reason, b.reason);
 
-/** The route the address names now: the shell's address door is the one copy. */
-function useRoute(host: FrameHost): Route {
-  const address = host.device.address;
-  const fragment = useSyncExternalStore(address.subscribe, address.read, address.read);
-  return useMemo(() => routeOf(fragment), [fragment]);
-}
+/** A place under its own word: what a kept letter is remembered by (a letter open under one tag is not another's). */
+const spot = (at: Pick<Route, "place" | "sub">): string => `${at.place}/${at.sub ?? ""}`;
 
 /** The calendar's entry where this host offers the switch between the two products, else null. */
 function calendarOf(host: FrameHost): CalendarEntry | null {
@@ -81,37 +87,91 @@ function calendarOf(host: FrameHost): CalendarEntry | null {
 
 const HOME: Route = { place: MAIL_HOME, sub: null, open: null, stage: null, words: {} };
 
-function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraft | null }) {
+function useCommands(
+  host: FrameHost,
+  route: Route,
+  plan: LayoutPlan,
+  draft: { current: LinkedDraft | null },
+  entered: Feed<EnteredTarget | null>,
+) {
   const [railOpen, setRailOpen] = useState(false);
   const [held, setHeld] = useState(false);
   const [over, setOver] = useState<OverId | null>(null);
   const now = useRef(route);
   now.current = route;
+  const columns = useRef(plan.columns);
+  columns.current = plan.columns;
+  const places = host.features.places;
+  const keeps = useCallback(
+    (at: Route): boolean => {
+      /* A letter is kept by a mail place alone: the calendar's side opens an event, which the address carries. */
+      if (isCalendarPlace(at.place)) return false;
+      const place = places[at.place];
+      return place !== NONE && place.panes.kind === "columns" && place.panes.keepsOpen === true;
+    },
+    [places],
+  );
+  /* THE LETTERS THE PLACES KEEP (`keepsOpen`), for the frame's life: never stored, and gone with the scope. The
+     address is the one copy of what is open, so while it stands at such a place the memory follows it: the letter it
+     names, or none once that letter is closed, whichever way it was closed. */
+  const kept = useRef(new Map<string, string>());
+  if (keeps(route)) {
+    if (route.open === null) kept.current.delete(spot(route));
+    else kept.current.set(spot(route), route.open);
+  }
   /* The place the calendar's side was last in: an event opened from mail goes there. Kept for the frame's life only. */
   const lastCalendar = useRef<Route | null>(null);
-  if (isCalendarPlace(route.place) && route.stage === null) lastCalendar.current = route;
+  const lastMail = useRef<Route>(HOME);
+  if (route.stage === null) {
+    if (isCalendarPlace(route.place)) lastCalendar.current = route;
+    else lastMail.current = route;
+  }
   const go = useCallback(
-    (to: RouteTarget) => {
+    function go(to: RouteTarget, how?: GoHow) {
       const next: Route = { sub: null, open: null, stage: null, words: {}, ...to };
-      host.device.address.write(fragmentOf(next), "push");
+      /* A way back that names no letter opens the one the place kept, where a column stands for it. */
+      const again =
+        to.open === undefined && next.stage === null && columns.current === 2 && keeps(next)
+          ? kept.current.get(spot(next))
+          : undefined;
+      const fragment = fragmentOf(again === undefined ? next : { ...next, open: again });
+      if (host.device.address.heldBefore(fragment, () => go(to, how))) return;
+      /* A move to another place, or another part of one, is a switch: timed until its seat is on screen. */
+      if (next.place !== now.current.place || next.sub !== now.current.sub) beginSwitch(placeSwitchKey(next));
+      entered.set(how?.entered === true && next.open !== null ? { fragment, letter: next.open } : null);
+      host.device.address.write(fragment, how?.replace === true ? "replace" : "push");
       setRailOpen(false);
       setOver(null);
     },
-    [host],
+    [host, keeps, entered],
   );
   /* One object while the host stands: a feature that keeps a command in an effect's list is not run again for it. */
   const commands: FrameCommands = useMemo(
     () => ({
       go,
-      open: (letter: string | null) =>
-        host.device.address.write(fragmentOf({ ...now.current, open: letter }), "push"),
-      write: (letter?: LinkedDraft) => {
+      open: (letter: string | null, how?: "replace") => {
+        entered.set(null);
+        host.device.address.write(
+          fragmentOf({ ...now.current, open: letter }),
+          how ?? "push",
+          letter === null ? "closed" : undefined,
+        );
+      },
+      /* A new letter passes the composer's door (a letter whose send is still on its way gives way by its own rule);
+         a letter handed in is taken by the composer's mount. */
+      write: function write(letter?: LinkedDraft) {
+        if (host.device.address.heldBefore(fragmentOf({ ...HOME, place: "write" }), () => write(letter))) return;
         draft.current = letter ?? null;
-        go({ place: "write" });
+        if (letter === undefined) goCompose(() => go({ place: "write" }));
+        else go({ place: "write" });
       },
       rail: setRailOpen,
       hold: setHeld,
       over: setOver,
+      switchProduct: (to) => {
+        if (calendarOf(host) === null || productOf(now.current.place) === to) return;
+        go(to === "mail" ? lastMail.current : (lastCalendar.current ?? { ...HOME, place: CALENDAR_HOME }));
+      },
       event: (ref: EventRef | null) => {
         if (calendarOf(host) === null) return;
         const here = now.current;
@@ -129,111 +189,58 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
         go({ place: there.place, sub: ref.day, open, words: there.words });
       },
     }),
-    [go, host, draft],
+    [go, host, draft, entered],
   );
   return { commands, railOpen, setRailOpen, held, over };
-}
-
-/** The body a host's places keep, with the pane that draws it: the first entry whose wide arm says `kept`. */
-interface KeptBody {
-  readonly body: string;
-  readonly Wide: ComponentType<PaneProps>;
-}
-function keptOf(places: FramePlaces): KeptBody | null {
-  for (const id of PLACE_IDS) {
-    const entry = places[id];
-    if (entry !== NONE && entry.panes.kind === "wide" && entry.panes.kept === true)
-      return { body: entry.body, Wide: entry.panes.Wide };
-  }
-  return null;
-}
-
-/** The reading column stands over the list while a letter is open, or always where the place holds it. */
-function holdsItsReading(entry: PlaceEntry | null): boolean {
-  return entry !== null && entry.panes.kind === "columns" && entry.panes.holds === "always";
-}
-
-/**
- * A place's panes, or the shared body they name: one mounted instance per body. The kept body's pane is answered
- * whether it is on screen or not, always under the same key, so that the columns draw it at one position; while it is
- * on screen no pane of the place is answered (the place is of that body, or a part of the shell asked for it).
- */
-function panesOf(
-  entry: PlaceEntry | null,
-  pane: PaneProps,
-  reading: boolean,
-  reader: ReaderEntry | None,
-  kept: KeptBody | null,
-  keptShown: boolean,
-): Pick<ColumnsProps, "list" | "reading" | "wide" | "kept" | "above"> {
-  /* A place of the kept body draws it with its own pane: every place of one body shares the one mounted instance. */
-  const Kept =
-    kept === null
-      ? null
-      : entry !== null && entry.body === kept.body && entry.panes.kind === "wide"
-        ? entry.panes.Wide
-        : kept.Wide;
-  const keptPane =
-    kept === null || Kept === null
-      ? null
-      : { pane: <Kept key={kept.body} {...pane} keysHere={keptShown} />, shown: keptShown };
-  if (!entry || keptShown) return { list: null, reading: null, wide: null, kept: keptPane, above: null };
-  const panes = entry.panes;
-  if (panes.kind === "wide")
-    return {
-      list: null,
-      reading: null,
-      wide: <panes.Wide key={entry.body} {...pane} keysHere />,
-      kept: keptPane,
-      above: null,
-    };
-  const Reading = panes.Reading;
-  /* A place that holds its reading column gives it the keys whatever is open. */
-  const holds = panes.holds === "always";
-  const readingKeys = holds || pane.route.open !== null;
-  return {
-    list: <panes.List key={entry.body} {...pane} keysHere={!holds && pane.route.open === null} />,
-    /* A place that names the reader gets the shell's reading column; with none handed, the column stays empty. */
-    reading: !reading ? null : Reading !== "reader" ? (
-      <Reading {...pane} keysHere={readingKeys} />
-    ) : reader === NONE ? null : (
-      <reader.Reading {...pane} keysHere={readingKeys} />
-    ),
-    wide: null,
-    kept: keptPane,
-    above: panes.Above ? { Above: panes.Above, body: entry.body } : null,
-  };
 }
 
 function FrameBody({ host }: { host: FrameHost }) {
   const facts = useSignal(host.device.window);
   const look = useSignal(host.device.appearance);
   const plan: LayoutPlan = useMemo(() => layoutPlan(facts), [facts]);
-  const attributes = useMemo(() => attributesOf(plan, look, facts), [plan, look, facts]);
-  const addressed = useRoute(host);
+  const address = host.device.address;
+  const fragment = useSyncExternalStore(address.subscribe, address.read, address.read);
+  const addressed = useMemo(() => routeOf(fragment), [fragment]);
   const calendar = calendarOf(host);
   /* A calendar address where the switch is absent folds back to mail's home: the bar is replaced, and mail's home is
      drawn meanwhile, never a blank frame. */
   const folded =
     calendar === null && (isCalendarPlace(addressed.place) || addressed.stage?.id === "calSetup");
   const route = folded ? HOME : addressed;
-  useEffect(() => {
-    if (folded) host.device.address.write(fragmentOf(HOME), "replace");
-  }, [folded, host]);
+  const product = productOf(route.place);
+  const attributes = useMemo(() => attributesOf(plan, look, facts, product), [plan, look, facts, product]);
   const slot = useReportSlot();
   const [inner] = useState(() => ({
     notices: createNoticeStore(),
     rail: createFeed<RailModel | null>(null),
+    foot: createFeed<RailFootModel | null>(null),
     connection: createFeed<ConnectionFeed>(NO_CONNECTION, sameFeed),
     draft: { current: null as LinkedDraft | null },
+    entered: createFeed<EnteredTarget | null>(null),
     bars: createFeed<readonly string[]>([]),
-    keeps: createFeed<readonly string[]>([]),
+    owed: owedFeed(),
     offers: createOfferStore(),
+    drag: createFeed<Dragging | null>(null),
   }));
-  const { commands, railOpen, setRailOpen, held, over } = useCommands(host, route, inner.draft);
+  /* A history or external address change can leave a chosen hit before its local row arrives. */
+  useLayoutEffect(
+    () =>
+      address.subscribe(() => {
+        const target = inner.entered.read();
+        if (target && target.fragment !== address.read()) inner.entered.set(null);
+      }),
+    [address, inner],
+  );
+  const { commands, railOpen, setRailOpen, held, over } = useCommands(
+    host,
+    route,
+    plan,
+    inner.draft,
+    inner.entered,
+  );
   const api: FrameApi = useMemo(
-    () => ({ host, route, plan, commands, report: slot.report, over, product: productOf(route.place) }),
-    [host, route, plan, commands, slot.report, over],
+    () => ({ host, route, plan, commands, report: slot.report, over, product }),
+    [host, route, plan, commands, slot.report, over, product],
   );
   const context: FrameInner = useMemo(
     () => ({ ...inner, api, railOpen: [railOpen, setRailOpen] as const }),
@@ -242,32 +249,27 @@ function FrameBody({ host }: { host: FrameHost }) {
   const places = host.features.places;
   const place = isCalendarPlace(route.place) ? (calendar?.places[route.place] ?? NONE) : places[route.place];
   const entry = place === NONE ? null : place;
-  const stageEntry = !route.stage
-    ? NONE
-    : route.stage.id === "calSetup"
-      ? (calendar?.stage ?? NONE)
-      : host.features.stages[route.stage.id];
+  /* AN ADDRESS THAT NAMES A PLACE THIS HOST DOES NOT HAND (a stored link, a notice's link) is replaced by the
+     Ohbox's: nothing of that place exists here, no page stands in for it, and Back does not lead there again. On a
+     host that hands no Ohbox either the address stays and nothing is drawn. */
+  const lost = place === NONE && places.ohbox !== NONE;
+  /* Correct the fragment in place, with one write even if its place is unavailable. A bare page may stay bare. */
+  useLayoutEffect(() => {
+    if (fragment === "" || fragment === "#") return;
+    const canonical = fragmentOf(lost ? HOME : route);
+    if (canonical !== fragment && address.read() === fragment) address.write(canonical, "replace");
+  }, [address, fragment, lost, route]);
+  const stageEntry = useStageEntry(host, route, calendar, inner.owed);
   const staged = stageEntry !== NONE;
   const pane: PaneProps = { route, plan, keysHere: !staged };
-  /* The body the places keep is on screen where the place is of that body, or while a part of the shell says so. */
-  const keptBody = useMemo(() => keptOf(places), [places]);
-  const keptOver = useSignal(inner.keeps).length > 0;
-  const keptShown = keptBody !== null && (keptOver || entry?.body === keptBody.body);
   const readingShown = plan.columns === 2 || route.open !== null || holdsItsReading(entry);
-  const panes = panesOf(entry, pane, readingShown, host.features.reader, keptBody, keptShown);
+  const panes = panesOf(entry, pane, readingShown, host.features.reader);
   const Above = host.features.above;
-  /* Whose press seam it is, the host's record says, statically. A shell that hands its own says `handsSeam`. A host
-     that hands a ground above the panes (a component that does not say it) or a reader gets the room's own, mounted
-     once for the frame's life. A host that hands neither has nothing that can press, and no seam. */
-  const whose: RoomSeam =
-    Above !== NONE && Above.handsSeam === true
-      ? "handed"
-      : Above !== NONE || host.features.reader !== NONE
-        ? "own"
-        : "none";
-  /* The room's own seam is on wherever the frame stands. A handed one is the old shell's: on at every place the
-     frame draws, never over the body that shell keeps, whose views press through its seam themselves. */
-  const room = whose === "own" || (whose === "handed" && !keptShown);
+  /* Whose press seam it is, the host's record says, statically: a host that hands a ground above the panes or a reader
+     gets the room's own, mounted once for the frame's life and on wherever the frame stands. A host that hands neither
+     has nothing that can press, and no seam. */
+  const whose: RoomSeam = Above !== NONE || host.features.reader !== NONE ? "own" : "none";
+  const room = whose === "own";
   const root = useRef<HTMLDivElement>(null);
   const parts = (
     <FrameParts
@@ -311,12 +313,35 @@ function HostEngine({ host, children }: { host: FrameHost; children: ReactNode }
   return above ? children : <EngineContext.Provider value={own}>{children}</EngineContext.Provider>;
 }
 
+/** The key registry with what goes with it: the zone the keys are in, said on the document, and the focus rule. */
+function OwnKeys({ children }: { children: ReactNode }) {
+  return (
+    <KeymapContext.Provider value={useKeymapStore()}>
+      <ZoneCursor />
+      <FocusFollows />
+      {children}
+    </KeymapContext.Provider>
+  );
+}
+
+/**
+ * THE KEYS OF A FRAME: one table of bindings and one listener, mounted under the scope, so that a place declares its
+ * keys and needs nothing of a shell, and no binding of one account answers under the next. Where a registry stands
+ * above the frame (a shell that binds keys beside the frame too), the frame joins that one and mounts none: two
+ * tables would answer one press twice.
+ */
+function Keys({ children }: { children: ReactNode }) {
+  return useContext(KeymapContext) ? children : <OwnKeys>{children}</OwnKeys>;
+}
+
 /** The frame, mounted again whenever the host's scope changes. */
 export function Frame({ host }: { host: FrameHost }) {
   return (
     <HostEngine host={host}>
       <Scoped scope={host.session.scope}>
-        <FrameBody host={host} />
+        <Keys>
+          <FrameBody host={host} />
+        </Keys>
       </Scoped>
     </HostEngine>
   );

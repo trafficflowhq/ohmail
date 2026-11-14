@@ -319,6 +319,7 @@
       "itWasSent": "Sie wurde gesendet — ausblenden"
     },
     "letter": "Neue Nachricht",
+    "back": "Ohbox",
     "foot": "Formatierung und Dateien",
     "text": "Nachricht",
     "placeholder": "Schreib deine Nachricht",
@@ -330,6 +331,8 @@
     "subjectPlaceholder": "Betreff",
     "remove": "{name} entfernen",
     "refused": "Keine Adresse: {list}",
+    "suggestions": "Adressvorschläge",
+    "wroteToYou": "hat dir geschrieben",
     "verbs": "Senden oder verwerfen",
     "send": "Senden",
     "discard": "Verwerfen",
@@ -464,6 +467,7 @@
       }
     },
     "draft": {
+      "placeholder": "Schreib deine Nachricht oder Stichworte für einen Entwurf",
       "verb": "Antwort entwerfen",
       "again": "Erneut entwerfen",
       "running": "Wird entworfen …",

@@ -232,6 +232,11 @@
     right: var(--s4);
   }
 
+  /* The letter being written has no squares beside it. Its panel starts from the reading column's edge. */
+  :root[data-device="phone"] .oh-sheet:has(.oh-composer[data-fill]) > .oh-sheet-foot {
+    inset-inline-start: 0;
+  }
+
   /* The foot keeps its room at the screen's edge; the way back keeps the column's corner. */
   :root[data-device="phone"] .oh-sheet-foot > .oh-button.oh-jumpback {
     right: calc(var(--s3) - var(--s4));
@@ -242,6 +247,11 @@
     --oh-sheet-lead: calc(var(--sq-gutter) + var(--ringw));
 
     margin: var(--oh-sheet-out) var(--oh-sheet-out) 0;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet-run:has(> .oh-composer[data-fill]) {
+    min-height: 100%;
+    margin-top: 0;
   }
 
   :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet > .oh-sheet-foot {

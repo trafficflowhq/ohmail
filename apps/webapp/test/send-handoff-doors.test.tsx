@@ -3,12 +3,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { typeInto } from "./fixtures/rich-editor-driver";
 import en from "../messages/en.json";
 import {
-  act, message, mountShell, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
+  act, message, mountShell, press, ROSTER, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 import {
-  attach, composeSend, composeSubject, composerOn, dock, dockOn, footButton, footLine, holdTheWire, key,
-  letter, navigate, openDraftRow, pickFrom, replySend, rounds, sends, shape, toasts, typeRecipient,
+  attach, composeSend, composeSubject, composerOn, holdTheWire, letter, navigate, openDraftRow, rounds, sends, shape,
 } from "./_handoff-steps.js";
+import { settleEditor } from "./_first-paint.js";
 
 /**
  * EVERY DOOR BACK TO A HANDED-OFF MESSAGE BRINGS THE MESSAGE BACK WHOLE (PR #198 review, two
@@ -25,21 +25,117 @@ beforeEach(() => {
 });
 afterEach(async () => {
   setOnline(true);
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
   await unmountAll();
 });
 function setOnline(on: boolean): void {
   Object.defineProperty(window.navigator, "onLine", { configurable: true, get: () => on });
 }
 
+/*
+ * THE NEW SHELL's PARTS, by role and name (as `send-handoff.test.tsx` reads them). The sidebar's foot line is the
+ * frame's one notice slot (the rail's foot from a desk's width, the bar over the columns on a phone's), each line of
+ * a send one notice there, its acts by name; under 1024px today's sheet covered the foot and its toast said the
+ * refusal with Open: on a phone's width the new frame says it in the notice bar at its top, over the letter, with
+ * its Open (the toast's door is that bar's act). The open letter is the region "Open message": the reply is the
+ * composer section named "Reply to <name>", its words the textbox "Reply body" (a forward's "Forward body"), its
+ * verbs the toolbar "Actions", its people the groups "To", "Cc" and "Bcc", its From the button "From <address>:
+ * choose another address" with its menu "From", its files the kit's tiles with Attach's file input beside them.
+ */
+const slotNotices = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>('.fr-railnotice [role="status"], .fr-noticebar [role="status"]')];
+const slotBehind = (): string[] => {
+  const more = document.querySelector<HTMLButtonElement>('.fr-railnotice button[aria-haspopup="menu"], .fr-noticebar button[aria-haspopup="menu"]');
+  if (more === null) return [];
+  const name = more.getAttribute("aria-label") ?? "";
+  return [...document.querySelectorAll<HTMLElement>(`[role="menu"][aria-label="${name}"] [role="menuitem"]`)].map((n) => n.textContent ?? "");
+};
+/** What the foot's slot says, every notice. */
+const footLine = (): string => [...slotNotices().map((n) => n.textContent ?? ""), ...slotBehind()].join(" | ");
+/** A notice's act by its name. */
+const footButton = (label: string): HTMLButtonElement | null =>
+  slotNotices().flatMap((n) => [...n.querySelectorAll<HTMLButtonElement>("button")]).find((b) => (b.textContent ?? "").trim() === label) ?? null;
+/** On a phone's width: what the notice bar over the sheet says, and its Open (today's toast and its Open). */
+const barNotices = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('.fr-frame[data-rail="dock"] > .fr-noticebar [role="status"]')];
+const overSheet = (): string => barNotices().map((n) => n.textContent ?? "").join(" | ");
+const barOpen = (): HTMLButtonElement | null =>
+  barNotices().flatMap((n) => [...n.querySelectorAll<HTMLButtonElement>("button")]).find((b) => (b.textContent ?? "").trim() === en.sendingLine.open) ?? null;
+const openRegion = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+/** The reply standing on the open letter (today's dock). */
+const dock = (_el?: HTMLElement): HTMLElement | null => replySurface()?.closest<HTMLElement>("section[aria-label]") ?? null;
+const replySurface = (_el?: HTMLElement): HTMLElement | null =>
+  openRegion()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"], [role="textbox"][aria-label="Forward body"]') ?? null;
+/** A control of the open letter by its name. */
+const actionIn = (name: string): HTMLButtonElement | undefined =>
+  [...(openRegion()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.getAttribute("aria-label") === name);
+const replySend = (_el?: HTMLElement): HTMLButtonElement | undefined =>
+  [...(openRegion()?.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button') ?? [])]
+    .find((b) => b.getAttribute("aria-label") === "Send");
+const row = (el: HTMLElement, id: string): HTMLElement | null =>
+  el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
+/** The From line's choice: the button that names the address the reply goes from. */
+const fromButton = (): HTMLButtonElement | undefined =>
+  [...(dock()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => /^From .+: choose another address$/.test(b.getAttribute("aria-label") ?? ""));
+/** The reply's own files, as its tiles. */
+const replyFiles = (): HTMLElement[] => [...(dock()?.querySelectorAll<HTMLElement>(".oh-file") ?? [])];
+
+async function key(k: string, init: KeyboardEventInit = {}): Promise<void> {
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+  });
+  await settleEditor();
+}
+/** Select a row in the Ohbox and open its reply with `k` (r, R, F). */
+async function dockOn(s: DraftShell, id: string, k = "r", shiftKey = false): Promise<void> {
+  await waitFor(() => row(s.el, id) != null, `the row ${id}`);
+  await press(row(s.el, id), `the row ${id}`);
+  await key(k, shiftKey ? { shiftKey: true } : {});
+  await waitFor(() => replySurface(s.el) != null, `the dock on ${id}`);
+}
+async function typeRecipient(_el: HTMLElement, label: string, text: string): Promise<void> {
+  const input = openRegion()!.querySelector<HTMLInputElement>(`[role="group"][aria-label="${label}"] input[aria-label="${label}"]`)!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, text);
+    input.setSelectionRange(text.length, text.length);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  });
+}
+/** Choose the address the reply goes from, in its From menu. */
+async function pickFrom(_el: HTMLElement, address: string): Promise<void> {
+  const from = fromButton();
+  expect(from, "a From pick is offered").toBeDefined();
+  await press(from!, "the From line");
+  const item = [...document.querySelectorAll<HTMLElement>('[role="menu"][aria-label="From"] [role^="menuitem"]')]
+    .find((x) => (x.textContent ?? "").trim() === address);
+  await press(item ?? null, `From ${address}`);
+}
+/** Attach a small file through the reply's own Attach (the kit's file input beside its button). */
+async function attachTo(name: string): Promise<void> {
+  const input = dock()?.querySelector<HTMLInputElement>('.oh-attach input[type="file"]') ?? null;
+  expect(input, "the reply offers Attach").not.toBeNull();
+  const file = new File([new Uint8Array(512)], name, { type: "text/plain" });
+  Object.defineProperty(input!, "files", { value: [file], configurable: true });
+  await act(async () => { input!.dispatchEvent(new Event("change", { bubbles: true })); });
+  await rounds(8, 20);
+}
+/** The frame's plan reads the window's own width, as a phone hands it. */
+function phoneWidth(): void {
+  stubDom({ narrow: true });
+  Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+}
+
 const WORDS = "Between us: I would not take this offer";
 /** Reply to m1, take the computed sender off, name a teammate, send from the second address, attach a file. */
 async function editedReply(s: DraftShell): Promise<void> {
   await dockOn(s, "m1");
-  await act(async () => { dock(s.el)!.querySelector<HTMLButtonElement>(".reply-head-btn")!.click(); });
-  await act(async () => { dock(s.el)!.querySelector<HTMLElement>(".reply-rcpt .rcp-chip .rcp-chip-x")!.click(); });
+  await act(async () => { actionIn("Change recipients")!.click(); });
+  await act(async () => { actionIn("Remove The colleague")!.click(); });
   await typeRecipient(s.el, "To", "teammate@example.invalid");
-  await pickFrom(s.el, "mb2");
-  await attach(dock(s.el)!, "terms.txt");
+  await pickFrom(s.el, "me2@example.invalid");
+  await attachTo("terms.txt");
   await act(async () => { typeInto(replySurface(s.el)!, WORDS); });
 }
 /** Press Send with the wire held and a refusal for good armed. */
@@ -78,21 +174,22 @@ describe("a refused handed-off reply, by every door back", () => {
   }, 60_000);
 
   it("under 1024px in the reader sheet, the toast's Open", async () => {
-    stubDom({ narrow: true });
+    phoneWidth();
     const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true, secondMailbox: true });
     await editedReply(s);
-    expect(document.body.classList.contains("reading"), "the reply is in the sheet").toBe(true);
+    // The sheet: the letter stands over the list, on one column.
+    expect(document.querySelector(".fr-frame[data-letter]") != null && openRegion() != null, "the reply is in the sheet").toBe(true);
     const release = await pressRefused(s, true);
     await act(async () => { release(); });
-    await waitFor(() => toasts().includes(en.reply.statusUnreachable), "the refusal in the toast");
-    await press(document.querySelector(".toast-held .toast-act"), "the toast's Open");
+    await waitFor(() => overSheet().includes(en.reply.statusUnreachable), "the refusal in the toast");
+    await press(barOpen(), "the toast's Open");
     const [first, second] = await sendAgain(s);
     expect(first).toBe(FIRST);
     expect(second).toBe(first);
   }, 60_000);
 
   it("control: under 1024px with no hand-off, the dock stays", async () => {
-    stubDom({ narrow: true });
+    phoneWidth();
     const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: false, secondMailbox: true });
     await editedReply(s);
     const release = await pressRefused(s, false);
@@ -147,7 +244,7 @@ describe("a refused handed-off reply, by every door back", () => {
   }, 60_000);
 
   it("under 1024px, a reply-all reopened from the toast keeps everyone", async () => {
-    stubDom({ narrow: true });
+    phoneWidth();
     const m1 = message("m1", {
       to: [{ address: "me@example.invalid", name: "Me" }, { address: "pat@example.invalid", name: "Pat" }],
       cc: [{ address: "kim@example.invalid", name: "Kim" }],
@@ -157,24 +254,24 @@ describe("a refused handed-off reply, by every door back", () => {
     await act(async () => { typeInto(replySurface(s.el)!, "Agreed, let us go ahead"); });
     const release = await pressRefused(s, true);
     await act(async () => { release(); });
-    await waitFor(() => toasts().includes(en.reply.statusUnreachable), "the refusal in the toast");
-    await press(document.querySelector(".toast-held .toast-act"), "the toast's Open");
+    await waitFor(() => overSheet().includes(en.reply.statusUnreachable), "the refusal in the toast");
+    await press(barOpen(), "the toast's Open");
     const [first, second] = await sendAgain(s, "Agreed, let us go ahead");
     expect(first).toContain("kim@example.invalid");
     expect(second).toBe(first);
   }, 60_000);
 
   it("a forward reopened from the toast keeps its recipient and its files", async () => {
-    stubDom({ narrow: true });
+    phoneWidth();
     const s = await mountShell("#/ohbox", [message("m1")], [], { handOff: true });
     await dockOn(s, "m1", "F", true);
     await typeRecipient(s.el, "To", "friend@example.invalid");
-    await attach(dock(s.el)!, "notes.txt");
+    await attachTo("notes.txt");
     await act(async () => { typeInto(replySurface(s.el)!, "Have a look at this"); });
     const release = await pressRefused(s, true);
     await act(async () => { release(); });
-    await waitFor(() => toasts().includes(en.reply.statusUnreachable), "the refusal in the toast");
-    await press(document.querySelector(".toast-held .toast-act"), "the toast's Open");
+    await waitFor(() => overSheet().includes(en.reply.statusUnreachable), "the refusal in the toast");
+    await press(barOpen(), "the toast's Open");
     const [first, second] = await sendAgain(s, "Have a look at this");
     expect(first).toContain("to=friend@example.invalid");
     expect(first).toContain("files=notes.txt");
@@ -192,11 +289,12 @@ describe("a refused handed-off reply, by every door back", () => {
     await waitFor(() => replySurface(s.el) != null, "a new reply");
     await rounds(6, 20);
     const d = dock(s.el)!;
-    expect(d.querySelector(".reply-head")?.textContent ?? "", "the next reply is addressed as the last one was").toContain("Reply to The colleague");
+    expect(d.getAttribute("aria-label") ?? "", "the next reply is addressed as the last one was").toContain("Reply to The colleague");
     expect(d.textContent ?? "").not.toContain("teammate@example.invalid");
-    expect(d.querySelectorAll(".compose-attach-item").length, "the next reply carries the last one's file").toBe(0);
-    const from = [...d.querySelectorAll<HTMLSelectElement>("select")].find((x) => [...x.options].some((o) => o.value === "mb2"));
-    expect(from?.value, "the next reply sends from the last one's address").toBe("mb1");
+    expect(replyFiles().length, "the next reply carries the last one's file").toBe(0);
+    // The From line names the address it goes from: the first mailbox's (`mb1`), not the last reply's (`mb2`).
+    expect(fromButton()?.getAttribute("aria-label"), "the next reply sends from the last one's address")
+      .toBe(`From ${ROSTER[0]!.address}: choose another address`);
   }, 60_000);
 });
 

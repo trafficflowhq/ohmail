@@ -52,6 +52,17 @@ function raise(detail: DurabilityLostDetail): void {
   window.dispatchEvent(new DurabilityLostEvent(detail));
 }
 
+/**
+ * Hear the latch move (a lost write, or the reader putting the notice away), for a reader that draws it: the
+ * listening stands beside the raising, on the same `window`, so shared code that may not name the window can still
+ * follow it. The answer stops listening. Nothing to hear where there is no window.
+ */
+export function onDurabilityLost(changed: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener(DURABILITY_LOST_EVENT, changed);
+  return () => window.removeEventListener(DURABILITY_LOST_EVENT, changed);
+}
+
 /** A write that did not land, said: the latch and the event. Also for a store this door does not write (the phone's keeper). */
 export function lost(store: string): DurableWrite {
   announced = true;

@@ -24,7 +24,7 @@ import { dialect } from "@trafficflow/db/dialect";
 import { formatRRule, parseRRule } from "@ohmail/cal-core/recur/rrule";
 import { intlZones } from "@ohmail/cal-core/time/zones";
 import { PROVEN_REPEATS, proofPlaceOf, seriesProven, type ProofPlace, type ProvenRepeats } from "@ohmail/cal-providers/repeat-shapes";
-import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, storedObjectFacts } from "@ohmail/cal-providers/series";
+import { carriedExclusions, clockOf, continuedSeries, endedRule, isDayOf, movedRule, offItsClock, personalSeriesOf, storedObjectFacts } from "@ohmail/cal-providers/series";
 import type {
   CalendarEventAct, CalendarEventFields, CalendarEventRecord, CalendarTime, CalendarWriteAnswer, CalendarWriteFault,
   CalendarWriteReceipt,
@@ -270,6 +270,7 @@ const ms = (d: Date): number => d.getTime();
 async function standing(
   tx: Tx, accountId: string, event: { id: string; updatedAt: Date }, act: Extract<CalendarEventAct, { base: string }>,
 ): Promise<{ after: string | null; refusal: CalendarWriteFault | null }> {
+  if (act.kind === "calendar_event_update" && act.personalSeries && Date.parse(act.base) !== ms(event.updatedAt)) return { after: null, refusal: "version_stale" };
   if (Date.parse(act.base) === ms(event.updatedAt) && act.after === undefined) return { after: null, refusal: null };
   if (act.after !== undefined) {
     const [prev] = await tx.select({ id: calWrites.id, state: calWrites.state, updatedAt: calWrites.updatedAt }).from(calWrites)
@@ -419,6 +420,13 @@ async function recordOnEvent(
 
   // Someone else's event takes the account's answer and nothing else; a series is written as a whole or by the days it names.
   // The drain asks the same rule of what it sends, so what it would not send is not recorded.
+  if (act.kind === "calendar_event_update" && act.personalSeries) {
+    const [guest] = await tx.select({ id: calAttendees.eventId }).from(calAttendees)
+      .where(and(eq(calAttendees.accountId, accountId), eq(calAttendees.eventId, event.id))).limit(1);
+    if (cal.provider !== "caldav" || writeRowOf(event) !== "series" || event.myAnswer !== null || guest || !personalSeriesOf(held.original)) {
+      throw readOnly("this series is no longer a personal whole-day series");
+    }
+  }
   const own = await ownOrganizerAddresses(tx, accountId, cal.principal);
   const why = writeActRefusal(event, act, changedDaysOf(event, writeRowOf(event) === "series" ? await changedRows(tx, accountId, cal.id, event.uid) : 0), own);
   if (why !== null) throw why.word === "read_only" ? readOnly(why.why) : invalid(why.why);
@@ -671,7 +679,7 @@ async function recordFollowing(
   }
   const second = await insertRow(tx, {
     accountId, calendarId: cal.id, eventId: made.act.eventId, op: "create",
-    payload: writePayloadOf(made.act, first.id, { of: key, n: 2, from: { eventId: event.id, at: act.scope.at, named: made.named } }),
+    payload: writePayloadOf(made.act, first.id, { of: key, n: 2, from: { eventId: event.id, at: act.scope.at, named: made.named, ...(act.kind === "calendar_event_update" && act.personalSeries && { personalSeries: true }) } }),
     baseVersionTag: null, idempotencyKey: `${key}:2`, state: "pending",
   });
   if (second === null) throw invalid("the second part of this press is recorded already");

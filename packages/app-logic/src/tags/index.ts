@@ -8,3 +8,4 @@ export {
   type TagsInput,
   type TagsModel,
 } from "./model.js";
+export { useTagsLive, useTagsRailLive, type TagsLiveOwn } from "./live.js";

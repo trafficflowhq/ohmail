@@ -84,7 +84,7 @@ async function mount(): Promise<void> {
   const { useJunkWindow } = await import("../app/shell/junk-window.js");
   const { cloudWire } = await import("../app/(product)/mailbox/junk-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const store = new MemoryMirrorStore();
   await store.load();
   const engine = new OhmailEngine({

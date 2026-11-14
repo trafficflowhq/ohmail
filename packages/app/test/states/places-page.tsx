@@ -3,7 +3,8 @@
  * a folder, an address, Drafts and Trash, each through the real frame, its model from the real behaviour hook over the
  * page's world (`places-world.ts`), the frame's words beside it. The address carries the reference's words (`screen`,
  * `open`, `show`, `state`, `tag`, `shut`, `f`, `address`, `dir`, `run`, `device`, `face`, `scheme`) and `lang`.
- * Nothing here is seated: what the reading column draws in the reader's places is the reader's, and the composer in a
+ * Nothing here is seated (a place the mail places seat is taken without its seat, as a host that stands its model
+ * itself takes it): what the reading column draws in the reader's places is the reader's, and the composer in a
  * column is the writing column's; the comparison declares both.
  */
 import {
@@ -43,6 +44,7 @@ import { fillOver, TextProvider, type Messages } from "../../src/text/index.js";
 import { fakeHost, NO_ENGINE } from "../support/fake-host.js";
 import { fakeAddress, fakeAppearance, fakeWindow, ROOMS, type FakeAddress } from "../support/fake-window.js";
 import { FRAME_WORDS } from "../support/frame-words.js";
+import { unseated } from "../support/unseated.js";
 import * as W from "./places-world.js";
 import addressDe from "../../messages/address.de.json" with { type: "json" };
 import addressEn from "../../messages/address.en.json" with { type: "json" };
@@ -351,6 +353,16 @@ function useOpen(address: FakeAddress, base: string) {
     open: (id: string | null) => address.write(id === null ? base : `${base}/m/${id}`, "push"),
     markSeen: seen,
     act: NOTHING,
+    /* The page opens its letters by address: no hit is opened into a place here. */
+    entered: { letter: null, taken: NOTHING },
+    /* The page binds no key and stands the reference's arrival itself (`useArrival`, in place of the address). */
+    walk: {
+      columns: device === "phone" ? (1 as const) : (2 as const),
+      list: base,
+      labels: { next: "", prev: "", open: "" },
+      say: NOTHING,
+    },
+    arrival: "rest" as const,
     stamp,
     settled: true,
     owed: false,
@@ -358,7 +370,7 @@ function useOpen(address: FakeAddress, base: string) {
 }
 
 const historySeat = (): Seat => ({
-  places: { history: historyPlace },
+  places: { history: unseated(historyPlace) },
   start: open ? `#/history/m/${open}` : "#/history",
   Above: function HistorySeat({ address, children }) {
     const model = useHistoryList({
@@ -378,7 +390,7 @@ function tagsSeat(): Seat {
   const tag = q.get("tag");
   const base = `#/tag/${tag ?? "pottery"}`;
   return {
-    places: { tags: tagsPlace },
+    places: { tags: unseated(tagsPlace) },
     start: open ? `${base}/m/${open}` : base,
     Above: function TagsSeat({ address, children }) {
       const model = useTagsList({
@@ -407,7 +419,7 @@ function folderSeat(): Seat {
   const folder = W.FOLDERS.find((f) => f.name === name) ?? W.FOLDERS[0]!;
   const base = `#/folder/${folder.id}`;
   return {
-    places: { folder: folderPlace },
+    places: { folder: unseated(folderPlace) },
     start: open ? `${base}/m/${open}` : base,
     Above: function FolderSeat({ address, children }) {
       const model = useFolderList({
@@ -428,7 +440,7 @@ function addressSeat(): Seat {
   const base = `#/address/${encodeURIComponent(who)}`;
   const side = q.get("dir") === "from" ? "from" : q.get("dir") === "to" ? "to" : "all";
   return {
-    places: { address: addressPlace },
+    places: { address: unseated(addressPlace) },
     start: open ? `${base}/m/${open}` : base,
     Above: function AddressSeat({ address, children }) {
       const model = useAddressList({

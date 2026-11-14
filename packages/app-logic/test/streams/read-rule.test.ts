@@ -28,6 +28,15 @@ describe("a stream's read rule (News and Receipts)", () => {
     expect(STREAM_REST_MS).toBe(600);
   });
 
+  it("rests on the chosen visible result until the person moves the stream", () => {
+    const rule = createStreamReadRule();
+    rule.enter(0, "i8");
+    expect(rule.rest(look(2400, 600), "i9")).toEqual(["i8"]);
+    expect(rule.rest(look(2400, 1200), "i9")).toEqual([]);
+    rule.hand("wheel", 1400);
+    expect(rule.rest(look(2400, 2000), "i9")).toEqual(["i9"]);
+  });
+
   it("reads nothing before a hand has moved the stream: not on opening, not on a landing, not at rest", () => {
     const rule = createStreamReadRule();
     expect(rule.look(look(0, 0), true, false)).toEqual([]);
@@ -196,5 +205,25 @@ describe("a stream's read rule (News and Receipts)", () => {
 
     const long = createStreamReadRule();
     expect(long.still(look(0, 1000), "wheel")).toEqual([]);
+  });
+
+  it("lets the leave answer to a hand alone: a wheel, a moving finger or a scroll key, never a press, j, k, a finger's tap or the app's move", () => {
+    const pressed = createStreamReadRule();
+    pressed.enter(1000);
+    pressed.appMoved(1100);
+    expect([pressed.driven, pressed.handDrove]).toEqual([true, false]);
+    const tapped = createStreamReadRule();
+    tapped.touchDown(1000);
+    tapped.touchUp(1100);
+    expect([tapped.driven, tapped.handDrove]).toEqual([true, false]);
+    for (const drive of [
+      (r: ReturnType<typeof createStreamReadRule>) => r.hand("wheel", 1000),
+      (r: ReturnType<typeof createStreamReadRule>) => r.hand("touch", 1000, true),
+      (r: ReturnType<typeof createStreamReadRule>) => r.scrollKey(1000),
+    ]) {
+      const rule = createStreamReadRule();
+      drive(rule);
+      expect([rule.driven, rule.handDrove]).toEqual([true, true]);
+    }
   });
 });

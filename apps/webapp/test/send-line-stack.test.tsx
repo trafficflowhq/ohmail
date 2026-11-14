@@ -1,12 +1,13 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import en from "../messages/en.json";
+import { typeInto } from "./fixtures/rich-editor-driver";
+import { settleEditor } from "./_first-paint.js";
 import {
-  act, message, mountShell, press, replySurface, stubDom, unmountAll, waitFor, type DraftShell,
+  act, message, mountShell, press, stubDom, unmountAll, waitFor, type DraftShell,
 } from "./_draft-shell.js";
 import {
-  attach, composeLine, composeSend, composeSubject, composerOn, footButton, footLine, holdTheWire, letter, navigate,
-  replyOn, replySend, rounds, sends, shape, toasts,
+  attach, composeLine, composeSend, composeSubject, composerOn, holdTheWire, letter, navigate, rounds, sends, shape,
 } from "./_handoff-steps.js";
 
 /**
@@ -16,6 +17,57 @@ import {
  * the toast that would have said it was dropped because a line was seen. The person read the
  * standing sentence as being about the message they had just sent.
  */
+
+/*
+ * THE NEW SHELL's PARTS, by role and name (as `send-handoff.test.tsx` reads them). The sidebar's foot line is the
+ * frame's one notice slot, each line of a send one notice there, read with the notices behind it ("N more") by their
+ * titles; its acts by name. A toast is the frame's report. The open letter is the region "Open message": the reply's
+ * words the textbox "Reply body", its verbs the toolbar "Actions". The letters are opened at the Ohbox.
+ */
+const slotNotices = (): HTMLElement[] =>
+  [...document.querySelectorAll<HTMLElement>('.fr-railnotice [role="status"], .fr-noticebar [role="status"]')];
+/**
+ * What stands behind the slot's first notice, by title, as a person reads it: the slot's "N more" opened, its list
+ * read, and closed again where it was closed (a glance). Each press is drawn before the read, as a person's is: a
+ * synchronous `act` flushes it, so the reads stay synchronous.
+ */
+function slotBehind(): string[] {
+  const more = document.querySelector<HTMLButtonElement>('.fr-railnotice button[aria-haspopup="menu"], .fr-noticebar button[aria-haspopup="menu"]');
+  if (more === null) return [];
+  const name = more.getAttribute("aria-label") ?? "";
+  const items = (): string[] =>
+    [...document.querySelectorAll<HTMLElement>(`[role="menu"][aria-label="${name}"] [role^="menuitem"]`)].map((n) => n.textContent ?? "");
+  if (more.getAttribute("aria-expanded") === "true") return items();
+  void act(() => { more.click(); });
+  const read = items();
+  void act(() => { more.click(); });
+  return read;
+}
+/** What the foot's slot says, every notice: the first whole, those behind it by their titles. */
+const footLine = (): string => [...slotNotices().map((n) => n.textContent ?? ""), ...slotBehind()].join(" | ");
+const toasts = (): string => [...document.querySelectorAll('.fr-report [role="status"]')].map((n) => n.textContent ?? "").join(" | ");
+/** A notice's act by its name. */
+const footButton = (label: string): HTMLButtonElement | null =>
+  slotNotices().flatMap((n) => [...n.querySelectorAll<HTMLButtonElement>("button")]).find((b) => (b.textContent ?? "").trim() === label) ?? null;
+const openRegion = (): HTMLElement | null => document.querySelector<HTMLElement>('[role="region"][aria-label="Open message"]');
+const replySurface = (_el?: HTMLElement): HTMLElement | null =>
+  openRegion()?.querySelector<HTMLElement>('[role="textbox"][aria-label="Reply body"], [role="textbox"][aria-label="Forward body"]') ?? null;
+const replySend = (_el?: HTMLElement): HTMLButtonElement | undefined =>
+  [...(openRegion()?.querySelectorAll<HTMLButtonElement>('[role="toolbar"][aria-label="Actions"] button') ?? [])]
+    .find((b) => b.getAttribute("aria-label") === "Send");
+const row = (el: HTMLElement, id: string): HTMLElement | null =>
+  el.querySelector<HTMLElement>(`section[aria-label="Messages"] [role=option][data-id='${id}']`);
+/** Select a row in the Ohbox, open its reply with `r`, and type `words`. */
+async function replyOn(s: DraftShell, id: string, words: string): Promise<void> {
+  await waitFor(() => row(s.el, id) != null, `the row ${id}`);
+  await press(row(s.el, id), `the row ${id}`);
+  await act(async () => {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true }));
+  });
+  await settleEditor();
+  await waitFor(() => replySurface(s.el) != null, `the dock on ${id}`);
+  await act(async () => { typeInto(replySurface(s.el)!, words); });
+}
 
 beforeEach(() => {
   try { window.localStorage.clear(); window.sessionStorage.clear(); } catch { /* storage blocked */ }
@@ -56,6 +108,16 @@ async function milaEnds(s: DraftShell, arm: () => void, standing: string): Promi
   await act(async () => { release(); });
   await waitFor(() => footLine().includes(standing), "Mila's ending standing on the foot");
   s.refuseSend.on = false;
+}
+
+async function refuseReply(s: DraftShell, id: string, words: string): Promise<void> {
+  await replyOn(s, id, words);
+  const release = holdTheWire(s);
+  Object.assign(s.refuseSend, { on: true, code: "send_unreachable", status: 424 });
+  await press(replySend(s.el) ?? null, "Send reply");
+  await waitFor(() => replySurface(s.el) == null, "the reply handed off");
+  await act(async () => { release(); });
+  await waitFor(() => footLine().includes(en.reply.statusUnreachable) || footLine().includes("messages weren't sent"), "the send ended");
 }
 /** Jonas's reply, handed off and delivered; the line and the toasts while it is out and after. */
 async function jonasGoes(s: DraftShell): Promise<{ during: string[]; after: { foot: string[]; toast: string[] } }> {
@@ -111,6 +173,29 @@ describe("a standing ending on the foot line, then another healthy send", () => 
     await act(async () => { replySend(s.el)!.click(); });
     await waitFor(() => footLine().includes(sentTo("Mila")), "Sent to Mila");
     expect(toasts()).not.toContain(en.reply.toastSent);
+  }, 60_000);
+
+  it("each failed reply can be opened from its own warning when Drafts is unavailable", async () => {
+    const s = await mountShell("#/ohbox", [mila, jonas], [], { handOff: true });
+    await refuseReply(s, "m1", "Thursday works for me");
+    await refuseReply(s, "m2", "Yes, see you then");
+    await waitFor(() => sends(s).length === 2, "both replies tried to send");
+    await waitFor(() => footLine().includes(about("Mila", "Thursday plans")) && footLine().includes(about("Jonas", "Lunch")), "both failed replies standing by name");
+
+    const more = document.querySelector<HTMLButtonElement>('.fr-railnotice button[aria-haspopup="menu"], .fr-noticebar button[aria-haspopup="menu"]');
+    await press(more, "more warnings");
+    const jonasNotice = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) => el.textContent?.includes(about("Jonas", "Lunch")));
+    await press(jonasNotice ?? null, "Jonas's warning");
+    expect(slotNotices().some((n) => n.textContent?.includes(en.reply.statusUnreachable))).toBe(true);
+    await press(footButton(en.sendingLine.open), "Jonas's Open");
+    await waitFor(() => replySurface(s.el)?.textContent?.includes("Yes, see you then") === true, "Jonas's words back");
+    expect(footLine()).toContain(about("Mila", "Thursday plans"));
+    expect(footLine()).toContain(en.reply.statusUnreachable);
+
+    await press(footButton(en.sendingLine.open), "Mila's Open");
+    await waitFor(() => replySurface(s.el)?.textContent?.includes("Thursday works for me") === true, "Mila's words back");
+    expect(sends(s)).toHaveLength(2);
+    expect(window.location.hash).toMatch(/^#\/ohbox/);
   }, 60_000);
 });
 

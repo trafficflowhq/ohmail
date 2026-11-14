@@ -143,7 +143,7 @@ async function mount(opts: {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith(opts.held, opts.claimsOnly);
   const overlay = new Map(Object.entries(opts.suggestions ?? {}).map(([a, dest]) => [
     senderKey(a), { dest, confidence: 0.9, rationale: "because" },

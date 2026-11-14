@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { KeymapProvider as KeymapProviderRaw } from "@ohmail/app/keys";
+import { KeymapProvider as KeymapProviderRaw } from "../../../test/support/keymap-provider";
 import { WithListGone } from "./_list-gone";
 import {
   createDeleteUndo,

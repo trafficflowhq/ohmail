@@ -28,13 +28,14 @@
  * last refused as empty (the Screener's model says it, and it stands in the ground with the Screener's own mount).
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { useConsent, usePartition } from "@ohmail/app-logic/consent";
 import { useDerivedVersion, useEngine, useSyncStatus } from "@ohmail/app-logic/engine";
 import { useMailState } from "@ohmail/app-logic/mail-state";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
 import { usePresented } from "@ohmail/app-logic/reading";
+import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import { usePinnedScope } from "@ohmail/app-logic/storage/scope";
 import type { Translator } from "@ohmail/app-logic/text/translator";
 import { useComposerLists, type ComposerLists } from "@ohmail/app-logic/writing/composer-lists";
@@ -83,16 +84,19 @@ export interface WritingInputs {
   readonly t: Translator;
 }
 
-/** The whole catalogue's reader, over the host's own text: a key names its namespace before the first dot. */
+/** The whole catalogue's reader over one lookup: a key names its namespace before the first dot. Made outside a
+ * hook's frame, so the reader holds the lookup and nothing of a render. */
+function catalogueOver(textOf: ReturnType<typeof useTextLookup>): Translator {
+  return (key, values) => {
+    const dot = key.indexOf(".");
+    return dot > 0 ? textOf(key.slice(0, dot))(key.slice(dot + 1), values as never) : "";
+  };
+}
+
+/** The whole catalogue's reader, over the host's own text: a new reader when the host's text moves. */
 function useCatalogue(): Translator {
   const textOf = useTextLookup();
-  return useMemo(
-    (): Translator => (key, values) => {
-      const dot = key.indexOf(".");
-      return dot > 0 ? textOf(key.slice(0, dot))(key.slice(dot + 1), values as never) : "";
-    },
-    [textOf],
-  );
+  return useMemo(() => catalogueOver(textOf), [textOf]);
 }
 
 interface Ways {
@@ -119,12 +123,12 @@ function useWays(): Ways {
   columnsNow.current = plan.columns;
   const places = host.features.places;
   /** Whether the place on screen draws the shell's reading column: only there is a letter shown with its reply. */
-  const readerHere = useCallback((): boolean => {
+  const readerHere = useStableCallback((): boolean => {
     const at = routeNow.current;
     if (isCalendarPlace(at.place)) return false;
     const entry = places[at.place];
     return entry !== NONE && entry.panes.kind === "columns" && entry.panes.Reading === "reader";
-  }, [places]);
+  });
 
   const [replyTo, setReplyTo] = useState<string | null>(null);
   /** The letter whose reply rides the walk in progress; opened by the change of place, which closes any other. */
@@ -140,41 +144,32 @@ function useWays(): Ways {
     setReplyTo(spot === `${MAIL_HOME}/` ? carried : null);
   }, [spot]);
 
-  const go = useCallback(
-    (to: ComposerPlace, how?: { readonly open: null }): void => {
-      const place = PLACE_OF[to];
-      const at = routeNow.current;
-      /* Already there: the address is not written again (Back would then take two presses to leave). */
-      if (at.place === place && at.stage === null) return;
-      /* `open: null` named: the list is arrived at with no letter open, also where the place kept one. */
-      commands.go(how === undefined ? { place } : { place, open: null });
-    },
-    [commands],
-  );
-  const showLetter = useCallback(
-    (letter: string): void => {
-      /* One column: the reading column is the open letter, so a reply under a letter that is not open would stand
+  const go = useStableCallback((to: ComposerPlace, how?: { readonly open: null }): void => {
+    const place = PLACE_OF[to];
+    const at = routeNow.current;
+    /* Already there: the address is not written again (Back would then take two presses to leave). */
+    if (at.place === place && at.stage === null) return;
+    /* `open: null` named: the list is arrived at with no letter open, also where the place kept one. */
+    commands.go(how === undefined ? { place } : { place, open: null });
+  });
+  const showLetter = useStableCallback((letter: string): void => {
+    /* One column: the reading column is the open letter, so a reply under a letter that is not open would stand
          unseen. Only a place that draws the reader can show it. At two columns the reply stands where the person is. */
-      if (columnsNow.current !== 1 || !readerHere()) return;
-      if (routeNow.current.open !== letter) commands.open(letter);
-    },
-    [commands, readerHere],
-  );
-  const openWithReply = useCallback(
-    (letter: EngineMessage): void => {
-      const at = routeNow.current;
-      if (readerHere() || at.place === MAIL_HOME) {
-        /* It stays on this place: nothing will close the reply, so it opens now, with its letter. */
-        setReplyTo(letter.id);
-        if (at.open !== letter.id) commands.open(letter.id);
-        return;
-      }
-      /* It walks to where a letter is read: the reply rides the walk, past the change of place that closes it. */
-      rides.current = letter.id;
-      commands.go({ place: MAIL_HOME, open: letter.id });
-    },
-    [commands, readerHere],
-  );
+    if (columnsNow.current !== 1 || !readerHere()) return;
+    if (routeNow.current.open !== letter) commands.open(letter);
+  });
+  const openWithReply = useStableCallback((letter: EngineMessage): void => {
+    const at = routeNow.current;
+    if (readerHere() || at.place === MAIL_HOME) {
+      /* It stays on this place: nothing will close the reply, so it opens now, with its letter. */
+      setReplyTo(letter.id);
+      if (at.open !== letter.id) commands.open(letter.id);
+      return;
+    }
+    /* It walks to where a letter is read: the reply rides the walk, past the change of place that closes it. */
+    rides.current = letter.id;
+    commands.go({ place: MAIL_HOME, open: letter.id });
+  });
   return { replyTo, setReplyTo, go, showLetter, openWithReply, atWrite: route.place === "write" };
 }
 
@@ -188,11 +183,11 @@ function useHandedLetter(atWrite: boolean): { link: LinkedDraft | null; seeded: 
   /* Every letter this mount queued. The composer takes a letter once by its identity, so one handed again (waiting or
      seeded) would stand at the head unseeded and hold every letter behind it: it is dropped. */
   const queued = useRef(new WeakSet<LinkedDraft>());
-  const enqueue = useCallback((letter: LinkedDraft): void => {
+  const enqueue = useStableCallback((letter: LinkedDraft): void => {
     if (queued.current.has(letter)) return;
     queued.current.add(letter);
     setQueue((q) => [...q, letter]);
-  }, []);
+  });
   useEffect(() => {
     if (linkIn === NONE) return undefined;
     /* Taken once at mount and again on every arrival; a null answer changes nothing, so a double effect loses none. */
@@ -211,7 +206,7 @@ function useHandedLetter(atWrite: boolean): { link: LinkedDraft | null; seeded: 
     const handed = takeHanded();
     if (handed !== null) enqueue(handed);
   }, [atWrite, takeHanded, enqueue]);
-  const seeded = useCallback(() => setQueue((q) => q.slice(1)), []);
+  const seeded = useStableCallback(() => setQueue((q) => q.slice(1)));
   return { link: queue[0] ?? null, seeded };
 }
 
@@ -259,6 +254,7 @@ export function useWritingInputs(): WritingInputs {
     draftReplyWire: host.wires.draftReply as unknown as DraftReplyWire | typeof NONE,
     route: view,
     go,
+    draftsAvailable: host.features.places.drafts !== NONE,
     showLetter,
     openWithReply,
     consent,

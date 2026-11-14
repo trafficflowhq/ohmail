@@ -15,7 +15,7 @@ import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { FoldersRailGroup } from "../app/shell/FoldersRailGroup";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { junkFolderSaid } from "@ohmail/app-logic/lists/folders";
 import { fillFrom } from "../app/shell/locale";
 

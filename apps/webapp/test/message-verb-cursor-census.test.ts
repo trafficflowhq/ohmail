@@ -30,9 +30,17 @@ import { join, relative } from "node:path";
  *     both ways, so a stale entry reds as loudly as a missing one);
  *   · drop `useRowCursorPlacer` from `message-verbs.ts` → case 2 reds;
  *   · spell the hint a second time anywhere → the one-producer case reds.
+ *
+ * RE-POINTED BY PATH (share ohbox-1, the switch's older tests; ruling D (3)): the census read today's shell and views
+ * (`apps/webapp/app/`), which leave with the switch; the files that now declare the message verbs and place the cursor
+ * are the new parts' (`packages/app/src/`, beside `packages/app-logic/src/` and `packages/letter-body/src/` as before).
+ * Its two tables name those files (the composer's chords are `write/keys.ts` now; the Ohbox's placer, which answers
+ * for its own keys, its cursor row's verbs and the reader's verbs beside it, is `ohbox/live.ts`'s `useOhboxPlacer`; the
+ * sentence it says is `cursor("placed")` there). Every expectation is as it stood. No file of the web's own that stays
+ * declares a message verb (`apps/webapp/app/` holds none after the switch's deletions).
  */
 
-const APP = new URL("../app/", import.meta.url).pathname;
+const APP = new URL("../../../packages/app/src/", import.meta.url).pathname;
 
 function sources(dir: string): string[] {
   const out: string[] = [];
@@ -59,39 +67,31 @@ const naming = declaring.filter((n) => /disabledReason:\s*"no_cursor"/.test(read
  * under test, not a note about it.
  */
 const EXEMPT: Record<string, string> = {
-  "views/ComposeView.tsx":
+  "write/keys.ts":
     "the composer's own send and schedule chords — a writing surface with no list and no cursor; "
     + "the digits are the picker's, and are declared `inWriting` for that reason",
-  "../../../packages/app-logic/src/search/keys.ts":
+  "../../app-logic/src/search/keys.ts":
     "`Enter` opens the hit under this view's OWN cursor, which exists whenever there are hits "
     + "(`cursor = shown.length === 0 ? -1 : min(at, …)`); it rests on an empty result set or on "
     + "focus being outside the list, neither of which a placement would answer",
-  "views/TrashView.tsx":
-    "⇧⌫ acts on the row the reading column shows, which falls back to the bin's first row; it "
-    + "rests only on an empty bin or on a live row, which has no restore — no placement answers either",
-  "views/TriageView.tsx":
-    "only `f` is declared here — the pile's message verbs come from `useMessageVerbs`, which "
-    + "names the reason; `f` rests on an empty Answer Later pile, which is its own reason",
+  "mail/ground/MailKeys.tsx":
+    "⌘⇧↩ is the open reply's Send + Done, bound beside the mail for the reply's editor (`inInput`); it rests "
+    + "where no reply stands open or the reply offers no Send + Done (`sendAndDone === null`), which no placement "
+    + "answers (today's twin was declared in `shell-keys.tsx` beside verbs that name the reason)",
 };
 
 /**
- * WHO PLACES FOR EACH FILE THAT NAMES THE REASON. Three of these views hand their cursor to the
- * shell (`selectedOhbox`, `readsCur`, `receiptsCur`), and the shell's `global` claim —
- * `useCursorPlacer(placeCursor, "global")` — answers for them, from `shell-open-state.ts` since
- * ARCH-022. Naming the ANSWERING file is what keeps the check from passing on a frame that no
- * longer claims anything; the verbs seam claims at `view` scope for every view that mounts it.
+ * WHO PLACES FOR EACH FILE THAT NAMES THE REASON. The Ohbox's seat claims the placer at `view` scope
+ * (`useOhboxPlacer`, `ohbox/live.ts`): it answers for the list's own keys, for the cursor row's verbs
+ * where one column stands, and for the reader's verbs beside the list. Naming the ANSWERING file is
+ * what keeps the check from passing on a frame that no longer claims anything.
  */
-/* The global key map — which declares the verbs and names the reason — left `AppShell.tsx` for
-   `shell-keys.tsx` at ARCH-022 L6, which is why the first row below names that file. */
 const PLACED_BY: Record<string, string> = {
-  "shell/shell-keys.tsx": "shell/shell-open-state.ts",
-  "../../../packages/app-logic/src/press/delete-undo.ts":
-    "its caller — a factory with no cursor of its own, mounted by the shell and by the verbs seam",
-  "shell/message-verbs.ts":
-    "itself — `useRowCursorPlacer` at `view` scope, for every split view that mounts it",
-  "../../../packages/app-logic/src/ohbox/keys.ts": "shell/shell-open-state.ts",
-  "views/ReadsView.tsx": "shell/shell-open-state.ts",
-  "views/ReceiptsView.tsx": "shell/shell-open-state.ts",
+  "../../app-logic/src/press/delete-undo.ts":
+    "its caller — a factory with no cursor of its own, mounted by the place whose verbs it builds",
+  "../../app-logic/src/ohbox/keys.ts": "../../app-logic/src/ohbox/live.ts",
+  "../../app-logic/src/ohbox/cursor-verbs.ts": "../../app-logic/src/ohbox/live.ts",
+  "reader/keys.ts": "../../app-logic/src/ohbox/live.ts",
 };
 
 const claimsAPlacer = (n: string): boolean =>
@@ -125,7 +125,7 @@ describe("every declared reason has a host that answers it", () => {
     for (const hostFile of hosts) {
       expect(claimsAPlacer(hostFile), `${hostFile} is named as a placer and claims none`).toBe(true);
     }
-    for (const n of ["shell/shell-open-state.ts", "shell/message-verbs.ts"]) {
+    for (const n of ["../../app-logic/src/ohbox/live.ts"]) {
       expect(claimsAPlacer(n), `${n} places for the shell and claims none`).toBe(true);
     }
   });
@@ -134,13 +134,16 @@ describe("every declared reason has a host that answers it", () => {
 describe("one placement, not one per host", () => {
   it("the hint has exactly one producer in the app", () => {
     /* Three hosts each spelling "first row, scroll it into view, say which verb is next" is how
-       three lists come to place a cursor three different ways. The sentence is the tell. */
-    const producers = files.filter((p) => /t\("cursor\.placed"/.test(read(p))).map(name);
-    expect(producers).toEqual(["shell/cursor-placer.ts"]);
+       three lists come to place a cursor three different ways. The sentence is the tell: the
+       catalogue's `cursor.placed`, read off the `cursor` words. */
+    const producers = files.filter((p) => /cursor\("placed"/.test(read(p))).map(name);
+    expect(producers).toEqual(["../../app-logic/src/ohbox/live.ts"]);
   });
 
   it("and one spelling of the placement itself", () => {
-    const definers = files.filter((p) => /function placeFirstRow\(/.test(read(p))).map(name);
-    expect(definers).toEqual(["shell/cursor-placer.ts"]);
+    /* The placement: a placer a place defines (the key map's own registry, `useCursorPlacer`, is the door it
+       claims, not a placement). */
+    const definers = files.filter((p) => /function (?!use(Row)?CursorPlacer\b)\w*Placer\(/.test(read(p))).map(name);
+    expect(definers).toEqual(["../../app-logic/src/ohbox/live.ts"]);
   });
 });

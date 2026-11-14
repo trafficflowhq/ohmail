@@ -13,7 +13,7 @@ export function StreamReading(props: PaneProps) {
   const model = useStreamModel();
   const { host } = useFrame();
   useStreamKeys(props.keysHere && props.plan.device !== "phone", model.scroller, model);
-  if (props.plan.device !== "phone") return <StreamColumn phone={false} />;
+  if (props.plan.device !== "phone") return <StreamColumn phone={false} keysHere={props.keysHere} />;
   const reader = host.features.reader;
   return reader === NONE ? null : <reader.Reading {...props} />;
 }

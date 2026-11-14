@@ -15,9 +15,9 @@ import {
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
-import { TodaysScopeProvider } from "../app/shell/todays-scope";
+import { Scoped } from "@ohmail/app/frame";
 import { ESTIMATED_ROW_PX } from "@ohmail/app-logic/lists/list-window";
 
 /**
@@ -81,7 +81,7 @@ async function render(engine: OhmailEngine, query: string): Promise<void> {
     root.render(h(NextIntlClientProvider, {
       locale: "en", messages, timeZone: "UTC", now: NOW,
       /* Drawn in a shell, as Search always is: the order is kept under the shell's scope. */
-      children: h(TodaysScopeProvider, { value: SEARCH_SCOPE },
+      children: h(Scoped, { scope: SEARCH_SCOPE },
         h(KeymapProvider, { children: h(SearchView, { engine, version: 1, now: NOW, query, onQuery: () => {}, onOpen: () => {} }) })),
     }));
   });

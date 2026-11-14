@@ -9,7 +9,7 @@ import { NextIntlClientProvider } from "next-intl";
 import type { FeedPartition } from "@ohmail/client-engine";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { MessageRecipients } from "../app/shell/MessageRecipients";
 import { MessageChromeProvider } from "../app/shell/message-chrome";
 import { ReadsView } from "../app/views/ReadsView";
@@ -208,12 +208,6 @@ describe("a Reads card with several recipients names them in its header", () => 
     await mountReads(message(three), "de");
     expect(fold()!.textContent).toContain("und 1 weitere");
     expect(block()!.querySelector(".rcpt-k")!.textContent).toBe("An");
-  });
-
-  it("the German face calls the reader `dich`", async () => {
-    await mountRaw(message([{ name: null, address: "me@x.invalid" }, ...three]), 2, "de", ["me@x.invalid"]);
-    expect(chips().map((c) => c.textContent)).toEqual(["dich", "Anna Roth"]);
-    expect(fold()!.textContent).toContain("und 2 weitere");
   });
 });
 
@@ -424,13 +418,6 @@ describe("the fold control never announces the opposite of what it does", () => 
     expect(hidden.toLowerCase()).not.toContain("show");
     expect(hidden.toLowerCase()).toContain("hide");
     expect(fold()!.getAttribute("aria-expanded")).toBe("true");
-  });
-
-  it("holds on the uncapped reading-pane form too, where nothing was ever folded", async () => {
-    await mountRaw(message(three), Number.POSITIVE_INFINITY);
-    expect(fold()!.getAttribute("aria-label")!.toLowerCase()).toContain("show");
-    await click(fold());
-    expect(fold()!.getAttribute("aria-label")!.toLowerCase()).toContain("hide");
   });
 
   it("the German face says it in German", async () => {

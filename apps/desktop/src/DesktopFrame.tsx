@@ -1,38 +1,43 @@
 /**
- * THE DESKTOP WINDOW'S FRAME: the host built from the door in force, and today's views in it. Every entry renders the
- * node the window drew for that door, and nothing under any further condition the mount had (`status`, the first
- * run standing). Everything is memoized on its parts, so a poll of the gate that changes nothing hands the frame the
- * same record (`todays-host-is-stable.test.tsx`).
+ * THE DESKTOP WINDOW'S FRAME: the host built from the door in force, and the mail's places in it over the mail
+ * ground. Every entry renders the node the window drew for that door, and nothing under any further condition the
+ * mount had (`status`, the first run standing). Everything is memoized on its parts, so a poll of the gate that
+ * changes nothing hands the frame the same record (`todays-host-is-stable.test.tsx`).
+ *
+ * WHAT THE WINDOW HANDS OF ITS OWN: the reader over the letter's renderer, and the managed Account section's
+ * native action for opening the browser.
  */
 import { useMemo, type ReactNode } from "react";
-import { NONE, type FeatureEntry, type HostConnectionState, type Signal } from "@ohmail/app/host";
-import { useTodaysSupplies } from "../../webapp/app/shell/todays-supplies";
+import { connectWireOver, NONE, type FeatureEntry, type HostConnectionState, type HostDevice, type Signal } from "@ohmail/app/host";
+import {
+  browserMailParts, browserOpenLink, MAILBOXES_NOTICES, MailFrame, useBrowserMail,
+} from "../../webapp/app/shell/browser-mail";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import type { LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
 import type { OhmailEngine } from "@ohmail/client-engine";
 import { MailboxFilings } from "../../webapp/app/shell/MailboxFilings";
 import { MailboxSelfCheck } from "../../webapp/app/shell/MailboxSelfCheck";
-import { goSettings } from "../../webapp/app/shell/routing";
+import {
+  desktopDroppedFilesEnabled, isWithheldFileDrop, looksLikeWithheldFileDrag, takeDroppedFiles,
+} from "@ohmail/app-logic/write/dropped-files";
+import { desktopFileShell } from "../../webapp/app/shell/open-attachment";
+import { cloudSuggestWire } from "./cloud-suggest.js";
 import type { StorageFacts } from "../../webapp/app/shell/storage-state";
-import { TodaysFrame } from "../../webapp/app/shell/TodaysFrame";
-import type { TodaysNodes } from "../../webapp/app/shell/todays-inputs";
-import { useTranslations } from "next-intl";
 import type { EngineStatus } from "./bridge-fetch.js";
 import { BUILD_SHA, BUILD_VERSION } from "./build-id.js";
-import { CloudSuggest, type CloudSuggestProps } from "./CloudSuggest.js";
-import { cloudSuggestWire } from "./cloud-suggest.js";
-import { DefaultMailAsk, DefaultMailRow } from "./DesktopDefaultMail.js";
+import { DefaultMailRow, useDefaultMailNotice } from "./DesktopDefaultMail.js";
 import { DesktopAbout } from "./DesktopAbout.js";
 import { DesktopAiAccount } from "./DesktopAiAccount.js";
 import { DesktopDevices } from "./DesktopDevices.js";
 import { DesktopMailboxes, readMirrorFreshness } from "./DesktopMailboxes.js";
 import { DesktopScreening } from "./DesktopScreening.js";
-import { desktopPaneLabel, DesktopSettings } from "./DesktopSettings.js";
+import { DesktopSettings } from "./DesktopSettings.js";
 import { DesktopStorageNotice } from "./DesktopStorageNotice.js";
 import { DesktopStorage, DesktopSubscription } from "./DesktopSubscription.js";
 import { DesktopWebSection } from "./DesktopWebSection.js";
-import { flavorOf, hostDoorFor, selfHostedServerOf, suggestDoorFor, type HostedSession } from "./doors.js";
+import { useAppLocale } from "./DesktopLocale.js";
+import { accountDoorFor, flavorOf, hostDoorFor, selfHostedServerOf, type HostedSession } from "./doors.js";
 import { desktopHost } from "./host-contract.js";
 import type { LinkSlot } from "./link-in.js";
 import { awayOverBridge } from "./local-away.js";
@@ -49,12 +54,12 @@ import { olderBodyOverBridge } from "./local-older-body.js";
 import { organizerNoticeOverBridge } from "./local-organizer-notice.js";
 import { profileImportOverBridge } from "./local-profile-import.js";
 import { checkMailboxHere } from "./local-self-check.js";
-import { LocalSuggest } from "./local-suggest.js";
 import { desktopEmitterFor } from "./notice-emitter.js";
+import { openWeb } from "./native.js";
 import { desktopNotificationHost } from "./notify-host.js";
 import { reuseSweepsOverBridge } from "./reuse-sweeps-wire.js";
 import type { ReuseSweepLine } from "../../webapp/app/shell/reuse-sweeps";
-import { useRecheckWhileShown, useSweepsAnswer } from "../../webapp/app/shell/ReuseSweepNotice";
+import { useRecheckWhileShown, useSweepsAnswer, useSweepsFrameNotice } from "../../webapp/app/shell/ReuseSweepNotice";
 
 export interface DesktopFrameProps {
   engine: OhmailEngine;
@@ -94,13 +99,32 @@ export interface DesktopFrameProps {
   connection: Signal<HostConnectionState | null>;
 }
 
+const DESKTOP_MAIL_PARTS = browserMailParts({ mailboxes: NONE, account: NONE });
+const ACCOUNT_IN_BROWSER = { open: () => openWeb("account").then(() => true, () => false) };
+const MANAGED_MAIL_PARTS = browserMailParts({
+  mailboxes: NONE,
+  account: { useBrowserDoor: () => ACCOUNT_IN_BROWSER },
+});
+
 const entry = (name: FeatureEntry["name"], node: ReactNode, notice?: FeatureEntry["notice"]): FeatureEntry =>
   ({ name, render: () => node, ...(notice ? { notice } : {}) });
 
 export function DesktopFrame(p: DesktopFrameProps) {
-  /* What every browser shell hands the frame: made where the frame mounts, under the window's theme. */
-  const frame = useTodaysSupplies(NONE);
-  const { status, session, paired, hostLabel, freshness, storage, mayLinkOut, ai } = p;
+  const { status, session, paired, hostLabel, freshness, storage, mayLinkOut } = p;
+  /* The native Account action opens the managed service, and the gate already confirmed the session at mount. */
+  const managedAccount = flavorOf(status) === "managed" && accountDoorFor(status, session) !== null;
+  /* What every browser host hands the frame for mail: made where the frame mounts, under the window's theme. */
+  const frame = useBrowserMail(NONE, managedAccount ? MANAGED_MAIL_PARTS : DESKTOP_MAIL_PARTS);
+  /* The language's controls this window's own provider stands, as the host contract takes them: one record while
+     the language and its adoption stand. */
+  const controls = useAppLocale();
+  const drawnLocale = controls?.locale;
+  const adoptLocale = controls?.adoptLocale;
+  const language = useMemo(
+    (): HostDevice["language"] =>
+      drawnLocale === undefined || adoptLocale === undefined ? NONE : { locale: drawnLocale, adoptLocale },
+    [drawnLocale, adoptLocale],
+  );
   const onStatus = useStableCallback(p.onStatus);
   const openOverlay = useStableCallback(p.openOverlay);
   const takeOver = useStableCallback(p.takeOver);
@@ -130,7 +154,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
           <MailboxFilings api={filingsOverBridge} />
           {status.mode === "local" ? <MailboxSelfCheck check={checkMailboxHere} /> : null}
         </>
-      )),
+      ), MAILBOXES_NOTICES),
       ai: entry("ai", <DesktopAiAccount />),
       subscription: entry("subscription", <DesktopSubscription onNowhere={withdrawManage} />),
       storage: entry("storage", storage ? <DesktopStorage facts={storage} linksOut={mayLinkOut} reread={rereadAccess} /> : null),
@@ -156,7 +180,9 @@ export function DesktopFrame(p: DesktopFrameProps) {
       devices: entry("devices", hostMode ? <DesktopDevices />
         : <DesktopWebSection place="devices" copy={{ title: "webDevicesTitle", why: "webDevicesWhy", note: "webDevicesNote" }} />),
       defaultMail: entry("defaultMail", <DefaultMailRow />),
-      stageCard: entry("stageCard", p.firstRunOpen ? null : <DefaultMailAsk />),
+      /* The one-time ask to open mail links: said in the frame's notice slot, beside the list; nothing while the first
+         run stands. */
+      stageCard: entry("stageCard", null, () => useDefaultMailNotice(!p.firstRunOpen)),
       screener: entry("screener", <DesktopScreening door={status.mode ?? null} />),
       help: entry("help", null),
     };
@@ -171,6 +197,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
       ? null : { document: noticeDocument, session: noticeSession });
   }, [noticeDocument, noticeSession]);
 
+  const connect = useMemo(() => p.firstRun ? connectWireOver(p.firstRun) : NONE, [p.firstRun]);
   const host = useMemo(() => desktopHost(p.engine, {
     status,
     session,
@@ -200,6 +227,7 @@ export function DesktopFrame(p: DesktopFrameProps) {
       draftReply,
       consent: { account: consentOverBridge, standalone: consentOverBridgeStandalone },
       firstRun: p.firstRun ?? NONE,
+      connect,
       screening: NONE,
       autoFiled: NONE,
       ownModelAutoSuggest: NONE,
@@ -209,44 +237,30 @@ export function DesktopFrame(p: DesktopFrameProps) {
     notifications: { ...desktopNotificationHost, emitter: noticeEmitter, liveNoticeScope: p.liveNoticeScope },
     frame,
     badge: p.onUnread,
+    language,
+    /* The webview's new-window request, which the shell opens in the person's own browser, on a press alone. */
+    openLink: browserOpenLink,
+    /* The file door saves and stages through the window's shell where it is armed; a preview build answers none
+       and saves as a browser does. Read as the host is built: the window is armed before anything mounts. */
+    saveFile: desktopFileShell(),
+    pickFile: desktopDroppedFilesEnabled() ? {
+      looksLikeDrag: looksLikeWithheldFileDrag,
+      matchesDrop: isWithheldFileDrop,
+      take: takeDroppedFiles,
+    } : NONE,
     hostConnection: p.connection,
     linkIn: p.links,
   }), [p.engine, p.liveBody, status, session, p.sessionRefused, hostLabel, p.manageOffered, storage, mayLinkOut,
-    p.takesMailLinks, p.scope, p.liveNoticeScope, noticeEmitter, p.account, draftReply, p.firstRun, features, p.onUnread, p.connection, p.links, frame]);
+    p.takesMailLinks, p.scope, p.liveNoticeScope, noticeEmitter, p.account, draftReply, p.firstRun, connect, features, p.onUnread, language, p.connection, p.links,
+    frame]);
 
-  /* What today's views take that the contract does not carry: the Screener's own suggest control, by door, and the
-     name of the desktop's pane. */
-  const suggestDoor = suggestDoorFor(status, session);
-  /* The hosted control's run is handed its two readers: bound here, where a hook may be called. */
-  const tScreener = useTranslations("screener");
-  const tAiRefusal = useTranslations("aiRefusal");
-  const suggestText = useMemo(
-    () => ({ screener: tScreener, aiRefusal: tAiRefusal }) as unknown as CloudSuggestProps["text"],
-    [tScreener, tAiRefusal],
-  );
-  const todays = useMemo((): TodaysNodes => ({
-    screenerSuggest: suggestDoor === "local"
-      ? ({ senders, absorb }) => <LocalSuggest senders={senders} absorb={absorb} ai={ai} onConfigure={() => goSettings("desktop")} />
-      : suggestDoor === "cloud"
-        ? ({ senders, resuggestable, unanswered, absorb, absorbStanding }) => (
-          <CloudSuggest senders={senders} resuggestable={resuggestable} unanswered={unanswered} absorb={absorb} absorbStanding={absorbStanding} text={suggestText} />
-        )
-        : NONE,
-    desktopPane: { label: desktopPaneLabel() },
-  }), [suggestDoor, ai, suggestText]);
-
-  return <TodaysFrame host={host} todays={todays} />;
+  return <MailFrame host={host} />;
 }
 
-/** The sign-ins ohmail ended because an older copy used them again, as one notice with its one answer. */
+/** The sign-ins ohmail ended because an older copy used them again, as one notice: the advice, OK and Details. */
 function useSweepsNotice(sweeps: readonly ReuseSweepLine[], recheck: () => Promise<unknown>) {
-  const t = useTranslations("settings");
   useRecheckWhileShown(true, recheck);
   const { shown, ok } = useSweepsAnswer(sweeps, reuseSweepsOverBridge);
-  if (shown.length === 0) return [];
-  return [{
-    kind: "signInCopies" as const,
-    title: t("reuseSweepsTitle", { count: shown.length }),
-    acts: [{ label: t("reuseSweepsOk"), onPress: ok }] as const,
-  }];
+  const notice = useSweepsFrameNotice(shown, ok);
+  return notice === null ? [] : [notice];
 }

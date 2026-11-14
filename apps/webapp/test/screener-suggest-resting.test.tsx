@@ -235,7 +235,7 @@ async function mountView(props: Record<string, unknown>): Promise<HTMLElement> {
   const { useScreenerState } = await import("@ohmail/app-logic/screener/screener-state");
   const { useScreenerText } = await import("../app/shell/screener-text.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith([
     held("m1", "one@example.test", 9),
     held("m2", "two@example.test", 10),
@@ -375,7 +375,7 @@ async function mountLive(): Promise<Live> {
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const engine = await engineWith(TWELVE);
 
   let live: { unsuggestedSenders: string[]; suggestedSenders: string[] } | null = null;

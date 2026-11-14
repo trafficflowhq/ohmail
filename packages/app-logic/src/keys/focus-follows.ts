@@ -36,6 +36,8 @@ const TABBABLE = [
 
 /** Where somebody was: the control, the row it stood in and the rows either side, and the list. */
 interface Place {
+  /** The frame this control belonged to. Its replacement is another host scope, even if row ids repeat. */
+  frame: Element | null;
   el: HTMLElement | null;
   row: HTMLElement | null;
   id: string | null;
@@ -146,6 +148,7 @@ function placeOf(target: Element | null): Place {
     prev = at > 0 ? rows[at - 1] ?? null : null;
   }
   return {
+    frame: el?.closest(".fr-root") ?? null,
     el, row, list, next, prev,
     id: row?.dataset.id ?? null,
     nextId: next?.dataset.id ?? null,
@@ -190,7 +193,7 @@ function stopWaiting(): Place | null {
  */
 function land(p: Place, returnTo: boolean, wait = false): boolean {
   // A document whose root has unmounted has no body: there is nowhere left to put focus.
-  if (document.body === null) return false;
+  if (document.body === null || (p.frame !== null && !p.frame.isConnected)) return false;
   const modal = standingModal();
   const take = (el: HTMLElement | null | undefined): boolean =>
     el != null && el.isConnected && (modal === null || modal.contains(el))
@@ -198,6 +201,8 @@ function land(p: Place, returnTo: boolean, wait = false): boolean {
   const chain = chainOf(p);
   if (returnTo) {
     for (const q of chain) {
+      // A list drawn again after leaving the place returns to the original row by id.
+      if (q.row !== null && !q.row.isConnected && take(rowById(q.id))) return true;
       const cursor = cursorRow();
       if (q.el !== null && q.el === q.row && cursor !== null && cursor !== q.el && take(cursor)) return true;
       if (take(q.el) || take(rowById(q.id))) return true;

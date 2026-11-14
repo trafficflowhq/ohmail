@@ -8,6 +8,7 @@ import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../../webapp/messages/en.json";
 import { stubThreadLayout, type ThreadLayout } from "../../webapp/test/fixtures/thread-layout.js";
+import { cursorRow, lettersShown, readingColumn } from "../../webapp/test/ohbox/_finders.js";
 
 /**
  * THE DESKTOP'S OHBOX SAVES A READ WHEN IT SHOWS ONE. Paired and standalone windows mount the web
@@ -16,6 +17,11 @@ import { stubThreadLayout, type ThreadLayout } from "../../webapp/test/fixtures/
  * of the message on screen on the outbox and the wire once its top was on screen for the dwell,
  * while it is still open, and the count follows it; a j preview passed within the rest writes nothing,
  * one rested on reads. The window's reader is laid out (`thread-layout.ts`).
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): the window mounts the shell there is (the web's `MailShell`:
+ * the frame over the mail ground, the seated Ohbox and the reader, `_mail-shell.tsx`), and its parts are found by
+ * role and by the marks the new list and reader draw: a row is an option, the cursor row by the list's own finder,
+ * the letter the reader is on by the ring in the conversation's squares. Expectations as they stood.
  */
 
 (globalThis as unknown as { React: unknown }).React = React;
@@ -69,12 +75,12 @@ afterEach(async () => {
 });
 
 const count = (): number => Number(/(\d+) unread/.exec(host!.textContent ?? "")?.[1] ?? NaN);
-const rowOf = (id: string): HTMLElement => host!.querySelector<HTMLElement>(`:is(.row, [role=option])[data-id="${id}"]`)!;
+const rowOf = (id: string): HTMLElement => host!.querySelector<HTMLElement>(`[role=option][data-id="${id}"]`)!;
 
 /** The window as `DesktopGate` mounts it: the web client's shell over an engine the window built. */
 async function mountWindow(store: LaterTaskDisk): Promise<void> {
   const engine = new OhmailEngine({ adapter: new FixturesAdapter(), store, storePolicy: { mode: "full" } });
-  const { AppShell } = await import("../../webapp/test/_todays-shell.js");
+  const { MailShell: AppShell } = await import("../../webapp/test/_mail-shell.js");
   window.location.hash = "#/ohbox";
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -96,7 +102,7 @@ describe("the desktop window's Ohbox", () => {
     const store = new LaterTaskDisk();
     await mountWindow(store);
 
-    const first = host!.querySelector<HTMLElement>(':is(.row, [role=option])[data-unseen="1"][data-id]');
+    const first = host!.querySelector<HTMLElement>('[role=option][data-unseen="1"][data-id]');
     expect(first, "the fixture Ohbox shows no unread row").not.toBeNull();
     // A preview: the first row on screen, resting well past the rest, the window in front. Rested on,
     // it reads (owner 2026-10-28: "no it stays like that and does not fade, that's the issue").
@@ -107,7 +113,7 @@ describe("the desktop window's Ohbox", () => {
     // The open, of the next unread row: what it writes alone.
     wire = [];
     store.disk.length = 0;
-    const row = host!.querySelector<HTMLElement>(':is(.row, [role=option])[data-unseen="1"][data-id]');
+    const row = host!.querySelector<HTMLElement>('[role=option][data-unseen="1"][data-id]');
     expect(row, "the fixture Ohbox shows no second unread row").not.toBeNull();
     const id = row!.dataset.id!;
     const before = count();
@@ -125,7 +131,7 @@ describe("the desktop window's Ohbox", () => {
 
   it("a preview passed within the rest writes nothing, however long after", async () => {
     await mountWindow(new LaterTaskDisk());
-    const passed = host!.querySelector<HTMLElement>(":is(.row, [role=option])[data-id]")!.dataset.id!;
+    const passed = host!.querySelector<HTMLElement>("[role=option][data-id]")!.dataset.id!;
     expect(rowOf(passed).dataset.unseen, "the first row is not unread").toBe("1");
     const j = () => act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true })); });
     await j();
@@ -138,7 +144,7 @@ describe("the desktop window's Ohbox", () => {
 
   it("a row marked unread stays unread after j away, k back and a long rest; ↵ then reads it (found on 0.30.12)", async () => {
     await mountWindow(new LaterTaskDisk());
-    const id = host!.querySelector<HTMLElement>(':is(.row, [role=option])[data-unseen="1"][data-id]')!.dataset.id!;
+    const id = host!.querySelector<HTMLElement>('[role=option][data-unseen="1"][data-id]')!.dataset.id!;
     const key = (k: string) => act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })); });
     const wait = (ms: number) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
     const marks = () => wire.filter((w) => w.kind === "mark_seen" && w.ids.includes(id)).map((w) => w.unread);
@@ -152,7 +158,8 @@ describe("the desktop window's Ohbox", () => {
     await key("j");
     await wait(300);
     await key("k");
-    expect(host!.querySelector(".view :is(.row.sel, [role=option][data-open])")?.getAttribute("data-id"), "k came back").toBe(id);
+    await wait(0); // the new shell draws the open row from the address, which the window announces a task later
+    expect(cursorRow(host!)?.getAttribute("data-id"), "k came back").toBe(id);
     await wait(6000);
     expect(marks(), "the landing's rest read it back").toEqual([false, true]);
     await key("Enter");
@@ -191,22 +198,27 @@ describe("the desktop window's Ohbox", () => {
       return { ...page, changes: { ...page.changes, creates } };
     });
     await mountWindow(new LaterTaskDisk());
-    const group = [...host!.querySelectorAll<HTMLElement>(':is(.row, [role=option])[data-unseen="1"][data-ids]')]
+    const group = [...host!.querySelectorAll<HTMLElement>('[role=option][data-unseen="1"][data-ids]')]
       .find((r) => (r.dataset.ids ?? "").split(" ").length >= 2);
     expect(group, "the fixture Ohbox shows no unread conversation").toBeTruthy();
     const newest = group!.dataset.id!;
     const older = group!.dataset.ids!.split(" ").filter((id) => id !== newest);
-    const holding = (): HTMLElement => host!.querySelector<HTMLElement>(`:is(.row, [role=option])[data-ids~="${newest}"]`)!;
+    const holding = (): HTMLElement => host!.querySelector<HTMLElement>(`[role=option][data-ids~="${newest}"]`)!;
     const reads = () => wire.filter((w) => w.kind === "mark_seen").flatMap((w) => w.ids);
-    const focused = () => host!.querySelector<HTMLElement>('.read-col [data-conv-id][aria-current="true"]')?.dataset.convId
-      ?? host!.querySelector<HTMLElement>(".read-col [data-conv-id]")?.dataset.convId;
+    /* The letter the reader is on: the ring in the conversation's squares beside the letters, by its place. */
+    const focused = (): string | undefined => {
+      const conversation = [...(readingColumn(host!)?.querySelectorAll<HTMLElement>('[role="group"]') ?? [])]
+        .find((g) => /^\d+ messages, /.test(g.getAttribute("aria-label") ?? "") && g.closest('[role="option"]') === null);
+      const at = conversation?.querySelector<HTMLElement>("[data-square][data-here]")?.dataset.square;
+      return at === undefined ? undefined : lettersShown(host!)[Number(at)];
+    };
 
     await act(async () => { holding().click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });
     await layout.passDwell();
     expect(focused(), "the first open").toBe(newest);
     expect(reads(), "the first open reads the newest").toEqual([newest]);
-    const other = [...host!.querySelectorAll<HTMLElement>(":is(.row, [role=option])[data-id]")].find((r) => !(r.dataset.ids ?? r.dataset.id!).split(" ").includes(newest));
+    const other = [...host!.querySelectorAll<HTMLElement>("[role=option][data-id]")].find((r) => !(r.dataset.ids ?? r.dataset.id!).split(" ").includes(newest));
     expect(other, "the fixture Ohbox shows one row only").toBeTruthy();
     await act(async () => { other!.click(); });
     await act(async () => { await vi.advanceTimersByTimeAsync(50); });

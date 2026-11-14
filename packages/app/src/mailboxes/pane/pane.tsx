@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { useEngineOrNull } from "@ohmail/app-logic/engine";
+import { useEngine } from "@ohmail/app-logic/engine";
 import { documentHidden } from "@ohmail/app-logic/session/document-hidden";
 import { useFrame } from "../../frame/index.js";
 import { NONE, panesOf, type None } from "../../host/index.js";
@@ -26,6 +26,9 @@ export interface MailboxesSlots {
   readonly mailState: () => PaneMailState;
 }
 
+/** What a host alone can hand the pane: the slots but the ground's, which the mail's panes record names. */
+export type MailboxesParts = Omit<MailboxesSlots, "mailState">;
+
 /**
  * THE MAILBOXES PANE'S REGISTRATION: its body and what the menu says beside its name, from what is in memory alone.
  * Made once by a shell (module scope or a memo), never inline: a registered entry is never a component made in render.
@@ -34,7 +37,7 @@ export interface MailboxesSlots {
 export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" | "useSummary"> {
   function Body(_props: PaneBodyProps): ReactNode {
     const { host, route, commands } = useFrame();
-    const engine = useEngineOrNull();
+    const engine = useEngine();
     const mail = slots.mailState();
     const { refresh } = mail;
     const importing = mail.state.key === "importing";
@@ -42,7 +45,7 @@ export function mailboxesPane(slots: MailboxesSlots): Pick<SettingsPane, "Body" 
       () => ({
         importing,
         refresh: () => void refresh(),
-        sync: () => void engine?.syncOnce().catch(() => undefined),
+        sync: () => void engine.syncOnce().catch(() => undefined),
       }),
       [engine, importing, refresh],
     );

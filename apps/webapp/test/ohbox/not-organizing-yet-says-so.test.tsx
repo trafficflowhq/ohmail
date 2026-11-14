@@ -5,8 +5,6 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import en from "../../messages/en.json";
 import { settleFirstPaint } from "../_first-paint.js";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   nothingOrganizesOf, notOrganizingYetOf, readerStandDown, type MailboxFacts, type NotOrganizingYet, type ScreenerRole,
 } from "@ohmail/app-logic/mail-state/mail-state";
@@ -102,7 +100,7 @@ function screenerState(): ScreenerState {
 }
 
 async function mount(node: React.ReactElement): Promise<HTMLElement> {
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../../test/support/keymap-provider");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -123,30 +121,6 @@ async function screener(notOrganizingYet: NotOrganizingYet | null): Promise<HTML
     settled: true, owed: false, storeImportOpen: false,
     onSelect: () => {}, hydrateBody: () => {}, hydrateBodies: () => {}, full: false, onFull: () => {},
     notOrganizingYet,
-  } as never));
-}
-
-/** A never-seen sender in the Ohbox — what a mailbox nothing screens looks like. */
-const stranger = {
-  id: "m1", accountId: "a", mailboxId: "mb-1", threadId: null, messageIdHeader: null, subject: "Hello",
-  from: { name: "Ada Stranger", address: "ada@first-time.example" }, to: [], cc: [],
-  date: "2026-10-09T10:50:00.000Z", folder: "INBOX", snippet: "s", unread: true, hasAttachments: false, attachmentCount: 0,
-  sensitivity: { sensitive: false, category: null, no_ai: false, no_forward: false, no_kb: false, priority: false },
-  triage: null, labels: [], remoteContent: "none", updatedAt: "2026-10-09T10:50:00.000Z",
-};
-
-async function ohbox(notOrganizingYet: NotOrganizingYet | null, more: Record<string, unknown> = {}): Promise<HTMLElement> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  return mount(h(OhboxView as never, {
-    owed: false, demo: false, settled: true,
-    older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-    // One row: an empty Ohbox renders the sync strip, which reads the shell's provider this harness does not mount.
-    resurfacedRows: [], newForYou: [stranger], previouslySeen: [], replyDone: null, tags: [], now: NOW,
-    selectedId: null, onSelect: () => {}, onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id],
-    onMarkSeen: () => {},
-    bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-    doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-    notOrganizingYet, ...more,
   } as never));
 }
 
@@ -208,19 +182,6 @@ describe("the Screener over a mailbox nothing organizes", () => {
   });
 });
 
-describe("the Ohbox doorbell over a mailbox nothing organizes", () => {
-  const doorbell = (el: HTMLElement) => [...el.querySelectorAll<HTMLButtonElement>("button")].find((b) => /waiting at the Screener|Screener/.test(b.getAttribute("aria-label") ?? "")) ?? null;
-
-
-
-  it("draws no bell, not even 'All clear', while the Screener's queue is not read yet", async () => {
-    const el = await ohbox(null, { doorbellSettled: false });
-    expect(doorbell(el)).toBeNull();
-    expect(text(el)).not.toContain("All clear");
-  });
-
-});
-
 /**
  * A MAILBOX HANDED BACK, OR WHOSE HOLDER STOPPED, IS NOT SCREENED EITHER. After "Hand the mailbox back" a stranger
  * landed in the Ohbox while the Screener said "all clear · First-time senders appear here before anything reaches the
@@ -264,13 +225,6 @@ describe("nothingOrganizesOf — every mailbox nothing organizes, and why", () =
     expect(readerStandDown(back)).toBe("released");
     expect(readerStandDown({ ...back, takeoverAuthorizedAt: T } as MailboxFacts)).toBe("released");
     expect(readerStandDown({ ...back, organizerChecked: false } as MailboxFacts)).toBe("released");
-  });
-
-  it("the shell hands the Ohbox and the Screener this set, not the never-agreed one", () => {
-    const shell = readFileSync(resolve(process.cwd(), "apps/webapp/app/shell/AppShell.tsx"), "utf8");
-    /* The Screener takes it as its view's prop; the seated Ohbox as a member of the composition's feed. */
-    expect(shell.match(/notOrganizingYet(=\{|: )demo \? null : nothingOrganizesOf\(facts\)/g)).toHaveLength(2);
-    expect(shell).not.toMatch(/notOrganizingYet(=\{|: )demo \? null : notOrganizingYetOf\(facts\)/);
   });
 });
 

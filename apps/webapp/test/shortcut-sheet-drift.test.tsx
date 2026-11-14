@@ -65,7 +65,7 @@ async function unmount(): Promise<void> {
 
 async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -78,7 +78,7 @@ async function mountShell(locale: "en" | "de" = "en"): Promise<void> {
         locale, messages: locale === "de" ? de : en, timeZone: "UTC", now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           storageKey: null,
-          children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
+          children: h(ToastHost, { children: h(MailShell, { demo: true }) }),
         }),
       }),
     );
@@ -94,8 +94,8 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 
 /** The palette's rows as `{ caps, label }` — the caps are the row's own keycaps, joined. */
 function paletteRows(): Array<{ caps: string; label: string }> {
-  return [...host!.querySelectorAll<HTMLElement>(".palette [role=option]")].map((li) => {
-    const caps = [...(li.querySelector(".keys")?.querySelectorAll("kbd") ?? [])]
+  return [...document.querySelectorAll<HTMLElement>('[role="dialog"] [role="option"]')].map((li) => {
+    const caps = [...(li.querySelector(".oh-palette-keys")?.querySelectorAll("kbd") ?? [])]
       .map((k) => k.textContent ?? "").join("");
     /* The label is the row WITHOUT its keycap span, taken by removing that node from a clone.
        Subtracting the caps STRING from the row's text is what this used to do, and it is wrong
@@ -105,7 +105,7 @@ function paletteRows(): Array<{ caps: string; label: string }> {
        and the row read `shortcuts.Ohboxgo`. The case went red either way; a test whose failure
        text is garbled is a test somebody has to debug before they can read it. */
     const clone = li.cloneNode(true) as HTMLElement;
-    clone.querySelector(".keys")?.remove();
+    clone.querySelector(".oh-palette-keys")?.remove();
     return { caps, label: (clone.textContent ?? "").trim() };
   });
 }
@@ -113,9 +113,9 @@ function paletteRows(): Array<{ caps: string; label: string }> {
 /** The `?` sheet's rows as `{ caps, label }`, one entry per chord spelling. */
 function sheetRows(): Array<{ caps: string; label: string }> {
   const out: Array<{ caps: string; label: string }> = [];
-  for (const li of host!.querySelectorAll(".ks li")) {
-    const label = li.querySelector(".ks-lab")?.textContent ?? "";
-    for (const chord of li.querySelectorAll(".ks-chord")) {
+  for (const li of document.querySelectorAll('[role="dialog"] .oh-keyhelp-row')) {
+    const label = li.querySelector(".oh-keyhelp-label")?.textContent ?? "";
+    for (const chord of li.querySelectorAll(".oh-keyhelp-chord")) {
       out.push({ caps: [...chord.querySelectorAll("kbd")].map((k) => k.textContent ?? "").join(""), label });
     }
   }
@@ -178,7 +178,7 @@ describe("the palette and the ? sheet name a destination with one sentence", () 
 
 /** Types into the open palette's field. */
 async function query(text: string): Promise<void> {
-  const input = host!.querySelector<HTMLInputElement>(".palette input")!;
+  const input = document.querySelector<HTMLInputElement>('[role="dialog"] [role="combobox"]')!;
   await act(async () => {
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text);
     input.dispatchEvent(new Event("input", { bubbles: true }));

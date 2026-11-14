@@ -44,7 +44,8 @@ export function HistoryList({ plan }: PaneProps) {
     <ListHead
       title={t("title")}
       hot={model.list.rows.some((m) => m.unread)}
-      count={model.count > 0 ? t("metaCount", { count: model.count }) : undefined}
+      /* Where the store does not answer, the device's mail stands and is not every letter owned: no count. */
+      count={model.count > 0 && !model.store.down ? t("metaCount", { count: model.count }) : undefined}
       aside={<ListMenu label={t("list.menu")} items={[]} />}
       below={
         inHead && years.length > 0 ? (
@@ -59,7 +60,7 @@ export function HistoryList({ plan }: PaneProps) {
     />
   );
   return (
-    <ListColumn head={head} plan={plan} scrollerRef={scroller}>
+    <ListColumn head={head} plan={plan} cursor={model.list.cursor} scrollerRef={scroller}>
       {model.store.down ? (
         <RefusalLine way={{ label: t("storeRetry"), onPress: model.store.retry }}>
           {t("storeUnavailable")}
@@ -75,7 +76,7 @@ export function HistoryList({ plan }: PaneProps) {
           <LetterRows
             label={t("title")}
             rows={model.list.rows}
-            openId={model.list.openId}
+            cursor={model.list.cursor}
             press={model.list.press}
             stamp={model.stamp}
             file={t("row.file")}

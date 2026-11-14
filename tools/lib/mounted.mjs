@@ -70,10 +70,33 @@ function firstArgLiterals(reading, callee) {
     }
     const name = /^[A-Za-z_$][\w$]*/.exec(reading.code.slice(at))?.[0];
     const bound = name && new RegExp(`\\b${name}\\b[^=;{}()]*=\\s*\\{`).exec(reading.code);
+    const made = bound || !name ? null : madeBy(reading.code, name);
     if (bound) braces.push(bound.index + bound[0].length - 1);
+    else if (made !== null) braces.push(made);
     else unread += 1;
   }
   return { braces, unread };
+}
+
+/**
+ * The literal a name is made from where it is bound to a call of a function of the same file: `const panes =
+ * mailPanes(parts);` and `function mailPanes(parts) { return { ... }; }`. The brace of that `return {`, or null.
+ */
+function madeBy(code, name) {
+  const call = new RegExp(`\\b(?:const|let|var)\\s+${name}\\b[^=;{}()]*=\\s*([A-Za-z_$][\\w$]*)\\s*\\(`).exec(
+    code,
+  );
+  if (!call) return null;
+  const fn = new RegExp(`\\bfunction\\s+${call[1]}\\s*\\(`).exec(code);
+  if (!fn) return null;
+  const params = closeOf(code, fn.index + fn[0].length - 1);
+  if (params < 0) return null;
+  const head = /^\s*(?::[^{;]*)?\{/.exec(code.slice(params + 1));
+  if (!head) return null;
+  const body = params + 1 + head[0].length - 1;
+  const end = closeOf(code, body);
+  const ret = /\breturn\s*\(?\s*\{/.exec(code.slice(body, end < 0 ? undefined : end));
+  return ret ? body + ret.index + ret[0].length - 1 : null;
 }
 
 /** Whether the `{` at `brace` opens an object literal (a value), not a block or a type's body. */

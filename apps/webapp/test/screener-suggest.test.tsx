@@ -200,7 +200,7 @@ async function mountView(engine: OhmailEngine, opts: { active?: boolean } = {}):
   const { useScreenerSuggestions } = await import("../app/shell/screener-suggest.js");
   const { CLOUD_WIRE } = await import("../app/(product)/mailbox/suggest-wire.js");
   const { ScreenerView } = await import("../app/views/ScreenerView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
 
   /**
    * The LIVE state, re-captured every render.

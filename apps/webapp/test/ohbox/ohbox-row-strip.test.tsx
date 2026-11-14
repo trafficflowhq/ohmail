@@ -9,15 +9,25 @@
  *
  * The kit's squares carry their index (`data-square`) and their kind (`data-kind`); the ring is the one mark drawn
  * in a square. Geometry: tops 0/420/840/1260, p4 60px tall, the view 740, so the scroll's end is 620.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): the shell is the one there is (the shared fixtures mount
+ * `_mail-shell.tsx`: the frame over the mail ground, the seated Ohbox and the reader). The reading column is the
+ * frame's reading section; a letter is found by `data-conv-id`; the reader's ring is the square of the column of
+ * squares beside the letters that the reader is on (`data-here`), by its place in the conversation. The column has no
+ * close press: Escape closes the letter beside a list (point 64, DIFFERENCES-FROM-TODAY.md: "there is no ✕ on the
+ * column"), so "the column's close" is Escape. At a phone's width the letter is the reading sheet and its way back is
+ * the sheet's Back (named by the place it returns to); a phone's width is the window's (the frame lays its plan from
+ * it) as well as the media query's. Expectations as they stood.
  */
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { answerStoreWith, installShellEnv, teardownShellEnv, tick } from "../fixtures/live-walk-shell.js";
 import { ME, arriveLater, click, key, mountThread, msg, patches, readSlot, settle, theRow } from "../fixtures/thread-read-shell.js";
 import { stubThreadLayout, type ThreadLayout } from "../fixtures/thread-layout.js";
+import { letterShown, lettersShown, openLetter, readingColumn } from "./_finders.js";
 
 const glances = () => patches.filter((p) => p.via === "glance").map((p) => p.ids);
-const col = (): HTMLElement => document.querySelector<HTMLElement>(".read-col")!;
-const panel = (id: string): HTMLElement | null => col()?.querySelector<HTMLElement>(`[data-conv-id="${id}"]`) ?? null;
+const col = (): HTMLElement => readingColumn(document)!;
+const panel = (id: string): HTMLElement | null => letterShown(document, id);
 const bodies = (ids: string[]): void => answerStoreWith([], Object.fromEntries(ids.map((id) => [id, `the words of ${id}`])));
 const four = () => [msg("p1", 0), msg("p2", 10), msg("p3", 20), msg("p4", 30)];
 const ORDER = ["p1", "p2", "p3", "p4"];
@@ -44,13 +54,26 @@ const stripRing = (host: ParentNode, order = ORDER): string | undefined => ringI
 const stripButton = (host: ParentNode, id: string, order = ORDER): HTMLElement | null =>
   slots(strip(host)).find((s) => Number(s.dataset.square) === order.indexOf(id)) ?? null;
 const stripKinds = (host: ParentNode): string[] => slots(strip(host)).map((s) => KIND[s.dataset.kind ?? ""] ?? "?");
-const ring = (): string | undefined =>
-  document.querySelector<HTMLElement>('.thread-marks .tm-mb[aria-current="location"]')?.dataset.for;
+/** The column of squares beside the letters, by its name ("4 messages, 4 unread"): a group no row holds. */
+const squaresColumn = (): HTMLElement | null =>
+  [...(readingColumn(document)?.querySelectorAll<HTMLElement>('[role="group"]') ?? [])]
+    .find((g) => /^\d+ messages, /.test(g.getAttribute("aria-label") ?? "") && g.closest('[role="option"]') === null) ?? null;
+/** The letter the reader's ring stands on: the square the reader is on, by its place in the conversation. */
+const ring = (): string | undefined => {
+  const at = squaresColumn()?.querySelector<HTMLElement>("[data-square][data-here]")?.dataset.square;
+  return at === undefined ? undefined : lettersShown(document)[Number(at)];
+};
+/** The column's close: Escape beside a list (point 64: the column draws no ✕). */
+const closeColumn = (): Promise<void> => key("Escape");
+/** The reading sheet's way back on a phone: its Back, named by the place it returns to ("Ohbox") or "Back". */
+const sheetBack = (): HTMLElement | null =>
+  [...(openLetter(document)?.querySelectorAll<HTMLElement>("button") ?? [])].find((b) =>
+    /^(Back|Ohbox)$/.test(b.getAttribute("aria-label") ?? (b.textContent ?? "").trim())) ?? null;
 
 let layout: ThreadLayout;
 
 beforeAll(async () => {
-  await import("../../app/shell/AppShell.js");
+  await import("../_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => {
@@ -141,8 +164,8 @@ describe("the walked row's squares follow the reader's ring", () => {
     await settle();
     const stopped = ring();
     expect(stopped).toBeDefined();
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
+    await closeColumn();
+    expect(openLetter(document), "the reader closed").toBeNull();
     expect(stripRing(host), "the row remembers the place").toBe(stopped);
     const before = glances().length;
     await click(stripButton(host, "p2"), "p2 in the row, nothing open");
@@ -157,8 +180,8 @@ describe("the walked row's squares follow the reader's ring", () => {
     await key("j");
     await key("Enter");
     await dwell();
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
+    await closeColumn();
+    expect(openLetter(document), "the reader closed").toBeNull();
     arriveLater([msg("p5", 40)], ["p1", "p2", "p3", "p4", "p5"]);
     await tick(20_000);
     await settle();
@@ -175,9 +198,11 @@ describe("the walked row's squares follow the reader's ring", () => {
     await key("Enter");
     await dwell();
     await click(readSlot(col()), "Mark read");
+    /* The column closes first: Escape is the close beside a list (point 64), and with a pick standing the list's own
+       Escape (the pick dropped) answers before it. Then the pick, so u reaches the conversation with the column closed. */
+    await closeColumn();
+    expect(openLetter(document), "the reader closed").toBeNull();
     await key("x"); // picked, so u reaches the conversation with the column closed
-    await click(document.querySelector(".read-col-close"), "the column's close");
-    expect(document.querySelector(".thread-marks"), "the reader closed").toBeNull();
     expect(stripKinds(host)).toEqual(["read", "read", "read", "read"]);
     await key("u");
     const unread = stripKinds(host).filter((k) => k === "unread").length;
@@ -215,7 +240,7 @@ describe("the walked row's squares follow the reader's ring", () => {
       await settle();
       expectRows(`T walked to ${y}`, { [T]: ["strip"], [S]: ["own"] });
     }
-    await click(document.querySelector(".read-col-close"), "the column's close");
+    await closeColumn();
     expectRows("T closed, its place kept", { [T]: ["strip"], [S]: ["own"] });
     arriveLater([msg("p5", 50)], ["p1", "p2", "p3", "p4", "p5"]);
     await tick(20_000);
@@ -240,16 +265,21 @@ describe("the walked row's squares follow the reader's ring", () => {
     await key("Enter");
     expect(stripButton(host, "o1", order), "the own reply has its square").not.toBeNull();
     expect(stripButton(host, "o1", order)?.dataset.kind).toBe("own");
-    await click(document.querySelector(".read-col-close"), "the column's close");
+    await closeColumn();
     await click(stripButton(host, "o1", order), "the own reply's square");
-    expect(document.querySelector(".msg-gone"), "a false 'removed elsewhere'").toBeNull();
+    expect(document.body.textContent ?? "", "a false 'removed elsewhere'").not.toMatch(/moved or deleted elsewhere/i); // the reader's gone words
     expect(panel("o1"), "the conversation is open").not.toBeNull();
     expect(ring()).toBe("o1");
   }, 30_000);
 });
 
 describe("at phone width, Back from a letter keeps the cursor on its row", () => {
+  const wide = window.innerWidth;
+  afterEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: wide });
+  });
   it("the row read wears the cursor, the focus and its walked squares after Back: a conversation, an unread letter, a read one", async () => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: 390 });
     Object.defineProperty(window, "matchMedia", {
       configurable: true, writable: true,
       value: (query: string) => ({ matches: /max-width/.test(query), media: query, addEventListener: () => {}, removeEventListener: () => {}, addListener: () => {}, removeListener: () => {}, onchange: null, dispatchEvent: () => false }),
@@ -263,9 +293,9 @@ describe("at phone width, Back from a letter keeps the cursor on its row", () =>
     const cursor = (): string[] => options(host).filter((r) => r.hasAttribute("data-open")).map((r) => r.dataset.ids ?? r.dataset.id ?? "");
     for (const [id, row] of [["p4", "p4 p3 p2 p1"], ["w1", "w1"], ["u1", "u1"], ["l1", "l1"]] as const) {
       await click(rowHolding(host, id), `${id}'s row`);
-      expect(document.querySelector(".reader"), `${id} opens in the sheet`).not.toBeNull();
+      expect(openLetter(document), `${id} opens in the sheet`).not.toBeNull();
       await dwell();
-      await click(document.querySelector(".reader-close"), "the sheet's Back");
+      await click(sheetBack(), "the sheet's Back");
       expect(cursor(), `after Back from ${id}`).toEqual([row]);
       expect(rowHolding(host, id)?.getAttribute("aria-selected"), `${id} is the selected option`).toBe("true");
       expect(document.activeElement, `focus on ${id}'s row`).toBe(rowHolding(host, id));
@@ -273,7 +303,7 @@ describe("at phone width, Back from a letter keeps the cursor on its row", () =>
     expect(order(), "w1 and u1 read and filed under Earlier, the last read first; T still has unread").toEqual(["p4 p3 p2 p1", "u1", "w1", "l1"]);
     expect(squaresOf(rowHolding(host, "p4"))?.hasAttribute("data-press"), "the conversation's walk left with the cursor").toBe(false);
     await click(rowHolding(host, "p4"), "T's row again");
-    await click(document.querySelector(".reader-close"), "Back");
+    await click(sheetBack(), "Back");
     expect(squaresOf(rowHolding(host, "p4"))?.hasAttribute("data-press"), "T keeps its walked squares after Back").toBe(true);
   }, 60_000);
 });

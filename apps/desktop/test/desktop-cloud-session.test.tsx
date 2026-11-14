@@ -471,7 +471,15 @@ describe("a session refused while the mail is on screen", () => {
   it("gives focus back to where it stood once the session is live again and the card closes", async () => {
     const shell = fakeShell({ signedIn: true, sessionExpired: false, session: reading("live", null) }, { wait: true });
     const el = await render();
-    const stood = el.querySelector<HTMLElement>(".today button")!;
+    // Where focus stood: the rail's Ohbox entry, found by its landmark's role and its own name (what is said: the
+    // entry's digit is drawn beside its name, unsaid).
+    const said = (b: HTMLElement): string => {
+      const copy = b.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('[aria-hidden="true"]').forEach((n) => n.remove());
+      return copy.textContent ?? "";
+    };
+    const stood = [...el.querySelectorAll<HTMLElement>('nav[aria-label="Places"] button')]
+      .find((b) => (b.getAttribute("aria-label") ?? said(b)).trim() === "Ohbox")!;
     stood.focus();
     shell.move({ signedIn: false, sessionExpired: true, session: reading("refused", "refresh_expired", 0) });
     expect(await within(2_000, () => dialog(el))).not.toBeNull();

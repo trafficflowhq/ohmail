@@ -18,7 +18,7 @@ export function writeEntry(parts: WriteParts): WriteEntry {
       </WritePartsContext.Provider>
     );
   }
-  function Sheet(props: { readonly letters: readonly string[] }) {
+  function Sheet(props: { readonly letters: readonly string[]; readonly keysHere?: boolean }) {
     return (
       <WritePartsContext.Provider value={parts}>
         <ReplySheet {...props} />
@@ -33,5 +33,24 @@ export function writeEntry(parts: WriteParts): WriteEntry {
       else writing.openReply(messageId, how === "reply_all");
     };
   }
-  return { Letter, reply: { Sheet, useOpen, useVerbs: useReplyVerbs } };
+  /**
+   * Draft reply opens the reply on that letter (keeping the audience its editor already holds) and asks the drafter,
+   * as a list's row answers it (`answerThrough`); null where the composition has no drafter.
+   */
+  function useDraft() {
+    const writing = useWriting();
+    if (!writing.draftReply.offered) return null;
+    return (messageId: string): void => {
+      writing.openReply(messageId, writing.replyTo === messageId && writing.replyAll);
+      writing.draftReply.open(messageId);
+    };
+  }
+  function useTarget() {
+    return useWriting().reply?.messageId ?? null;
+  }
+  function useSendPhase() {
+    const writing = useWriting();
+    return (lane: string) => writing.replySendState(lane).phase;
+  }
+  return { Letter, reply: { Sheet, useTarget, useSendPhase, useOpen, useVerbs: useReplyVerbs, useDraft } };
 }

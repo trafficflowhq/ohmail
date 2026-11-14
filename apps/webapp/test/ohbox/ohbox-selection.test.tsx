@@ -1,10 +1,11 @@
 /** @vitest-environment jsdom */
 import type { EngineMutation } from "@ohmail/wire";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { screen } from "@testing-library/react";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import en from "../../messages/en.json";
@@ -16,7 +17,7 @@ import { isModalOpen } from "@ohmail/app-logic/session/modal-gate";
 /* The source censuses below anchor on the DECLARED NAME. The rule, and what a hook spelling
    costs, are written out in the helper; `anchor-census.test.ts` refuses the hook spelling
    across every test source under this directory. */
-import { shellFramePaths, shellSliceOf, sliceOfDeclaration } from "../source-anchor.js";
+import { sliceOfDeclaration } from "../source-anchor.js";
 import { ohboxRows, openLetter, reportSays, seatedList } from "./_finders.js";
 
 /**
@@ -55,9 +56,18 @@ process.env.NEXT_PUBLIC_API_BASE = "/api";
   escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
 };
 
-/** The shell's frames as one text — the spine's declarations live in `shell-dispatch.ts` now. */
-const shellFramesText = (): string =>
-  shellFramePaths(process.cwd()).map((at) => readFileSync(at, "utf8")).join("\n");
+/**
+ * THE NEW SHELL's PRESS, read by path (section D (3) of the new-shell ruling: re-pointed, expectations untouched).
+ * Today's shell declared the move arms inline (`onBulkAction`, `onBulkScreen`, `onMessageAction`); the new shell's
+ * verbs are functions of `VerbContext` under `packages/app-logic/src/press/` (`runBulkAction` in `selection-verbs.ts`,
+ * `screenBulk` in `selection-screening.ts`, `pressMove` and `moveToPlace` in `message-verbs.ts`), and the refusal's
+ * words are the press seam's (`refusalCopy` in `shell-dispatch.ts`, which the frame's room mounts once).
+ */
+const PRESS = "packages/app-logic/src/press";
+const pressText = (file: string): string => readFileSync(`${PRESS}/${file}`, "utf8");
+const pressSliceOf = (file: string, name: string): string => sliceOfDeclaration(pressText(file), name);
+const pressFolderText = (): string =>
+  readdirSync(PRESS).filter((f) => /\.tsx?$/.test(f)).map(pressText).join("\n");
 
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -77,7 +87,7 @@ async function unmount(): Promise<void> {
 /** The demo shell, cursor on the first row — `shell-screening-bulk.test.ts`'s own harness. */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("../_todays-shell.js");
+  const { MailShell: AppShell } = await import("../_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -513,16 +523,22 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
     /* THE FRAME THAT DECLARES THEM, from the manifest: both verbs left `AppShell.tsx` for
        `shell-verbs.ts` at ARCH-022, and `shellSliceOf` refuses zero hits and two — an arm read
        off a frame where the name means a different declaration is the defect, not a pass. */
-    const bulk = shellSliceOf("onBulkAction");
-    const moveArm = bulk.slice(0, bulk.indexOf('const view = action.slice("move:".length)'));
+    /* The new shell's arms (`PRESS` above): the bulk move is `runBulkAction`'s last arm, its dispatch `moveSet`; the
+       bulk screening is `screenBulk`, its plan `planBulkScreening`. */
+    const bulk = pressSliceOf("selection-verbs.ts", "runBulkAction");
+    const dispatchAt = bulk.indexOf('moveSet(cx, action.slice("move:".length)');
+    expect(dispatchAt, "fixture: the bulk move's dispatch is not in runBulkAction").toBeGreaterThan(-1);
+    const moveArm = bulk.slice(0, dispatchAt);
     expect(moveArm, "the bulk move arm no longer asks for the refusal before it dispatches")
-      .toMatch(/readerMoveRefusal\(\s*rosterRef\.current/);
-    expect(moveArm).toMatch(/if \(refused !== null\) \{\s*toast\(refused\);\s*return false;/);
+      .toMatch(/readerMoveRefusal\(\s*cx\.press\.rosterRef\.current/);
+    expect(moveArm).toMatch(/if \(refused !== null\) \{\s*cx\.toast\(refused\);\s*return false;/);
 
-    const screen = shellSliceOf("onBulkScreen");
-    const beforePlan = screen.slice(0, screen.indexOf("const plan = planBulkScreening"));
+    const screen = pressSliceOf("selection-screening.ts", "screenBulk");
+    const planAt = screen.indexOf("const plan = planBulkScreening");
+    expect(planAt, "fixture: screenBulk no longer plans").toBeGreaterThan(-1);
+    const beforePlan = screen.slice(0, planAt);
     expect(beforePlan, "bulk screening no longer refuses a reader before it plans")
-      .toMatch(/readerMoveRefusal\(\s*rosterRef\.current/);
+      .toMatch(/readerMoveRefusal\(\s*cx\.press\.rosterRef\.current/);
     expect(beforePlan).toMatch(/return false;/);
   });
 
@@ -547,21 +563,22 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
      * yes for an organizer, out of the shipped catalogue over a real roster row — is asserted
      * above and is the same function this arm calls.
      */
-    const single = shellSliceOf("onMessageAction");
-    const arm = single.slice(single.indexOf('const view = action.slice("move:".length)'));
+    /* The new shell's single move is `pressMove` (the `move:<view>` arm of `runMessageAction` calls it); a refusal
+       there RETURNS before the wire, as today's arm broke out of its switch. */
+    const arm = pressSliceOf("message-verbs.ts", "pressMove");
     const gate = arm.indexOf("readerMoveRefusal(");
-    const wire = arm.indexOf("moveToPlace(m, view)");
+    const wire = arm.indexOf("moveToPlace(cx, m, view)");
     expect(gate, "the single-message move arm no longer asks for the refusal").toBeGreaterThan(-1);
     expect(wire).toBeGreaterThan(-1);
     // ORDER IS THE CLAIM: the gate stands before the wire, and it breaks rather than falling through.
     expect(gate, "the refusal is asked AFTER the move is dispatched").toBeLessThan(wire);
-    expect(arm.slice(gate, wire)).toMatch(/if \(refusedMove !== null\) \{\s*toast\(refusedMove\);\s*break;\s*\}/);
+    expect(arm.slice(gate, wire)).toMatch(/if \(refusedMove !== null\) \{\s*cx\.toast\(refusedMove\);\s*return;\s*\}/);
     // The same two sentences as every other caller — a second spelling is the drift the helper ends.
     expect(arm.slice(gate, wire)).toMatch(/refusalCopy/);
     /* AND THE CALL PAST THE GATE REALLY WRITES. Without this the anchor above could name a
        function that does nothing and the order claim would be about nothing. */
     expect(
-      shellSliceOf("moveToPlace"),
+      pressSliceOf("message-verbs.ts", "moveToPlace"),
       "the call past the refusal dispatches nothing — the order claim is over air",
     ).toContain("dispatchScreeningChange(");
     /* WHAT THIS CASE MEANS, CHOSEN RATHER THAN INHERITED: **the declaration names the key.**
@@ -581,11 +598,11 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
        hits and on two, which is what keeps a re-home from landing on a same-named declaration
        somewhere else. The re-typing count is asked over both frames for the same reason. */
     expect(
-      shellSliceOf("refusalCopy"),
+      pressSliceOf("shell-dispatch.ts", "refusalCopy"),
       "the refusal memo no longer resolves the catalogue key — both move arms toast something else",
     ).toMatch(/screener\.readerMoveRefused/);
     expect(
-      (shellFramesText().match(/t\("screener\.readerMoveRefused"/g) ?? []).length,
+      (pressFolderText().match(/t\("screener\.readerMoveRefused"/g) ?? []).length,
       "a caller re-typed the refusal sentence instead of using refusalCopy",
     ).toBe(1);
   });
@@ -597,16 +614,16 @@ describe("a reader is refused AT THE PRESS, once, with the selection kept", () =
      * that hook, and an empty slice made every `toContain` over it pass on nothing. A name the
      * shell does not declare has to throw, not hand back something to assert nothing against.
      */
-    const shell = readFileSync("apps/webapp/app/shell/AppShell.tsx", "utf8");
+    const shell = pressText("selection-verbs.ts");
     expect(() => sliceOfDeclaration(shell, "noSuchName")).toThrow("anchor not found: noSuchName");
     /* The positive half — the names these cases DO use resolve to a slice with the arm in it. */
-    expect(shellSliceOf("onBulkAction")).toContain("readerMoveRefusal(");
-    expect(shellSliceOf("onMessageAction")).toContain("moveToPlace(m, view)");
-    expect(shellSliceOf("moveToPlace")).toContain("dispatchScreeningChange(");
+    expect(pressSliceOf("selection-verbs.ts", "runBulkAction")).toContain("readerMoveRefusal(");
+    expect(pressSliceOf("message-verbs.ts", "pressMove")).toContain("moveToPlace(cx, m, view)");
+    expect(pressSliceOf("message-verbs.ts", "moveToPlace")).toContain("dispatchScreeningChange(");
     /* `refusalCopy`'s own positive arm. Its case above was the last site in this file located by
        a hook spelling; a refusal arm alone would prove the helper says no to a name that is not
        there, and nothing about it saying yes to this one. */
-    expect(shellSliceOf("refusalCopy")).toContain("screener.readerMoveRefused");
+    expect(pressSliceOf("shell-dispatch.ts", "refusalCopy")).toContain("screener.readerMoveRefused");
   });
 
   it("`runBulk` KEEPS the selection when the verb reports it was refused", () => {
@@ -728,71 +745,12 @@ describe("the delete window holds a whole press, not a message", () => {
 
 describe("what the stylesheets say", () => {
   const actionBar = readFileSync("apps/webapp/app/shell/action-bar.css", "utf8");
-  const appCss = readFileSync("apps/webapp/app/app.css", "utf8");
   const listPane = readFileSync("packages/ui/src/composites/list-pane.css", "utf8");
 
-  /* A retired class is censused by SELECTOR, never by raw text. A comment that names the old
-     class as history is legitimate stylesheet writing — `action-bar.css` keeps two, explaining
-     which rungs went and why — and a census over the raw text measures those comments instead
-     of the rules: it goes red for prose, and the only way to answer it is to reword prose, which
-     is not a fix. So blank the comments, then ask whether the token still stands where a rule
-     would put it. Blanked and not deleted, so every offset and line number in what is left is
-     still the file's own. */
-  const withoutComments = (css: string) =>
-    css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
-
-  /* The token in SELECTOR position: the whole class name — not the head of a longer, live one
-     (`.pick-bar-hint`) — followed by a declaration block, another compound of the same selector,
-     a combinator (`>` `+` `~`, or whitespace before the next simple selector), a pseudo, an
-     attribute filter, or the next item of a selector list. */
-  const hasSelector = (css: string, className: string) =>
-    new RegExp(
-      `\\.${className.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])\\s*(?:[{,>+~:.#[)]|[A-Za-z])`,
-    ).test(css);
-
-  const CENSUS =
-    "the retired strip has no selector left in either stylesheet; comments naming it as history are allowed";
-
-  it("the retired strip has no rule left in either stylesheet", () => {
-    expect(hasSelector(withoutComments(actionBar), "pick-bar"), CENSUS).toBe(false);
-    expect(hasSelector(withoutComments(appCss), "pick-bar"), CENSUS).toBe(false);
-    // …and its two container rungs went with it: those were the last static widths in the file.
-    expect(withoutComments(actionBar)).not.toMatch(/@container abar \(min-width: (456|601)px\)/);
-  });
-
-  it("the census reads a comment naming the retired class as history as clean", () => {
-    const fixture = [
-      "/* WHAT USED TO STAND HERE: `.pick-bar > .abar` at `flex: 1 1 100%`, retired — a",
-      " * selection's verbs wear the message pill now. `.pick-bar`, below, is gone with it. */",
-      ".msg-actions > .abar { flex: 0 1 auto }",
-    ].join("\n");
-    expect(
-      hasSelector(withoutComments(fixture), "pick-bar"),
-      "a comment naming the old class was counted as a rule",
-    ).toBe(false);
-  });
-
-  it("the census refuses the retired class the moment it is a selector again", () => {
-    for (const fixture of [
-      ".pick-bar { display: flex }",
-      ".pick-bar > .abar { flex: 1 1 100% }",
-      ".list-foot .pick-bar,\n.list-foot .abar { gap: 6px }",
-    ]) {
-      expect(hasSelector(withoutComments(fixture), "pick-bar"), fixture).toBe(true);
-    }
-  });
-
-  it("a live class that merely starts with the retired name is not the retired class", () => {
-    expect(
-      hasSelector(withoutComments(".pick-bar-hint { color: var(--muted) }"), "pick-bar"),
-      "the census matched a longer class name",
-    ).toBe(false);
-  });
-
-  it("the picked ROW treatment is untouched — tint plus rail, and it is not the cursor's", () => {
-    expect(appCss).toMatch(/\.view-ohbox \.row\.picked \{[^}]*--accent-soft/);
-    expect(appCss).toMatch(/\.view-ohbox \.row\.picked \{[^}]*inset 2px 0 0 var\(--accent\)/);
-  });
+  /* The retired strip's census, today's selection pill's stylesheet rules (the count capsule, the compact floor, the
+     measure row) and the picked row's tint over `.view-ohbox` left with today's Ohbox view (the new-shell ruling,
+     section D: their rows in share ohbox-1's rows file name the new part's cases that hold the behaviour behind
+     them). The two left read today's sheets for a promise the new part does not state yet: their rows are GAPs. */
 
   it("the foot is in flow and carries the safe area under 640", () => {
     const foot = listPane.slice(listPane.indexOf(".list-foot{"));
@@ -816,45 +774,6 @@ describe("what the stylesheets say", () => {
     expect(actionBar).toMatch(
       /@media \(pointer: coarse\), \(max-width: 640px\) \{\s*\.abar kbd \{ display: none; \}/,
     );
-  });
-
-  it("the count capsule outranks `.abar-solo`, or it renders white", () => {
-    /* TWO CLASSES, DELIBERATELY. The capsule also wears `.abar-solo`, whose
-       `background: var(--panel)` sits LOWER in the file at equal specificity — a single-class
-       rule loses the cascade and the one accent object in the row goes white at rest and on
-       hover. Drop a class from either selector and this goes red. */
-    expect(actionBar).toMatch(/\.abar-b\.abar-count \{[^}]*var\(--accent-soft\)/);
-    expect(actionBar).toMatch(/\.abar-b\.abar-count:hover \{[^}]*var\(--accent-soft\)/);
-    const soloAt = actionBar.indexOf(".abar-solo {");
-    const countAt = actionBar.indexOf(".abar-b.abar-count {");
-    expect(soloAt, "fixture: `.abar-solo` is not in this file any more").toBeGreaterThan(-1);
-    expect(countAt).toBeGreaterThan(-1);
-    // The pin only matters while `.abar-solo` is declared later; say so, so a reorder is loud.
-    expect(soloAt, "`.abar-solo` moved above the capsule — re-read the specificity note")
-      .toBeGreaterThan(countAt);
-  });
-
-  it("the compact floor hides the count's word and nothing structural", () => {
-    expect(actionBar).toMatch(
-      /\.msg-actions \.abar\[data-admit~="compact"\] \.abar-row \.abar-count \.abar-count-word \{\s*display: none;/,
-    );
-  });
-
-  it("…and the MEASURE row is immune to it, or the pill oscillates", () => {
-    /**
-     * MEASURED THE HARD WAY. The compact rule is written `.abar-row .abar-count
-     * .abar-count-word`, and the measure row IS an `.abar-row` — so folding the word hid it in
-     * the COPY as well. The next measurement then read a base 69px narrower than the row it was
-     * deciding for (331 against 356 of room), concluded compact was unnecessary, put the word
-     * back, overflowed, and folded again: the pill cycled, and `fit-render` caught it mid-cycle
-     * as a German row 33px past its box at 1440 and 90px at 390.
-     *
-     * A fold must never zero the width that decides the fold. The read switch's label has
-     * carried this `!important` since the density hook shipped and its comment says why; the
-     * count's word needs the same, and deleting this line brings the oscillation straight back.
-     */
-    expect(actionBar).toMatch(/\.abar-measure \.abar-count-word \{ display: inline !important; \}/);
-    expect(actionBar).toMatch(/\.abar-measure \.abar-read-lab \{ display: inline !important; \}/);
   });
 });
 
@@ -1040,17 +959,20 @@ describe("a long press starts a selection on a phone", () => {
     /* iOS Safari raises the callout over a held button at about the moment the selection
        appears under it. The row is a `<button>`, so there is no text selection to suppress
        and this is the only half that bites. */
-    const rowCss = readFileSync("packages/ui/src/composites/row.css", "utf8");
-    expect(rowCss).toMatch(/\.row\{[^}]*-webkit-touch-callout:\s*none/);
+    /* The new shell's Ohbox list stands its rows inside `ListTouch` (`packages/app/src/touch/`), whose sheet holds
+       the rule for every row of a list under a finger. Re-pointed by path from today's `.row` rule. */
+    const rowCss = readFileSync("packages/app/src/touch/touch.css", "utf8");
+    expect(rowCss).toMatch(/\[data-touch-list\]\s*\{[^}]*-webkit-touch-callout:\s*none/);
   });
 
   it("neither the hold nor the drag can arm on the other's pointer", () => {
     const view = readFileSync("packages/app-logic/src/ohbox/pointer.ts", "utf8");
-    const drag = readFileSync("apps/webapp/app/shell/drag-file.ts", "utf8");
+    /* The drag to the rail is the frame's now (`rail-drag.ts`, moved from today's web shell's drag-file.ts). */
+    const drag = readFileSync("packages/app/src/frame/rail-drag.ts", "utf8");
     // Both handlers run on the same press, and each returns early for the other's pointer.
     expect(view).toMatch(/if \(e\.pointerType !== "touch"\) return;/);
     expect(drag, "drag-to-file stopped excluding touch — the two gestures would both arm")
-      .toMatch(/if \(e\.pointerType === "touch"\) return;/);
+      .toMatch(/if \([^)]*e\.pointerType === "touch"\) return null;/);
   });
 });
 
@@ -1137,7 +1059,7 @@ describe("the selection's delete keys are gated on the DOM, not on a list", () =
     sent = [];
 
     await key("?", { shiftKey: true });
-    expect(document.querySelector(".ks"), "fixture: the sheet did not open").toBeTruthy();
+    expect(screen.getByRole("dialog", { name: en.shortcuts.title })).toBeTruthy();
 
     await key("Backspace");
     expect(toasts(), "⌫ opened a delete window through an open sheet").toHaveLength(0);
@@ -1153,8 +1075,9 @@ describe("the selection's delete keys are gated on the DOM, not on a list", () =
     await mountShell();
     await pick(3);
     await key("?", { shiftKey: true });
+    expect(screen.getByRole("dialog", { name: en.shortcuts.title })).toBeTruthy();
     await key("Escape");
-    expect(document.querySelector(".ks"), "fixture: the sheet did not close").toBeNull();
+    expect(screen.queryByRole("dialog", { name: en.shortcuts.title })).toBeNull();
     expect(pickedRows(), "Escape cleared the selection instead of the sheet").toHaveLength(3);
 
     await key("Backspace");

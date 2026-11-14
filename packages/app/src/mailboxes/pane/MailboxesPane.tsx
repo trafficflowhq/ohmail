@@ -16,6 +16,7 @@ import {
 } from "../../host/index.js";
 import type { CalendarHalfSlot, FactorSlot } from "../connect/contract.js";
 import { PaneLines } from "./Lines.js";
+import { Removal } from "./Removal.js";
 import { Row } from "./Row.js";
 import { useSay } from "./say.js";
 import "./placement.css";
@@ -163,6 +164,8 @@ function Listed(
           <SettingNote>{say({ key: "setupAgainWhy" })}</SettingNote>
         </>
       ) : null}
+      {/* The removal's confirmation over the window, for the row it was opened on; the factor's dialog over it. */}
+      <Removal model={model} verbs={verbs} />
       {/* The one second-factor dialog, for the press the server parked; its line names which write it authorises. */}
       {model.gated.asking !== null && factor !== NONE && model.gated.state.at === "asking"
         ? factor({ ...model.gated.asking, line: say({ key: FACTOR_LINE[model.gated.state.act.verb] }) })

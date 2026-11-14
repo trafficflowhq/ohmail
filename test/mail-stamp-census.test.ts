@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import * as stamps from "../packages/client-engine/src/stamp.js";
+import { headStamp } from "../packages/app-logic/src/reader/head-model.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +11,8 @@ import { fileURLToPath } from "node:url";
  * "When did this arrive" is answered on six surfaces that share no renderer: the browser's list
  * rows and its open message, the desktop's (the same shell), the phone's rows, its open message,
  * and the earlier messages inside a thread. The rule they answer with — today shows a clock, the
- * last six days show a weekday and a clock, beyond that a date — lives in exactly one module,
+ * last six days show a weekday and a clock, beyond that a date — and the parts the open letter
+ * combines into a fuller stamp live in one module,
  * `packages/client-engine/src/stamp.ts`.
  *
  * IT DID NOT USED TO. A time of day was composed in seven places across three packages and the
@@ -107,11 +110,28 @@ describe("every door renders the shared mail stamp", () => {
     );
   });
 
-  it("THE READING HEADER in the shell renders that same stamp", () => {
-    // The open message and the row it was opened from must agree; they do so by calling one
-    // function, not by two functions that currently produce the same string.
-    const src = stripComments(read("apps/webapp/app/shell/MessageCard.tsx"));
-    expect(src).toContain("displayTime(message, now)");
+  it("the open letter renders its date and time from the shared stamp formatters", () => {
+    const header = stripComments(read("packages/app/src/reader/Letter.tsx"));
+    expect(header).toMatch(/const stamp = headStamp\(stampOf\(message\)/);
+    expect(header).toMatch(/when: full \? stamp\.full : narrow \? stamp\.short : stamp\.when/);
+    // Parts distinct from the real calendar expose a second formatter even if its dates normally agree.
+    const date = "2001-02-03T12:00:00.000Z";
+    const now = new Date("2002-02-04T12:00:00.000Z");
+    vi.spyOn(stamps, "clock").mockReturnValue("08:19");
+    vi.spyOn(stamps, "weekdayClock").mockReturnValue("Weekday 08:19");
+    vi.spyOn(stamps, "dateClock").mockReturnValue("24 Month, 08:19");
+    vi.spyOn(stamps, "fullDateTime").mockImplementation((at) =>
+      at.getTime() === now.getTime() ? "Weekday 4 Month 2099, 08:19" : "Weekday 24 Month 2088, 08:19",
+    );
+    try {
+      expect(headStamp(date, now, "UTC", "en", { yesterday: (time) => time })).toEqual({
+        when: "Weekday 24 Month 2088 08:19",
+        short: "24 Month",
+        full: "Weekday 24 Month 2088, 08:19",
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("THE PHONE's rows, open message and thread history all render that stamp", () => {
@@ -139,8 +159,9 @@ describe("every door renders the shared mail stamp", () => {
 
 /* ── HALF B: THE CENSUS ───────────────────────────────────────────────────────────────────── */
 
-/** The trees a mail stamp could hide in — every surface that renders a message. */
-const TREES = ["apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "packages/ui/src", "apps/mobile/src", "apps/mobile/app"];
+/** The trees a mail stamp could hide in — every surface that renders a message. `packages/app/src` is the new
+ * shell's own (its frame, its ground, its places), which every host mounts since the switch. */
+const TREES = ["apps/webapp/app", "packages/app/src", "packages/app-logic/src", "packages/letter-body/src", "packages/ui/src", "apps/mobile/src", "apps/mobile/app"];
 
 /**
  * EVERY date-formatting call in those trees, by file, with the kind it is.
@@ -206,6 +227,33 @@ const PINNED: Record<string, { calls: number; why: string }> = {
       + "never a mail stamp.",
   },
 
+  /* THE NEW SHELL's OWN TREE (`packages/app/src`), read since the switch mounts it on every host. */
+  "packages/app/src/frame/connection.ts": {
+    calls: 1,
+    why: "`dayIn`: the calendar day of an instant as a comparable `en-CA` key, to tell whether the copy last synced "
+      + "today or before. A comparison key, never shown; the sentence's own clock and date come from the rule.",
+  },
+  "packages/app/src/history/months.ts": {
+    calls: 2,
+    why: "History's month rail: a month's short and long NAMES (\"Nov\", \"November 2026\") over a month key at noon "
+      + "UTC. A month being walked to, never a letter's date.",
+  },
+  "packages/app/src/mailboxes/first-run/Seat.ts": {
+    calls: 1,
+    why: "`dateOf`: the day a standing fact of a mailbox became true (from when mail is brought in), with no clock "
+      + "on it, in the reader's zone: the first run's twin of `format.ts`'s `dayStamp`. An account date, not mail.",
+  },
+  "packages/app/src/reader/actions/use-verbs.ts": {
+    calls: 1,
+    why: "`whenLabel`: the time a letter is set to come back (\"resurfaces Tuesday 4 Nov, 09:00\"), said in the "
+      + "toast of the Resurface verb. A SET TIME the person chose, never the date a letter was written or received.",
+  },
+  "packages/app/src/settings/about/AboutPane.tsx": {
+    calls: 1,
+    why: "`absolute`: when a MAILBOX last synced, said in the About pane's line of the mailboxes in the viewer's own "
+      + "locale and zone (a relative stamp would go stale unpainted). An account's date, never a letter's.",
+  },
+
   /* `toLocaleString` ON A NUMBER. It cannot be told from the date form without types, and it is
      kept in the detector rather than excluded BECAUSE of that: pinning the count here means the
      day one of these files formats an instant instead of a byte count, the number moves and this
@@ -214,6 +262,15 @@ const PINNED: Record<string, { calls: number; why: string }> = {
     calls: 3,
     why: "A byte figure in the reader's digit grouping, the MONTH text is kept from "
       + "(\"April 2019\") and the day a trial's storage floor ends — storage sentences, never a mail stamp.",
+  },
+  "packages/app/src/ohbox/OhboxHead.tsx": {
+    calls: 1,
+    why: "The doorbell's count of senders waiting at the Screener, in the reader's digit grouping. A number, never a date.",
+  },
+  "packages/app/src/search/verdict-words.ts": {
+    calls: 3,
+    why: "Search's verdict sentences: how many letters were found, held and searched, each count in the reader's "
+      + "digit grouping. Numbers, never a date.",
   },
 };
 

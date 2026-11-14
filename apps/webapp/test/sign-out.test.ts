@@ -711,7 +711,7 @@ describe("a one-account wipe takes only what its reach allows", () => {
 
   it("each account's preferences outlive a whole sign-out and a revoke; an erasure takes its own", async () => {
     const { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } = await import("@ohmail/app-logic/storage/persisted-ui");
-    const { seedNotNowKey } = await import("../app/shell/seed-offer");
+    const { seedNotNowKey } = await import("@ohmail/app-logic/mailboxes/first-run/seed-offer");
     const { readAfterVerb, writeAfterVerb } = await import("@ohmail/app-logic/press/after-verb");
     const prefs = (owner: string): string[] =>
       [searchSortKey(owner), seedNotNowKey(owner), foldersOpenedKey(owner), mailOriginalKey(owner)];

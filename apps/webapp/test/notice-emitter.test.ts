@@ -527,13 +527,11 @@ describe("the page's emitter", () => {
     /* What the shell hands the caller as `atDevices` advances the numbers this browser has told with no notice
        drawn. Anything wider (Settings alone, a tab behind another window) would count a device as told that
        nobody was told of. Read from the shell's text: no case mounts the whole shell for one line. */
-    const shell = readFileSync(
-      existsSync(resolve("apps/webapp/app")) ? resolve("apps/webapp/app/shell/AppShell.tsx") : resolve("app/shell/AppShell.tsx"),
-      "utf8",
-    );
-    expect(shell).toContain('const devicesShown = effectiveView === "settings" && route.settingsPane === "devices";');
-    expect(shell).toContain('atDevices: () => devicesShown && typeof document !== "undefined" && document.hasFocus(),');
-    expect(shell.split("atDevices:").length - 1, "one place says it").toBe(1);
+    const ground = existsSync("packages/app/src") ? "packages/app/src" : "../../packages/app/src";
+    const notices = readFileSync(resolve(ground, "mail/ground/MailSystemNotices.ts"), "utf8");
+    expect(notices).toContain('const devicesShown = route.place === "settings" && route.sub === "devices" && route.stage === null;');
+    expect(notices).toContain('atDevices: () => devicesShown && typeof document !== "undefined" && document.hasFocus(),');
+    expect(notices.split("atDevices:").length - 1, "one place says it").toBe(1);
   });
 
   it("takes back every notice of this origin still listed", async () => {

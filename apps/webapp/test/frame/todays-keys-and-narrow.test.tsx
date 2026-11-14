@@ -11,16 +11,18 @@ import { act, engineOver, msg, S, setup, shell, storeWith, teardown, waitFor } f
 beforeEach(setup);
 afterEach(teardown);
 
-const inRail = (): boolean => document.activeElement?.closest("nav[aria-label='Main']") != null;
+/* The frame's own rail, the navigation named Places (`frame.landmark.places`); today's fed rail ("Main") left with
+   today's views. */
+const inRail = (): boolean => document.activeElement?.closest("nav[aria-label='Places']") != null;
 
 describe("today's keys and the frame's rail", () => {
   for (const [what, init] of [["h", { key: "h" }], ["ArrowLeft", { key: "ArrowLeft" }]] as const) {
     it(`${what} from a row steps into the rail`, async () => {
       const store = await storeWith([msg("m1")]);
       const el = await shell(store, engineOver(store));
-      /* A row of the Ohbox: an option of its listbox (today's views keep `.row`). */
-      await waitFor(() => el.querySelector(":is(.row, [role=option])[data-id='m1']") != null, "the row");
-      const row = el.querySelector<HTMLElement>(":is(.row, [role=option])[data-id='m1']")!;
+      /* A row of the seated Ohbox: an option of its listbox, by its letter. */
+      await waitFor(() => el.querySelector("[role=option][data-id='m1']") != null, "the row");
+      const row = el.querySelector<HTMLElement>("[role=option][data-id='m1']")!;
       await act(async () => { row.focus(); });
       expect(inRail()).toBe(false);
       await act(async () => { fireEvent.keyDown(document.activeElement ?? document.body, init); });

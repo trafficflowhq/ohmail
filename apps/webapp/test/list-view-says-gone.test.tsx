@@ -9,7 +9,7 @@ import messages from "../messages/en.json";
 import { FolderView } from "../app/views/FolderView";
 import { TrashView } from "../app/views/TrashView";
 import { TriageView } from "../app/views/TriageView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { listGoneFacts } from "../app/shell/list-view";
 import { WithListGone } from "./_list-gone";
 import { GONE, NOW, S, act, click, engineOver, msg, setup, shell, storeWith, teardown, text, tombstone, waitFor } from "./_view-shell";
@@ -28,15 +28,8 @@ const TAG = { type: "tag", op: "create", id: "tg1", seq: 900, updatedAt: NOW.toI
 const tagged = () => [msg("m1", { labels: ["tg1"] }), msg("m2", { labels: ["tg1"], date: "2026-09-16T08:00:00.000Z" })];
 
 describe("the shell's list views say a picked message is gone", () => {
-  it("control: the Ohbox column says it", async () => {
-    const s = await storeWith(tagged(), [TAG]);
-    const el = await shell(s, engineOver(s), "#/ohbox");
-    await waitFor(() => el.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]') !== null, "ohbox rows");
-    await click(el.querySelector('.view-ohbox :is(.row, [role=option])[data-id="m1"]'), "ohbox row m1");
-    await tombstone("m1");
-    expect(text(el, ".view-ohbox .read-col")).toContain(GONE);
-  });
-
+  /* "control: the Ohbox column says it" moved to `ohbox/ohbox-column-says-gone.test.tsx` (share ohbox-2), over the new
+     shell's door; the views below wait for their places' mounts. */
   for (const [hash, view] of [["#/tag/tg1", "tag"], ["#/history", "history"]] as const) {
     it(`the ${view} column says it, and shows no other message in its place`, async () => {
       const s = await storeWith(tagged(), [TAG]);
@@ -213,11 +206,5 @@ describe("a pile row the column shows is followed, not its message", () => {
   });
 });
 
-describe("the shell half: a tombstone this tab's own verb wrote is not 'gone'", () => {
-  it("reads a foreign tombstone as gone, and neither an own one nor an absent row", () => {
-    const facts = listGoneFacts((id) => id === "t1" || id === "t2", new Set(["t2"]), null);
-    expect(facts.isGone("t1")).toBe(true);
-    expect(facts.isGone("t2"), "this tab's own delete read as another app's").toBe(false);
-    expect(facts.isGone("absent")).toBe(false);
-  });
-});
+/* "the shell half" moved to `ohbox/ohbox-column-says-gone.test.tsx` (share ohbox-2): what a person meets in the
+   Ohbox's column over the new shell, where today's `listGoneFacts` was AppShell's half. */

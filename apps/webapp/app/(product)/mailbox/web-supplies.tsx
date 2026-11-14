@@ -7,7 +7,9 @@
  */
 import { useMemo, useRef, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
-import { NONE, type FeatureEntry, type FrameSupplies, type HostContract } from "@ohmail/app/host";
+import { NONE, type FeatureEntry, type FrameSupplies, type HostContract, type HostDevice } from "@ohmail/app/host";
+import { calendar } from "@ohmail/app/calendar";
+import { calendarPortOf } from "@ohmail/app-logic/calendar";
 import type { FrameNotice } from "@ohmail/app/frame";
 import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
 import { liveBodyLoaded, liveBodyPath, liveBodyRefused, type LiveBodyWire } from "@ohmail/app-logic/reading/live-body";
@@ -23,6 +25,8 @@ import { MailboxFilings, type MailboxFilingsApi } from "../../shell/MailboxFilin
 import { MailboxSelfCheck } from "../../shell/MailboxSelfCheck";
 import { browserNoticePage, noticeWordingOf, webNoticeEmitter } from "../../shell/notice-emitter";
 import { browserNotificationHost, type NotificationHost } from "../../shell/notification-settings";
+import { browserOpenLink, MAILBOXES_NOTICES } from "../../shell/browser-mail";
+import { useAppLocale } from "../../shell/LocaleContext";
 import { CLOUD_OLDER_BODY } from "../../shell/older-body";
 import type { OrganizerNoticeTransport } from "../../shell/OrganizerNotice";
 import { HOSTED as PROFILE_IMPORT } from "../../shell/ProfileImportCard";
@@ -38,13 +42,14 @@ import { CLOUD_CONSENT, CLOUD_SEED_REVIEW } from "./consent-over-api";
 import { WEB_IMAGES } from "./image-wire";
 import { DevicesSection } from "./DevicesSection";
 import { webConnectWire } from "./connect-wire";
+import { webMailboxesWire } from "./mailboxes-wire";
 import { webHost, type WebSupplies } from "./host";
 import { InvitesSection } from "./InvitesSection";
 import { useLifecycleNotice } from "./lifecycle-notice";
 import { MailboxSection } from "./MailboxSection";
 import { PasswordSection } from "./PasswordSection";
 import { useReuseSweepFeed } from "./reuse-sweep-feed";
-import { useRecheckWhileShown, useSweepsAnswer } from "../../shell/ReuseSweepNotice";
+import { useRecheckWhileShown, useSweepsAnswer, useSweepsFrameNotice } from "../../shell/ReuseSweepNotice";
 import type { ReuseSweepLine } from "../../shell/reuse-sweeps";
 import { SecuritySection } from "./SecuritySection";
 import { sendSurfaceFor } from "./send-surface";
@@ -83,6 +88,8 @@ const accessHere: Exclude<WebSupplies["reads"]["access"], typeof NONE> = () => a
 /** A feature that draws nothing of its own in today's views. */
 /** The connect form's calls on the app's page: a sign-in started here is for the account this window is bound to. */
 const CONNECT_WIRE = webConnectWire({ owner: () => boundApiOwner(), returned: "page" });
+/** Settings' Mailboxes section's calls on the app's page: one wire for the page's life; standing it asks nothing. */
+const MAILBOXES_WIRE = webMailboxesWire();
 
 const drawsNothing = (): ReactNode => null;
 const entryOf = (name: FeatureEntry["name"], node: ReactNode, notice?: FeatureEntry["notice"]): FeatureEntry =>
@@ -99,11 +106,11 @@ const NO_SWEEPS: readonly ReuseSweepLine[] = [];
 export function useAccountNotices(): readonly FrameNotice[] {
   const t = useTranslations("accountLifecycle");
   const tLock = useTranslations("accessLock");
-  const ts = useTranslations("settings");
   const { notice, busy, mintRefusal, putAway, toManage } = useLifecycleNotice();
   const { sweeps, acknowledge, recheck } = useReuseSweepFeed();
   useRecheckWhileShown(sweeps !== null, recheck);
   const answer = useSweepsAnswer(sweeps ?? NO_SWEEPS, acknowledge);
+  const sweepsNotice = useSweepsFrameNotice(answer.shown, answer.ok);
   const out: FrameNotice[] = [];
   if (notice !== null) {
     if (notice.kind === "caughtUp") {
@@ -122,24 +129,19 @@ export function useAccountNotices(): readonly FrameNotice[] {
       });
     }
   }
-  if (answer.shown.length > 0) {
-    out.push({
-      kind: "signInCopies",
-      title: ts("reuseSweepsTitle", { count: answer.shown.length }),
-      acts: [{ label: ts("reuseSweepsOk"), onPress: answer.ok }],
-    });
-  }
+  if (sweepsNotice !== null) out.push(sweepsNotice);
   return out;
 }
 
 /** What the page has learned before it builds the record: its hooks' answers, held by `CloudShell`. */
 export interface WebWords {
-  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean; readonly searchPeople: boolean };
+  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean; readonly searchPeople: boolean; readonly calendar?: boolean | null };
   readonly invites: boolean;
   readonly subscriptionPage: boolean;
   readonly withdrawManage: () => void;
   readonly storageBlock: boolean;
   readonly account: string | null;
+  readonly accountAddress?: string | null;
   readonly firstRun: FirstRunHost | undefined;
   readonly mailboxFacts: Exclude<WebSupplies["reads"]["mailboxes"], typeof NONE>;
   readonly resolve: WebSupplies["session"]["resolve"];
@@ -155,10 +157,20 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
   /* WHOSE KEYS TODAY'S VIEWS KEEP: the account the engine's mirror is named for, read off the engine itself, never a
      second read of the session's marker (which another tab may have moved since the engine was opened). */
   const scope = useMemo(() => mirrorOwnerOf(engine), [engine]);
+  /* The language's controls the page wraps around the frame (the account's locale context), as the host contract
+     takes them: one record while the language and its adoption stand. */
+  const controls = useAppLocale();
+  const drawnLocale = controls?.locale;
+  const adoptLocale = controls?.adoptLocale;
+  const language = useMemo(
+    (): HostDevice["language"] =>
+      drawnLocale === undefined || adoptLocale === undefined ? NONE : { locale: drawnLocale, adoptLocale },
+    [drawnLocale, adoptLocale],
+  );
   const devices = server.pairing;
   const features = useMemo((): WebSupplies["features"] => ({
     account: entryOf("account", <><PasswordSection /><AccountSection /></>),
-    mailboxes: entryOf("mailboxes", <><MailboxSection subscriptionPane={subscriptionPage} /><MailboxFilings api={filingsApi} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>),
+    mailboxes: entryOf("mailboxes", <><MailboxSection subscriptionPane={subscriptionPage} /><MailboxFilings api={filingsApi} /><MailboxSelfCheck check={mailboxApi.selfCheck} /></>, MAILBOXES_NOTICES),
     ai: entryOf("ai", <AiSection />),
     subscription: entryOf("subscription", <SubscriptionSection onNowhere={withdrawManage} />),
     storage: entryOf("storage", <StorageSection />),
@@ -171,6 +183,15 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     screener: entryOf("screener", <ScreeningSection />),
     help: { name: "help", render: drawsNothing },
   }), [subscriptionPage, withdrawManage, devices]);
+  const calendarPort = useMemo(() => {
+    if (server.calendar !== true || scope === null || scope !== confirmed) return NONE;
+    const transport = engine.calendarTransport();
+    if (!transport) return NONE;
+    return calendarPortOf({
+      engine, transport, clock: { uuid: () => crypto.randomUUID(), now: Date.now },
+      settings: transport.calendarSettings, held: () => engine.calendarHeld(), load: (span) => engine.loadCalendar(span),
+    });
+  }, [engine, scope, confirmed, server.calendar]);
   const notifications = useWebNotifications();
   const supplies = useMemo((): WebSupplies => ({
     session: { resolve: words.resolve, confirmed: words.confirmed, signOut: signOutHere },
@@ -194,15 +215,18 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
       seedReview: apiConfigured() ? CLOUD_SEED_REVIEW : NONE,
       folderSummary: NONE,
       connect: CONNECT_WIRE,
-      mailboxes: NONE,
+      mailboxes: MAILBOXES_WIRE,
+      calendar: calendarPort,
     },
     features,
     notifications,
-    frame,
-  }), [words.resolve, words.confirmed, words.mailboxFacts, firstRun, features, frame, notifications]);
+    language,
+    openLink: browserOpenLink,
+    frame: calendarPort === NONE ? frame : { ...frame, calendar },
+  }), [words.resolve, words.confirmed, words.mailboxFacts, firstRun, features, language, frame, notifications, calendarPort]);
   return useMemo(() => webHost(engine, {
     selfHost: SELF_HOST_BUILD,
-    server: { pairing: server.pairing, remoteImages: server.remoteImages, searchPeople: server.searchPeople },
+    server: { pairing: server.pairing, remoteImages: server.remoteImages, searchPeople: server.searchPeople, calendar: server.calendar },
     invites,
     subscriptionPage,
     storageBlock,
@@ -210,8 +234,9 @@ export function useWebHost(engine: HostContract["engine"], words: WebWords, fram
     foldersStorable: CLOUD_CONSENT.foldersStorable,
     scope,
     account: confirmed,
+    accountAddress: words.accountAddress,
     build: { version: process.env.NEXT_PUBLIC_APP_VERSION ?? null, commit: process.env.NEXT_PUBLIC_BUILD ?? null },
-  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, invites, subscriptionPage, storageBlock, scope, confirmed, supplies]);
+  }, supplies), [engine, server.pairing, server.remoteImages, server.searchPeople, server.calendar, invites, subscriptionPage, storageBlock, scope, confirmed, words.accountAddress, supplies]);
 }
 
 /**

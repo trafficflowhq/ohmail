@@ -85,6 +85,7 @@ afterEach(async () => {
   delete document.documentElement.dataset.face;
 });
 
+/* The adoption is a duty of the boot (the mail ground's), so its cases mount the new shell's door. */
 describe("account adoption", () => {
   it("a consent answer carrying themeFace re-skins the device and mirrors it for the next boot", async () => {
     answerConsentWith({ themeFace: "ohmarchy" });

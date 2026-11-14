@@ -319,6 +319,7 @@
       "itWasSent": "It was sent — dismiss"
     },
     "letter": "New message",
+    "back": "Ohbox",
     "foot": "Formatting and files",
     "text": "Message",
     "placeholder": "Write your message",
@@ -330,6 +331,8 @@
     "subjectPlaceholder": "Subject",
     "remove": "Remove {name}",
     "refused": "Not an address: {list}",
+    "suggestions": "Address suggestions",
+    "wroteToYou": "wrote to you",
     "verbs": "Send or discard",
     "send": "Send",
     "discard": "Discard",
@@ -464,6 +467,7 @@
       }
     },
     "draft": {
+      "placeholder": "Write, or a few words to draft from",
       "verb": "Draft reply",
       "again": "Draft again",
       "running": "Drafting…",

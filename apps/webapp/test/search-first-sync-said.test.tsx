@@ -14,7 +14,7 @@ import {
 import messages from "../messages/en.json";
 import de from "../messages/de.json";
 import { SearchView } from "../app/views/SearchView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * DURING A FIRST SYNC THE RESULT LINE SAYS WHAT IT SEARCHED. The store's answers

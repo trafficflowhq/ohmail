@@ -2,6 +2,8 @@
  * WHAT A SHELL HANDS THE SCREENER BESIDE ITS MODEL, by what the Screener calls of it. The held letters' parts are the
  * very objects the shell hands the reader; nothing here is built by the Screener.
  */
+import type { SuggestStanding } from "@ohmail/app-logic/screener/no-suggestion";
+import type { NoAdvice } from "@ohmail/app-logic/screener";
 import type { ReaderParts } from "../reader/index.js";
 
 /** The parts a held letter is drawn with: its body, its files, its pictures and the one look at a file. */
@@ -24,6 +26,8 @@ export interface ScreenerSuggestControl {
   /** One sentence about the run, already in the person's words, or null. */
   readonly notice: string | null;
   readonly progress: { readonly done: number; readonly total: number } | null;
+  /** Why the last run could not buy, while that still stands (`no_budget`: the balance is empty); null: nothing. */
+  readonly standing?: SuggestStanding | null;
   open(): void;
   openAgain(): void;
   choose(size: number): void;
@@ -35,6 +39,8 @@ export interface ScreenerSuggest {
   /** Each sender asked about costs a credit. */
   readonly priced: boolean;
   readonly control: ScreenerSuggestControl;
+  /** What the run knows about senders it has no advice for: why a sender's sentence says none. */
+  readonly noAdvice: NoAdvice;
 }
 
 /** One letter of the mail server's Junk folder, as the shell's window reads it: header facts, never a mirror row. */

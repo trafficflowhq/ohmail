@@ -1,9 +1,8 @@
 /** @vitest-environment jsdom */
-import { afterEach, describe, expect, it } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../../messages/en.json";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act } from "@testing-library/react";
+import { fakeMail } from "../../../../packages/app/test/reader/support/fake-mail.js";
+import { admitting, mountSeat, unmountSeat } from "../_ohbox-1-seat.js";
 
 /**
  * THE DATE ON A LIST ROW SAYS WHICH SATURDAY, AND ONE PRESS ASKS THE WHOLE LIST.
@@ -25,16 +24,13 @@ import messages from "../../messages/en.json";
  *
  * A message with NO `Date:` header has one form and no flip at all — see the last case. That is
  * the production path that keeps `MessageRow`'s unwired branch honest rather than theoretical.
+ *
+ * RE-POINTED (share ohbox-2, the switch's older tests): from today's harness (`./_today.js` `prepareSeated`, fed a
+ * flag the test held, under today's `KeymapProvider`) to the Ohbox's own seat over the mail ground
+ * (`../_ohbox-1-seat.tsx`: the flag is the seat's own, `ohbox/live.ts`), what a press opened read off the address the
+ * seat writes; the two forms read from `@ohmail/app-logic/text/format`, which today's `shell/format.ts` re-exports.
+ * Every expectation is as it stood.
  */
-
-(globalThis as unknown as { React: unknown }).React = React;
-process.env.NEXT_PUBLIC_API_BASE = "/api";
-(globalThis as unknown as { CSS: { escape: (s: string) => string } }).CSS ??= {
-  escape: (v: string) => String(v).replace(/["\\]/g, "\\$&"),
-};
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW = new Date("2026-08-08T13:00:00.000Z");
 
@@ -64,62 +60,44 @@ function msg(id: string, date: string | null): Record<string, unknown> {
 const OLDER = msg("a", "2026-08-01T09:12:00.000Z");
 const NEWER = msg("b", "2026-08-08T08:04:00.000Z");
 
-let root: Root | null = null;
-let host: HTMLDivElement | null = null;
-/** Every row press the view reported — the cursor move a stamp press must NOT cause. */
-let selected: string[] = [];
+let host: HTMLElement | null = null;
+let address: ReturnType<typeof mountSeat>["address"] | null = null;
+/** Every letter a row press opened: the address the seat wrote — the cursor move a stamp press must NOT cause. */
+const selected = (): string[] =>
+  (address?.writes ?? []).map((w) => /\/m\/([^/]+)$/.exec(w.next)?.[1]).filter((id): id is string => id !== undefined);
 
 /**
- * The Ohbox, driven the way the shell drives it: the absolute-time flag is held OUTSIDE the view
- * and handed back down, because that is the seam under test. A flag frozen at mount would prove
- * the rows can RENDER two forms and nothing about the press that changes which.
+ * The Ohbox, as its seat stands it over the ground: the absolute-time flag is the seat's own (`ohbox/live.ts`), held
+ * OUTSIDE the rows and handed back down, because that is the seam under test. A flag frozen at mount would prove the
+ * rows can RENDER two forms and nothing about the press that changes which.
  */
 async function render(rows: Record<string, unknown>[]): Promise<void> {
-  const OhboxView = await (await import("./_today.js")).prepareSeated();
-  const { KeymapProvider } = await import("@ohmail/app/keys");
-  const base = {
-    demo: false, settled: true, owed: false,
-    older: { available: false, items: [], loading: false, error: null, exhausted: false, loadMore: () => {} },
-    resurfacedRows: [], newForYou: rows, previouslySeen: [], replyDone: null,
-    threadParticipants: () => [], threadSubject: () => null,
-    tags: [], now: NOW,
-    onEnterReader: () => {}, readerId: null, readSetFor: (id: string) => [id], onMarkSeen: () => {},
-    bulk: { run: () => {}, tag: () => {}, screenPreview: () => ({ senders: 0, messages: 0, rules: 0 }), screen: () => {} },
-    doorbellInitials: [], doorbellCount: 0, onDoorbell: () => {}, onAction: () => {}, onAddTag: () => {},
-  };
-  function Wrapper(): React.ReactElement {
-    const [abs, setAbs] = React.useState(false);
-    const [sel, setSel] = React.useState<string | null>(null);
-    return h(OhboxView as never, {
-      ...base,
-      absoluteTime: abs,
-      onToggleTime: () => setAbs((v) => !v),
-      selectedId: sel,
-      onSelect: (id: string) => { selected.push(id); setSel(id); },
-    } as never);
-  }
-  const el = h(NextIntlClientProvider, {
-    locale: "en", messages, timeZone: "UTC", now: NOW,
-    children: h(KeymapProvider as never, { children: h(Wrapper) } as never),
-  });
-  if (!root) { host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host); }
-  await act(async () => { root!.render(el); });
+  const letters = rows as never[];
+  const mail = fakeMail(letters, [], {}, admitting(rows.map((r) => (r.from as { address: string }).address)));
+  const seat = mountSeat(mail.engine);
+  host = seat.container;
+  address = seat.address;
+  await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
 const stampOf = (id: string): HTMLElement =>
   host!.querySelector<HTMLElement>(`[role=option][data-id="${id}"] time`)!;
 
-afterEach(async () => {
-  if (root) await act(async () => { root!.unmount(); });
-  host?.remove();
-  root = null;
+/* The seat reads the wall's clock (today's harness was handed `now`): the wall stands at the fixture's NOW. */
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+});
+afterEach(() => {
+  vi.useRealTimers();
+  unmountSeat();
   host = null;
-  selected = [];
+  address = null;
 });
 
 describe("a list row's date names the exact instant on hover", () => {
   it("shows the relative stamp and carries the absolute one as its title", async () => {
-    const { displayTime, fullDateTime } = await import("../../app/shell/format.js");
+    const { displayTime, fullDateTime } = await import("@ohmail/app-logic/text/format");
     const rel = displayTime(OLDER as never, NOW);
     const abs = fullDateTime(OLDER as never);
     expect(rel, "the fixture's two forms must actually differ").not.toBe(abs);
@@ -135,7 +113,7 @@ describe("a list row's date names the exact instant on hover", () => {
 
 describe("pressing one date flips every date in the list", () => {
   it("flips the pressed row AND its neighbours, and swaps each title to the other form", async () => {
-    const { displayTime, fullDateTime } = await import("../../app/shell/format.js");
+    const { displayTime, fullDateTime } = await import("@ohmail/app-logic/text/format");
     await render([OLDER, NEWER]);
 
     await act(async () => { stampOf("a").click(); });
@@ -163,18 +141,18 @@ describe("pressing one date flips every date in the list", () => {
     await act(async () => { stampOf("a").click(); });
     // THE GUARD. Let the press fall through to the row's own handler (drop the `data-stamp` hit
     // test) and reading the exact date silently opens whatever row it was read on.
-    expect(selected, "pressing the date opened the message").toEqual([]);
+    expect(selected(), "pressing the date opened the message").toEqual([]);
     expect(host!.querySelector("[role=option][data-open]"), "pressing the date selected a row").toBeNull();
 
     // The rest of the row is untouched: a press anywhere else still opens it.
     await act(async () => { host!.querySelector<HTMLElement>(`[role=option][data-id="b"] .oh-row-subject`)!.click(); });
-    expect(selected).toEqual(["b"]);
+    expect(selected()).toEqual(["b"]);
   });
 });
 
 describe("rowStamp — the two forms, and when there is only one", () => {
   it("names the other form whichever one is displayed", async () => {
-    const { displayTime, fullDateTime, rowStamp } = await import("../../app/shell/format.js");
+    const { displayTime, fullDateTime, rowStamp } = await import("@ohmail/app-logic/text/format");
     const rel = displayTime(OLDER as never, NOW);
     const abs = fullDateTime(OLDER as never);
     const toggle = () => {};
@@ -189,7 +167,7 @@ describe("rowStamp — the two forms, and when there is only one", () => {
   });
 
   it("a message with no Date: header gets no title and NO flip — one form is not a choice", async () => {
-    const { rowStamp } = await import("../../app/shell/format.js");
+    const { rowStamp } = await import("@ohmail/app-logic/text/format");
     // Spam and scripts routinely omit the header; `fullDateTime` answers "" because there is no
     // instant to name. Offering to reveal an exact date that does not exist is the dead
     // affordance this product removes wherever it finds one.

@@ -213,7 +213,8 @@ async function probe(engine: OhmailEngine): Promise<Probe> {
   // see the thing it was extended to test.
   await act(async () => { await engine.start(); });
   const { useMailSend } = await import("@ohmail/app-logic/writing/mail-send");
-  const { useMailSendText } = await import("../app/shell/mail-send-text.js");
+  // The send machine's words as the mail ground hands them (today's shell words leave with today's shell).
+  const { useMailSendText } = await import("./_write-1-send-text.js");
   let send!: (m: Mut) => void;
   let stateOf!: (key: string) => SendState;
   const Probe = (): null => {

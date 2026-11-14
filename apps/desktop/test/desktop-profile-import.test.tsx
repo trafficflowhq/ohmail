@@ -454,14 +454,12 @@ describe("the door that may ask about found settings", () => {
  */
 describe("the wiring, pinned by source", () => {
   const gate = read("src/DesktopGate.tsx");
-  const shell = fs.readFileSync(
-    path.resolve(APP, "../webapp/app/shell/AppShell.tsx"),
-    "utf8",
-  );
-
-  it("the shared shell threads the host wire into the one import state", () => {
-    expect(shell).toMatch(/const profileImportOffer = useProfileImport\(!demo, facts, profileImportTransport, undefined, profileDoorbell\);/);
-  });
+  /* The shared shell, re-pointed by path (RULING-NEW-SHELL-FIRST D (3)): today's `AppShell.tsx` leaves with the
+     switch, and every host now mounts the new shell, `packages/app/src` whole. Its case that read today's call of
+     `useProfileImport` moved word for word to `desktop-profile-import-todays-shell.test.tsx`. */
+  const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(path.join(dir, e.name)) : /\.tsx?$/.test(e.name) ? [path.join(dir, e.name)] : []);
+  const shell = walk(path.resolve(APP, "../../packages/app/src")).map((f) => fs.readFileSync(f, "utf8")).join("\n");
 
   it("the shared files name none of the transport — no bridge, no Tauri, no engine", () => {
     const cardSource = fs.readFileSync(

@@ -154,6 +154,8 @@ export function usePersistedChoice<T extends string>(
  */
 export const UI_KEYS = {
   tagsOpen: "ohmail.ui.rail.tagsOpen",
+  /** The browser remembers dismissing the desktop download offer across sign-ins. */
+  desktopCtaDismissed: "ohmail.desktopCtaDismissed",
   /** The rail's Folders group — `tagsOpen`'s sibling, one flag for the whole group. */
   foldersOpen: "ohmail.ui.rail.foldersOpen",
   /**

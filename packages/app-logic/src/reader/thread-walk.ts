@@ -29,6 +29,11 @@ export interface ThreadWalkInput {
    * at the person's first gesture, a hand scroll, a square's press, or after {@link ANCHOR_CEILING_MS}.
    */
   readonly anchor?: boolean;
+  /**
+   * The open's anchor stands down for good while this answers true: the person's own reply has joined the
+   * conversation (`sent-reveal`'s `claims`), which the reveal brings into view; the open must not pull it away.
+   */
+  readonly standsDown?: () => boolean;
 }
 
 /** A ceiling, not a schedule: a conversation still growing after this has something else wrong with it. */
@@ -57,6 +62,7 @@ export function useThreadWalk({
   onEnter,
   names = THREAD_DOM,
   anchor = false,
+  standsDown,
 }: ThreadWalkInput): ThreadWalk {
   const ids = messages.map((m) => m.id);
   const key = ids.join(" ");
@@ -67,8 +73,8 @@ export function useThreadWalk({
   const pin = useRef<string | null>(openedId);
   const [here, setHere] = useState<string | null>(null);
   const [endFar, setEndFar] = useState(false);
-  const latest = useRef({ onEnter, names });
-  latest.current = { onEnter, names };
+  const latest = useRef({ onEnter, names, standsDown });
+  latest.current = { onEnter, names, standsDown };
   /* The open's anchor, live from the open until it is let go. */
   const anchored = useRef(anchor);
 
@@ -105,6 +111,7 @@ export function useThreadWalk({
     });
     const opened = pin.current === null ? -1 : list.current.indexOf(pin.current);
     const top = at.get(pin.current ?? "") ?? Number.NaN;
+    if (anchored.current && latest.current.standsDown?.() === true) anchored.current = false;
     const anchoring = anchored.current && opened >= 0 && list.current.length > 1 && view.current > 0;
     if (anchoring && Number.isFinite(top)) {
       const under = top - coverOf(scroller, latest.current.names) - OPEN_GAP_PX;

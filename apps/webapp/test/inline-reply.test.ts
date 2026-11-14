@@ -7,7 +7,7 @@ import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { triage } from "@ohmail/testing";
 import messages from "../messages/en.json";
 import { editorOf, typeInto } from "./fixtures/rich-editor-driver";
-import { settleEditor, settleFirstPaint } from "./_first-paint.js";
+import { settleEditor } from "./_first-paint.js";
 import { replyDraftKey } from "@ohmail/app-logic/writing/mail-send";
 import { DEMO_STORAGE_OWNER } from "@ohmail/app-logic/storage/storage-owner";
 
@@ -24,6 +24,15 @@ const replyBuffer = (id: string): string | null => window.localStorage.getItem(r
  * mounts the real `AppShell` in demo mode (fixtures, no network — see
  * `demo-zero-network.test.ts`) and drives it with keys, exactly as that change drives
  * production with CDP.
+ *
+ * RE-POINTED BY THE OLDER TESTS' SORTING (share write-1), EXPECTATIONS UNTOUCHED: today's `AppShell` is mounted by no
+ * host; this mounts the shell there is, the frame over the mail ground in demo mode (`_mail-shell.tsx`, the door's
+ * own name), and reads it by role and name. The open letter is the region "Open message" (its subject the reading
+ * head's heading, its text `[data-read-body]`, the reader's own name for it); Write's reply stands in it as the
+ * sheet "Reply to <name>" (its text the textbox "Reply body", its file input under its clip); the verbs (Send,
+ * Discard) stand in the toolbar "Actions"; the selection's count is the button "<n> selected — …". Keys go where the
+ * keys are (`document.activeElement`), as a person's do: the reply's text holds them from its mount. The clock is the
+ * run's own: the frame's lazy parts settle across real tasks, so the beats are waited out, not advanced.
  *
  * Escape is the assertion that costs the most to get right. Four components had a
  * `document` Escape listener before that change; the reply editor could not simply have added a
@@ -65,7 +74,7 @@ async function unmount(): Promise<void> {
 /** The whole client, on the fixture world. `#/ohbox` is the default route. */
 async function mountShell(): Promise<void> {
   await unmount();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -80,8 +89,8 @@ async function mountShell(): Promise<void> {
       }),
     );
   });
-  // The fixtures engine hydrates synchronously but still through a promise chain.
-  for (let i = 0; i < 8; i++) await act(async () => { await Promise.resolve(); });
+  // The fixtures engine hydrates synchronously but still through a promise chain; the frame's places are lazy.
+  await waitFor(() => host!.querySelector(`section[aria-label="Messages"] [role=option][data-id]`) !== null, "the Ohbox's rows");
   /**
    * …AND THEN OPEN A MESSAGE, because the Ohbox no longer opens one by itself.
    *
@@ -92,14 +101,22 @@ async function mountShell(): Promise<void> {
    * that opens one. `j` is that act, and it is the product's own: it is what the resting
    * column tells the reader to press.
    */
-  await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "j", bubbles: true, cancelable: true }));
-  });
+  await key("j");
+  await waitFor(() => openSubject() !== "", "the letter j opens");
+}
+
+/** Wait, in real time, for what the frame draws across tasks. */
+async function waitFor(p: () => boolean, what: string, timeout = 5000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!p()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
+    await act(async () => { await new Promise((r) => setTimeout(r, 10)); });
+  }
 }
 
 const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
   await act(async () => {
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    (document.activeElement ?? document).dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
   });
   // A key can open an editor, and the editor is behind `RichEditorLazy` — one seam, one helper.
   await settleEditor();
@@ -107,25 +124,36 @@ const key = async (k: string, init: KeyboardEventInit = {}): Promise<void> => {
 
 /** Editors that are INSIDE a rendered message — the journey's own question.
  *
- *  It selects `.rte-surface` and no longer `textarea`: the reply is a rich editor now, and
- *  `textarea` would answer zero everywhere while every assertion built on it read as "the
- *  editor is closed". The surface is also the element the driver needs — the `.rte` wrapper
- *  carries no TipTap handle. */
+ *  It selects the rich editor's surface, the textbox "Reply body" (share write-1: by role and name; before, by
+ *  today's `.rte-surface`), and not a `textarea`: the reply is a rich editor, and `textarea` would answer zero
+ *  everywhere while every assertion built on it read as "the editor is closed". The surface is also the element the
+ *  driver needs. */
+const OPEN = '[role="region"][aria-label="Open message"]';
 const editorsInMessage = (): HTMLElement[] =>
-  [...host!.querySelectorAll<HTMLElement>(".reader .msg, .read-col .msg")]
-    .flatMap((m) => [...m.querySelectorAll<HTMLElement>(".rte-surface")]);
+  [...host!.querySelectorAll<HTMLElement>(OPEN)]
+    .flatMap((m) => [...m.querySelectorAll<HTMLElement>('[role="textbox"][aria-label="Reply body"]')]);
 
-/** The id of the message the reply editor is open on — the scratch buffer's key. */
+/** Write's reply in the open letter: the sheet named "Reply to <name>" that holds the reply's text. */
+const replySheet = (): HTMLElement | null =>
+  [...host!.querySelectorAll<HTMLElement>(`${OPEN} [aria-label^="Reply to "]`)]
+    .find((s) => s.querySelector('[role="textbox"][aria-label="Reply body"]') !== null) ?? null;
+
+/** The id of the message the reply editor is open on — the scratch buffer's key: the letter the address reads. */
 const openMessageId = (): string =>
-  host!.querySelector<HTMLElement>(".reply[data-reply-for]")?.dataset.replyFor ?? "";
+  replySheet() === null ? "" : /^#\/ohbox\/m\/([^/?]+)/.exec(window.location.hash)?.[1] ?? "";
 
 // SELECTOR UPDATED BY THE VIEWER REDESIGN, ASSERTION UNTOUCHED: the subject moved from the
 // 24px `h2` into the header's quiet per-message `.msg-subject` line (SUBJECT-D). What is
 // asserted — the open pane shows the message that was opened — is exactly what it was.
+// RE-POINTED AGAIN (share write-1): the open letter's subject is its reading head's heading.
 const openSubject = (): string =>
-  host!.querySelector(".reader .msg .msg-subject")?.textContent
-  ?? host!.querySelector(".read-col .msg .msg-subject")?.textContent
+  host!.querySelector(`${OPEN} h2`)?.textContent
   ?? "";
+/** The open letter's text, as the reader draws it. */
+const BODY = `${OPEN} [data-read-body]`;
+/** The selection's count, as its button names it ("1 selected — clear the selection"). */
+const picked = (): string | null =>
+  [...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null;
 
 /** How many times `needle` occurs in `hay` — non-overlapping, plain string search. */
 function occurrences(hay: string, needle: string): number {
@@ -148,8 +176,9 @@ const scrolledArgs: (ScrollIntoViewOptions | undefined)[] = [];
 let hadScrollIntoView: unknown;
 
 beforeEach(() => {
-  vi.useFakeTimers();
   setViewport(false);
+  // The frame's report leaves through `animate`; jsdom has none.
+  Element.prototype.animate ??= (() => ({ cancel() {}, finished: Promise.resolve() })) as unknown as Element["animate"];
   window.location.hash = "#/ohbox";
   try { window.localStorage.clear(); } catch { /* storage blocked */ }
   const proto = Element.prototype as unknown as { scrollIntoView?: unknown };
@@ -164,7 +193,6 @@ beforeEach(() => {
 
 afterEach(async () => {
   await unmount();
-  vi.useRealTimers();
   vi.restoreAllMocks();
   (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView =
     hadScrollIntoView;
@@ -186,7 +214,8 @@ describe("Reply opens inside the message", () => {
     // so the claim is "no navigation", not "an empty bar". See `message-url.test.tsx`.
     expect(window.location.hash).toMatch(/^#\/ohbox(\/m\/|$)/);
     expect(openSubject()).toBe(subject);
-    expect(host!.querySelector(".view-compose")).toBeNull();
+    // No new letter was opened instead: the shell's compose sheet is the region "New message".
+    expect(host!.querySelector('[role="region"][aria-label="New message"]')).toBeNull();
   });
 
   it("the Reply button does the same thing as the key", async () => {
@@ -201,9 +230,11 @@ describe("Reply opens inside the message", () => {
      * original equality was: it still refuses "Reply all" or any other button whose label
      * merely starts with "Reply".
      */
-    const reply = [...host!.querySelectorAll<HTMLButtonElement>(".read-col .msg-actions button")]
-      .find((b) => labelWithoutKeycap(b) === "Reply")!;
+    // RE-POINTED (share write-1): the open letter's verbs are named; Reply is the button named "Reply".
+    const reply = [...host!.querySelectorAll<HTMLButtonElement>(`${OPEN} button`)]
+      .find((b) => (b.getAttribute("aria-label") ?? labelWithoutKeycap(b)) === "Reply")!;
     await act(async () => { reply.click(); });
+    await settleEditor();
     expect(editorsInMessage().length).toBeGreaterThan(0);
     // The VIEW is unchanged — the reading itself rides the hash now (`#/ohbox/m/<id>`),
     // so the claim is "no navigation", not "an empty bar". See `message-url.test.tsx`.
@@ -228,15 +259,15 @@ describe("Reply opens inside the message", () => {
      */
     await mountShell();
     await key("r");
-    const scope = host!.querySelector(".read-col .msg")!;
-    const editor = scope.querySelector(".reply-editor")!;
+    const scope = host!.querySelector(OPEN)!;
+    const editor = replySheet()!;
 
-    // No quoted context, anywhere.
-    expect(scope.querySelector(".reply-context")).toBeNull();
+    // No quoted context, anywhere: nothing of the letter stands inside the reply (the count below asks it whole).
+    expect(editor.querySelector("[data-read-body]")).toBeNull();
 
-    // The mail, once. `.msg-body` is the only thing that holds it (`ReadingPane`), and the
+    // The mail, once. `[data-read-body]` is the only thing that holds it (the reader), and the
     // occurrence count catches a copy rendered by anything else.
-    const bodies = [...scope.querySelectorAll<HTMLElement>(".msg-body")];
+    const bodies = [...scope.querySelectorAll<HTMLElement>("[data-read-body]")];
     expect(bodies).toHaveLength(1);
     const body = bodies[0]!.textContent!;
     expect(body.length, "the demo message has no body to count").toBeGreaterThan(40);
@@ -257,7 +288,7 @@ describe("Reply opens inside the message", () => {
     scrolled.length = 0;
     scrolledArgs.length = 0;
     await key("r");
-    const box = host!.querySelector<HTMLElement>(".read-col .reply")!;
+    const box = replySheet()!;
     expect(scrolled, "the editor did not scroll itself into view").toContain(box);
     // it is the editor's BOTTOM edge — the Send/Cancel row — that must land on screen, not
     // merely its nearest edge (on a tall editor that was its head, leaving the actions below the
@@ -277,7 +308,7 @@ describe("Reply opens inside the message", () => {
     expect(host!.textContent).not.toContain("the only message ohmail has on this conversation");
     expect(host!.textContent).not.toContain("Threading is not built yet");
     // And the mail itself is still on screen — an absent note must not be a stood-down pane.
-    expect(host!.querySelectorAll(".read-col .msg .msg-body")).toHaveLength(1);
+    expect(host!.querySelectorAll(BODY)).toHaveLength(1);
   });
 });
 
@@ -308,7 +339,7 @@ describe("Escape", () => {
     // Drop the `chrome.replyTo != null` term from that binding's `disabled` and this fails.
     await mountShell();
     await key("x");                                   // pick the row under the cursor
-    expect(([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null)).toBe("1");
+    expect(picked()).toBe("1");
     await key("r");
     expect(editorsInMessage().length).toBeGreaterThan(0);
 
@@ -316,10 +347,10 @@ describe("Escape", () => {
 
     expect(editorsInMessage()).toHaveLength(0);
     // …and the selection is still there, because Escape closed the inner thing, not both.
-    expect(([...host!.querySelectorAll("button")].map((b) => /^(\d+) selected — /.exec(b.getAttribute("aria-label") ?? "")?.[1]).find(Boolean) ?? null)).toBe("1");
-    // A second Escape is what clears it — the cascade, one layer per press.
+    expect(picked()).toBe("1");
+    // A second Escape is what clears it — the cascade, one layer per press. (The picked set's bar is its count.)
     await key("Escape");
-    expect(host!.querySelector(".ob-foot")).toBeNull();
+    expect(picked()).toBeNull();
   });
 
   it("works from INSIDE the editor, which is where the cursor actually is", async () => {
@@ -338,8 +369,9 @@ describe("Escape", () => {
   it("Escape leaves Compose too — the other half of 'cant even esc out of it'", async () => {
     await mountShell();
     await act(async () => { window.location.hash = "#/compose"; window.dispatchEvent(new HashChangeEvent("hashchange")); });
-    await settleFirstPaint();
-    expect(host!.querySelector(".view-compose")).toBeTruthy();
+    await waitFor(() => host!.querySelector('[role="region"][aria-label="New message"]') !== null, "the new letter");
+    await settleEditor();
+    expect(host!.querySelector('[role="region"][aria-label="New message"]')).toBeTruthy();
     await key("Escape");
     // The VIEW is unchanged — the reading itself rides the hash now (`#/ohbox/m/<id>`),
     // so the claim is "no navigation", not "an empty bar". See `message-url.test.tsx`.
@@ -363,8 +395,8 @@ function labelWithoutKeycap(b: Element): string {
 
 /** The Send button inside the open message's reply editor. */
 const sendButton = (): HTMLButtonElement =>
-  [...host!.querySelectorAll<HTMLButtonElement>(".read-col .msg .reply-actions button")]
-    .find((b) => b.textContent?.trim().startsWith("Send"))!;
+  [...host!.querySelectorAll<HTMLButtonElement>(`${OPEN} [role="toolbar"][aria-label="Actions"] button`)]
+    .find((b) => b.getAttribute("aria-label") === "Send")!;
 
 /** Type into the open reply editor — through ProseMirror, which is the only path that
  *  produces a change the shell can see. See `fixtures/rich-editor-driver.ts`. */
@@ -380,16 +412,15 @@ async function type(text: string): Promise<void> {
  * (`afterPaint`); microtasks drain before the task ends, so a `Promise.resolve()` loop never
  * reaches the dispatch at all — the mutation simply never arrives at the adapter.
  *
- * ADVANCED, not awaited: this suite installs FAKE timers (`vi.useFakeTimers()` in its
- * `beforeEach`), so a real `setTimeout` promise never settles and the helper would sit until the
- * case's own deadline — which looks exactly like a hang in the code under test, and did.
+ * WAITED, in real time (share write-1): the frame's lazy parts settle across real tasks, so this suite runs on the
+ * run's own clock (it installed fake timers over today's shell and advanced them).
  *
  * This does NOT run out the closing beat; see {@link settleClosed}. Most cases here are about
  * what was SENT rather than about the editor going away.
  */
 async function settle(): Promise<void> {
   for (let i = 0; i < 8; i++) {
-    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await act(async () => { await new Promise((r) => setTimeout(r, 1)); });
   }
 }
 
@@ -401,7 +432,7 @@ async function settle(): Promise<void> {
 async function settleClosed(): Promise<void> {
   await settle();
   const { SENT_BEAT_MS } = await import("@ohmail/app-logic/writing/mail-send");
-  await act(async () => { await vi.advanceTimersByTimeAsync(SENT_BEAT_MS + 80); });
+  await act(async () => { await new Promise((r) => setTimeout(r, SENT_BEAT_MS + 80)); });
   await settle();
 }
 
@@ -481,7 +512,7 @@ describe("sending the reply", () => {
     await mountShell();
     await key("r");
     await type("Donnerstag passt.");
-    const messageId = host!.querySelector<HTMLElement>(".read-col .reply")!.dataset.replyFor!;
+    const messageId = openMessageId();
     expect(replyBuffer(messageId)).toBe("Donnerstag passt.");
 
     await act(async () => { sendButton().click(); });
@@ -568,7 +599,7 @@ describe("the outgoing reply is exactly what was typed", () => {
     await key("r");
 
     // The parent's body as the READER sees it — the copy this slice made the pane keep.
-    const parentBody = host!.querySelector(".read-col .msg .msg-body")!.textContent!;
+    const parentBody = host!.querySelector(BODY)!.textContent!;
     expect(parentBody.length, "no parent body on screen ⇒ nothing to leak ⇒ vacuous").toBeGreaterThan(40);
     const parentLine = parentBody.split("\n").find((l) => l.trim().length > 20)!.trim();
 
@@ -675,12 +706,13 @@ describe("reply attachments ride the send, never the account and never the scrat
       await type("Mit Anhang.");
       const messageId = openMessageId();
 
-      const input = host!.querySelector<HTMLInputElement>(".reply .compose-attach input[type='file']");
+      const input = replySheet()?.querySelector<HTMLInputElement>("input[type='file']") ?? null;
       expect(input, "the reply editor rendered no attach control").not.toBeNull();
       const file = new File([new Uint8Array([1, 2, 3, 4, 5])], "note.txt", { type: "text/plain" });
       Object.defineProperty(input!, "files", {
         configurable: true,
-        value: { 0: file, length: 1, item: () => file },
+        // A FileList is iterable, as the browser's is (the kit's clip spreads it): the fixture made whole.
+        value: { 0: file, length: 1, item: () => file, [Symbol.iterator]: function* () { yield file; } },
       });
       await act(async () => { input!.dispatchEvent(new Event("change", { bubbles: true })); });
       await settle();

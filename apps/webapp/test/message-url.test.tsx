@@ -6,6 +6,7 @@ import { NextIntlClientProvider } from "next-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import messages from "../messages/en.json";
 import { canonicalHash, normalizedHash, parseHash } from "../app/shell/routing";
+import { openSubject } from "./ohbox/_finders.js";
 
 /**
  * THE OPEN MESSAGE LIVES IN THE URL — `#/<view>/m/<id>`.
@@ -69,7 +70,7 @@ const settle = async (): Promise<void> => {
 async function mountShell(): Promise<void> {
   await unmountKeepHash();
   setViewport();
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -146,8 +147,9 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
     await unmountKeepHash();
     await mountShell();
     expect(host!.querySelector<HTMLElement>(":is(.row.sel, [role=option][data-open])[data-id]")?.dataset.id, "the restored selection").toBe(selId);
+    /* The reading column, by its section and the open letter's region: its heading is the letter's subject. */
     expect(
-      host!.querySelector(".read-col .msg-subject")?.textContent ?? "",
+      openSubject(host!),
       "the reading column shows the restored message",
     ).not.toBe("");
   });

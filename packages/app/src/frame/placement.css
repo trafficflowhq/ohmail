@@ -90,6 +90,11 @@
   min-height: 0;
 }
 
+/* The empty Ohmarchy tile's ring sits outside the reading column's grid cell. */
+:root[data-face="ohmarchy"]:not([data-device="phone"]) .fr-reading:not([data-over]):has(> .oh-blankcolumn) {
+  margin: calc(-1 * var(--ringw)) calc(-1 * var(--ringw)) 0;
+}
+
 /* A kept body stays mounted while a place of another body is on screen: its box is hidden and takes no cell. */
 .fr-wide[hidden] {
   display: none;

@@ -35,6 +35,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { registeredFeatures } from "./registered-features.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const APP = path.resolve(HERE, "..");
@@ -79,6 +80,7 @@ function bundleText(dir) {
 }
 
 const text = bundleText(DIST);
+const registered = registeredFeatures(path.resolve(APP, "../.."), EXPECT);
 
 /**
  * The bridge command is in the WINDOW bundle and cannot be in the host client — the served page
@@ -281,7 +283,9 @@ if (wantsEngine) {
   if (absent.length > 0) {
     failures.push(`the window bundle is missing the local-model surface: ${absent.join(", ")}`);
   }
-  if (!hostedSuggestPresent) {
+  if (!registered.hostedSuggest && hostedSuggestPresent) {
+    failures.push("the window carries the hosted suggest transport without a registered Screener or suggestion wire");
+  } else if (registered.hostedSuggest && !hostedSuggestPresent) {
     failures.push(
       "the window bundle has no hosted-account suggest transport in it — an install pointed at a " +
         "hosted account would find the Screener's suggest control missing, which is the state " +
@@ -343,11 +347,17 @@ if (wantsEngine) {
         "shipping.",
     );
   }
-  const pdfjsShipped = pdfjsFiles.filter((f) => f.present).map((f) => f.name);
+  const pdfjsShipped = fs.readdirSync(DIST, { recursive: true })
+    .filter((file) => PDFJS_FILES.includes(path.basename(file)));
   if (pdfjsShipped.length > 0) {
     failures.push(`the served host client carries ${pdfjsShipped.join(" and ")} — its policy admits no worker, and pdf.js is the window's`);
   }
-  if (!pdfjsStubPresent) {
+  if (pdfjsGlobalsInBoot.length) {
+    failures.push(`the served host client carries PDF library or worker code (${pdfjsGlobalsInBoot.join(", ")})`);
+  }
+  if (!registered.pdfPreview && pdfjsStubPresent) {
+    failures.push("the served host client carries a PDF preview stub without a registered file-preview consumer");
+  } else if (registered.pdfPreview && !pdfjsStubPresent) {
     failures.push("the served host client lost the pdf.js stub's sentence — check the pdfjs-dist alias in vite.config.ts (src/no-pdfjs.ts)");
   }
 }

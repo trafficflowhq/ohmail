@@ -62,13 +62,12 @@ export function contextOf(state: ConnectState, facts: ConnectFacts, afterFactor:
 const still = (state: ConnectState): Stepped => ({ state, send: null, done: null, forget: false });
 
 /**
- * WHAT A PRESS WOULD SEND HAS CHANGED: a press waiting on the second factor is withdrawn, and the test's verdict
- * goes with the form it described. Either a parked press equals what the form would send now, or there is none.
- * A press still on its way cannot be called back: the form remembers that it moved, and no factor is asked for it.
+ * WHAT A PRESS WOULD SEND HAS CHANGED: withdraw a press waiting on a second factor and clear the result on screen.
+ * An in-flight press keeps its slot until the wire answers. Its test verdict or refusal belongs to the old form.
  */
 function changed(state: ConnectState): ConnectState {
   const gate = state.gate.at === "asking" ? gatedStep(state.gate, { kind: "cancelled" }).state : state.gate;
-  return { ...state, gate, moved: state.gate.at === "trying" ? true : state.moved, tested: null };
+  return { ...state, gate, moved: state.gate.at === "trying", tested: null, shown: null };
 }
 
 /** A server's name or port changed, or the provider: everything known about the old server goes. */
@@ -81,11 +80,9 @@ const forgetServer = (state: ConnectState): ConnectState => ({
 
 function provider(state: ConnectState, id: string | null, byHand: boolean): ConnectState {
   const base = forgetServer(changed({ ...state, signIns: state.signIns + 1, leaving: false }));
-  const calm = base.shown?.calm === true ? null : base.shown;
   if (id === null)
     return {
       ...base,
-      shown: calm,
       typed: { ...base.typed, provider: null, byHand: false, byPassword: false },
     };
   const next = providerById(id);
@@ -94,7 +91,6 @@ function provider(state: ConnectState, id: string | null, byHand: boolean): Conn
   const hosts = hostsFor(next, { imapHost: base.typed.imapHost, smtpHost: base.typed.smtpHost }, previous);
   return {
     ...base,
-    shown: calm,
     typed: {
       ...base.typed,
       provider: next.id,
@@ -111,8 +107,8 @@ function answered(state: ConnectState, answer: Answered<unknown>, facts: Connect
   if (state.gate.at !== "trying") return still(state);
   const { act, afterFactor } = state.gate;
   if (answer.ok) {
-    const gate = gatedStep(state.gate, { kind: "answered", answer: { ok: true } }).state;
     if (act.verb === "test") {
+      if (state.moved) return still({ ...state, gate: GATED_IDLE, moved: false });
       const ok = answer.value as ConnectProbed;
       // The sending leg's own offer opens from the test, as it would from the connect.
       const consents = withOffers(state.consents, offersOfProbed(ok, act.sent));
@@ -126,6 +122,7 @@ function answered(state: ConnectState, answer: Answered<unknown>, facts: Connect
         offerHosts: false,
       });
     }
+    const gate = gatedStep(state.gate, { kind: "answered", answer: { ok: true } }).state;
     // The password leaves the form the moment the server has it, and everything typed goes with the form it described.
     const cleared: ConnectState = {
       ...initialState(null, facts),
@@ -164,6 +161,7 @@ function answered(state: ConnectState, answer: Answered<unknown>, facts: Connect
       moved: false,
       shown: { said: nothingRanSaid(facts.purpose), calm: facts.purpose !== "join" },
     });
+  if (state.moved && word.word === "said") return still({ ...state, gate: GATED_IDLE, moved: false });
   const gate = gatedStep<Parked, never>(state.gate, { kind: "answered", answer: word }).state;
   if (gate.at === "asking") return still({ ...state, gate, shown: null });
   const reason = probeReasonOf(refusal);
@@ -231,7 +229,6 @@ export function connectStep(state: ConnectState, event: ConnectEvent, facts: Con
         changed({
           ...state,
           typed: { ...state.typed, byPassword: true },
-          shown: null,
           signIns: state.signIns + 1,
           leaving: false,
         }),
@@ -260,7 +257,7 @@ export function connectStep(state: ConnectState, event: ConnectEvent, facts: Con
         smtpHost: s.leg === "smtp" || both ? s.host : state.typed.smtpHost,
       };
       // It rewrites a host, so everything learned about the old one goes: the verdict, the consents, the offers.
-      return still({ ...forgetServer(changed({ ...state, typed })), shown: null });
+      return still(forgetServer(changed({ ...state, typed })));
     }
     case "hostsTaken": {
       const typed = {
@@ -268,7 +265,7 @@ export function connectStep(state: ConnectState, event: ConnectEvent, facts: Con
         imapHost: event.imap ?? state.typed.imapHost,
         smtpHost: event.smtp ?? state.typed.smtpHost,
       };
-      return still({ ...forgetServer(changed({ ...state, typed })), shown: null });
+      return still(forgetServer(changed({ ...state, typed })));
     }
     case "press": {
       const stepped = gatedStep(state.gate, { kind: "try", act: event.act });

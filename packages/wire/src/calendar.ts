@@ -181,6 +181,8 @@ export interface CalendarEventRecord {
   /** The moment of the occurrence this record replaces; `null` when it replaces none. */
   occurrenceAt: ISODateTime | null;
   repeat: CalendarRepeat | null;
+  /** The original is a personal series whose simple whole-day repeat this server can edit. */
+  personalSeries?: true;
   busy: boolean;
   private: boolean;
   organizer: { address: string; name: string | null } | null;
@@ -433,6 +435,10 @@ export type CalendarEventAct =
       kind: "calendar_event_update";
       scope: CalendarChangeScope;
       change: Partial<CalendarEventFields>;
+      /** Apply the chosen scope only while the provider's series remains personal. */
+      personalSeries?: true;
+      /** The people this editor expects the provider to notify, checked under the same tag as its write. */
+      audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
     })
   | (CalendarEventBase & { kind: "calendar_event_delete"; scope: CalendarRemoveScope })
   | (CalendarEventBase & { kind: "calendar_event_move"; toCalendarId: string })

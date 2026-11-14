@@ -1,0 +1,32 @@
+/* An address in two halves: the local part gives way first and takes the ellipsis, keeping room for it; the domain is
+   never cut: one too long for its line breaks between its letters, and a hyphen is held to the letter after it. */
+@layer oh {
+  .oh-address {
+    --oh-address-local: 3ch;
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    vertical-align: top;
+  }
+
+  .oh-address-local {
+    flex: 1 1 var(--oh-address-local);
+    min-width: 0;
+    max-width: max-content;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-address-domain {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    white-space: normal;
+    word-break: break-all;
+  }
+
+  .oh-address-held {
+    white-space: nowrap;
+  }
+}

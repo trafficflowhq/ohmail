@@ -8,6 +8,7 @@
     --oh-messagehead-offset: 0.18em;
     --oh-messagehead-offset-fine: 0.2em;
     --oh-messagehead-short: 2ch;
+    --oh-messagehead-least: calc(var(--t-ui) * 2.5);
     --oh-messagehead-reach: -7px -3px -18px;
     --oh-messagehead-touch: 44px;
     --oh-messagehead-row-gap: 2px;
@@ -47,7 +48,12 @@
     background: var(--oh-messagehead-over, var(--hover));
   }
 
-  .oh-messagehead-sender > .oh-avatar {
+  /* The circle and the lines beside it: the sender's own grid (one box only under a finger, below). */
+  .oh-messagehead-line {
+    display: contents;
+  }
+
+  .oh-messagehead-line > .oh-avatar {
     grid-row: 1 / span 2;
     align-self: center;
   }
@@ -71,9 +77,12 @@
     text-overflow: ellipsis;
   }
 
+  /* The name is the sender's to choose; the address is the evidence. Short of room the address leaves the name its
+     first letters and is cut in its local part, never in its domain; the name gives way to it. */
   .oh-messagehead-address {
-    flex: 0 2 auto;
+    flex: 0 0 auto;
     min-width: 0;
+    max-width: calc(100% - var(--oh-messagehead-least) - var(--s2));
     overflow: hidden;
     color: var(--ink2);
     font-size: var(--t-meta);
@@ -234,6 +243,22 @@
   :root[data-touch="1"] .oh-messagehead-name,
   :root[data-touch="1"] .oh-messagehead-address {
     max-width: 100%;
+  }
+
+  /* Under a finger the circle and the lines beside it are the head's own first row: an address whose domain takes a
+     second line puts who it went to under it. */
+  :root[data-touch="1"] .oh-messagehead-sender {
+    grid-template-rows: subgrid;
+  }
+
+  :root[data-touch="1"] .oh-messagehead-line {
+    grid-column: 1 / -1;
+    grid-row: 1;
+    align-self: start;
+    display: grid;
+    grid-template-columns: var(--av) minmax(0, 1fr);
+    column-gap: var(--s3);
+    align-items: center;
   }
 
   :root[data-touch="1"] .oh-messagehead-stamp {

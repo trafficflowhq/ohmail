@@ -98,7 +98,7 @@ function keyedControls(root: ParentNode): Array<{ name: string; caps: string[]; 
 describe("a control's name is its words (R21-08)", () => {
   it("an open letter's controls: no keycap in any name, and the key stated beside it", async () => {
     const root = await shell("#/ohbox");
-    const row = root.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")[1]!;
+    const row = root.querySelectorAll<HTMLElement>("[role=option][data-id]")[1]!;
     await act(async () => { row.click(); });
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
     const controls = keyedControls(root);
@@ -109,11 +109,11 @@ describe("a control's name is its words (R21-08)", () => {
     const byName = Object.fromEntries(controls.map((c) => [c.name, c.keys]));
     expect(byName.Reply).toBe("r");
     expect(byName.Forward).toBe("Shift+F");
-    /* The rail's Compose and Search print no keycap at rest, and state their keys all the same, as 1.0's did. */
+    /* The rail's Compose (the studio's Write) and Search print no keycap at rest, and state their keys all the same, as 1.0's did. */
     const inRail = (want: string) =>
       [...root.querySelectorAll<HTMLElement>("nav button, nav a")].find((b) => nameOf(b) === want);
-    expect(inRail("Compose"), "the rail has no control named Compose").toBeTruthy();
-    expect(inRail("Compose")!.getAttribute("aria-keyshortcuts")).toBe("c");
+    expect(inRail("Write"), "the rail has no control named Write").toBeTruthy();
+    expect(inRail("Write")!.getAttribute("aria-keyshortcuts")).toBe("c");
     expect(inRail("Search"), "the rail has no control named Search").toBeTruthy();
     expect(inRail("Search")!.getAttribute("aria-keyshortcuts")).toBe("/");
   });
@@ -138,13 +138,16 @@ describe("one heading level per view (R21-09)", () => {
 
   it("an open letter's subject is a level-2 heading under the view's h1", async () => {
     const root = await shell("#/ohbox");
-    const row = root.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")[1]!;
+    const row = root.querySelectorAll<HTMLElement>("[role=option][data-id]")[1]!;
     await act(async () => { row.click(); });
     for (let i = 0; i < 4; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
-    const subject = root.querySelector(".read-col .msg-subject");
-    expect(subject?.getAttribute("role")).toBe("heading");
-    expect(subject?.getAttribute("aria-level")).toBe("2");
-    const view = root.querySelector(".view")!;
+    /* The open letter's subject: the heading of the frame's reading column; the view: the place's main landmark. */
+    const reading = root.querySelector('[role="region"][aria-label="Open message"]');
+    expect(reading, "premise: the letter opened").not.toBeNull();
+    const subject = reading!.querySelector<HTMLElement>("h1, h2, h3, h4, h5, h6, [role=heading]");
+    expect(subject, "the open letter's subject is no heading").not.toBeNull();
+    expect(Number(subject!.getAttribute("aria-level") ?? subject!.tagName.slice(1))).toBe(2);
+    const view = root.querySelector("main")!;
     const seen = levels(view);
     expect(seen[0]).toBe(1);
     for (let i = 1; i < seen.length; i += 1) expect(seen[i]! - seen[i - 1]!, `a skipped level in ${seen.join(",")}`).toBeLessThanOrEqual(1);

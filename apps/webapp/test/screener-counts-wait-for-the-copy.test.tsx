@@ -21,7 +21,7 @@ import {
   NOW as WORLD_NOW, SENDERS, removedMailboxWorld,
 } from "../../../packages/services/test/helpers/removed-mailbox-world.js";
 import { ScreenerView } from "../app/views/ScreenerView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { LOADING_GRACE_MS } from "@ohmail/app-logic/session/loading-grace";
 import type { ScreenerRole } from "@ohmail/app-logic/mail-state/mail-state";
 import type { ScreenerState } from "@ohmail/app-logic/screener/screener-state";

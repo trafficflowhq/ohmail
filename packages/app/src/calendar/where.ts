@@ -67,6 +67,7 @@ export function useSettings(port: CalendarPort): CalendarViewSettings {
   return useMemo(
     () => ({
       /* The settings carry no week start yet: Monday. */
+      ...(said === null ? {} : { newEventsCalendarId: said.newEventsCalendarId }),
       weekStart: 0,
       weekNumbers: said?.weekNumbers ?? false,
       secondZone: said?.secondZone ?? null,
@@ -156,6 +157,7 @@ export function useWhere(
 export function useSources(port: CalendarPort) {
   const { host } = useFrame();
   const words = useText("event");
+  const mailWords = useText("calmail");
   const version = useSyncExternalStore(port.subscribe, port.version, port.version);
   const records = useMemo(() => {
     void version;
@@ -171,11 +173,12 @@ export function useSources(port: CalendarPort) {
   }, [host.engine, port, version]);
   const faceWords = useMemo(
     () => ({
+      busy: () => mailWords("busy"),
       waitingDevice: words("waiting.device"),
       waitingProvider: words("waiting.provider"),
       notSaved: words("notSaved"),
     }),
-    [words],
+    [words, mailWords],
   );
   return useMemo(() => ({ ...records, faceWords }), [records, faceWords]);
 }

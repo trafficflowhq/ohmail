@@ -118,10 +118,6 @@ describe("the sheet's split is the wire's when another mail app filed one", () =
     expect(r.stayedFor).not.toHaveBeenCalled();
     expect(r.back?.verdict).toEqual({ key: "none" });
   });
-
-  it("the press's after-sentence says the one that stayed, never 'all 5' over six", async () => {
-    // `screening.verdictAll` ("All 5 from … are in Ohbox.") is said only on `none`.
-    const r = await render({ fixture: true });
-    expect(r.back?.verdict).toMatchObject({ key: "still", count: 5, still: 1, stillPlace: "Fixture", ids: ["fix-1"] });
-  });
+  /* "the press's after-sentence says the one that stayed, never 'all 5' over six" MOVED word for word (share ohbox-2)
+     to `screening-read-back-says-who-stayed.test.ts`: it reads the press's read-back alone and draws no sheet of today's. */
 });

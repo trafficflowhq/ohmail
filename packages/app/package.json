@@ -46,23 +46,11 @@
       "node": "./dist/host/index.js",
       "default": "./src/host/index.ts"
     },
-    "./keys": {
-      "types": "./src/keys/index.ts",
-      "ohmail-source": "./src/keys/index.ts",
-      "node": "./dist/keys/index.js",
-      "default": "./src/keys/index.ts"
-    },
     "./mail": {
       "types": "./src/mail/index.ts",
       "ohmail-source": "./src/mail/index.ts",
       "node": "./dist/mail/index.js",
       "default": "./src/mail/index.ts"
-    },
-    "./mail/ground": {
-      "types": "./src/mail/ground/index.ts",
-      "ohmail-source": "./src/mail/ground/index.ts",
-      "node": "./dist/mail/ground/index.js",
-      "default": "./src/mail/ground/index.ts"
     },
     "./mail-state": {
       "types": "./src/mail-state/index.ts",

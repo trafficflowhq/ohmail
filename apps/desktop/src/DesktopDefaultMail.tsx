@@ -169,16 +169,24 @@ export function DefaultMailRow() {
   );
 }
 
+/** The one-time ask's state, under both its faces: the frame's notice (the new shell) and the card (today's). */
+export interface DefaultMailAskState {
+  /** "ask": the question; "after": the sentence a press earned; null: nothing is said. */
+  readonly phase: "ask" | "after" | null;
+  /** The sentence after a press: the shell's refusal, the platform's own sentence, or that the system is asked. */
+  readonly after: string;
+  readonly makeDefault: () => void;
+  readonly notNow: () => void;
+  readonly done: () => void;
+}
+
 /**
- * The one-time ask, in the stage's card slot above the mail once a mailbox is connected (`AppShell`'s
- * `stageCard`): in the flow, so it covers no control.
- *
- * Renders NOTHING until the state is read, and only when another app holds mail links — a card
- * about a setting that is already right is noise. Every exit persists: Make default, Not now,
- * and "it is already the default" all call `onDone`, and the card never appears again. The
- * Settings row above is the way back.
+ * The one-time ask, once a mailbox is connected. Says NOTHING until the state is read, and only when another app
+ * holds mail links: a question about a setting that is already right is noise. Every exit persists: Make default,
+ * Not now, and "it is already the default" all mark it asked, and it never appears again. The Settings row is the
+ * way back. `active` false (the first run stands): nothing is read and nothing is said.
  */
-export function DefaultMailAsk() {
+export function useDefaultMailAsk(active = true): DefaultMailAskState {
   /* `false` is the fresh-install truth; a stored answer replaces it in the hook's post-mount
      read. `seen` flips in an effect REGISTERED AFTER that read, so the probe below cannot start
      until the stored answer is in — which is what makes a flash for somebody who already
@@ -189,7 +197,7 @@ export function DefaultMailAsk() {
     setSeen(true);
   }, []);
 
-  const mail = useDefaultMail(seen && !asked);
+  const mail = useDefaultMail(active && seen && !asked);
   const [phase, setPhase] = useState<"ask" | "after">("ask");
 
   /* Already the default: there is nothing to ask, now or ever — the answer is the OS's own. */
@@ -197,14 +205,52 @@ export function DefaultMailAsk() {
     if (!asked && mail.state === "default" && phase === "ask") setAsked(true);
   }, [asked, mail.state, phase, setAsked]);
 
-  if (asked && phase === "ask") return null;
-  if (mail.state !== "not-default" && phase === "ask") return null;
-
-  const decide = async (): Promise<void> => {
-    setPhase("after");
-    setAsked(true);
-    await mail.request();
+  const silent = !active || (phase === "ask" && (asked || mail.state !== "not-default"));
+  return {
+    phase: silent ? null : phase,
+    after: mail.problem ?? mail.note ?? DOOR_COPY.mailtoAskingSystem,
+    makeDefault: () => {
+      setPhase("after");
+      setAsked(true);
+      void mail.request();
+    },
+    notNow: () => setAsked(true),
+    done: () => setPhase("ask"),
   };
+}
+
+/**
+ * THE ASK IN THE NEW SHELL: the window's `stageCard` entry hands it as its `notice()`, so the frame's one slot says
+ * it beside the list and takes no key (⌫ and ⌦ on the open letter still move it to Trash). The question with Make
+ * default and Not now; after Make default, the sentence the press earned with Done.
+ */
+export function useDefaultMailNotice(active: boolean) {
+  const ask = useDefaultMailAsk(active);
+  if (ask.phase === null) return [];
+  if (ask.phase === "ask")
+    return [{
+      kind: "mailLinks" as const,
+      title: DOOR_COPY.mailtoAskTitle,
+      line: DOOR_COPY.mailtoAskBody,
+      acts: [
+        { label: DOOR_COPY.mailtoMakeDefault, onPress: ask.makeDefault },
+        { label: DOOR_COPY.mailtoNotNow, onPress: ask.notNow },
+      ] as const,
+    }];
+  return [{
+    kind: "mailLinks" as const,
+    title: ask.after,
+    acts: [{ label: DOOR_COPY.mailtoDone, onPress: ask.done }] as const,
+  }];
+}
+
+/**
+ * The one-time ask as today's shell drew it, in the stage's card slot above the mail (`AppShell`'s `stageCard`): in
+ * the flow, so it covers no control. The new frame says it as the entry's notice ({@link useDefaultMailNotice}).
+ */
+export function DefaultMailAsk() {
+  const ask = useDefaultMailAsk();
+  if (ask.phase === null) return null;
 
   return (
     <div
@@ -214,26 +260,24 @@ export function DefaultMailAsk() {
       data-key-beside=""
       className="stage-card"
     >
-      {phase === "ask" ? (
+      {ask.phase === "ask" ? (
         <>
           <p style={{ margin: 0, fontWeight: 600 }}>{DOOR_COPY.mailtoAskTitle}</p>
           <p style={{ margin: "6px 0 12px", opacity: 0.8 }}>{DOOR_COPY.mailtoAskBody}</p>
           <span className="set-tag-acts">
-            <Button variant="primary" onClick={() => void decide()}>
+            <Button variant="primary" onClick={ask.makeDefault}>
               {DOOR_COPY.mailtoMakeDefault}
             </Button>
-            <Button variant="ghost" onClick={() => setAsked(true)}>
+            <Button variant="ghost" onClick={ask.notNow}>
               {DOOR_COPY.mailtoNotNow}
             </Button>
           </span>
         </>
       ) : (
         <>
-          <p style={{ margin: 0, fontWeight: 600 }}>
-            {mail.problem ?? mail.note ?? DOOR_COPY.mailtoAskingSystem}
-          </p>
+          <p style={{ margin: 0, fontWeight: 600 }}>{ask.after}</p>
           <span className="set-tag-acts" style={{ marginTop: 12, display: "inline-flex" }}>
-            <Button variant="ghost" onClick={() => setPhase("ask")}>
+            <Button variant="ghost" onClick={ask.done}>
               {DOOR_COPY.mailtoDone}
             </Button>
           </span>

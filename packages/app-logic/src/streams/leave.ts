@@ -8,7 +8,7 @@
 
 /** What a stream knows when it is left. */
 export interface StreamLeaveState {
-  /** A hand (or a press in the stream) drove it this visit. */
+  /** A hand drove it this visit: a wheel, a moving finger or a scroll key. A press, `j`/`k`, a tap or an entered hit does not. */
   readonly drove: boolean;
   /** The newest item shown this visit. */
   readonly newestSeenId: string | null;

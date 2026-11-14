@@ -42,6 +42,8 @@ export interface EventCardRow {
 
 export interface EventCardProps {
   title: string;
+  titleInput?: { label: string; value: string; onChange: (value: string) => void; readOnly: boolean };
+  editor?: ReactNode;
   /** Whose it is: the head stands on that colour, a step deeper. `null` while it is on no calendar. */
   tone: CalendarTone;
   /** The time in full, and the time it replaced, struck before it. */
@@ -139,7 +141,18 @@ export function EventCard(p: EventCardProps) {
         ) : (
           why
         )}
-        <h3 className="oh-text oh-display oh-ecard-title">{p.title}</h3>
+        {p.titleInput ? (
+          <input
+            autoFocus
+            className="oh-control oh-display oh-ecard-title oh-ecard-title-input"
+            aria-label={p.titleInput.label}
+            readOnly={p.titleInput.readOnly}
+            value={p.titleInput.value}
+            onChange={(e) => p.titleInput?.onChange(e.currentTarget.value)}
+          />
+        ) : (
+          <h3 className="oh-text oh-display oh-ecard-title">{p.title}</h3>
+        )}
         <p className="oh-text oh-ecard-when">
           {p.was ? <s className="oh-ecard-was">{p.was}</s> : null}
           {p.when}
@@ -167,6 +180,7 @@ export function EventCard(p: EventCardProps) {
         ) : null}
         {p.answers}
       </div>
+      {p.editor}
       {p.rows?.length ? (
         <dl className="oh-ecard-rows">
           {p.rows.map((r) => (

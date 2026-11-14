@@ -4,6 +4,7 @@
  * unless the test says so.
  */
 import type { Appearance, FrameAddress, Pointer, WindowFacts } from "../../src/frame/contract.js";
+import { leaveHold } from "../../src/host/leave-hold.js";
 import type { Signal } from "../../src/host/index.js";
 
 export interface MovableSignal<T> extends Signal<T> {
@@ -60,17 +61,23 @@ export interface FakeAddress extends FrameAddress {
 }
 
 export function fakeAddress(first = "#/ohbox"): FakeAddress {
+  const hold = leaveHold();
   const fragment = movable(first);
   const writes: { next: string; how: "push" | "replace" }[] = [];
   return {
+    holdLeave: hold.holdLeave,
+    heldBefore: hold.heldBefore,
     read: fragment.read,
     subscribe: fragment.subscribe,
     writes,
-    write(next, how) {
+    write: function write(next, how) {
+      if (hold.heldBefore(next, () => write(next, how))) return;
       writes.push({ next, how });
       fragment.set(next);
     },
-    visit: fragment.set,
+    visit(next) {
+      if (!hold.heldBefore(next, () => fragment.set(next))) fragment.set(next);
+    },
   };
 }
 

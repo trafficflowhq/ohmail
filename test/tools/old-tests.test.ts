@@ -302,6 +302,18 @@ describe("the older tests' checklist, read against a tree of its own", () => {
     expect(run({}, byCase, red).refused, "with no base, nothing is compared").toEqual([]);
   });
 
+  it("lets a base row with no case's name leave: it named no case (an older reader's call with no argument)", () => {
+    const phantom = row(`${HISTORY}#`, "behaviour", "mount-lists", "WAITS:history");
+    const byCase = [
+      row(`${HISTORY}#History > draws its rows`, "behaviour", "mount-lists", "WAITS:history"),
+      row(`${HISTORY}#History > lists the kept letters`, "behaviour", "mount-lists", "WAITS:history"),
+    ];
+    expect(run({}, byCase, [], { rows: [phantom, ...byCase], neverRed: [] }).refused).toEqual([]);
+    expect(run({}, [phantom, ...byCase], []).refused, "and while it stands it names no case").toEqual([
+      `REFUSED old tests: ${HISTORY}#: ${HISTORY} holds no case of that name (the case's titles as written, joined by " > ")`,
+    ]);
+  });
+
   it("refuses, against its base, one never-red row deleted alone", () => {
     const at = (name: string) => `${HISTORY}#History > ${name}`;
     const byCase = [

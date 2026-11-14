@@ -12,7 +12,7 @@ import { replyDraftKey, replyMetaKey, sentCopyNotesKey } from "@ohmail/app-logic
 import { RETIRED_ID_SETS, foldersOpenedKey, mailOriginalKey, searchSortKey } from "@ohmail/app-logic/storage/persisted-ui";
 import { readingAlongKey } from "@ohmail/app-logic/reading/reading-along";
 import { screenerIntentsKey } from "@ohmail/app-logic/screener/screener-intents";
-import { seedNotNowKey } from "../../webapp/app/shell/seed-offer";
+import { seedNotNowKey } from "@ohmail/app-logic/mailboxes/first-run/seed-offer";
 import { sendLocksKey } from "@ohmail/app-logic/writing/send-lock";
 import { ACCESS_VERDICT_PREFIX } from "@ohmail/app-logic/doors/wall-lift";
 import { windowSentFoldersKey } from "../src/window-outbox-store.js";

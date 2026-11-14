@@ -5,21 +5,35 @@
  */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
   type Dispatch,
   type SetStateAction,
 } from "react";
 import type { ToastFn } from "@ohmail/app-logic/press/report";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
 import type { LinkedDraft } from "../host/index.js";
-import type { FrameApi, FrameNotice, OfferFeed, OfferSource, PaletteOffer, RailModel } from "./contract.js";
+import type {
+  FrameApi,
+  FrameNotice,
+  OfferFeed,
+  OfferSource,
+  PaletteOffer,
+  RailFootModel,
+  RailModel,
+  StageId,
+} from "./contract.js";
+import { fragmentOf } from "./route.js";
 import { useSignal, type Feed } from "./feeds.js";
 import { shapeOf, type OfferStore } from "./offers.js";
 import type { NoticeStore } from "./notice-store.js";
+import type { Dragging } from "./rail-drag.js";
 
 /** What the shell's views know of the connection that the contract does not carry. */
 /**
@@ -53,21 +67,38 @@ export const NO_CONNECTION: ConnectionFeed = {
   follow: () => undefined,
 };
 
+export interface EnteredTarget {
+  readonly fragment: string;
+  readonly letter: string;
+}
+
 export interface FrameInner {
   readonly api: FrameApi;
   readonly notices: NoticeStore;
   readonly rail: Feed<RailModel | null>;
+  /** The rail's foot, fed apart from the places; read where no whole rail is fed. */
+  readonly foot: Feed<RailFootModel | null>;
   readonly connection: Feed<ConnectionFeed>;
   /** A letter handed to `write`, taken once by the place that writes. */
   readonly draft: { current: LinkedDraft | null };
+  /** The letter a `go` named as entered, until the place that lists it takes the word or the address moves on. */
+  readonly entered: Feed<EnteredTarget | null>;
   /** Whether the whole rail stands over the app, and its setter (`commands.rail` is the same setter). */
   readonly railOpen: readonly [boolean, Dispatch<SetStateAction<boolean>>];
   /** The parts whose selection's bar stands now, by their own id. */
   readonly bars: Feed<readonly string[]>;
-  /** The parts of the shell that say the kept body must be on screen now, by their own id. */
-  readonly keeps: Feed<readonly string[]>;
+  /** The parts that say a stage is owed now, each by its own id ({@link useStageOwed}). */
+  readonly owed: Feed<readonly StageOwing[]>;
   /** The palette's offers, by the part that hands them. */
   readonly offers: OfferStore;
+  /** A letter dragged from a list toward the rail, past its threshold (`rail-drag.ts`), or none. */
+  readonly drag: Feed<Dragging | null>;
+}
+
+/** One part's word that a stage is owed. */
+export interface StageOwing {
+  readonly part: string;
+  readonly id: StageId;
 }
 
 export const FrameContext = createContext<FrameInner | null>(null);
@@ -76,6 +107,11 @@ function useInner(): FrameInner {
   const inner = useContext(FrameContext);
   if (!inner) throw new Error("a part of the frame was drawn outside the frame");
   return inner;
+}
+
+/** The drag toward the rail: written by the gesture, read by the entries that take a drop. */
+export function useDragFeed(): Feed<Dragging | null> {
+  return useInner().drag;
 }
 
 export function useFrame(): FrameApi {
@@ -108,6 +144,18 @@ export function useRailModel(model: RailModel | null): void {
   useLayoutEffect(() => () => rail.set(null), [rail]);
 }
 
+/**
+ * The rail's foot, fed by what holds the account and the sync: who is signed in, Pull new mail, the quiet tools. The
+ * places above it are the registrations' and are never fed. Null, or the feeder gone, takes the foot away. While a
+ * shell feeds the whole rail (`useRailModel`), that model's own foot is the one drawn. The feeder hands the same
+ * object while nothing of it changed: a new one draws the rail again.
+ */
+export function useRailFoot(foot: RailFootModel | null): void {
+  const fed = useInner().foot;
+  useLayoutEffect(() => fed.set(foot));
+  useLayoutEffect(() => () => fed.set(null), [fed]);
+}
+
 /** The mail state ladder's reading and the browser's network, as today's views hold them. */
 export function useConnectionFeed(feed: ConnectionFeed): void {
   const connection = useInner().connection;
@@ -131,17 +179,19 @@ export function useSelectionBar(shown: boolean): void {
 }
 
 /**
- * A part of the shell says the kept body must be on screen now, over whatever place the address names. While any part
- * says so, the frame shows the kept pane and renders no pane of the place.
+ * A STAGE IS OWED while `owed`: it stands over the app at whatever address, the address untouched, until this part
+ * says otherwise or goes (`stage-entry.ts` has the rule). For a part that lives for the frame's life (a piece of what
+ * the host stands above the panes): a pane that said it would take its word away with a walk between places. What is
+ * held is the part's own word, so under another scope nothing is owed until a part there says so.
  */
-export function useKeptPane(shown: boolean): void {
-  const keeps = useInner().keeps;
-  const id = useId();
+export function useStageOwed(id: StageId, owed: boolean): void {
+  const feed = useInner().owed;
+  const part = useId();
   useLayoutEffect(() => {
-    if (!shown) return;
-    keeps.set([...keeps.read().filter((part) => part !== id), id]);
-    return () => keeps.set(keeps.read().filter((part) => part !== id));
-  }, [keeps, id, shown]);
+    if (!owed) return;
+    feed.set([...feed.read().filter((word) => word.part !== part), { part, id }]);
+    return () => feed.set(feed.read().filter((word) => word.part !== part));
+  }, [feed, part, id, owed]);
 }
 
 /** Whether the whole rail stands over the app: today's views read it as they read their own state. */
@@ -183,4 +233,20 @@ export function useLinkedDraft(): () => LinkedDraft | null {
     draft.current = null;
     return taken;
   };
+}
+
+/**
+ * THE LETTER THAT WAS OPENED AS ENTERED (`commands.go(to, { entered: true })`), for the place that lists it: its id
+ * while the address still names it, and `taken`, which the place calls once it has entered the letter's row. Null
+ * for every other way in (a link, a reload, Back, a walk): those are previews.
+ */
+export function useEntered(): { readonly letter: string | null; readonly taken: () => void } {
+  const inner = useInner();
+  const asked = useSyncExternalStore(inner.entered.subscribe, inner.entered.read, inner.entered.read);
+  const letter = asked !== null && asked.fragment === fragmentOf(inner.api.route) ? asked.letter : null;
+  const feed = inner.entered;
+  const taken = useCallback(() => {
+    if (feed.read() === asked) feed.set(null);
+  }, [asked, feed]);
+  return useMemo(() => ({ letter, taken }), [letter, taken]);
 }

@@ -41,7 +41,7 @@ export function AddressList({ plan }: PaneProps) {
         <LetterRows
           label={t(`side.${model.side}`)}
           rows={model.list.rows}
-          openId={model.list.openId}
+          cursor={model.list.openId}
           press={model.list.press}
           stamp={model.stamp}
           who={(m) =>

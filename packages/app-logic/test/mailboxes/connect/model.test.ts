@@ -151,6 +151,50 @@ describe("a press, tried first", () => {
     expect(done).toEqual([]);
   });
 
+  it("a test that finishes after the incoming server is edited leaves no verdict", () => {
+    const pending = walk(ADD, [
+      type("imapHost", A),
+      press(act("test")),
+      type("imapHost", B),
+      press(act("connect")),
+    ]);
+    expect(pending.sends).toHaveLength(1);
+    const { state } = walk(
+      ADD,
+      [answered({ ok: true, value: { host: A, user: "u", folders: 4 } })],
+      pending.state,
+    );
+    expect(state.typed.imapHost).toBe(B);
+    expect(state.tested).toBeNull();
+    expect(state.gate.at).toBe("idle");
+  });
+
+  it("correcting a field or the password clears a connect refusal", () => {
+    const { state } = walk(ADD, [
+      press(act("connect")),
+      answered(no(refusal("mailbox_probe_failed", { reason: "auth" }))),
+    ]);
+    expect(keyOf(state)).toBe("mailboxes.probe_auth");
+    expect(keyOf(walk(ADD, [type("user", "other")], state).state)).toBeNull();
+    expect(keyOf(walk(ADD, [{ kind: "password" }], state).state)).toBeNull();
+  });
+
+  it.each(["test", "connect"] as const)(
+    "a %s refusal that finishes after an edit leaves no message",
+    (verb) => {
+      const { state, done, forgets } = walk(ADD, [
+        press(act(verb)),
+        type("user", "other"),
+        answered(no(refusal("mailbox_probe_failed", { reason: "auth" }))),
+      ]);
+      expect(keyOf(state)).toBeNull();
+      expect(state.gate.at).toBe("idle");
+      expect(state.typed.user).toBe("other");
+      expect(done).toEqual([]);
+      expect(forgets).toBe(0);
+    },
+  );
+
   it("one press at a time: a second while one is on its way is not taken", () => {
     expect(walk(ADD, [press(act("test")), press(act("connect"))]).sends).toHaveLength(1);
   });

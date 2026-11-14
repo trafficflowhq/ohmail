@@ -44,7 +44,7 @@ export async function resolveOwnerOutcome(
    * amount of ignoring the answer undoes a `Set-Cookie`. An abort surfaces here as a
    * non-`ApiError` throw and is classified `unknown`, which is what it is.
    */
-  opts: { signal?: AbortSignal } = {},
+  { includeAddress = false, ...opts }: { signal?: AbortSignal; includeAddress?: boolean } = {},
 ): Promise<OwnerOutcome> {
   try {
     /*
@@ -87,7 +87,9 @@ export async function resolveOwnerOutcome(
       if ((held || sessionMints() !== mints) && csrfToken() === null) return UNKNOWN;
       // The server no longer writes the marker here; a silent jar gets the name back, and only a silent one.
       healOwner(accountId);
-      return { kind: "owner", accountId };
+      return includeAddress && user.emailVerified === true && typeof user.email === "string" && user.email.trim()
+        ? { kind: "owner", accountId, address: user.email }
+        : { kind: "owner", accountId };
     }
     /*
      * `scope: "full"` with no account id is our server answering something it cannot mean.

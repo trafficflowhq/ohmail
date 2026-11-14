@@ -4,7 +4,8 @@
  * the place above the line. A press opens the item in the stream. On a phone's width the place is the stream itself.
  */
 import type { EngineMessage } from "@ohmail/wire";
-import { useRef, type ReactNode } from "react";
+import { useContext, useRef, type ReactNode } from "react";
+import { PileNoteContext } from "@ohmail/app-logic/lists/pile-note";
 import { useListWindow } from "@ohmail/app-logic/lists";
 import { lineStampOf, useStreamModel, type StreamModel } from "@ohmail/app-logic/streams";
 import { Empty } from "@ohmail/ui/base";
@@ -12,6 +13,7 @@ import { GroupHeading, ListHead, Row, Rows } from "@ohmail/ui/mail";
 import type { PaneProps } from "../frame/contract.js";
 import { ListColumn, ListMenu } from "../place-list/index.js";
 import { useLocale, useText, type Text } from "../text/index.js";
+import { PileNote } from "./PileNote.js";
 import { StreamColumn } from "./StreamColumn.js";
 import { useStreamKeys } from "./keys.js";
 import { senderOf, stampOf, useStreamText } from "./words.js";
@@ -51,6 +53,7 @@ function ItemRow({
 
 export function StreamList({ plan, keysHere }: PaneProps) {
   const model = useStreamModel();
+  const pileNote = useContext(PileNoteContext);
   const t = useStreamText(model.place);
   /* What is new since the last visit says so in the released stream's one sentence (the catalogue's waterline key): a
      count that says "new" alone, beside a menu counting the unread, is the "2 new" beside 3 unread the word guard ends. */
@@ -85,26 +88,29 @@ export function StreamList({ plan, keysHere }: PaneProps) {
       );
   }
   const head = (
-    <ListHead
-      title={t("title")}
-      hot={model.mayState && model.newCount > 0}
-      count={model.mayState && model.newCount > 0 ? since("newSince", { count: model.newCount }) : undefined}
-      aside={
-        <ListMenu
-          label={t("list.menu")}
-          items={[
-            {
-              label: t("markAll.label"),
-              icon: "read",
-              note: model.mayState && unread > 0 ? String(unread) : undefined,
-              /* Rows above the line with nothing unread: the press moves the line, as the released stream's. */
-              disabled: !model.mayState || (unread === 0 && fresh === 0),
-              onPress: model.markAllRead,
-            },
-          ]}
-        />
-      }
-    />
+    <>
+      <ListHead
+        title={t("title")}
+        hot={model.mayState && model.newCount > 0}
+        count={model.mayState ? since("newSince", { count: model.newCount }) : undefined}
+        aside={
+          <ListMenu
+            label={t("list.menu")}
+            items={[
+              {
+                label: t("markAll.label"),
+                icon: "read",
+                note: model.mayState && unread > 0 ? String(unread) : undefined,
+                /* Rows above the line with nothing unread: the press moves the line, as the released stream's. */
+                disabled: !model.mayState || (unread === 0 && fresh === 0),
+                onPress: model.markAllRead,
+              },
+            ]}
+          />
+        }
+      />
+      {pileNote ? <PileNote offer={pileNote} /> : null}
+    </>
   );
   /* An empty stream's list says so, as the reference draws it; its reading column says All read. */
   const empty = model.mayState && model.items.length === 0 ? <Empty label={t("stream.empty")} /> : null;
@@ -114,7 +120,7 @@ export function StreamList({ plan, keysHere }: PaneProps) {
       <div className="pl-list">
         {head}
         <div className="pl-fill">
-          <StreamColumn phone />
+          <StreamColumn phone keysHere={false} />
         </div>
       </div>
     ) : (

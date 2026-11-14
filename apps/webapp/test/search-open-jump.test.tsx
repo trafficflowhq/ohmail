@@ -6,12 +6,12 @@ import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
 import type { FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { openTargetFor, readerMessageFor } from "../app/shell/AppShell";
+import { openTargetFor, readerMessageFor } from "@ohmail/app-logic/search/open-target";
 import { StreamShell, type StreamHandle, type StreamLeaveState } from "../app/shell/StreamShell";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
 import { useKeyBindings } from "@ohmail/app-logic/keys/keymap";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 import { deleteKeyBindings } from "@ohmail/app-logic/press/delete-undo";
 
 /**

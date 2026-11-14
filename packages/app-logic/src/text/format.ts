@@ -140,6 +140,11 @@ export function displayTime(m: Pick<EngineMessage, "time" | "date" | "sortAt">, 
   return messageDisplayTime(m, now, activeFormatZone(), activeFormatLocale());
 }
 
+/** An instant as a list's row prints it, on the reader's calendar: the hour today, the day this week, else the date. */
+export function stampOver(now: Date): (iso: string) => string {
+  return (iso) => displayTime({ date: iso }, now);
+}
+
 /**
  * A meta line, joined — the separator is never printed without a value on both sides. A message with
  * no `Date:` header (spam routinely omits it) carries `date: null` to the client and `displayTime`

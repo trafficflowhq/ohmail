@@ -8,7 +8,7 @@ import type { FeedPartition } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
 import { ReadsView } from "../app/views/ReadsView";
 import { ReceiptsView } from "../app/views/ReceiptsView";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { KeymapProvider } from "../../../test/support/keymap-provider";
 
 /**
  * THE ROWS PAINT BEFORE THE STREAM (`ReadsView`, `ReceiptsView`, `visit.ts#afterPaint`).

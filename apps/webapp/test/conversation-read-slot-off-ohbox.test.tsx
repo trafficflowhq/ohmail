@@ -18,7 +18,7 @@ const views = [
 ] as const;
 
 beforeAll(async () => {
-  await import("../app/shell/AppShell.js");
+  await import("./_mail-shell.js");
   await import("@ohmail/ui");
 }, 120_000);
 beforeEach(() => { installShellEnv(); });

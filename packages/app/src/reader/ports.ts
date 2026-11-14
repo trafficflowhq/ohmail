@@ -4,6 +4,7 @@
  * the files of its letters, and its pictures. `none` is a real answer: no tiles, no pictures, never a guess.
  */
 import type { ComponentType } from "react";
+import type { SendPhase } from "@ohmail/app-logic/writing/mail-send";
 import type { PanelVerb } from "@ohmail/ui/mail";
 import type { EmbeddedPictureSeam, LetterPictureInputs, PictureSeam } from "@ohmail/app-logic/reader";
 
@@ -88,11 +89,24 @@ export interface ReaderFiles extends EmbeddedPictureSeam {
  * that Reply, Reply all and Forward reach before anything else.
  */
 export interface ReaderReply {
-  readonly Sheet: ComponentType<{ readonly letters: readonly string[] }>;
+  /**
+   * `keysHere`: the reading column has the keys, so the reply binds its own while it stands, as the letter does
+   * (absent: it binds none, and its text's own keys still send and leave).
+   */
+  readonly Sheet: ComponentType<{ readonly letters: readonly string[]; readonly keysHere?: boolean }>;
   /** `from`: the press came from a letter's own menu: "answer THIS letter", which opens and never closes an editor. */
   readonly useOpen: () => (messageId: string, how: "reply" | "reply_all" | "forward", from?: "menu") => void;
+  /** The letter the open reply answers, including while the person reads on to another letter. */
+  readonly useTarget?: () => string | null;
+  /** Read the send still finishing after its inline editor has closed. */
+  readonly useSendPhase?: () => (lane: string) => SendPhase;
   /** The open reply's verbs, which the reading sheet's one panel shows in place of the letter's; null: none open. */
   readonly useVerbs: () => readonly PanelVerb[] | null;
+  /**
+   * DRAFT REPLY on a letter: the reply opened on it and the drafter asked, where the shell's composition has a
+   * drafter (the host hands a draft wire). Null, or absent: no drafter stands, and the letter's More offers none.
+   */
+  readonly useDraft?: () => ((messageId: string) => void) | null;
 }
 
 export interface ReaderParts {
@@ -114,4 +128,9 @@ export interface ReaderParts {
    * event cannot be shown, and the event once. Found by the letter's id alone; `none`: nothing stands there.
    */
   readonly invitation: ComponentType<{ readonly messageId: string }> | "none";
+  /**
+   * The shell's clipboard, written inside the person's own press (a person's address, copied from their card): `true`
+   * only once the clipboard took it. `none`, or left out: the shell has none, and a copy is not offered.
+   */
+  readonly copy?: ((text: string) => Promise<boolean>) | "none";
 }

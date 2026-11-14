@@ -83,6 +83,8 @@ function setup(px: number): void {
     writable: true,
     value: mkMatchMedia(px),
   });
+  /* The frame lays itself out from the window's own width (its layout plan), not from a media query. */
+  Object.defineProperty(window, "innerWidth", { configurable: true, writable: true, value: px });
   (globalThis as Record<string, unknown>).CSS = { escape: (s: string) => s };
   const el = Element.prototype as unknown as Record<string, () => void>;
   el.scrollIntoView = () => {};
@@ -108,10 +110,6 @@ afterEach(async () => {
   }
   roots = [];
   document.body.innerHTML = "";
-  // The Zero runs stamp the layout axis (see `zeroSetup`); a stale stamp or a stored
-  // `ohmail.layout` must not leak into the classic runs' narrow question (shell/narrow.ts
-  // reads the attribute).
-  delete document.documentElement.dataset.layout;
   try {
     window.localStorage.clear();
   } catch {
@@ -122,22 +120,8 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-/**
- * THE ZERO LAYOUT'S MOUNT (OHMARCHY-PLAN §3b/§4 — the walkthrough must hold in BOTH
- * layouts). The stamp is written the way production writes it: `ohmail.layout` in storage
- * (what the boot script reads) plus the pre-paint attribute (what shell/narrow.ts asks),
- * and the provider is mounted with the face axis ACTIVE exactly as the product door mounts
- * it — with `faces: false`, or with no storage door, the provider would never adopt the
- * stored layout at all.
- */
-function zeroSetup(px: number): void {
-  setup(px);
-  window.localStorage.setItem("ohmail.layout", "zero");
-  document.documentElement.dataset.layout = "zero";
-}
-
 async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
-  const { AppShell } = await import("./_todays-shell.js");
+  const { MailShell: AppShell } = await import("./_mail-shell.js");
   const { ThemeProvider, ToastHost } = await import("@ohmail/ui");
   const { localStorageDoor } = await import("@ohmail/app-logic/storage/durable");
 
@@ -155,8 +139,7 @@ async function shell(opts: { faces?: boolean } = {}): Promise<HTMLElement> {
         now: new Date("2026-08-02T09:00:00.000Z"),
         children: h(ThemeProvider, {
           faces: opts.faces === true,
-          // The product door's door: without one the provider is `unpersisted` and never reads
-          // the `ohmail.layout` the Zero runs seed, so the Zero ladder would measure classic.
+          // The product door's door: without one the provider is `unpersisted` and reads no stored face.
           storage: localStorageDoor("theme"),
           children: h(ToastHost, { children: h(AppShell, { demo: true }) }),
         }),
@@ -194,8 +177,15 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 4000): 
   throw new Error(`timed out after ${timeout} ms waiting for: ${what}`);
 }
 
-const listRows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>(".view :is(.row, [role=option])[data-id]")];
-const selRow = (c: HTMLElement): HTMLElement | null => c.querySelector<HTMLElement>(".view :is(.row.sel, [role=option][data-open])[data-id]");
+/* A place's rows are its list's options, each carrying its letter's id; the cursor row is the one the list marks (or,
+   where it marks none, the open one), as `ohbox/_finders.ts` finds them. */
+const listRows = (c: HTMLElement): HTMLElement[] => [...c.querySelectorAll<HTMLElement>('[role="option"][data-id]')];
+const selRow = (c: HTMLElement): HTMLElement | null =>
+  c.querySelector<HTMLElement>('[role="option"][data-cursor][data-id]') ?? c.querySelector<HTMLElement>('[role="option"][data-open][data-id]');
+/** The place the frame shows, by its rail entry's (or dock's) current mark and name. */
+const placeShown = (name: string): boolean =>
+  [...document.querySelectorAll<HTMLElement>('[aria-current="page"]')]
+    .some((el) => (el.getAttribute("aria-label") ?? el.textContent ?? "").trim().startsWith(name));
 const byText = (c: HTMLElement, sel: string, text: string): HTMLElement | null =>
   [...c.querySelectorAll<HTMLElement>(sel)].find((el) => (el.textContent ?? "").includes(text)) ?? null;
 
@@ -394,31 +384,37 @@ describe("the §4 keyboard-only walkthrough, against the real shell", () => {
 
 /**
  * THE SAME FIFTEEN STEPS UNDER THE ZERO LAYOUT (3b), at a representative width of every
- * rung of the §12 ladder. The `narrow` flag is the JS half of the ladder itself: under
- * zero the split SURVIVES at 800px (classic's sheet width — the run that proves the
- * ribbon tier's split is real), and the sheet takes over only under 722.
+ * rung of the §12 ladder. The `narrow` flag is the JS half of the ladder itself: the split
+ * SURVIVES at 800px (classic's sheet width — the run that proves the ribbon tier's split is
+ * real), and one column takes over only under 700.
+ *
+ * The frame has one layout, the Zero's successor: the layout axis (`ohmail.layout`,
+ * `data-layout="zero"`) was today's shell's and nothing of the frame reads it. The rungs are
+ * the frame's own layout plan (`packages/app/src/frame/layout-plan.ts`): 1280 the desktop, 800
+ * two columns beside the rail of icons, 600 and 390 one column. The provider is mounted with
+ * the face axis active, as the product door mounts it.
  */
 describe("the §4 walkthrough under the Zero layout, per §12 ladder rung", () => {
   it("passes at the full-rail tier (1280px, split)", { timeout: 120_000 }, async () => {
-    zeroSetup(1280);
+    setup(1280);
     const container = await shell({ faces: true });
     await walkthrough(container, false);
   });
 
   it("passes at the ribbon tier (800px — the split classic never had here)", { timeout: 120_000 }, async () => {
-    zeroSetup(800);
+    setup(800);
     const container = await shell({ faces: true });
     await walkthrough(container, false);
   });
 
   it("passes at the push-nav tier (600px, one tile)", { timeout: 120_000 }, async () => {
-    zeroSetup(600);
+    setup(600);
     const container = await shell({ faces: true });
     await walkthrough(container, true);
   });
 
   it("passes at the floating tier (390px)", { timeout: 120_000 }, async () => {
-    zeroSetup(390);
+    setup(390);
     const container = await shell({ faces: true });
     await walkthrough(container, true);
   });
@@ -469,7 +465,7 @@ describe("the separators are part of the keyboard walk", () => {
     await key("g");
     await key("o");
     await waitFor(
-      () => container.querySelector(".view-ohbox") != null,
+      () => placeShown("Ohbox"),
       "step 16: `g o` stopped working after the separator held focus",
     );
   };
@@ -480,7 +476,7 @@ describe("the separators are part of the keyboard walk", () => {
   });
 
   it("under the Zero layout, at the full-rail tier (1280px)", { timeout: 120_000 }, async () => {
-    zeroSetup(1280);
+    setup(1280);
     const container = await shell({ faces: true });
     await drive(container);
   });

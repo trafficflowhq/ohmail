@@ -12,7 +12,6 @@ import {
   type SyncChange,
 } from "@ohmail/client-engine";
 import messages from "../messages/en.json";
-import { ContactPopover } from "../app/shell/ContactPopover";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import { SubjectRuleSheet } from "../app/shell/SubjectRuleSheet";
 import { senderScreening } from "@ohmail/app-logic/press/sender-screening";
@@ -228,27 +227,10 @@ describe("SubjectRuleSheet is viewport-clamped", () => {
   });
 });
 
-describe("ContactPopover is viewport-clamped", () => {
-  it("applies the clamp off a chip pressed at the fold", async () => {
-    const el = await mount(
-      React.createElement(ContactPopover, {
-        state: {
-          messageId: "a",
-          address: "cy@x.example",
-          name: "Cy Cole",
-          ...LOW_ANCHOR,
-        },
-        onClose: () => {},
-      }),
-    );
-    const pop = el.querySelector<HTMLElement>(".cpop")!;
-    await planted(pop, 320, { w: 1440, h: 900 });
-    const top = Number.parseFloat(pop.style.top);
-    // 320px does not fit below the 654 anchor in 900px — the popover flips whole.
-    expect(top).toBe(630 - OVERLAY_GAP - 320);
-    expect(pop.style.overflowY).toBe("auto");
-  });
-});
+/* "ContactPopover is viewport-clamped" retired with today's popover: the reader's contact card is the kit's Menu
+   (kind card, `packages/app/src/reader/contact/Contact.tsx`), placed by `placeMenu`, whose own case holds it:
+   `packages/ui/test/base/overlays.test.tsx`, "where a menu stands > upwards where it would leave the stage below
+   and there is more room above". */
 
 describe("the stylesheet halves (VWR-8, VWR-12) — asserted at the source, jsdom lays nothing out", () => {
   // Root-relative like `screener-row-actions-overlay.test.ts` — the suite runs from the repo

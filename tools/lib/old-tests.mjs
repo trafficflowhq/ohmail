@@ -282,6 +282,9 @@ export function compareOldTestsWithBase({ rows, neverRed, baseRows, baseNeverRed
   );
   for (const row of baseRows) {
     if (held.has(row.file) || sortedByCase.has(row.file)) continue;
+    // A row whose case has no name named no case: an older reader took a call with no argument (`if (test())`)
+    // for one. It leaves without a holder; a case of a name is never written so.
+    if (splitKey(row.file).name === "") continue;
     refusals.push(
       `old tests: ${row.file}: a row never leaves the checklist; a file or case that leaves is RETIRED by its row (D)`,
     );

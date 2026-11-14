@@ -144,7 +144,7 @@ async function mount(node: React.ReactNode, KeymapProvider: unknown): Promise<vo
 
 async function mountReads(partition: FeedPartition): Promise<void> {
   const { ReadsView } = await import("../app/views/ReadsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const node = h(ReadsView as never, {
     settled: true, owed: false,
     partition,
@@ -162,7 +162,7 @@ async function mountReads(partition: FeedPartition): Promise<void> {
 
 async function mountReceipts(partition: FeedPartition): Promise<void> {
   const { ReceiptsView } = await import("../app/views/ReceiptsView.js");
-  const { KeymapProvider } = await import("@ohmail/app/keys");
+  const { KeymapProvider } = await import("../../../test/support/keymap-provider");
   const all = [...partition.fresh, ...partition.seen];
   const node = h(ReceiptsView as never, {
     settled: true, owed: false,

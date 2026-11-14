@@ -10,6 +10,7 @@ import { calsettingsPlace } from "../calsettings/index.js";
 import { calSetupStage } from "../calsetup/index.js";
 import { fromMailPlace } from "../frommail/index.js";
 import { InvitationsPanel } from "../invitations/index.js";
+import { CalendarRail } from "./CalendarRail.js";
 import { CalendarBody } from "./CalendarBody.js";
 
 /** The six views are places of one mounted body: the hours in view and the open event stay across a change of view. */
@@ -20,7 +21,6 @@ const view = (id: CalendarPlaceId): PlaceEntry => ({
   panes: { kind: "wide", Wide: CalendarBody },
 });
 
-const NoRail: CalendarEntry["Rail"] = () => null;
 const Through: CalendarEntry["Above"] = ({ children }) => children;
 const nothingWaits = () => false;
 
@@ -37,7 +37,7 @@ export const calendar: CalendarEntry = {
   },
   stage: calSetupStage,
   panels: { agenda: NONE, invitations: InvitationsPanel },
-  Rail: NoRail,
+  Rail: CalendarRail,
   Above: Through,
   useWants: nothingWaits,
 };

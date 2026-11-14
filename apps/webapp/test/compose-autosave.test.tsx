@@ -1246,12 +1246,16 @@ describe("the shell is the consumer, not just the harness", () => {
   /**
    * THE WIRING, STRUCTURALLY. Everything above drives the hook directly, which is exactly the
    * blind spot `fetchBody` and `searchServer` shipped through: a hook that works perfectly and
-   * is called by nothing. Both ends are pinned here — the shell arms the hook and gives its id
-   * to the plan, and the Drafts list is rendered from the selector rather than from a copy.
+   * is called by nothing. The mail ground mounts the writer, which arms the hook and gives its
+   * draft id to Send.
    */
-  it("AppShell arms autosave, feeds Send its id, and renders the list", async () => {
+  it("the mounted writer arms autosave and gives Send the same draft id", async () => {
     const { readFileSync } = await import("node:fs");
     const { resolve } = await import("node:path");
+    const ground = readFileSync(resolve("packages/app/src/mail/MailGround.tsx"), "utf8");
+    const writing = readFileSync(resolve("packages/app/src/mail/ground/WritingMount.tsx"), "utf8");
+    expect(ground).toMatch(/<WritingMount>/);
+    expect(writing).toMatch(/useShellCompose\(inputs\.composer\)/);
     const shell = readFileSync(
       resolve(process.cwd(), "packages/app-logic/src/writing/shell-compose.ts"), "utf8",
     );
@@ -1261,6 +1265,10 @@ describe("the shell is the consumer, not just the harness", () => {
       .toMatch(/active:\s*route\.view === "compose"/);
     expect(shell, "Send would create a second row beside the autosaved one")
       .toMatch(/composePlan\(\{ \.\.\.compose, forwardParts: [^}]*\}, composeMailbox, autosave\.draftId\)/);
+  });
+
+  /* This half still reads the Drafts list and its rail entry where they originally stood. */
+  it("the Drafts list is rendered from the selector, and the rail reaches it", async () => {
     expect(shellFrameOf("drafts").source, "the Drafts list is built from something other than the selector")
       .toContain("draftsList(reader)");
     /* The rail entry is chrome, and the rail left `AppShell.tsx` for `shell-keys.tsx` with the
@@ -1912,8 +1920,9 @@ describe("a body past the ceiling is refused here, not at the server", () => {
     // this branch only appears once somebody has pasted a book into the form.
     // Through `unknown`: the catalogues' inferred literal types nest objects, so the direct
     // assertion is a TS2352 the webapp's own typecheck refuses. The runtime read is unchanged.
-    const en = (await import("../messages/en.json")).default as unknown as Record<string, Record<string, string>>;
-    const de = (await import("../messages/de.json")).default as unknown as Record<string, Record<string, string>>;
+    /* Write's letter and reply read these sentences from the shared Write catalogue. */
+    const en = (await import("../../../packages/app/messages/write.en.json")).default as unknown as Record<string, Record<string, string>>;
+    const de = (await import("../../../packages/app/messages/write.de.json")).default as unknown as Record<string, Record<string, string>>;
     for (const key of ["draftNote", "bodyTooLong"]) {
       expect(en.compose?.[key], `en.compose.${key}`).toBeTruthy();
       expect(de.compose?.[key], `de.compose.${key}`).toBeTruthy();

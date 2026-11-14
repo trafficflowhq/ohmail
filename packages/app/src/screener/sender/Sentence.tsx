@@ -17,7 +17,7 @@ import {
 import { displayAddress, displayDomainLabel } from "@ohmail/app-logic/text/idn";
 import { Button, Dot, Menu, MenuItem, Sentence as KitSentence, Slot, Tag } from "@ohmail/ui/base";
 import { useText } from "../../text/index.js";
-import { useScreener } from "../contract.js";
+import { useNoAdvice, useScreener } from "../contract.js";
 
 const chunkText = (chunks: unknown): string =>
   (Array.isArray(chunks) ? chunks : [chunks]).filter((c) => typeof c === "string").join("");
@@ -46,7 +46,7 @@ export function Sentence({
 }) {
   const t = useText("screener");
   const model = useScreener();
-  const words = suggestionWords(sender);
+  const words = suggestionWords(sender, useNoAdvice());
   const choosing = view.segment === "waiting" && !decided && !refused(model.role);
   const place =
     view.segment !== "waiting"
@@ -127,7 +127,7 @@ function Lines({
 }) {
   const t = useText("screener");
   const model = useScreener();
-  const words = suggestionWords(sender);
+  const words = suggestionWords(sender, useNoAdvice());
   const reach = choosing && scope === "domain" ? model.reachOf(sender, scope) : null;
   const claim = choosing ? model.unsubClaimOf(sender, scope) : "none";
   return (

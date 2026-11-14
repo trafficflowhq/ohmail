@@ -222,6 +222,10 @@ export type EventChange = Partial<EventDraft>;
 
 /** The stored object a write is made on, as a reading handed it out. */
 export interface WriteTarget {
+  /** These scopes were chosen for a series with no guests. */
+  readonly personalSeries?: true;
+  /** A single event edit may notify only this audience. Earlier queued acts have no such field. */
+  readonly audience?: { readonly organizer: string | null; readonly guests: readonly string[] };
   /** `upsert.id` as a reading handed it. */
   readonly id: string;
   /** `upsert.version` as stored; never empty. A writer that cannot send it as a precondition reads the object first. */

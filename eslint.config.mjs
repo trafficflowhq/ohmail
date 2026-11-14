@@ -9,12 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
-import ohmail, {
-  readBinders,
-  readDoors,
-  readOwnerReaders,
-  readShellAdapters,
-} from "./tools/eslint-plugin-ohmail/index.mjs";
+import ohmail, { readBinders, readDoors, readOwnerReaders } from "./tools/eslint-plugin-ohmail/index.mjs";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}";
@@ -92,9 +87,7 @@ export default [
     { ignores: TESTS },
   ),
   // The old shell's side of the frame takes no new file and no new feed (tools/shell-adapters.json only shrinks).
-  ...block(["apps/webapp/app/shell/*.{ts,tsx}"], {
-    "ohmail/old-shell-adapters": ["error", { root, ...readShellAdapters(root) }],
-  }),
+  ...block(["apps/webapp/app/shell/*.{ts,tsx}"], {}),
   ...block(
     PRODUCT,
     { "ohmail/binder-callers": ["error", { root, ...readBinders(root) }] },

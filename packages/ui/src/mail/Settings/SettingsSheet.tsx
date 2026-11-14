@@ -17,12 +17,23 @@ export interface SettingsSheetProps {
   aside?: ReactNode;
   /** What the sheet wants, said once: a word that ends in the dot, at most a line, at most two buttons. It tints the sheet. */
   wants?: { word: string; line?: string; acts?: ReactNode };
+  /** A settled explanation with its own action, such as the way to delete the account. */
+  note?: { line: string; acts: ReactNode };
   /** Its lines. */
   children?: ReactNode;
 }
 
 /** A sheet of settings: a head when it needs one, what it wants when it wants something, then its lines. */
-export function SettingsSheet({ title, person, sign, hot, aside, wants, children }: SettingsSheetProps) {
+export function SettingsSheet({
+  title,
+  person,
+  sign,
+  hot,
+  aside,
+  wants,
+  note,
+  children,
+}: SettingsSheetProps) {
   const lead = person ? (
     <Avatar name={person.name} address={person.address} size="s" />
   ) : sign ? (
@@ -30,6 +41,7 @@ export function SettingsSheet({ title, person, sign, hot, aside, wants, children
   ) : hot ? (
     <Dot kind="hot" />
   ) : null;
+  const message = wants ?? note;
   return (
     <Sheet kind="plain">
       <div className="oh-settingssheet" data-wants={hot || wants ? "" : undefined}>
@@ -42,15 +54,18 @@ export function SettingsSheet({ title, person, sign, hot, aside, wants, children
         ) : null}
         {/* It stands before the sheet wants anything, so what the sheet then wants is said when it appears. */}
         <div className="oh-settingssheet-said" aria-live="polite">
-          {wants ? (
+          {message ? (
             <div className="oh-settingssheet-say">
               <p className="oh-text oh-settingssheet-line">
-                <b className="oh-settingssheet-word">
-                  <EndDot kind="hot">{wants.word}</EndDot>
-                </b>
-                {wants.line ? ` ${wants.line}` : null}
+                {wants ? (
+                  <b className="oh-settingssheet-word">
+                    <EndDot kind="hot">{wants.word}</EndDot>
+                  </b>
+                ) : null}
+                {wants && message.line ? " " : null}
+                {message.line}
               </p>
-              {wants.acts ? <span className="oh-settingssheet-acts">{wants.acts}</span> : null}
+              {message.acts ? <span className="oh-settingssheet-acts">{message.acts}</span> : null}
             </div>
           ) : null}
         </div>

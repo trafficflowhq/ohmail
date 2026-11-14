@@ -6,7 +6,7 @@
  */
 import {
   CANNOT, NONE,
-  type DeviceNotifications, type Entries, type FrameSupplies, type HostConnectionState, type HostContract, type HostReads, type HostSession,
+  type DeviceNotifications, type Entries, type FrameSupplies, type HostConnectionState, type HostContract, type HostDevice, type HostReads, type HostSession,
   type LinkedDraft, type MayBeNone, type Transports,
 } from "@ohmail/app/host";
 import type { OlderBodyWire } from "@ohmail/client-engine";
@@ -31,12 +31,16 @@ import type { TrashWire } from "../../shell/trash-window";
 type Engine = HostContract["engine"];
 type Supplied<T> = Exclude<T, typeof NONE>;
 
+/** The web offers the latest release. The desktop build has no use for this address. */
+export const DESKTOP_DOWNLOAD_URL =
+  process.env.NEXT_PUBLIC_DESKTOP === "1" ? null : "https://github.com/trafficflowhq/ohmail/releases/latest";
+
 /** What the page knows before it mounts. */
 export interface WebFacts {
   /** The build serves a server its operator runs (`SELF_HOST_BUILD`). */
   readonly selfHost: boolean;
   /** The server pairs devices and fetches a letter's pictures (its handshake's words). */
-  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean; readonly searchPeople: boolean };
+  readonly server: { readonly pairing: boolean; readonly remoteImages: boolean; readonly searchPeople: boolean; readonly calendar?: boolean | null };
   /** People may be invited here: a self-host build, and the server's word. */
   readonly invites: boolean;
   /** The service serves a page for the subscription. */
@@ -54,6 +58,7 @@ export interface WebFacts {
   readonly scope: string | null;
   /** The account the server confirmed, or null until it has. */
   readonly account: string | null;
+  readonly accountAddress?: string | null;
   readonly build: { readonly version: string | null; readonly commit: string | null };
 }
 
@@ -74,7 +79,7 @@ export interface WebSupplies {
   readonly wires: Transports<
     | "organizerNotice" | "gapLetters" | "liveBody" | "away" | "profileImport" | "consent" | "olderBody" | "junk" | "trash"
     | "suggest" | "draftReply"
-  > & MayBeNone<"images" | "firstRun" | "screening" | "autoFiled" | "seedReview" | "folderSummary" | "connect" | "mailboxes">;
+  > & MayBeNone<"images" | "firstRun" | "screening" | "autoFiled" | "seedReview" | "folderSummary" | "connect" | "mailboxes" | "calendar">;
   /** The account's features. Never the desktop's. */
   readonly features: Entries<
     | "account" | "mailboxes" | "ai" | "subscription" | "storage" | "storageCard" | "accountStrip" | "invites"
@@ -82,12 +87,18 @@ export interface WebSupplies {
   >;
   /** The browser's own notification reader. */
   readonly notifications: DeviceNotifications;
+  /** The language's controls the page wraps around the frame (the account's locale context), or none. */
+  readonly language: HostDevice["language"];
+  /** The way to an address the app itself makes: a new tab of this browser. */
+  readonly openLink: Supplied<HostDevice["openLink"]>;
   /** The places, the address bar, the window, the look and the way back. */
   readonly frame: FrameSupplies;
 }
 
 export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): HostContract {
   const { selfHost, server } = facts;
+  const calendar = server.calendar === true && facts.scope !== null && facts.scope === facts.account
+    ? has.wires.calendar : NONE;
   return {
     engine,
     session: {
@@ -96,8 +107,10 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       state: "live",
       scope: facts.scope,
       account: facts.account,
+      accountAddress: facts.account && facts.account === facts.scope ? facts.accountAddress ?? null : null,
       signOut: has.session.signOut,
       recover: has.frame.recover,
+      today: NONE,
     },
     reads: { mailboxes: has.reads.mailboxes, copyAge: NONE, access: has.reads.access },
     wires: {
@@ -106,8 +119,7 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       liveBody: selfHost ? NONE : has.wires.liveBody,
       images: server.remoteImages ? has.wires.images : NONE,
       ownModelAutoSuggest: NONE,
-      // The calendar's port is built at its seating, beside the engine.
-      calendar: NONE,
+      calendar,
     },
     capabilities: {
       service: selfHost ? "self" : "managed",
@@ -125,8 +137,7 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       mailboxes: "here",
       language: "account",
       searchBy: server.searchPeople ? "people" : "words",
-      // The switch to the calendar is answered from the server's word at its seating.
-      products: CANNOT.products,
+      products: calendar === NONE ? CANNOT.products : "both",
     },
     features: {
       ...has.features,
@@ -147,12 +158,19 @@ export function webHost(engine: Engine, facts: WebFacts, has: WebSupplies): Host
       calendar: has.frame.calendar,
     },
     device: {
-      build: { surface: "web", version: facts.build.version, commit: facts.build.commit, mailtoLeaves: true },
+      build: {
+        surface: "web",
+        version: facts.build.version,
+        commit: facts.build.commit,
+        mailtoLeaves: true,
+        desktopDownload: DESKTOP_DOWNLOAD_URL,
+      },
       notifications: has.notifications,
       badge: NONE,
-      language: NONE,
-      openLink: NONE,
+      language: has.language,
+      openLink: has.openLink,
       pickFile: NONE,
+      // A browser saves a file from the address it fetched: no shell saves by id.
       saveFile: NONE,
       defaultMail: NONE,
       address: has.frame.address,

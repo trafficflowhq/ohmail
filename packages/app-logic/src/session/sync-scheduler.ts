@@ -1,3 +1,4 @@
+import type { CalendarHostTransport } from "@ohmail/client-engine/calendar-writes";
 import type { MessageBodyWire, MutationAnswer } from "@ohmail/wire";
 import {
   MutationRejectedError,
@@ -292,7 +293,7 @@ export class ForeignSessionError extends Error {
  * change into something a reader checks against a list; the imported types
  * are the package's own, so a rename over there fails here.
  */
-type GatedAdapter = EngineAdapter & {
+type GatedAdapter = EngineAdapter & Partial<CalendarHostTransport> & {
   snapshot?: SnapshotFn;
   listMessages?: ListOlderFn;
   /* The Trash pair, named here for the reason above and NOT as one field: the engine binds them
@@ -603,6 +604,14 @@ export function createSyncGate(mirrorOwner: string | null): SyncGate {
         // gate that hid the transport would have quietly turned their control cases into
         // tautologies. See {@link transportOf}.
         transport: adapter,
+        ...(adapter.calendarSettings
+          ? { calendarSettings: gatedPress(adapter.calendarSettings.bind(adapter), "reading calendar settings") } : {}),
+        ...(adapter.writeCalendar
+          ? { writeCalendar: gatedPress(adapter.writeCalendar.bind(adapter), "saving a calendar change") } : {}),
+        ...(adapter.retryCalendarWrite
+          ? { retryCalendarWrite: gatedPress(adapter.retryCalendarWrite.bind(adapter), "retrying a calendar change") } : {}),
+        ...(adapter.dismissCalendarWrite
+          ? { dismissCalendarWrite: gatedPress(adapter.dismissCalendarWrite.bind(adapter), "dismissing a calendar change") } : {}),
         sync: async (params: SyncParams): Promise<SyncResponse> => {
           /*
            * IDENTITY FIRST, BEFORE THE CLAIM — and the order is the point. This refusal is
@@ -1072,6 +1081,11 @@ export function confirmSyncOwner(engine: OhmailEngine, accountId: string): void 
 export function syncIdentityOf(engine: OhmailEngine | null | undefined): SyncIdentity {
   if (!engine) return "holds";
   return GATES.get(engine)?.identity() ?? "holds";
+}
+
+/** A write can be issued and its answer accepted only while its own engine still holds the account. */
+export function confirmedSyncEngine(engine: OhmailEngine): OhmailEngine | null {
+  return syncIdentityOf(engine) === "holds" ? engine : null;
 }
 
 /** The account this engine's mirror is named for; null for an engine with no named mirror (the demo's, a host-built one). */

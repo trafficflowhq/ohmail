@@ -29,12 +29,12 @@ export function Head({ view, go }: { view: ScreenerView; go: (segment: ScreenerS
     junk === NONE
       ? { value: "spam" as const, label: t("segSpam"), count: copied ? model.spam.length : undefined }
       : { value: "spam" as const, label: t("segJunk"), count: undefined },
-  ];
+  ].map((option) => option.count ? { ...option, ariaLabel: `${option.label} ${option.count}` } : option);
   return (
     <ListHead
       title={t("title")}
       hot={model.queueSettled && model.waitingCount > 0}
-      aside={<Seg label={t("segAria")} options={options} value={view.segment} onChange={go} />}
+      sections={<Seg label={t("segAria")} options={options} value={view.segment} onChange={go} />}
     />
   );
 }

@@ -1,15 +1,12 @@
 /** @vitest-environment jsdom */
 import { describe, expect, it, afterEach } from "vitest";
-import * as React from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
-import messages from "../messages/en.json";
-import de from "../messages/de.json";
-import { FirstRun, type FirstRunDecideSubject } from "../app/shell/FirstRun";
-import { KeymapProvider } from "@ohmail/app/keys";
+import { act, cleanup } from "@testing-library/react";
+import deCatalogue from "../../../packages/app/messages/mailboxes.de.json" with { type: "json" };
 import { takeoverState } from "@ohmail/app-logic/reading/reader-holder";
-import type { FirstRunHost } from "@ohmail/app-logic/doors/first-run-host";
-import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { OnboardingMailbox } from "@ohmail/app-logic/doors/onboarding";
+import type { FirstRunRow, FirstRunSender } from "@ohmail/app-logic/mailboxes/first-run/ground";
+import { O, id } from "../../../packages/app/test/mailboxes/connect/support.js";
+import { mountStage } from "./_first-run-stage.js";
 
 /**
  * DONE SAYS THE TAKEOVER THAT IS UNDER WAY, AND THE FIRST DECISION REACHES ITS HOST
@@ -18,13 +15,15 @@ import type { OnboardingFacts, OnboardingMailbox } from "@ohmail/app-logic/doors
  * reads the row: asked while the stamp stands, landed once the row says organizer, refused once
  * the gate spent the stamp and the row stayed a reader. HOW TO WATCH IT FAIL: make
  * `takeoverState` answer `null` — the asked and refused cases go red.
+ *
+ * RE-POINTED (the switch's older tests, sorted once): the run is the new frame's first-run stage
+ * (`packages/app/src/mailboxes/first-run`) over a ground the case moves (`_first-run-stage.tsx`), its
+ * words the stage's catalogue; the guided decision's sender is the ground's (its `decide` is the host's press); a
+ * key reaches the element that has the keys, as a browser delivers it. Every expectation is as it stood.
  */
 
-(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-const h = React.createElement;
-const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
-
-const t = messages.onboarding;
+const t = O;
+const de = deCatalogue;
 const HOLDER = "W-old";
 const SENDER = "Bea";
 const STAMP = "2026-09-26T05:30:00.000Z";
@@ -39,9 +38,8 @@ const READER: OnboardingMailbox = {
   takeoverAuthorizedAt: null,
 };
 
-const roots: Root[] = [];
-afterEach(async () => {
-  await act(async () => { for (const r of roots.splice(0)) r.unmount(); });
+afterEach(() => {
+  cleanup();
   document.body.innerHTML = "";
 });
 
@@ -49,66 +47,51 @@ async function settle(): Promise<void> {
   await act(async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); });
 }
 
+/** The row the ground hands: the account's id and address beside exactly the case's facts. */
+const rowOf = (mailbox: OnboardingMailbox): FirstRunRow =>
+  ({ id: id("mb-1"), address: "me@example.invalid", holderSince: "14 Sept 2026", ...mailbox }) as FirstRunRow;
+
 async function mount() {
-  let current: OnboardingFacts = {
-    door: "local", mailbox: READER, account: { onboardingCompletedAt: null }, ai: "off", queuedSenders: 1,
-  };
+  let current = rowOf(READER);
   const decisions: string[] = [];
-  const el = document.createElement("div");
-  document.body.appendChild(el);
-  const root = createRoot(el);
-  roots.push(root);
-  let bump: (() => void) | null = null;
-  const host: FirstRunHost = {
+  const sender: FirstRunSender = {
+    name: SENDER, address: "bea@example.test", held: 6, waiting: 1, many: false, since: "6 waiting",
+    decide: (dest) => { decisions.push(dest); },
+  };
+  const st = await mountStage({
+    rows: [current],
     door: "local",
-    ai: current.ai,
-    probe: async () => ({ host: "h", user: "u", folders: 1 }),
-    connect: async () => ({ id: "mb-1" }),
-    // The door's answer to Agree: consent and the takeover stamp, one statement; the role waits.
-    organize: async () => {
-      current = { ...current, mailbox: { ...current.mailbox!, organizeConsentedAt: STAMP, takeoverAuthorizedAt: STAMP } };
-      return "stored";
+    live: () => [current],
+    about: { queuedSenders: 1, sender },
+    verbs: {
+      ai: "off",
+      // The door's answer to Agree: consent and the takeover stamp, one statement; the role waits.
+      organize: async () => {
+        current = { ...current, organizeConsentedAt: STAMP, takeoverAuthorizedAt: STAMP };
+        return "stored";
+      },
+      complete: async () => { /* stamped */ },
+      setAiEnabled: async () => { /* answered */ },
     },
-    complete: async () => { /* stamped */ },
-    setAiEnabled: async () => { /* answered */ },
-    probeReason: () => null,
-    probeMessage: () => null,
-  };
-  const decide: FirstRunDecideSubject = {
-    name: SENDER, address: "bea@example.test", held: 6, waiting: 1, since: "6 waiting",
-    onDecide: (dest) => { decisions.push(dest); },
-  };
-  const Stage = () => {
-    const [, set] = React.useState(0);
-    bump = () => set((n) => n + 1);
-    return h(FirstRun, {
-      host, facts: current, onRefresh: () => bump?.(), onLeave: () => { /* left */ },
-      pull: { screened: 0, history: 0, pulled: 0 }, decide, mailboxId: "mb-1",
-      organizedSince: "14 Sept 2026",
-    });
-  };
-  await act(async () => {
-    root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC",
-      children: h(KeymapProvider, { children: h(Stage, null) }),
-    }));
   });
+  const el = st.el;
   return {
-    heading: () => (el.querySelector("h1")?.textContent ?? "").trim(),
+    heading: st.heading,
     text: () => el.textContent ?? "",
     press: async (label: string) => {
       const button = [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim().startsWith(label));
       if (!button) throw new Error(`no button labelled ${JSON.stringify(label)}`);
       await act(async () => { button.click(); for (let i = 0; i < 12; i++) await Promise.resolve(); });
     },
+    /** A key as a browser delivers it: at the element that has the keys. */
     key: async (key: string) => {
-      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
+      await act(async () => { ((document.activeElement as HTMLElement | null) ?? document.body).dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); });
       await settle();
     },
     /** A later read of the row, as the shell's poll delivers it. */
     read: async (over: Partial<OnboardingMailbox>) => {
-      current = { ...current, mailbox: { ...current.mailbox!, ...over } };
-      await act(async () => { bump?.(); });
+      current = { ...current, ...over };
+      await st.move([current]);
       await settle();
     },
     decisions,

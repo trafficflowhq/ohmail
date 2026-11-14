@@ -10,7 +10,7 @@ import { bodyOf, threadOf, threadSubject, type EntityReader } from "@ohmail/clie
 import { useEngineOrNull } from "../engine/index.js";
 import { useBodyArrival } from "../reading/body-arrival.js";
 import { conversationOnScreen } from "../reading/conversation-on-screen.js";
-import { usePresentedMirror } from "../reading/presented-mirror.js";
+import { usePresented } from "../reading/presented-mirror.js";
 import { subscribeSessionRevival } from "../session/session-truth.js";
 
 const NOTHING_TO_STOP = (): void => {};
@@ -47,7 +47,7 @@ export interface ConversationShown {
    * with nothing opened.
    */
   readonly subject: string;
-  /** The opened letter was read off the presented mirror: false where no shell handed one, or it holds no row of it. */
+  /** The opened letter was read off the presented mirror: false where it holds no row of it. */
   readonly presented: boolean;
   /** The letters read off the presented mirror; any other one fails closed (it loads no picture by itself). */
   readonly presentedIds: ReadonlySet<string>;
@@ -58,16 +58,16 @@ export interface ConversationShown {
  * presentation holds at the gate, a letter inside its delete window, are in no panel). Where the presentation holds
  * no row of the opened letter (a History row), the raw thread is read, and each member through the presentation
  * again: a member it holds is handed its presented row (its folder carries the hold), any other one goes as raw and
- * not presented. With no presented mirror, the raw one, nothing presented. A letter neither holds is `gone` only
+ * not presented. A letter neither holds is `gone` only
  * where the engine tombstoned it, else `absent` (not synced yet, or beyond this device).
  */
 export function conversationShown(
   raw: EntityReader,
-  presented: EntityReader | null,
+  presented: EntityReader,
   openId: string,
   isGone: (id: string) => boolean,
 ): ConversationShown {
-  const shown = presented?.get<EngineMessage>("message", openId) ?? null;
+  const shown = presented.get<EngineMessage>("message", openId) ?? null;
   const opened = shown ?? raw.get<EngineMessage>("message", openId) ?? null;
   if (opened === null)
     return {
@@ -80,20 +80,8 @@ export function conversationShown(
     };
   const named = (messages: readonly EngineMessage[]): string =>
     messages.length > 1 && opened.threadId !== null
-      ? (threadSubject(presented ?? raw, opened.threadId) ?? opened.subject)
+      ? (threadSubject(presented, opened.threadId) ?? opened.subject)
       : opened.subject;
-  if (presented === null) {
-    const members = threadOf(raw, openId);
-    const messages = members.length > 0 ? members : [opened];
-    return {
-      state: "letters",
-      opened,
-      messages,
-      subject: named(messages),
-      presented: false,
-      presentedIds: NONE,
-    };
-  }
   if (shown !== null) {
     const members = conversationOnScreen(presented, raw, openId);
     const messages = members.length > 0 ? members : [opened];
@@ -135,16 +123,22 @@ const NOTHING_OPEN: ConversationShown = {
   presentedIds: NONE,
 };
 
-export function useOpenConversation(openId: string | null): ConversationShown {
+/**
+ * `own`: whether a letter is one this tab's own verbs took away (the ground's press seam keeps them); its tombstone is
+ * the person's act, never another app's, and reads as a letter that is not here (`absent`), not as `gone`.
+ */
+export function useOpenConversation(openId: string | null, own: (id: string) => boolean): ConversationShown {
   const engine = useEngineOrNull();
   const { mirror, stamp } = useMirror();
-  const presented = usePresentedMirror();
+  /* The mirror as the ground presents it: the column never reads the raw one in its place, and throws where no
+     ground stands above. */
+  const presented = usePresented();
   return useMemo(
     () =>
       mirror === null || engine === null || openId === null || stamp < 0
         ? NOTHING_OPEN
-        : conversationShown(mirror, presented, openId, (id) => engine.messageIsGone(id)),
-    [engine, mirror, presented, stamp, openId],
+        : conversationShown(mirror, presented, openId, (id) => engine.messageIsGone(id) && !own(id)),
+    [engine, mirror, presented, stamp, openId, own],
   );
 }
 

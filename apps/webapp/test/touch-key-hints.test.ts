@@ -134,9 +134,11 @@ describe("the rules exist, and they are the ones the audit asked for", () => {
   it("the stylesheet is in the bundle — a rule nobody imports is a rule nobody has", () => {
     // `touch-keys.css` has no component of its own, so the only thing that puts it in the route
     // bundle is this import. Deleting it leaves every assertion in this file green and the
-    // product unfixed, which is exactly the failure mode worth one line of grep.
-    const keymap = read("packages/app/src/keys/KeymapProvider.tsx");
-    expect(keymap).toContain('import "./touch-keys.css"');
+    // product unfixed, which is exactly the failure mode worth one line of grep. The registry
+    // is the frame's own now (`OwnKeys` of `Frame.tsx`, mounted by every host's frame): the
+    // stylesheet rides with it there, as it rode with today's `KeymapProvider`.
+    const keymap = read("packages/app/src/frame/Frame.tsx");
+    expect(keymap).toContain('import "../keys/touch-keys.css"');
   });
 });
 

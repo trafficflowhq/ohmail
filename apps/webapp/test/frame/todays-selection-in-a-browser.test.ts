@@ -117,6 +117,29 @@ async function underItsMiddle(page: Page, name: RegExp) {
 }
 
 describe("today's Ohbox selection bar on a phone, 390 by 844, under a finger", () => {
+  it("leaves the first group inside the sheet and the final History action clear of the dock", async () => {
+    const page = await demo("#/ohbox");
+    try {
+      const scroller = page.locator(".ob-scroll");
+      const first = scroller.getByRole("heading").first();
+      const heading = page.locator(".oh-listhead");
+      const firstBox = (await first.boundingBox())!;
+      const headBox = (await heading.boundingBox())!;
+      expect.soft(firstBox.y - headBox.y - headBox.height).toBe(4);
+      await scroller.evaluate((list) => { list.scrollTop = list.scrollHeight; });
+      const action = scroller.getByRole("button", { name: "History", exact: true });
+      const actionBox = (await action.boundingBox())!;
+      const dockBox = (await page.locator(".oh-dock").boundingBox())!;
+      expect.soft(actionBox.y + actionBox.height).toBeLessThan(dockBox.y);
+      expect(await action.evaluate((button) => {
+        const box = button.getBoundingClientRect();
+        return button.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+      })).toBe(true);
+    } finally {
+      await page.context().close();
+    }
+  });
+
   it("while the bar stands no dock is drawn, and each of its controls is the control under its middle", async () => {
     const page = await demo("#/ohbox");
     expect(await docks(page), "no dock at rest").toBe(1);

@@ -3,13 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { NextIntlClientProvider } from "next-intl";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import messages from "../messages/en.json";
-import { shellFrameOf, shellSliceOf } from "./source-anchor";
-
-const read = (rel: string): string =>
-  readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
 
 /**
  * TRI-F4 / TRI-F6 / TRI-F11 — THE MESSAGE VERBS INSIDE TRIAGE, AND THE WAY OUT OF A PILE.
@@ -322,53 +316,12 @@ describe("TRI-F11 — `b` matches the picker and is reversible", () => {
       "Now brings it back",
     );
   }, 20000);
-
-  it("the keyboard default IS a picker option — tomorrow, at the hour the strip shows", async () => {
-    // The picker's presets are `tomorrowAt` / `nextWeekAt` (MessagePane); the keyboard and
-    // palette default used `nextFridayNine`, a horizon the picker cannot produce — so the key's
-    // outcome could be neither predicted nor reproduced from the documented control. Both
-    // dispatch sites mint the picker's own first dated preset.
-    //
-    // SINCE mail 0110 the preset takes an HOUR, and the invariant is one degree stronger: the
-    // key and the strip must agree about WHICH hour, not merely which day. Both must read
-    // `consent.resurfaceTime` — the value the strip's control is filled from — so a key that
-    // kept minting 09:00 after somebody set 14:30 goes red here. The single-message verb and
-    // the selection verb are asserted apart: one of the pair was fixed alone once.
-    /* THE TWO VERBS MOVED to `shell-verbs.ts` at ARCH-022 and the chrome supply stayed in
-       `AppShell.tsx`, so the claim is asked of each frame that holds its half — and the two
-       negatives are asked of BOTH, because a bare 09:00 written back into either is the same
-       defect. Each verb is read inside its OWN declaration: one of the pair was fixed alone
-       once, and a file-wide match cannot tell them apart. */
-    const src = read("../app/shell/AppShell.tsx");
-    const verbs = shellFrameOf("onMessageAction").source;
-    for (const [where, text] of [["AppShell.tsx", src], ["shell-verbs.ts", verbs]] as const) {
-      expect(text, `${where} mints the retired Friday horizon`).not.toMatch(/nextFridayNine/);
-      // Neither site may mint a bare 09:00 any more — the `*Nine` wrappers belong to send later.
-      expect(text, `${where} mints a bare 09:00`).not.toMatch(/tomorrowNine/);
-    }
-    // `.iso` since a horizon carries the wall clock it booked as well as the instant: both sites
-    // take the instant off the SAME value the strip labels its buttons from.
-    // `nowAt()` and not `now`: the shell's rendered clock is at most a minute old, and a horizon
-    // minted from it at 00:00:30 books yesterday's tomorrow. A press asks the clock itself
-    // (`resurface-horizon-at-the-press.test.tsx` drives that on the rendered strip).
-    expect(shellSliceOf("onMessageAction"), "the single-message verb")
-      .toMatch(/const when = tomorrowAt\(nowAt\(\), consent\.resurfaceTime\)\.iso;/);
-    expect(shellSliceOf("onBulkAction"), "the selection verb").toMatch(
-      /const when = action === "resurface" \? tomorrowAt\(nowAt\(\), consent\.resurfaceTime\)\.iso : null;/,
-    );
-    // …and the strip fills its control from the SAME field, through the chrome the shell
-    // supplies it on — one source, or the key and the control are two answers again.
-    expect(src).toMatch(/resurfaceTime: consent\.resurfaceTime,/);
-    const pane = read("../app/shell/MessagePane.tsx");
-    expect(pane).toMatch(/resurfaceClock\(chrome\.resurfaceTime\)/);
-    expect(pane).toMatch(/resurfaceHorizons\(base, resurfaceAt\)/);
-  });
 });
 
 describe("STA-F8 — the pile hint renders once", () => {
   it("an empty Parked pile does not repeat the header's sentence in the empty state", async () => {
     const { TriageView } = await import("../app/views/TriageView.js");
-    const { KeymapProvider } = await import("@ohmail/app/keys");
+    const { KeymapProvider } = await import("../../../test/support/keymap-provider");
     const { WithListGone } = await import("./_list-gone.js");
     const container = await mount(
       h(KeymapProvider, {

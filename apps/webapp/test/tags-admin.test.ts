@@ -550,18 +550,6 @@ describe("the rail's inline tag create — what only the rendered rail can be wr
   });
 });
 
-describe("bulk tag-assign writes assignments only", () => {
-  it("the bulk-tag verb fans out tag_assign and never promotes a rule", () => {
-    // A bulk tag over a selection is `bulkToggleTag` — the whole path. It must dispatch
-    // `tag_assign` per message and nothing that writes a rule: "always tag this sender" is an
-    // explicit rule the user makes, never inferred from a bulk act. Same standard
-    // `planBulkScreening` states when it passes `makeRule: false`. Read from the function body so
-    // an added rule/decide dispatch inside it trips this. The mutation-level proof is in
-    // `packages/client-engine/test/tag-crud-wire.test.ts`; this pins the shell caller too.
-    const verbs = shellFrameOf("bulkToggleTag").source;
-    const block = verbs.slice(verbs.indexOf("const bulkToggleTag"), verbs.indexOf("const createTag ="));
-    expect(block).toMatch(/kind: "tag_assign"/);
-    expect(block).not.toMatch(/kind: "rule_create"/);
-    expect(block).not.toMatch(/kind: "screener_decide"/);
-  });
-});
+/* "bulk tag-assign writes assignments only" > "the bulk-tag verb fans out tag_assign and never promotes a rule" MOVED
+   word for word (share ohbox-2) to `bulk-tag-writes-assignments-only.test.ts`, re-pointed by path to where the verb
+   lives now (`packages/app-logic/src/press/tag-verbs.ts`). */

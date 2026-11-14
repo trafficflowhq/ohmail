@@ -122,15 +122,26 @@ const key = async (k: string): Promise<void> => {
   });
   await tick(500);
 };
+/** The frame's reading column, where the new shell reads an open letter. */
+const READING = '[role="region"][aria-label="Open message"]';
 const scopeOf = (sel: string): Element => {
   const el = document.querySelector(sel);
   expect(el, `${sel} is not on screen`).not.toBeNull();
   return el!;
 };
-/** The file names one surface's strips show, stem and extension joined. */
-const tilesIn = (scope: Element): string[] =>
-  [...scope.querySelectorAll(".att-strip .att-name")].map((n) =>
-    `${n.querySelector(".att-stem")?.textContent ?? ""}${n.querySelector(".att-ext")?.textContent ?? ""}`);
+/** A button's accessible name: its label, else its words. */
+const nameOf = (b: Element): string => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim();
+/** The file names one surface's letter files show, in their order: each ready file offers its own "Download <name>"
+ *  (the set's own "Download all" is no file). */
+const tilesIn = (scope: Element): string[] => {
+  const names: string[] = [];
+  for (const b of scope.querySelectorAll("button")) {
+    if (nameOf(b) === "Download all") continue;
+    const m = /^Download (.+)$/.exec(nameOf(b));
+    if (m && !names.includes(m[1]!)) names.push(m[1]!);
+  }
+  return names;
+};
 
 async function open(): Promise<void> {
   await mountShell([mailbox()]);
@@ -139,11 +150,14 @@ async function open(): Promise<void> {
 
 /** A tile a person can use: its name, its size, and a press that fetches the bytes. */
 async function expectUsableTile(scope: Element, filename: string, attachmentId: string): Promise<void> {
-  const tile = [...scope.querySelectorAll<HTMLElement>(".att-item")]
-    .find((t) => (t.textContent ?? "").includes(filename.replace(/\.[^.]+$/, "")));
+  const named = (want: string): HTMLButtonElement[] =>
+    [...scope.querySelectorAll<HTMLButtonElement>("button")].filter((b) => nameOf(b) === want);
+  /* The tile: the press on the file itself (a look where the file has one, else its download), its face its name and size. */
+  const tile = named(`Preview ${filename}`)[0] ?? named(`Download ${filename}`)[0];
   expect(tile, `no tile for ${filename}`).toBeTruthy();
-  expect(tile!.querySelector(".att-state")?.textContent ?? "", `${filename} states no size`).toMatch(/\d/);
-  const save = tile!.querySelector<HTMLButtonElement>("button.att-side") ?? tile!.querySelector<HTMLButtonElement>("button.att-tile");
+  expect((tile!.textContent ?? "").replace(filename, ""), `${filename} states no size`).toMatch(/\d/);
+  /* Its save: the file's own Download beside the tile (the last control so named). */
+  const save = named(`Download ${filename}`).at(-1);
   expect(save, `${filename} has nothing to press`).toBeTruthy();
   await act(async () => { save!.click(); });
   await tick(500);
@@ -199,13 +213,14 @@ describe("a file is listed on the open message, whatever the body's type", () =>
 
   it("a message already in the mirror lists its file on every open, the list asked again after a close", async () => {
     await open();
-    await goHash("#/search/m/t1");
-    expect(tilesIn(scopeOf("[role=dialog].reader"))).toEqual(["notes.txt"]);
-    // Settings shows no message, so nothing holds `t1` there and its list is let go.
-    await goHash("#/settings");
-    expect(document.querySelector(".att-strip"), "a strip outlived every pane").toBeNull();
-    await goHash("#/search/m/t1");
-    expect(tilesIn(scopeOf("[role=dialog].reader")), "a re-open shows no file").toEqual(["notes.txt"]);
+    /* Opened where the new shell reads a letter, the Ohbox's reading column (Search is not mounted yet). */
+    await goHash("#/ohbox/m/t1");
+    expect(tilesIn(scopeOf(READING))).toEqual(["notes.txt"]);
+    // Write shows no message, so nothing holds `t1` there and its list is let go.
+    await goHash("#/write");
+    expect(tilesIn(document.body), "a strip outlived every pane").toEqual([]);
+    await goHash("#/ohbox/m/t1");
+    expect(tilesIn(scopeOf(READING)), "a re-open shows no file").toEqual(["notes.txt"]);
     expect(listed.filter((id) => id === "t1"), "the close did not let the list go, or the re-open did not ask").toHaveLength(2);
   }, 30_000);
 });

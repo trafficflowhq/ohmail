@@ -17,7 +17,7 @@ import en from "../messages/en.json";
 import de from "../messages/de.json";
 import { SenderMenu } from "../app/shell/SenderMenu";
 import {
-  planScreeningChange, ruleMatchOf, screeningPath, senderScreening, withResolution,
+  ruleMatchOf, senderScreening,
   type ScreeningDest, type ScreeningScope,
 } from "@ohmail/app-logic/press/sender-screening";
 import { shellSliceOf } from "./source-anchor";
@@ -27,6 +27,9 @@ import { shellSliceOf } from "./source-anchor";
  * pressed address filing elsewhere turns the press into a step: the rule is listed with the rows it
  * keeps, "All their mail" is chosen, Enter commits it, ↑/↓ changes the answer, and Escape goes back
  * to the list before it closes the sheet. No rule in the way: no step, the press commits.
+ *
+ * Which door a sheet press goes through (the planner alone, no sheet drawn) stands in
+ * `sender-sheet-resolve-step-plan.test.ts`.
  */
 const NOW = new Date("2026-09-25T13:00:00.000Z");
 const ADDR = "alerts@kestrel.example";
@@ -219,26 +222,3 @@ describe("no address press past the gate reaches the wire outside the window", (
     expect(body, "a rule write left the held press directly").not.toMatch(/ruleMutations|dispatchScreeningChange/);
   });
 });
-
-describe("which door a sheet press goes through", () => {
-  it("an address press past the gate that makes a rule is held; a domain press and a move-only go at once", async () => {
-    const store = await mirror([msg("m1")], []);
-    const s = senderScreening(store, "m1")!;
-    expect(screeningPath(s, "sender", true)).toBe("window");
-    expect(screeningPath(s, "domain", true)).toBe("immediate");
-    expect(screeningPath(s, "sender", false)).toBe("immediate");
-    const held = await mirror([msg("h1", { folder: "ohmail/Screener" })], []);
-    expect(screeningPath(senderScreening(held, "h1")!, "sender", true)).toBe("decide");
-  });
-
-  it("the step's removals ride a decide ahead of it, and a ladder after it", async () => {
-    const store = await mirror([msg("h1", { folder: "ohmail/Screener" })], []);
-    const plan = planScreeningChange(senderScreening(store, "h1")!, "ohbox", "sender", true, true);
-    const del = { kind: "rule_delete" as const, ruleId: "term" };
-    const out = withResolution(plan, [del]);
-    expect(out.mutations[0]).toBe(del);
-    expect(out.ruleMutations).toEqual([del]);
-    expect(out.mutations.filter((m) => m.kind === "screener_decide")).toHaveLength(1);
-  });
-});
-

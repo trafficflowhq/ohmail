@@ -7,12 +7,19 @@
  * composition of its own.
  */
 import type { EngineDraft } from "@ohmail/wire";
-import type { FromOption, ImageQualityLevel, OhmailEngine, SignatureState } from "@ohmail/client-engine";
+import type {
+  EntityReader,
+  FromOption,
+  ImageQualityLevel,
+  OhmailEngine,
+  SignatureState,
+} from "@ohmail/client-engine";
 import {
   addressBook,
   effectiveSignature,
   effectiveSignatureHtml,
   matchAddresses,
+  sendAndDonePlanFor,
 } from "@ohmail/client-engine";
 import type { ConsentState } from "../consent/consent-state.js";
 import { activeFormatZone } from "../text/format-words.js";
@@ -28,7 +35,7 @@ import type { SendSurface } from "../write/files.js";
 import { compressImage, readImageQualityLevel, writeImageQualityLevel } from "../write/image-quality.js";
 import { readComposeRow, readComposeSession } from "./compose.js";
 import { DRAFT_REPLY_COST_CREDITS, NEW_LETTER, type DraftReplyControl } from "./draft-reply.js";
-import { COMPOSE_SEND_KEY, composeStateOnScreen, heldRowUnverified } from "./mail-send.js";
+import { COMPOSE_SEND_KEY, composeStateOnScreen, heldRowUnverified, sendStateFor } from "./mail-send.js";
 import {
   gatedInvalid,
   joinRecipients,
@@ -58,6 +65,8 @@ export interface WritingContext {
   readonly noCredits: boolean;
   /** The whole catalogue's reader, as the composer is handed it. */
   readonly t: Translator;
+  /** The letters as the Ohbox shows them (the composer's own `presented`): where Send + Done is offered. */
+  readonly presented: EntityReader;
 }
 
 const NOTHING = (): void => undefined;
@@ -90,6 +99,19 @@ const NO_DRAFTER: NotOffered = {
 };
 const NO_DRAFT_CHROME = { control: NO_DRAFTER, pending: null, resolve: NOTHING };
 
+/**
+ * SEND + DONE, offered per letter by the engine's one rule, asked of the letters as the Ohbox shows them and never of
+ * the raw mirror (a letter a rule presents under Reads still stands in INBOX there). The press is the composer's own
+ * `pressSendAndDone`, which reads the rule again at the press: a render and a press are two moments.
+ */
+function sendAndDoneFor(
+  compose: ShellCompose,
+  presented: EntityReader,
+  messageId: string,
+): (() => void) | null {
+  return sendAndDonePlanFor(presented, messageId) === null ? null : () => compose.pressSendAndDone(messageId);
+}
+
 /** The composition as `write` reads it: the record's own members, and the ones a caller derives of it. */
 export function writingOf(compose: ShellCompose, ctx: WritingContext) {
   const { engine, scope, t } = ctx;
@@ -97,17 +119,24 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
   /* Read in a render, so never minted: a render writes no key of the account. None names no record. */
   const session = readComposeSession(scope);
   const hold = holdOf(engine, { lane: COMPOSE_SEND_KEY, draftId: row, session }, scope);
-  const send = heldRowUnverified(
-    composeStateOnScreen(
-      compose.mailSend.stateOf(COMPOSE_SEND_KEY),
-      compose.mailSend.pressHere(COMPOSE_SEND_KEY),
+  /* THE STATE AS IT APPLIES TO THE LETTER ON SCREEN (`sendStateFor`): a send nobody could confirm parks the letter it
+     belongs to, and its warning and answers stand over that letter alone; the next letter on the lane draws neither.
+     Narrowed for what is drawn, not for the rule: the send's gate answers the same over either. */
+  const send = sendStateFor(
+    heldRowUnverified(
+      composeStateOnScreen(
+        compose.mailSend.stateOf(COMPOSE_SEND_KEY),
+        compose.mailSend.pressHere(COMPOSE_SEND_KEY),
+      ),
+      row,
+      hold,
+      session,
     ),
-    row,
-    hold,
-    session,
+    compose.plan.mutation,
   );
   return {
     compose: compose.compose,
+    composeEpochNow: compose.composeEpochNow,
     onComposeFields: compose.onComposeFields,
     plan: compose.plan,
     composeFrom: compose.composeFrom,
@@ -139,8 +168,10 @@ export function writingOf(compose: ShellCompose, ctx: WritingContext) {
     replyForwardFiles: compose.replyForwardFiles,
     replyBook: compose.replyBook,
     replySendState: compose.replySendState,
+    showSend: compose.mailSend.showing,
     heldReplyRow: compose.heldReplyRow,
     sendReply: (messageId: string) => compose.sendReply(messageId),
+    sendReplyAndDone: (messageId: string) => sendAndDoneFor(compose, ctx.presented, messageId),
     openReply: compose.openReply,
     openForward: compose.openForward,
     confirmForward: compose.confirmForward,
@@ -220,9 +251,12 @@ export function writeBesideOf(
     },
     suggest: (typed: string, taken: readonly string[]) => {
       const skip = new Set(taken.map((a) => a.toLowerCase()));
-      return matchAddresses(addressBook(engine.read()), typed.trim(), 6)
-        .filter((e) => !skip.has(e.address))
-        .map((e) => ({ name: e.name, address: e.address, they: e.name !== "" }));
+      return (
+        matchAddresses(addressBook(engine.read()), typed.trim(), 6)
+          .filter((e) => !skip.has(e.address))
+          /* `they`: somebody who wrote to the account and whom it never wrote to, said beside the name. */
+          .map((e) => ({ name: e.name, address: e.address, they: e.evidence === "they_wrote" }))
+      );
     },
     later: {
       options: (now: number) => {

@@ -15,11 +15,13 @@ import {
   useRef,
   useState,
   type Context,
+  type RefObject,
 } from "react";
 import { appointmentStamp } from "@ohmail/client-engine";
 import { leaveSaysSomething, streamLeaveCommit, type StreamLeaveCommit } from "./leave.js";
 import { useStreamRead, type StreamReadDom } from "./stream-read-dom.js";
 import { useStreamScroll, type StreamCardNames, type StreamScroll } from "./stream-scroll.js";
+import type { PlaceLiveArgs } from "../lists/place-live.js";
 import { readerZone } from "../reader/head-model.js";
 
 /**
@@ -74,6 +76,8 @@ export interface StreamInput {
 }
 
 export interface StreamModel {
+  /** The chosen hit whose card opens after its landing. A direct address previews the card. */
+  readonly entered?: PlaceLiveArgs["entered"];
   readonly place: StreamPlace;
   /** Nothing about the pile is said while the mailbox is not settled or a sync is owed. */
   readonly mayState: boolean;
@@ -85,6 +89,8 @@ export interface StreamModel {
   readonly lineAt: string | null;
   readonly newCount: number;
   readonly openId: string | null;
+  /** The explicit address to land on. Reading farther by hand changes selection without making a history entry. */
+  readonly addressedId: string | null;
   /** A row's stamp in the list's own form, as the seat hands it. */
   readonly stamp: (iso: string) => string;
   /** The stream's scroller once mounted, and the ref that mounts it (the reading sheet's `scroller`). */
@@ -99,8 +105,12 @@ export interface StreamModel {
   open(id: string): void;
   markUnread(id: string): void;
   markAllRead(): void;
+  hydrateNear(ids: readonly string[]): void;
   textOf(id: string): string | null;
 }
+
+/** Whether this window's last visit to each pile had a cursor. No letter is kept between visits. */
+export const StreamCursorVisits = createContext<Set<StreamPlace> | null>(null);
 
 export const StreamModelContext: Context<StreamModel | null> = createContext<StreamModel | null>(null);
 
@@ -110,11 +120,35 @@ export function useStreamModel(): StreamModel {
   return model;
 }
 
+/** Ask once for each missing body that is linked or approaches the reading area. */
+function useHydrateNear(inputRef: RefObject<StreamInput>, openId: string | null) {
+  const askedForBody = useRef(new Set<string>());
+  const hydrateNear = useCallback(
+    (ids: readonly string[]) => {
+      const current = inputRef.current;
+      const missing: string[] = [];
+      for (const id of ids) {
+        if (askedForBody.current.has(id) || current.textOf(id) !== null) continue;
+        askedForBody.current.add(id);
+        missing.push(id);
+      }
+      if (missing.length > 0) current.hydrate(missing);
+    },
+    [inputRef],
+  );
+  useEffect(() => {
+    if (openId !== null) hydrateNear([openId]);
+  }, [hydrateNear, openId]);
+  return hydrateNear;
+}
+
 export function useStream(input: StreamInput): StreamModel {
   const { partition } = input;
   const items = useMemo(() => [...partition.fresh, ...partition.seen], [partition.fresh, partition.seen]);
   const order = useMemo(() => items.map((m) => m.id), [items]);
   const byId = useMemo(() => new Map(items.map((m) => [m.id, m])), [items]);
+  // A linked item can arrive after the address. Only its own stream may open, fetch or read it.
+  const openId = input.openId !== null && byId.has(input.openId) ? input.openId : null;
   const [scroller, attach] = useState<HTMLDivElement | null>(null);
   const inputRef = useRef(input);
   inputRef.current = input;
@@ -125,6 +159,7 @@ export function useStream(input: StreamInput): StreamModel {
 
   const read = useStreamRead({
     scroller,
+    openId,
     order,
     factsOf: (id) => {
       const m = byId.get(id);
@@ -134,17 +169,40 @@ export function useStream(input: StreamInput): StreamModel {
     onLanded: () => landedRef.current(),
   });
 
-  /* The scroll: an app move drives the stream as a press does, and the scroll it makes is not the hand's. */
+  /* The scroll: an app move is no hand's, and drives nothing by itself; a press that moves it drives it (`open`). */
   const [current, setCurrent] = useState<string | null>(null);
+  const visits = useContext(StreamCursorVisits);
+  const [scrolled, setScrolled] = useState<{
+    routeId: string | null;
+    listed: boolean;
+    id: string;
+  } | null>(() => {
+    const first = order[0];
+    return input.openId === null && first && visits?.has(input.place)
+      ? { routeId: null, listed: false, id: first }
+      : null;
+  });
+  // A pending addressed item can arrive later, at which point the address takes over again.
+  const sameAddress = scrolled?.routeId === input.openId && scrolled.listed === (openId !== null);
+  if (scrolled && !sameAddress) setScrolled(null);
+  const wanted = sameAddress ? scrolled.id : openId;
+  const selected = wanted !== null && byId.has(wanted) ? wanted : null;
+  useEffect(() => {
+    if (selected === null) visits?.delete(input.place);
+    else visits?.add(input.place);
+  }, [visits, input.place, selected]);
   const indexOf = useMemo(() => new Map(order.map((id, i) => [id, i])), [order]);
   const scroll = useStreamScroll({
     scroller,
     card: STREAM_ITEM,
     contentKey: order,
-    cursor: input.openId,
-    onCurrentChange: setCurrent,
+    cursor: openId,
+    onCurrentChange: (id, byHand) => {
+      setCurrent(id);
+      if (byHand) setScrolled({ routeId: input.openId, listed: openId !== null, id });
+    },
     pileIndexOf: (id) => indexOf.get(id) ?? -1,
-    seam: { moved: () => read.enter(), landing: () => read.flying() },
+    seam: { moved: () => read.moved(), landing: () => read.flying() },
   });
   landedRef.current = () => scroll.endLanded();
 
@@ -175,22 +233,16 @@ export function useStream(input: StreamInput): StreamModel {
     };
   }, []);
 
-  /* The bodies of what stands near: the opening run and the open item. */
-  const hydrateRef = useRef(new Set<string>());
-  useEffect(() => {
-    const want = order.slice(0, 8).filter((id) => !hydrateRef.current.has(id) && input.textOf(id) === null);
-    if (input.openId && !hydrateRef.current.has(input.openId) && input.textOf(input.openId) === null)
-      want.push(input.openId);
-    for (const id of want) hydrateRef.current.add(id);
-    if (want.length > 0) input.hydrate(want);
-  }, [order, input]);
+  const hydrateNear = useHydrateNear(inputRef, openId);
 
   const open = useCallback(
     (id: string) => {
-      read.enter();
+      read.enter(id);
+      if (scrolled && id === openId && scrolled.id !== id) scroll.scrollTo(id);
+      setScrolled(null);
       inputRef.current.open(id);
     },
-    [read],
+    [read, openId, scroll, scrolled],
   );
   const markUnread = useCallback(
     (id: string) => {
@@ -213,7 +265,8 @@ export function useStream(input: StreamInput): StreamModel {
     lineShown: partition.waterline !== null,
     lineAt: partition.waterline?.at ?? null,
     newCount: partition.newCount,
-    openId: input.openId,
+    openId: selected,
+    addressedId: openId,
     stamp: input.stamp,
     scroller,
     attach,
@@ -223,6 +276,7 @@ export function useStream(input: StreamInput): StreamModel {
     open,
     markUnread,
     markAllRead,
+    hydrateNear,
     textOf,
   };
 }

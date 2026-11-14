@@ -117,7 +117,7 @@ export function partsOf(s: Scene): Map<PartName, Part[]> {
     parts.get("over")!.push(only(s, o.box as Box, "window"));
   const subject = find("textbox", "Subject");
   const text = find("textbox", "Message");
-  const to = find("textbox", "To");
+  const to = find("textbox", "To") ?? find("combobox", "To");
   const top = to ?? subject;
   /* The From line stands one line over the first people's line. */
   const headTop = top ? top.box[1] - 40 : null;

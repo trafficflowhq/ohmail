@@ -47,6 +47,10 @@
     grid-template-columns: repeat(7, 1fr);
     text-align: center;
   }
+  /* The grid's own parts for a screen reader: the days stand in the grid above them. */
+  .oh-mini-days {
+    display: contents;
+  }
   .oh-mini-wd {
     height: var(--oh-mini-wd);
     color: var(--ink2);
