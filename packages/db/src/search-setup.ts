@@ -15,28 +15,18 @@ const rowsOf = <T,>(r: unknown): T[] =>
  * search pg tests call it in `beforeAll`, and production setup calls it once after migrating.
  * Idempotent — `IF NOT EXISTS` throughout. The tsvector columns and their GIN indexes are NOT
  * here: they are core-Postgres generated columns in migration 0008 and replay fine into PGlite.
- * This file adds only the `pg_trgm` extension plus the trigram GIN indexes on subject,
- * from_address and the search document's substring corpus, whole and each of its two sides.
+ * This file adds only the `pg_trgm` extension plus the trigram GIN indexes on the search
+ * document's substring corpus, whole and each of its two sides.
  */
 
 /**
- * The fuzzy arm's trigram GIN indexes (subject + sender), built CONCURRENTLY: setup runs on the
- * live database, where a plain build over `messages`, the schema's largest table, holds every
- * write for the whole scan. So it needs an autocommit session, like every other prebuild here.
+ * The search document's trigram GIN indexes, built CONCURRENTLY: setup runs on the live database,
+ * where a plain build holds every write for the whole scan. So it needs an autocommit session,
+ * like every other prebuild here. The two on `messages` (subject, sender) served the arm for
+ * letters without a document; mail 0200 drops them with the old search and nothing builds them
+ * again. Where the old search still stands they stand too, built by an earlier setup.
  */
 export const TRIGRAM_INDEX_SPECS: readonly ConcurrentIndexSpec[] = [
-  {
-    name: "messages_subject_trgm_idx",
-    table: "messages",
-    ddl: sql`create index concurrently if not exists "messages_subject_trgm_idx"
-      on public.messages using gin ("subject" gin_trgm_ops)`,
-  },
-  {
-    name: "messages_from_address_trgm_idx",
-    table: "messages",
-    ddl: sql`create index concurrently if not exists "messages_from_address_trgm_idx"
-      on public.messages using gin ("from_address" gin_trgm_ops)`,
-  },
   {
     // The typo arm over the search document's substring corpus (mail 0125): subject, senders,
     // recipients and file names in one column. The ACCOUNT leads (btree_gin): a trigram's candidates
@@ -114,12 +104,16 @@ export async function ensureWordIndex(
 }
 
 /**
- * THE OLD BODY VECTOR, RETIRED ON A SERVER. Not a journal entry: the journal is also the desktop's
- * schema, and a desktop paired to a server builds no search documents and still searches by
- * `body_tsv`. 0140's trigger keeps its name, timing and column and runs a function that stores no
- * vector, so a new letter costs no `to_tsvector` and no index entry, and an old row's vector is
- * cleared once its text changes (a gone letter keeps no words). The GIN goes once no account still
- * reads the pre-0125 columns: one with living mail and no built search index.
+ * THE OLD SEARCH, RETIRED WHERE NOTHING IS FOUND BY IT ALONE. Mail 0200 drops it under a guard: no
+ * living letter without a search document in an account whose index was never stamped built. A
+ * store that still held one keeps the whole old search (`messages.subject_tsv`,
+ * `message_bodies.body_tsv`, the trigger, its functions, four indexes) and its search goes on
+ * reading it; this step, after the journals at every setup, runs 0200's own statements once that
+ * count is zero. Until then it does what it did before 0200: 0140's trigger is re-pointed at a
+ * function that stores no vector, and the body GIN goes once no account searches by it.
+ *
+ * It never creates the trigger or its function on a store without `body_tsv`: `new.body_tsv :=
+ * null` would then fail every body insert.
  */
 export const BODY_VECTOR_CLEARED_FUNCTION_DDL = sql`create or replace function public.message_bodies_body_tsv_cleared() returns trigger language plpgsql as $$ begin new.body_tsv := null; return new; end; $$`;
 
@@ -130,37 +124,75 @@ export const BODY_VECTOR_INDEX = "message_bodies_body_tsv_idx";
 const BOUNDED_FN = "message_bodies_body_tsv_bounded";
 const CLEARED_FN = "message_bodies_body_tsv_cleared";
 
-/** The trigger could not be re-pointed within its bounded waits; nothing was changed. */
+/**
+ * Mail 0200's retirement, statement by statement: what its guarded block runs, in its order. A
+ * test holds the two equal. `index` statements may run CONCURRENTLY outside a transaction.
+ */
+export const OLD_SEARCH_RETIREMENT: ReadonlyArray<{ kind: "ddl" | "index"; sql: string }> = [
+  { kind: "ddl", sql: `DROP TRIGGER IF EXISTS "message_bodies_body_tsv_tg" ON "message_bodies"` },
+  { kind: "ddl", sql: `DROP FUNCTION IF EXISTS "message_bodies_body_tsv_bounded"()` },
+  { kind: "ddl", sql: `DROP FUNCTION IF EXISTS "message_bodies_body_tsv_cleared"()` },
+  { kind: "index", sql: `DROP INDEX IF EXISTS "message_bodies_body_tsv_idx"` },
+  { kind: "ddl", sql: `ALTER TABLE "message_bodies" DROP COLUMN IF EXISTS "body_tsv"` },
+  { kind: "index", sql: `DROP INDEX IF EXISTS "messages_subject_tsv_idx"` },
+  { kind: "index", sql: `DROP INDEX IF EXISTS "messages_subject_trgm_idx"` },
+  { kind: "index", sql: `DROP INDEX IF EXISTS "messages_from_address_trgm_idx"` },
+  { kind: "ddl", sql: `ALTER TABLE "messages" DROP COLUMN IF EXISTS "subject_tsv"` },
+];
+
+/** A statement could not take its lock within its bounded waits; what ran before it stays done, and a re-run finishes. */
 export class BodyVectorLockTimeout extends Error {
   override name = "BodyVectorLockTimeout";
 }
 
-export interface BodyVectorRetirement {
+export interface OldSearchRetirement {
+  /** Do the two old columns stand after the step? `gone` on a store 0200 or an earlier run retired. */
+  columns: "standing" | "gone";
   /** What the trigger runs after the step; `other` is a function this step does not know, left alone. */
   trigger: "cleared" | "bounded" | "absent" | "other";
   gin: "dropped" | "kept" | "absent";
   /** Accounts with living mail and no built search index: their search still reads the old vector. */
   owedAccounts: number;
+  /** Living letters only the old search finds: 0200's own count. The old search goes when it is zero. */
+  owedLetters: number;
 }
 
-type BodyVectorState = { runs: string | null; valid: boolean | null; owed: number };
+/**
+ * The pass whose done mark says an account's search documents are all built (`pass_progress`,
+ * mail 0203; `account_settings.search_index_built_at` until then, which mail 0200's own guard
+ * still reads: it runs before 0203). Spelled here because this module may not reach the door:
+ * the desktop engine loads it with the journal alone.
+ */
+const SEARCH_INDEX_JOB = "search_index_backfill";
 
-async function bodyVectorState(db: SqlExecutor): Promise<BodyVectorState> {
-  const [r] = rowsOf<{ runs: string | null; valid: boolean | null; owed: number }>(await db.execute(sql`
-    select (select p.proname::text from pg_trigger t join pg_proc p on p.oid = t.tgfoid
+type OldSearchState = { column: boolean; runs: string | null; valid: boolean | null; owed: number; letters: number };
+
+async function oldSearchState(db: SqlExecutor): Promise<OldSearchState> {
+  const [r] = rowsOf<{ col: boolean; runs: string | null; valid: boolean | null; owed: number; letters: number }>(await db.execute(sql`
+    select exists (select 1 from information_schema.columns c where c.table_schema = 'public'
+                    and ((c.table_name = 'message_bodies' and c.column_name = 'body_tsv')
+                      or (c.table_name = 'messages' and c.column_name = 'subject_tsv'))) as col,
+           (select p.proname::text from pg_trigger t join pg_proc p on p.oid = t.tgfoid
              where t.tgrelid = to_regclass('public.message_bodies') and t.tgname = 'message_bodies_body_tsv_tg') as runs,
            (select i.indisvalid from pg_index i where i.indexrelid = to_regclass(${`public.${BODY_VECTOR_INDEX}`})) as valid,
            (select count(*)::int from (select distinct mb.account_id from public.mailboxes mb) a
              where exists (select 1 from public.messages m where m.account_id = a.account_id and m.deleted_at is null)
-               and not exists (select 1 from public.account_settings st
-                                where st.account_id = a.account_id and st.search_index_built_at is not null)) as owed`));
-  return { runs: r?.runs ?? null, valid: r?.valid ?? null, owed: Number(r?.owed ?? 0) };
+               and not exists (select 1 from public.pass_progress p
+                                where p.account_id = a.account_id and p.subject_id = a.account_id
+                                  and p.job = ${SEARCH_INDEX_JOB} and p.done_at is not null)) as owed,
+           (select count(*)::int from public.messages m
+             where m.deleted_at is null
+               and not exists (select 1 from public.message_search s where s.message_id = m.id)
+               and not exists (select 1 from public.pass_progress p
+                                where p.account_id = m.account_id and p.subject_id = m.account_id
+                                  and p.job = ${SEARCH_INDEX_JOB} and p.done_at is not null)) as letters`));
+  return { column: Boolean(r?.col), runs: r?.runs ?? null, valid: r?.valid ?? null, owed: Number(r?.owed ?? 0), letters: Number(r?.letters ?? 0) };
 }
 
-const triggerVerdict = (s: BodyVectorState): BodyVectorRetirement["trigger"] =>
+const triggerVerdict = (s: OldSearchState): OldSearchRetirement["trigger"] =>
   s.runs === null ? "absent" : s.runs === BOUNDED_FN ? "bounded" : s.runs === CLEARED_FN ? "cleared" : "other";
 /** An invalid leftover serves no read, so it goes whatever is owed. */
-const ginGoes = (s: BodyVectorState): boolean => s.valid === false || (s.valid === true && s.owed === 0);
+const ginGoes = (s: OldSearchState): boolean => s.valid === false || (s.valid === true && s.owed === 0);
 
 function sqlStateOf(err: unknown): unknown {
   let e: unknown = err;
@@ -173,62 +205,77 @@ function sqlStateOf(err: unknown): unknown {
 }
 
 /**
- * Re-points the trigger and drops the GIN where the state above owes it; a run with nothing owed
- * reads the catalog and takes no lock. `concurrently: false` as {@link ensureSearchExtensions}.
+ * Retires the old search where the state above owes it; a run with nothing owed reads the catalog
+ * and takes no lock. `concurrently: false` as {@link ensureSearchExtensions}.
  */
-export async function retireBodyVector(
+export async function retireOldSearch(
   db: SqlExecutor,
   opts: { log?: (msg: string) => void; concurrently?: boolean; lockTimeoutMs?: number; attempts?: number; pauseMs?: number } = {},
-): Promise<BodyVectorRetirement> {
+): Promise<OldSearchRetirement> {
   const { log, concurrently = true, lockTimeoutMs = 2_000, attempts = 20, pauseMs = 500 } = opts;
   if (!Number.isInteger(lockTimeoutMs) || lockTimeoutMs <= 0) throw new Error("lockTimeoutMs must be a positive integer");
-  const first = await bodyVectorState(db);
-  const kept = (s: BodyVectorState): BodyVectorRetirement["gin"] => {
+  const first = await oldSearchState(db);
+  const verdict = (s: OldSearchState, gin: OldSearchRetirement["gin"]): OldSearchRetirement =>
+    ({ columns: s.column ? "standing" : "gone", trigger: triggerVerdict(s), gin, owedAccounts: s.owed, owedLetters: s.letters });
+  // Nothing of the old search stands: 0200 took it, or an earlier run of this step did.
+  if (!first.column) return verdict(first, "absent");
+  const kept = (s: OldSearchState): OldSearchRetirement["gin"] => {
     if (s.valid === null) return "absent";
     log?.(`${BODY_VECTOR_INDEX}: kept, ${s.owed} account(s) still search by the old body vector`);
     return "kept";
   };
-  if (first.runs !== BOUNDED_FN && !ginGoes(first)) {
-    return { trigger: triggerVerdict(first), gin: kept(first), owedAccounts: first.owed };
-  }
+  if (first.letters > 0 && first.runs !== BOUNDED_FN && !ginGoes(first)) return verdict(first, kept(first));
 
   const [prev] = rowsOf<{ v: string }>(await db.execute(sql`select current_setting('lock_timeout') as v`));
   const restore = sql`select set_config('lock_timeout', ${prev?.v ?? "0"}, false)`;
+  /** One statement under a bounded lock wait, tried again while its table is busy. */
+  const bounded = async (what: string, statement: ReturnType<typeof sql.raw> | typeof BODY_VECTOR_TRIGGER_DDL): Promise<void> => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await db.execute(sql.raw(`set lock_timeout = ${lockTimeoutMs}`));
+        await db.execute(statement);
+        return;
+      } catch (err) {
+        if (sqlStateOf(err) !== "55P03") throw err;
+        if (attempt >= attempts) {
+          throw new BodyVectorLockTimeout(
+            `${what}: ${attempts} waits of ${lockTimeoutMs}ms on the table's writers each ran out. Re-run the setup; this step is idempotent.`,
+          );
+        }
+        log?.(`${what}: the table is busy (attempt ${attempt} of ${attempts}), retrying`);
+        await new Promise((r) => setTimeout(r, pauseMs));
+      } finally {
+        await db.execute(restore);
+      }
+    }
+  };
   const key = MIGRATION_LOCK_KEY as unknown as number;
   await db.execute(sql.raw(`set lock_timeout = ${MIGRATION_LOCK_TIMEOUT_MS}`));
   try {
     await db.execute(sql`select pg_advisory_lock(${key})`);
   } catch (err) {
     await db.execute(restore);
-    throw new Error(`could not take the migration advisory lock within ${MIGRATION_LOCK_TIMEOUT_MS}ms to retire the body vector — re-run; this step is idempotent. Cause: ${err instanceof Error ? err.message : String(err)}`);
+    throw new Error(`could not take the migration advisory lock within ${MIGRATION_LOCK_TIMEOUT_MS}ms to retire the old search — re-run; this step is idempotent. Cause: ${err instanceof Error ? err.message : String(err)}`);
   }
   try {
     await db.execute(restore);
-    const s = await bodyVectorState(db);
+    const s = await oldSearchState(db);
+    if (!s.column) return verdict(s, "absent");
+    if (s.letters === 0) {
+      // 0200's own statements, in its order. Each is IF EXISTS, so a run cut short is finished by the next.
+      log?.("the old search: nothing is found by it alone — retiring its columns, trigger and indexes");
+      for (const step of OLD_SEARCH_RETIREMENT) {
+        const text = step.kind === "index" && concurrently ? step.sql.replace(/^DROP INDEX /, "DROP INDEX CONCURRENTLY ") : step.sql;
+        await bounded(step.sql, sql.raw(text));
+      }
+      return verdict(await oldSearchState(db), s.valid === null ? "absent" : "dropped");
+    }
     if (s.runs === BOUNDED_FN) {
       await db.execute(BODY_VECTOR_CLEARED_FUNCTION_DDL);
-      let done = false;
-      for (let attempt = 1; !done; attempt++) {
-        try {
-          await db.execute(sql.raw(`set lock_timeout = ${lockTimeoutMs}`));
-          await db.execute(BODY_VECTOR_TRIGGER_DDL);
-          done = true;
-        } catch (err) {
-          if (sqlStateOf(err) !== "55P03") throw err;
-          if (attempt >= attempts) {
-            throw new BodyVectorLockTimeout(
-              `message_bodies_body_tsv_tg not re-pointed: ${attempts} waits of ${lockTimeoutMs}ms on message_bodies' writers each ran out. Nothing changed; re-run the setup.`,
-            );
-          }
-          log?.(`message_bodies_body_tsv_tg: message_bodies busy (attempt ${attempt} of ${attempts}), retrying`);
-          await new Promise((r) => setTimeout(r, pauseMs));
-        } finally {
-          await db.execute(restore);
-        }
-      }
+      await bounded("message_bodies_body_tsv_tg", BODY_VECTOR_TRIGGER_DDL);
       log?.("message_bodies_body_tsv_tg: re-pointed, a new body stores no vector");
     }
-    let gin: BodyVectorRetirement["gin"];
+    let gin: OldSearchRetirement["gin"];
     if (ginGoes(s)) {
       log?.(`${BODY_VECTOR_INDEX}: ${s.valid === false ? "an INVALID leftover" : "no account searches by it"} — dropping${concurrently ? " concurrently" : ""}`);
       await db.execute(sql.raw(`drop index ${concurrently ? "concurrently " : ""}if exists public."${BODY_VECTOR_INDEX}"`));
@@ -236,7 +283,7 @@ export async function retireBodyVector(
     } else {
       gin = kept(s);
     }
-    return { trigger: triggerVerdict(await bodyVectorState(db)), gin, owedAccounts: s.owed };
+    return verdict(await oldSearchState(db), gin);
   } finally {
     await db.execute(sql`select pg_advisory_unlock(${key})`);
   }
@@ -305,8 +352,8 @@ export const ARRIVAL_ORDER_PREBUILD_SPEC: ConcurrentIndexSpec = {
 };
 
 /**
- * Mail 0139's arrival index on its own (superseded) key, still built ahead of the migrator so a
- * store below 0139 does not build it blocking in the journal. No reader walks it since 0171.
+ * Mail 0139's arrival index on its own (superseded) key. No reader walks it since 0171 and mail
+ * 0200 drops it; nothing builds it any more ({@link RETIRED_PREBUILD_SPECS}).
  */
 export const ARRIVAL_ORDER_0139_PREBUILD_SPEC: ConcurrentIndexSpec = {
   name: "messages_account_arrival_order_idx",
@@ -431,10 +478,23 @@ export const FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC: ConcurrentIndexSpec = {
 };
 
 export const PREMIGRATION_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
-  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_0139_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
+  WITHHELD_PROVENANCE_SPEC, HISTORY_ORDER_PREBUILD_SPEC, ARRIVAL_ORDER_PREBUILD_SPEC,
   RECIPIENT_KEYS_PREBUILD_SPEC,
-  SENDER_DATE_PREBUILD_SPEC, FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
-  FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
+  SENDER_DATE_PREBUILD_SPEC, MAILBOXES_ACCOUNT_PREBUILD_SPEC,
+];
+
+/**
+ * WHAT A SETUP ONCE BUILT AHEAD OF THE 1.0 ROAD AND BUILDS NO MORE: an index a 2.0 entry drops or
+ * builds again on another column. A setup that still ran one would put back what the entry took at
+ * its next run: mail 0200 drops the 0139 arrival index, and mail 0201 drops the two columns the
+ * three queue specs add in their preludes and key their indexes on (the indexes keep their names,
+ * on `account_id`, built by 0201 itself). Kept as the record of how the 1.0 road's entries were
+ * written: each carries its statement minus `concurrently`, and the lock-cost census reads the
+ * old entries against these spellings too.
+ */
+export const RETIRED_PREBUILD_SPECS: readonly ConcurrentIndexSpec[] = [
+  ARRIVAL_ORDER_0139_PREBUILD_SPEC,
+  FOLDER_STATE_OUTSTANDING_PREBUILD_SPEC, FOLDER_STATE_PENDING_QUEUE_PREBUILD_SPEC, FLAG_STATE_PENDING_QUEUE_PREBUILD_SPEC,
 ];
 
 export async function ensureWithheldProvenanceIndex(

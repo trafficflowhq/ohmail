@@ -196,10 +196,10 @@ describe.skipIf(!AVAILABLE)("the junk sweep asks again before it writes to the s
         uid: 50 + i, uidvalidity: 1n, isPrimary: true,
       });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: PILE, observedFolder: PILE,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: PILE, observedFolder: PILE,
         lastSetBy: "us", reconcileStatus: "reconciled",
       });
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `buy things ${i}` });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `buy things ${i}` });
       ids.push(m!.id);
     }
     return { accountId, mailboxId: mb!.id, ids };

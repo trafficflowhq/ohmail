@@ -72,7 +72,7 @@ async function seedOneMailbox(db: Db) {
   await db.insert(contacts).values({ accountId, address: "anna@x.example" });
   const enc = await KP.encrypt(cfg.auth.pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: cfg.host, port: cfg.port, secure: false, user: cfg.auth.user },
   });
   return { cfg, accountId, mailboxId: row!.id };

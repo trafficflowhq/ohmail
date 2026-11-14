@@ -1,3 +1,4 @@
+import { accountOfUser } from "../src/parent-account.js";
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -145,7 +146,7 @@ async function seedCredentials(n: number, version: number): Promise<string[]> {
     }).returning();
     ids.push(m!.id);
     await db.insert(mailboxCredentials).values({
-      mailboxId: m!.id, transport: "imap", secretEnc: seal(version, `pass-${i}`), keyVersion: version,
+      mailboxId: m!.id, accountId: m!.accountId, transport: "imap", secretEnc: seal(version, `pass-${i}`), keyVersion: version,
     });
   }
   // ORDER BY nothing is what the candidate query does, so the pass's visit order is the planner's.
@@ -427,7 +428,7 @@ describe.skipIf(!PG_UP)("CRYPTO-4 — the whole population, all five sites, agai
       accountId, email: `kek-${randomUUID()}@example.test`,
     }).returning();
     await db.insert(totpSecrets).values({
-      userId: u!.id, secretEnc: seal(1, "totp-secret"), keyVersion: 1,
+      userId: u!.id, accountId: accountOfUser(u!.id), secretEnc: seal(1, "totp-secret"), keyVersion: 1,
     });
     await db.insert(staffUsers).values({
       email: `staff-${randomUUID()}@example.test`, passwordHash: "stored-row-password-hash",

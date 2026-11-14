@@ -53,7 +53,7 @@ describe("a stand-down in the middle of a hosted cycle", () => {
     }).returning();
     const enc = await KP.encrypt("pw");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     await db.insert(rules).values({ accountId, kind: "domain", match: "feed.example", destination: "ohmail/News", priority: 5 });

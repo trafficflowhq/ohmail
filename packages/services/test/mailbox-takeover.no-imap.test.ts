@@ -79,7 +79,7 @@ describe("MailboxService.organizeHere opens no IMAP connection when no password 
     // row is written directly because this file's claim is about SOCKETS, and the encryption is
     // not part of it; what matters is that the ceremony has something to find without dialling.
     await tx.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
       meta: { host: "imap.example.test", port: 993, secure: true, user: "u" },
       updatedAt: new Date("2026-08-01T00:00:00.000Z"),
     });

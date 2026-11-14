@@ -94,7 +94,7 @@ async function seeded(): Promise<World> {
   // file needs no IMAP probe: what matters is that a row exists to be gone afterwards.
   const sealed = await KP.encrypt(fixturePassword("mailbox-removal-sends"));
   await dbA.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap",
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap",
     secretEnc: sealed.ciphertext, keyVersion: sealed.keyVersion,
   });
   const [d] = await dbA.insert(drafts).values({

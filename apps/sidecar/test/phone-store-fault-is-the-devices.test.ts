@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { createRequire } from "node:module";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq, isNull, sql } from "drizzle-orm";
@@ -506,9 +507,9 @@ async function organizerOhbox(db: unknown, count: number, senders: number) {
         unread: false, messageIdHeader: `m${i}@batch.example`, nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
       }).returning();
       ids.push(m!.id);
-      await tx.insert(messageBodies).values({ messageId: m!.id, text: "body", html: null, headers: {} }).returning();
+      await tx.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "body", html: null, headers: {} }).returning();
       await tx.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "external",
         reconcileStatus: "reconciled", conflict: false,
       }).returning();
     }

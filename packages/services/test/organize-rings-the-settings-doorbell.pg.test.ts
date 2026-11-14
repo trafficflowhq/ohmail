@@ -32,7 +32,7 @@ async function account(opts: { organizing: boolean }) {
     organizeConsentedAt: opts.organizing ? NOW : null,
   }).returning();
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "not-a-real-secret", keyVersion: 1,
   });
   if (opts.organizing) {
     await db.insert(accountSettings).values({

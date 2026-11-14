@@ -23,7 +23,7 @@ async function letter(db: AnyDb, accountId: string, mailboxId: string, n: number
     date: new Date(Date.UTC(2026, 9, 1, n)), arrivedAt: new Date(Date.UTC(2026, 9, 1, n)),
   }).returning();
   await db.insert(folderState).values({
-    messageId: m.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m.id, accountId: m.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     reconcileStatus: "reconciled", conflict: false,
   });
   if (watched) {

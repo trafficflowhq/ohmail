@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, expect, it } from "vitest";
 import { asc, eq } from "drizzle-orm";
 import {
@@ -48,7 +49,7 @@ describe("a decision written in sets keeps every per-letter fact, on this store"
       senderCheck: "none",
     })) as never);
     await db.insert(folderState).values(ids.map((id) => ({
-      messageId: id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+      messageId: id, accountId: accountOfMessage(id), desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     })) as never);
 

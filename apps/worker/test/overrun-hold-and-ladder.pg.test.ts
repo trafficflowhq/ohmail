@@ -203,7 +203,7 @@ describe.skipIf(!AVAILABLE)("row 2: the hosted worker's wait after an overrun se
     }).returning();
     const enc = await KP.encrypt("pw");
     await wdb.insert(mailboxCredentials).values({
-      mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     const inbox: Array<[number, Msg]> = [[1, ordinary("old-1")]];
@@ -258,7 +258,7 @@ describe.skipIf(!AVAILABLE)("row 2: the hosted worker's wait after an overrun se
     }).returning();
     const enc = await KP.encrypt("pw");
     await wdb.insert(mailboxCredentials).values({
-      mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
     });
     const s = server([[1, ordinary("old-1")], [2, liar("liar-2")], [3, ordinary("behind-the-liar")]]);
@@ -309,7 +309,7 @@ describe.skipIf(!AVAILABLE)("row 2: the hosted worker's wait after an overrun se
       }).returning();
       const enc = await KP.encrypt("pw");
       await wdb.insert(mailboxCredentials).values({
-        mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+        mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
         meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
       });
       const fleet = new FakeAdapterFleet();

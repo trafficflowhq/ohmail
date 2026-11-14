@@ -37,8 +37,8 @@ async function world() {
       accountId, mailboxId: mb!.id, bodyHash: `h${i}`, dedupKey: `pb:${randomUUID()}`, subject: `Weekly offers ${i}`,
       fromAddress: from, authVerdict: "unavailable", nativeLocator: { folder: SCREENER, ref: `1:${i}` },
     }).returning();
-    await tx.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
-    await tx.insert(folderState).values({ messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false });
+    await tx.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
+    await tx.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false });
     await recordChange(tx as never, { accountId, entityType: "message", entityId: m!.id, op: "create", meta: null });
     return m!.id;
   });

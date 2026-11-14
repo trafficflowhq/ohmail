@@ -41,12 +41,13 @@ interface Wire {
   ohboxPolicy: "people_only" | "people_and_replied" | null;
   ohboxBar: string | null;
   defaultBar: string;
-  screenerAutoApply: boolean;
+  /** The retired bulk-filing switch, as a server one release older still answers it. */
+  screenerAutoApply?: boolean;
   impersonationFiling?: boolean;
 }
 
 let stored: Wire;
-let patchBodies: Array<{ ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown }>;
+let patchBodies: Array<{ ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown }>;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
@@ -60,7 +61,7 @@ function installFetch(): void {
     if (path === "/account/screening") {
       if ((init?.method ?? "GET") === "PATCH") {
         const body = JSON.parse(init!.body as string) as {
-          ohboxPolicy?: unknown; ohboxBar?: unknown; screenerAutoApply?: unknown; impersonationFiling?: unknown;
+          ohboxPolicy?: unknown; ohboxBar?: unknown; impersonationFiling?: unknown;
         };
         patchBodies.push(body);
         if ("ohboxBar" in body) stored = { ...stored, ohboxBar: body.ohboxBar as string | null };
@@ -116,7 +117,6 @@ beforeEach(() => {
   patchBodies = [];
   stored = {
     ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: DEFAULT_BAR,
-    screenerAutoApply: false,
   };
   installFetch();
 });

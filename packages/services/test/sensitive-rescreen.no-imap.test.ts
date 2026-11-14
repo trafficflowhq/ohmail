@@ -84,9 +84,9 @@ describe("the re-screen pass opens no IMAP connection", () => {
         subject: "Your verification code", fromAddress: `s${i}@stranger.test`,
         sensitivityCategory: "otp", nativeLocator: { folder: "INBOX", ref: `1:${i}` },
       }).returning();
-      await tx.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await tx.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
       await tx.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       ids.push(m!.id);

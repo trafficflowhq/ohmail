@@ -38,7 +38,7 @@ async function hold(w: World, from: string, ageMs = 0): Promise<string> {
     nativeLocator: { folder: GATE, ref: `1:${i}` },
   }).returning();
   await w.db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE,
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return m!.id;

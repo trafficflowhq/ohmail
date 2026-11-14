@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   AccountErasedError, accounts, accountSettings, accountStorage, applyBodyBytesDelta, bodyBytesOf, changeLog,
   mailboxes, messageBodies, messages, messageSearch, type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -91,9 +92,10 @@ async function world() {
   const deltas = async (id?: string) => (await db.select({ id: changeLog.entityId, op: changeLog.op }).from(changeLog)
     .where(and(eq(changeLog.accountId, accountId), eq(changeLog.entityType, "message"))))
     .filter((c) => id === undefined || c.id === id);
-  const settings = async () => (await db.select({
-    at: accountSettings.htmlWordsBackfillAt, cursor: accountSettings.htmlWordsBackfillCursor,
-  }).from(accountSettings).where(eq(accountSettings.accountId, accountId)))[0] ?? { at: null, cursor: null };
+  const settings = async () => {
+    const marks = await readPassProgress(db, accountPass("html_words_backfill", accountId));
+    return { at: marks.doneAt, cursor: marks.cursor };
+  };
   const source = async (id: string) => (await db.select({ s: messageSearch.source }).from(messageSearch)
     .where(eq(messageSearch.messageId, id)))[0]?.s;
   const pass = (o: Omit<HtmlWordsBackfillOptions, "accountId"> = {}) => htmlWordsBackfillPass(db, { accountId, ...o });

@@ -49,7 +49,6 @@ const PREFERENCE = JSON.stringify({
   ohboxPolicy: null,
   ohboxBar: "Only people who write to me by hand.",
   defaultBar: "Keep my Ohbox for real people writing to me.",
-  screenerAutoApply: false,
 });
 
 const OFFLINE_BODY = JSON.stringify({

@@ -44,9 +44,9 @@ async function seed() {
       snippet: "", fromAddress: from, date: at(-600), unread: true, createdAt: at(-600),
       nativeLocator: { folder, ref: `1:${i}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false, updatedAt: at(-100),
     });
     await changed("message", m!.id, "create");

@@ -94,7 +94,7 @@ async function seed(sender: string): Promise<string> {
     nativeLocator: { folder: "ohmail/Screener", ref: "1:1" },
   }).returning();
   await dbCron.insert(folderState).values({
-    messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   // Its copy in the Screener, as the ingest records one: the pass reads only letters with a copy on record.

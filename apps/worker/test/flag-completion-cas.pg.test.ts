@@ -64,7 +64,7 @@ describe.skipIf(!AVAILABLE)("flag completion — the desire it read is a witness
       unread: !opts.desired,
     }).returning();
     await db.insert(flagState).values({
-      messageId: m!.id, desiredSeen: opts.desired, observedSeen: opts.observed,
+      messageId: m!.id, accountId: m!.accountId, desiredSeen: opts.desired, observedSeen: opts.observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       attempts: opts.attempts ?? 0, nextAttemptAt: null,
     });

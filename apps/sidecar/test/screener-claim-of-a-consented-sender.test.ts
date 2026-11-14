@@ -48,9 +48,9 @@ async function world() {
       date: r.date, arrivedAt: r.arrivedAt, unread: r.unread ?? false, createdAt: r.createdAt ?? ago(9 * D),
       nativeLocator: { folder: GATE, ref: `1:${++n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   };
   const contact = (address: string, source: "inferred" | "person") => db.insert(contacts).values({ accountId, address, source });

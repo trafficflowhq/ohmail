@@ -190,7 +190,7 @@ describe("the local engine asks the lease at the write", () => {
       nativeLocator: { folder: "INBOX", ref: `1:${uid}` }, createdAt: new Date(nowMs),
     }).returning();
     await s.db.insert(folderState).values({
-      messageId: m!.id, observedFolder: "INBOX", desiredFolder: "ohmail/Screener",
+      messageId: m!.id, accountId: m!.accountId, observedFolder: "INBOX", desiredFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "pending",
     });
   }

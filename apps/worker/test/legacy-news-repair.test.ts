@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
   accounts, auditLog, changeLog, folderState, mailboxFolders, mailboxes, messageBodies, messageInstances, messages, type Tx,
+  passProgress,
 } from "@trafficflow/db";
 import { makeTestDb } from "@trafficflow/db/testing";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -31,8 +32,8 @@ async function store() {
     const [mb] = await db.insert(mailboxes).values({ accountId, provider: "imap", address: `t-${accountId.slice(0, 8)}@example.test` }).returning();
     const mailboxId = mb!.id;
     await db.insert(mailboxFolders).values([
-      { mailboxId, folder: NEWS, uidvalidity: 4n, uidnext: 90n, highestmodseq: 1n },
-      { mailboxId, folder: READS, uidvalidity: 1n, uidnext: 9n, highestmodseq: 1n },
+      { mailboxId, accountId, folder: NEWS, uidvalidity: 4n, uidnext: 90n, highestmodseq: 1n },
+      { mailboxId, accountId, folder: READS, uidvalidity: 1n, uidnext: 9n, highestmodseq: 1n },
     ]);
     /** A letter, its instances (`[folder, epoch, uid, primary]`) and, when given, its folder_state. */
     const letter = async (
@@ -43,13 +44,13 @@ async function store() {
         accountId, mailboxId, messageIdHeader: `${key}@example.test`, bodyHash: key, dedupKey: `mid:<${key}@example.test>`,
         subject: `letter ${key}`, fromAddress: "news@letters.example", nativeLocator: { folder: loc.split("#")[0]!, ref: loc.split("#")[1]! },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `the only copy of ${key}` });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `the only copy of ${key}` });
       for (const [folder, epoch, uid, isPrimary] of inst) {
         await db.insert(messageInstances).values({ accountId, mailboxId, messageId: m!.id, folder, uidvalidity: BigInt(epoch), uid, isPrimary });
       }
       if (fs) {
         await db.insert(folderState).values({
-          messageId: m!.id, desiredFolder: fs.desired, observedFolder: fs.observed, lastSetBy: "us",
+          messageId: m!.id, accountId: m!.accountId, desiredFolder: fs.desired, observedFolder: fs.observed, lastSetBy: "us",
           reconcileStatus: fs.desired === fs.observed ? "reconciled" : "pending", conflict: fs.conflict ?? false,
         });
       }
@@ -203,9 +204,10 @@ describe("the repair's three shapes, content-matched", () => {
 });
 
 describe("the pass around the repair", () => {
-  /** The mailbox's recorded clean mark (mail 0182). */
+  /** The mailbox's recorded clean mark: the repair's done mark for it. */
   const cleanAt = async (s: Awaited<ReturnType<typeof store>>, mailboxId: string) =>
-    (await s.db.select({ at: mailboxes.legacyNewsCleanAt }).from(mailboxes).where(eq(mailboxes.id, mailboxId)))[0]!.at;
+    (await s.db.select({ at: passProgress.doneAt }).from(passProgress)
+      .where(and(eq(passProgress.job, "news_repair"), eq(passProgress.subjectId, mailboxId))))[0]?.at ?? null;
   const gateAt = (attach: number) => ({ legacyNewsRepairGate: () => ({ attach }) }) as unknown as MailboxAdapter;
   const passOf = (s: Awaited<ReturnType<typeof store>>, a: { accountId: string; mailboxId: string }) =>
     (adapter: MailboxAdapter) => legacyNewsRepairPass({

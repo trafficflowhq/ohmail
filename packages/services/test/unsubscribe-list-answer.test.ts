@@ -67,7 +67,7 @@ type Db = Awaited<ReturnType<typeof makeCtx>>["db"];
 
 async function seedLetter(db: Db, accountId: string, mailboxId: string): Promise<string> {
   const id = await seedMessage(db, accountId, mailboxId, { from: FROM, folder: "ohmail/Screened" });
-  await db.insert(messageBodies).values({ messageId: id, text: "", headers: ONE_CLICK });
+  await db.insert(messageBodies).values({ messageId: id, accountId, text: "", headers: ONE_CLICK });
   return id;
 }
 

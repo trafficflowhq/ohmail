@@ -5,7 +5,7 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { eq, inArray } from "drizzle-orm";
 import {
-  accounts, awayReplies, awayResponders, awayResponderSent, awaySenderState, folderState,
+  accounts, awayReplies, awayResponders, awaySenderState, folderState,
   mailboxes, messageBodies, messages,
 } from "@trafficflow/db";
 import { runMigrations } from "@trafficflow/db/admin";
@@ -143,10 +143,10 @@ async function seedFleet(n: number): Promise<Fleet> {
   }));
   await db.insert(messages).values(msgRows);
   await db.insert(messageBodies).values(msgRows.map((m) => ({
-    messageId: m.id, text: "hello", headers: {},
+    messageId: m.id, accountId: m.accountId, text: "hello", headers: {},
   })));
   await db.insert(folderState).values(msgRows.map((m) => ({
-    messageId: m.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" as const,
+    messageId: m.id, accountId: m.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" as const,
   })));
 
   for (let i = 0; i < n; i++) {
@@ -166,7 +166,6 @@ afterEach(async () => {
   await db.delete(messageBodies).where(inArray(messageBodies.messageId, messageIds));
   await db.delete(awayReplies).where(inArray(awayReplies.accountId, accountIds));
   await db.delete(awaySenderState).where(inArray(awaySenderState.accountId, accountIds));
-  await db.delete(awayResponderSent).where(inArray(awayResponderSent.accountId, accountIds));
   await db.delete(messages).where(inArray(messages.accountId, accountIds));
   await db.delete(awayResponders).where(inArray(awayResponders.accountId, accountIds));
   await db.delete(mailboxes).where(inArray(mailboxes.accountId, accountIds));

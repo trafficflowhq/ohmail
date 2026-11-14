@@ -110,7 +110,7 @@ describe("the key writer's belt, under every validator", () => {
         senderCheck: "none", nativeLocator: { folder: "ohmail/Screener", ref: `1:${randomUUID().slice(0, 6)}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       return m!.id;
     };

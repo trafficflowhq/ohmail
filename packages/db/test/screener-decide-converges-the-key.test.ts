@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
 import { effectForDestination, ruleMatchKey } from "@trafficflow/core/rule-order";
@@ -27,7 +28,7 @@ async function held(db: Db): Promise<string> {
     subject: "s", fromAddress: ADDR, unread: true,
   }).returning({ id: messages.id });
   await db.insert(folderState).values({
-    messageId: msg!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+    messageId: msg!.id, accountId: accountOfMessage(msg!.id), desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
     lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   return msg!.id;

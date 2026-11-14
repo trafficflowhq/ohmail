@@ -48,8 +48,8 @@ describe("the ß/ss fold on the server (real Postgres)", () => {
         fromAddress: `s${i}@site.example`, date: new Date(NOW.getTime() - (i + 1) * 86_400_000),
         unread: false, hasAttachments: false, nativeLocator: { folder: "INBOX", ref: `1:${i + 1}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: body });
-      await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: body });
+      await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
       keyOf.set(m!.id, key);
     }
     expect((await searchIndexBackfillPass({ db: db as never, accountId: A })).marked).toBe(true);

@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { rmSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
@@ -90,7 +91,7 @@ describe("a standalone drain releases the held mail of somebody this account wro
   /** Our Sent copy to `to`, written now — after this mailbox was connected. */
   async function wroteTo(sidecar: Sidecar, to: string): Promise<void> {
     const w = sidecar.world;
-    await sidecar.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, folder: "Sent", uidvalidity: 7n, uidnext: 100n })
+    await sidecar.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), folder: "Sent", uidvalidity: 7n, uidnext: 100n })
       .onConflictDoNothing();
     const at = new Date(Date.now() + 60_000);
     const [m] = await sidecar.db.insert(messages).values({
@@ -103,9 +104,9 @@ describe("a standalone drain releases the held mail of somebody this account wro
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: "Sent", uidvalidity: 7n, uid: uid++, isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
-    await sidecar.db.insert(messageBodies).values({ messageId: m!.id, text: "Shall we?", headers: {} });
+    await sidecar.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "Shall we?", headers: {} });
   }
 
   /** Their mail, held at the gate by us before the ingest knew them. */
@@ -119,10 +120,10 @@ describe("a standalone drain releases the held mail of somebody this account wro
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: "ohmail/Screener", uidvalidity: 9n, uid: uid++, isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
       reconcileStatus: "reconciled", conflict: false,
     });
-    await sidecar.db.insert(messageBodies).values({ messageId: m!.id, text: "Thursday works.", headers: {} });
+    await sidecar.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "Thursday works.", headers: {} });
     return m!.id;
   }
 

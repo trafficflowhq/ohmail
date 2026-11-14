@@ -142,14 +142,11 @@ describe.skipIf(!PG_UP)("what the production spec table declares", () => {
       // table, so they are specs like the rest.
       "audit_log_created_at_idx",
       "auth_events_at_idx",
-      // Mail 0181's reconcile queues — each poll's pending rows, in its order.
-      "flag_state_pending_queue_idx",
-      // Mail 0160's outstanding filings by account — the mailbox poll's filing facts.
-      "folder_state_outstanding_idx",
-      "folder_state_pending_queue_idx",
-      // The Screener auto-apply held page: a growth table, unconditional like `messages`. Keyed by
-      // the floor version since mail 0141; the old `folder_state_screener_held_idx` left the list.
-      "folder_state_screener_held_floor_idx",
+      // (Mail 0160's outstanding filings and mail 0181's two reconcile queues are not here: mail
+      // 0201 builds all three itself, on the row's own account.)
+      // The rows held at the Screener by us, by letter: a growth table, unconditional like
+      // `messages`. Its floor-keyed twin served the retired auto-apply pass and left with mail 0200.
+      "folder_state_screener_held_idx",
       // Mail 0161's list read — the caller's mailboxes by account.
       "mailboxes_account_idx",
       // Mail 0171's arrival order — the order every list, History and snapshot page walks.

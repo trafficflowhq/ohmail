@@ -37,7 +37,7 @@ async function mailbox(accountId: string, label: string, n: number): Promise<str
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: k, dedupKey: k, subject: `m${i}`, fromAddress: "a@example.test",
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "body" });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "body" });
   }
   return mb!.id;
 }
@@ -167,7 +167,7 @@ describe.skipIf(!PG_UP)("mailboxErasurePass — the worker's half of the per-mai
         }).returning();
         await db.transaction(async (tx) => {
           await reserveBodyBytes(tx as unknown as Tx, dialect(db), accountId, BODY.length, null);
-          await (tx as unknown as Tx).insert(messageBodies).values({ messageId: m!.id, text: BODY });
+          await (tx as unknown as Tx).insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: BODY });
         });
       }
       return mb!.id;

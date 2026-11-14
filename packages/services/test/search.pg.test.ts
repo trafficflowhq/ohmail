@@ -4,13 +4,13 @@ import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
 import { sql } from "drizzle-orm";
-import { accountSettings, mailboxes, messages, messageBodies, folderState } from "@trafficflow/db";
+import { mailboxes, messages, messageBodies, folderState, accountPass, writePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
-import { runMigrations, ensureSearchExtensions, ensureWordIndex, retireBodyVector } from "@trafficflow/db/admin";
+import { runMigrations, ensureSearchExtensions, ensureWordIndex } from "@trafficflow/db/admin";
 import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { SearchService } from "@trafficflow/services";
 import type { SearchFilters, ServiceContext } from "@trafficflow/services";
-import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, throwawayDb } from "@trafficflow/db/testing";
+import { pgTestUrl, MIGRATED_DB_SETUP_BUDGET_MS } from "@trafficflow/db/testing";
 
 /**
  * Phase 2c-1 golden-relevance — the search tests PGlite cannot host (pg_trgm lives
@@ -46,9 +46,14 @@ async function seedMsg(o: {
     date: TODAY, unread: o.unread, hasAttachments: o.hasAttachments,
     nativeLocator: { folder: o.folder, ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: o.body });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.body });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us",
+    messageId: m!.id, accountId: m!.accountId, desiredFolder: o.folder, observedFolder: o.folder, lastSetBy: "us",
+  });
+  // As every writer of a body does: the letter's search document, in the same breath.
+  await upsertMessageSearch(db as never, m!.id, {
+    accountId: o.accountId, subject: o.subject, from: { name: null, address: o.from }, to: [], cc: [],
+    attachmentNames: [], bodyText: o.body, source: "text",
   });
   ids[o.key] = m!.id;
 }
@@ -100,8 +105,8 @@ describe("hybrid search (lexical + fuzzy RRF) on real Postgres", () => {
       select count(*)::int as n
       from messages m left join message_bodies b on b.message_id = m.id
       where m.account_id = ${A}
-        and (m.subject_tsv @@ websearch_to_tsquery('english', 'invoce')
-             or b.body_tsv @@ websearch_to_tsquery('english', 'invoce'))`) as unknown as Array<{ n: number }>;
+        and (to_tsvector('english', coalesce(m.subject, '') || ' ' || coalesce(m.from_address, '')) @@ websearch_to_tsquery('english', 'invoce')
+             or to_tsvector('english', left(coalesce(b.text, ''), 65536)) @@ websearch_to_tsquery('english', 'invoce'))`) as unknown as Array<{ n: number }>;
     expect(n).toBe(0);
 
     // …yet the hybrid search still surfaces the invoice message, ranked top.
@@ -112,16 +117,17 @@ describe("hybrid search (lexical + fuzzy RRF) on real Postgres", () => {
 
   /**
    * (c) FACET COUNTS DESCRIBE THE TIER THAT IS RETURNED. "acme" is in the invoice's subject and in
-   * BOTH senders' domains, so the exact tier holds both rows (the substring arm reads the sender)
-   * and the facets say 2 — a row both arms hold (the invoice) ranks first. It once expected 1,
-   * treating the queried address as a guess; the characters are in the address. The trigram reach
-   * is not lost: ask for something the corpus answers literally nowhere and it answers, labelled.
+   * BOTH senders' domains, so the exact tier holds both rows (the sender is part of a letter's
+   * search document) and the facets say 2. Both are hits in a letter's head, of one date: their
+   * order is a tie. It once expected 1, treating the queried address as a guess; the characters
+   * are in the address. The trigram reach is not lost: ask for something the corpus answers
+   * literally nowhere and it answers, labelled.
    */
   it("(c) facet counts describe the returned tier, and the fuzzy reach still exists below it", async () => {
     const r = await svc.search(ctx(A), { q: "acme" });
     expect(r.tier).toBe("exact");
     expect(r.total).toBe(2);
-    expect(r.items.map((m) => m.id)).toEqual([ids.invoice, ids.receipt]);
+    expect(new Set(r.items.map((m) => m.id))).toEqual(new Set([ids.invoice, ids.receipt]));
     expect(r.facets!.folder).toEqual({ INBOX: 1, "ohmail/Receipts": 1 });
     expect(r.facets!.unread).toEqual({ true: 1, false: 1 });
     expect(r.facets!.hasAttachments).toEqual({ true: 1, false: 1 });
@@ -133,7 +139,7 @@ describe("hybrid search (lexical + fuzzy RRF) on real Postgres", () => {
     expect(r.items.map((m) => m.id)).not.toContain(ids.newsletter);
 
     // …and with NOTHING matching literally, the same trigram reach answers, under `similar`.
-    const guess = await svc.search(ctx(A), { q: "acmee" });
+    const guess = await svc.search(ctx(A), { q: "reciept" });
     expect(guess.tier).toBe("similar");
     expect(guess.items.map((m) => m.id)).toContain(ids.receipt);
     expect(guess.facets!.folder["ohmail/Receipts"]).toBeGreaterThanOrEqual(1);
@@ -197,8 +203,7 @@ describe("past the summary's cap (real Postgres)", () => {
     await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
       select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english', 'nothing here'), lower(m.subject), 'text'
       from messages m where m.account_id = ${C}::uuid`);
-    await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${C}::uuid, ${NOW.toISOString()}::timestamptz)
-      on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
+    await writePassProgress(db, accountPass("search_index_backfill", C), { doneAt: NOW });
     await db.execute(sql`analyze messages`);
     await db.execute(sql`analyze message_search`);
   }, MIGRATED_DB_SETUP_BUDGET_MS);
@@ -302,8 +307,7 @@ describe("past the cap, the chosen orders read the exact matches (real Postgres,
     await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
       select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english', 'nothing here'), lower(m.subject), 'text'
       from messages m where m.account_id = ${U}::uuid order by m.date asc nulls first`);
-    await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${U}::uuid, ${NOW.toISOString()}::timestamptz)
-      on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
+    await writePassProgress(db, accountPass("search_index_backfill", U), { doneAt: NOW });
     await db.execute(sql`analyze messages`);
     await db.execute(sql`analyze message_search`);
   }, MIGRATED_DB_SETUP_BUDGET_MS);
@@ -375,8 +379,7 @@ describe("a chosen order answers the exact tier while a match exists (real Postg
     await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
       select m.id, m.account_id, to_tsvector('english', m.subject), to_tsvector('english', 'nothing here'), lower(m.subject), 'text'
       from messages m where m.account_id = ${account}::uuid order by m.date asc nulls first`);
-    await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${account}::uuid, ${NOW.toISOString()}::timestamptz)
-      on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
+    await writePassProgress(db, accountPass("search_index_backfill", account), { doneAt: NOW });
   };
 
   beforeAll(async () => {
@@ -515,15 +518,14 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
           'p' || (g % 5) || '@sweep.example', ${NOW.toISOString()}::timestamptz - make_interval(mins => g), g % 3 = 0, g % 50 = 0,
           jsonb_build_object('folder', case when g between 5001 and 5100 then 'Archive' when g between ${a.late[0]} and ${a.late[1]} then 'Late' else 'INBOX' end, 'ref', '1:' || g)
         from generate_series(${a.n}, 1, -1) g`);
-      await db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-        select m.id, 'Archive', 'INBOX', 'us' from messages m cross join lateral (select split_part(m.dedup_key, ':', 2)::int as g) x
+      await db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+        select m.id, m.account_id, 'Archive', 'INBOX', 'us' from messages m cross join lateral (select split_part(m.dedup_key, ':', 2)::int as g) x
         where m.account_id = ${a.id}::uuid and x.g between ${a.moved[0]} and ${a.moved[1]}`);
       await db.execute(sql`insert into message_search (message_id, account_id, head_tsv, text_tsv, terms, source)
         select m.id, m.account_id, to_tsvector('english', m.subject),
           to_tsvector('english', 'nothing here finch' || case when split_part(m.dedup_key, ':', 2)::int <= 2300 then ' lark' else '' end), lower(m.subject), 'text'
         from messages m where m.account_id = ${a.id}::uuid order by m.date asc nulls first`);
-      await db.execute(sql`insert into account_settings (account_id, search_index_built_at) values (${a.id}::uuid, ${NOW.toISOString()}::timestamptz)
-        on conflict (account_id) do update set search_index_built_at = excluded.search_index_built_at`);
+      await writePassProgress(db, accountPass("search_index_backfill", a.id), { doneAt: NOW });
     }
     await db.execute(sql`analyze messages`);
     await db.execute(sql`analyze message_search`);
@@ -615,79 +617,4 @@ describe("every order under every filter answers 0.30.19's rows (real Postgres, 
     expect(got.slice(0, want.length)).toEqual(want);
     expect(cursor === undefined).toBe(want.length === all.length);
   }, 300_000);
-});
-
-/**
- * THE SERVER'S BODY-VECTOR RETIREMENT CHANGES NO ANSWER (`retireBodyVector`): every query shape
- * answers the same letters before the step, after it while an account still reads the old vector
- * (the index kept), and after the index is dropped. On a database of its own: the step re-points
- * the trigger other files' seeding relies on.
- */
-describe("search answers the same before and after the old body vector is retired (real Postgres)", () => {
-  const box = throwawayDb("trafficflow_search_body_vector");
-  const bc = postgres(box.url, { max: 3, onnotice: () => {} });
-  const bdb = brandDialect(drizzle(bc, { schema }), "pg");
-  const stepClient = postgres(box.url, { max: 1, onnotice: () => {} });
-  const BUILT = randomUUID();   // every letter has its document and the account its marker
-  const OWED = randomUUID();    // letters from before the documents: search reads the old vector
-  const bctx = (accountId: string): ServiceContext => ({ db: bdb, accountId, userId: null, now: () => NOW, requestId: "search-body-vector" });
-  const LETTERS = [
-    { subject: "Harbour notes", body: "The lighthouse keeper wrote about the storm." },
-    { subject: "Visit", body: "We walked to the lighthouse at dawn, calm sea." },
-    { subject: "Insurance from myAXA", body: "Your keeper policy renews in June." },
-    { subject: "Weekend", body: "Lighthouses along the coast, a keeper's cottage." },
-    { subject: "Lunch", body: "Nothing about the coast here." },
-  ];
-  const SHAPES = ["lighthouse", "lighthouse keeper", "lighth", '"lighthouse keeper"', "lighthouse -storm", "axa", "lighthuose"];
-
-  beforeAll(async () => {
-    await box.createFromTemplate();
-    await ensureSearchExtensions(bdb, { concurrently: false });
-    await ensureWordIndex(bdb, { concurrently: false });
-    for (const accountId of [BUILT, OWED]) {
-      const [mb] = await bdb.insert(mailboxes).values({ accountId, provider: "imap", address: `${accountId.slice(0, 8)}@vector.example` }).returning();
-      for (const [i, l] of LETTERS.entries()) {
-        const [m] = await bdb.insert(messages).values({
-          accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `vector:${randomUUID()}`, subject: l.subject,
-          fromAddress: `writer${i}@vector.example`, date: new Date(TODAY.getTime() - i * 3_600_000), unread: false,
-          hasAttachments: false, nativeLocator: { folder: "INBOX", ref: `1:${i}` },
-        }).returning();
-        await bdb.insert(messageBodies).values({ messageId: m!.id, text: l.body });
-        await bdb.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
-        if (accountId === BUILT) {
-          await upsertMessageSearch(bdb as never, m!.id, {
-            accountId, subject: l.subject, from: { name: null, address: `writer${i}@vector.example` }, to: [], cc: [],
-            attachmentNames: [], bodyText: l.body, source: "text",
-          });
-        }
-      }
-    }
-    await bdb.insert(accountSettings).values({ accountId: BUILT, searchIndexBuiltAt: NOW });
-  }, MIGRATED_DB_SETUP_BUDGET_MS);
-  afterAll(async () => {
-    await Promise.all([bc.end({ timeout: 5 }), stepClient.end({ timeout: 5 })]);
-    await box.drop();
-  }, MIGRATED_DB_TEARDOWN_BUDGET_MS);
-
-  const answers = async (accountId: string): Promise<Record<string, string[]>> => {
-    const out: Record<string, string[]> = {};
-    for (const q of SHAPES) out[q] = (await svc.search(bctx(accountId), { q, parts: "page" })).items.map((m) => m.id);
-    return out;
-  };
-
-  it("every shape, on a built account and on an owed one, while the index is kept and once it is dropped", async () => {
-    const before = { built: await answers(BUILT), owed: await answers(OWED) };
-    for (const who of ["built", "owed"] as const) {
-      expect(before[who].lighthouse!.length, `${who}: the body word is found`).toBe(3);
-      expect(before[who].axa, `${who}: the substring`).toHaveLength(1);
-    }
-    const stepDb = brandDialect(drizzle(stepClient), "pg");
-    expect(await retireBodyVector(stepDb, { concurrently: false })).toEqual({ trigger: "cleared", gin: "kept", owedAccounts: 1 });
-    expect({ built: await answers(BUILT), owed: await answers(OWED) }).toEqual(before);
-
-    // The owed account's mail leaves: nothing reads the old vector, and the index goes.
-    await bc`update messages set deleted_at = now() where account_id = ${OWED}`;
-    expect(await retireBodyVector(stepDb, { concurrently: false })).toEqual({ trigger: "cleared", gin: "dropped", owedAccounts: 0 });
-    expect(await answers(BUILT)).toEqual(before.built);
-  }, 120_000);
 });

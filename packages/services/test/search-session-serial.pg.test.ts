@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { brandDialect } from "@trafficflow/db/dialect";
-import { accountSettings, folderState, mailboxes, messageBodies, messages } from "@trafficflow/db";
+import { accountSettings, folderState, mailboxes, messageBodies, messages, accountPass, writePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { ensureSearchExtensions } from "@trafficflow/db/admin";
 import { MIGRATED_DB_SETUP_BUDGET_MS, MIGRATED_DB_TEARDOWN_BUDGET_MS, throwawayDb } from "@trafficflow/db/testing";
@@ -84,15 +84,14 @@ describe("a search read is planned serial and uncompiled on a stock Postgres", (
         date: new Date(NOW.getTime() - i * 3_600_000), unread: i % 2 === 0, hasAttachments: false,
         nativeLocator: { folder: "INBOX", ref: `1:${i}` },
       }).returning();
-      await db.insert(messageBodies).values({ messageId: m!.id, text: `a heron by the lake, note ${i}` });
-      await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `a heron by the lake, note ${i}` });
+      await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
       await upsertMessageSearch(db as never, m!.id, {
         accountId: A, subject: `heron sighting ${i}`, from: { name: null, address: `watcher${i % 3}@serial.example` }, to: [], cc: [],
         attachmentNames: [], bodyText: `a heron by the lake, note ${i}`, source: "text",
       });
     }
-    await db.insert(accountSettings).values({ accountId: A, searchIndexBuiltAt: NOW })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { searchIndexBuiltAt: NOW } });
+    await writePassProgress(db, accountPass("search_index_backfill", A), { doneAt: NOW });
     await svc.search(ctx(), { q: "heron", parts: "page", limit: 4 });
   }, MIGRATED_DB_SETUP_BUDGET_MS);
   afterAll(async () => {

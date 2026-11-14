@@ -1,8 +1,12 @@
 import { and, asc, eq, gt, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import {
-  accounts, accountSettings, applyBodyBytesDelta, bodyBytesOf, fencedAccountWrite, messageBodies, messages,
+  accounts, applyBodyBytesDelta, bodyBytesOf, fencedAccountWrite, messageBodies, messages,
   recordChanges, type LedgerTx, type Tx,
+  accountPass, cursorBehind, onPass, passProgress, proposed, readPassProgress, writePassProgress,
 } from "@trafficflow/db";
+
+/** The pass, as `pass_progress` names it (mail 0203): its done mark and its cursor live there. */
+const JOB = "html_words_backfill" as const;
 import type { SQL } from "drizzle-orm";
 import { dialect } from "@trafficflow/db/dialect";
 /* The mail leaf, never the barrel: the local engines bundle this pass. */
@@ -63,10 +67,10 @@ export interface HtmlWordsBackfillResult {
 /** The accounts still owed the walk: not erased, living mail, no stamp. `shard` is a predicate over `accounts.id`. */
 export async function htmlWordsOwedAccounts(db: Tx, opts: { limit: number; shard?: SQL }): Promise<string[]> {
   const rows = await db.select({ id: accounts.id }).from(accounts)
-    .leftJoin(accountSettings, eq(accountSettings.accountId, accounts.id))
+    .leftJoin(passProgress, onPass(JOB, accounts.id))
     .where(and(
       isNull(accounts.erasedAt),
-      isNull(accountSettings.htmlWordsBackfillAt),
+      isNull(passProgress.doneAt),
       sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
       opts.shard,
     ))
@@ -84,12 +88,12 @@ export async function htmlWordsBackfillPass(db: Tx, opts: HtmlWordsBackfillOptio
   const until = opts.until ?? (() => false);
   const turn = opts.turn ?? (async () => undefined);
   const now = opts.now ?? (() => new Date());
-  const [state] = await db.select({ at: accountSettings.htmlWordsBackfillAt, cursor: accountSettings.htmlWordsBackfillCursor })
-    .from(accountSettings).where(eq(accountSettings.accountId, accountId)).limit(1);
+  const pass = accountPass(JOB, accountId);
+  const state = await readPassProgress(db, pass);
   const r = { ran: false, scanned: 0, blank: 0, filled: 0, wordless: 0, cut: false, marked: false };
-  if (state?.at != null) return r;
+  if (state.doneAt !== null) return r;
   r.ran = true;
-  let cursor: string | null = state?.cursor ?? null;
+  let cursor: string | null = state.cursor;
 
   for (let page = 0; page < maxPages; page += 1) {
     const ids = (await db.select({ id: messages.id }).from(messages)
@@ -135,21 +139,17 @@ export async function htmlWordsBackfillPass(db: Tx, opts: HtmlWordsBackfillOptio
     await opts.beforeWrite?.(fills.map((f) => f.id));
     const at = now();
     const filled = await fencedAccountWrite(db, { accountId }, async (tx) => {
-      // Settings first: the order every settings writer holds before the change sequence.
-      await tx.insert(accountSettings).values({
-        accountId, htmlWordsBackfillCursor: finished ? null : lastId, htmlWordsBackfillAt: finished ? at : null,
-      }).onConflictDoUpdate({
-        target: accountSettings.accountId,
-        set: (finished ? {
-          htmlWordsBackfillCursor: null,
-          htmlWordsBackfillAt: sql`coalesce(${accountSettings.htmlWordsBackfillAt}, excluded.html_words_backfill_at)`,
-        } : {
-          // Forward only: a walk behind another one never moves the cursor back.
-          htmlWordsBackfillCursor: sql`case
-            when ${accountSettings.htmlWordsBackfillCursor} is null or ${accountSettings.htmlWordsBackfillCursor} < ${lastId}
-            then ${lastId} else ${accountSettings.htmlWordsBackfillCursor} end`,
-        }) as never,
-      });
+      // The pass's own row first, before the change sequence: one order for every walk of it.
+      if (finished) {
+        // The first stamp stands; the cursor goes with it.
+        await writePassProgress(tx as unknown as Tx, pass, { cursor: null, doneAt: at }, {
+          onExisting: { cursor: null, doneAt: sql`coalesce(${passProgress.doneAt}, ${proposed("doneAt")})` },
+          now: at,
+        });
+      } else {
+        // Forward only: a walk behind another one never moves the cursor back.
+        await writePassProgress(tx as unknown as Tx, pass, { cursor: lastId }, { when: cursorBehind(tx), now: at });
+      }
       const written: Fill[] = [];
       for (const f of fills) {
         // Only the blank text read, beside the same html, never withheld since: nothing else is overwritten.

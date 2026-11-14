@@ -68,7 +68,7 @@ async function seedMailbox(db: Db, accountId = randomUUID(), createdAt?: Date): 
     }).returning();
   const enc = await KP.encrypt("pw");
   await db.insert(mailboxCredentials).values({
-    mailboxId: row!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId: row!.id, accountId: row!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host: "fake.invalid", port: 1143, secure: false, user: "u" },
   });
   return { accountId, mailboxId: row!.id };
@@ -2758,7 +2758,7 @@ describe("the serialized document carries configuration and NOTHING else", () =>
     // of either reaches the serialized message.
     const enc = await KP.encrypt(`${keyRingVar(9)}=super-secret-material`);
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { host: "fake.invalid", port: 1143, secure: false, user: "TF_SECRET_SENTINEL_USER" },
     });
     await db.insert(accountSettings).values({

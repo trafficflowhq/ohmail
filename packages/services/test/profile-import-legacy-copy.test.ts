@@ -31,7 +31,7 @@ async function world() {
   const [mb] = await db.insert(mailboxes).values({
     accountId, provider: "imap", address: `${accountId.slice(0, 8)}@trafficflow.test`,
   }).returning();
-  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
+  await db.insert(mailboxCredentials).values({ mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1 });
   const ctx = { db, accountId, userId: null, now: () => NOW, requestId: "legacy" } as unknown as ServiceContext;
   return { db, ctx, accountId, mailboxId: mb!.id };
 }

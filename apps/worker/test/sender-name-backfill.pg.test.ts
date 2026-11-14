@@ -69,7 +69,7 @@ describe.skipIf(!AVAILABLE)("the sender-name / recipients backfill", () => {
       date: norm.date, nativeLocator: { folder: "INBOX", ref: `1:${randomUUID()}` },
     }).returning();
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: norm.textBody, html: norm.htmlBody,
+      messageId: m!.id, accountId: m!.accountId, text: norm.textBody, html: norm.htmlBody,
       // The spread is the same load-bearing one `drizzle-repo.ts:705` documents: `normalizeMime`
       // returns a NULL-PROTOTYPE header map, and drizzle's own `is()` reads `value.constructor`
       // on what it is handed — which throws on such an object before a single row is written.
@@ -240,7 +240,7 @@ describe.skipIf(!AVAILABLE)("the sender-name / recipients backfill", () => {
       dedupKey: `bf:${randomUUID()}`, subject: "no headers", fromAddress: "x@example.test",
       nativeLocator: { folder: "INBOX", ref: `1:${randomUUID()}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
 
     const before = await run(w, false);
     expect(before.fillable).toBe(0);
@@ -262,7 +262,7 @@ describe.skipIf(!AVAILABLE)("the sender-name / recipients backfill", () => {
     // `message_bodies.headers` is jsonb through `JSON.parse`; nothing at the type level stops
     // this shape reaching the pass, and one bad row must not cost every other row its name.
     await db.insert(messageBodies).values({
-      messageId: bad!.id, text: "", html: null,
+      messageId: bad!.id, accountId: bad!.accountId, text: "", html: null,
       headers: { from: [17], to: "not-an-array" } as unknown as Record<string, string[]>,
     });
 

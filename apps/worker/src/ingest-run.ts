@@ -141,6 +141,7 @@ export async function persistNewRun(
       const husk = w.body.withheld ?? (holds[i] ? null : ("storage_cap" as const));
       return {
         messageId: messageIds[i]!,
+        accountId,
         text: husk !== null ? "" : w.body.text,
         html: husk !== null ? null : w.body.html,
         withheldReason: husk,

@@ -50,7 +50,7 @@ async function seed(rows: readonly OpenReadRow[]): Promise<{ accountId: string; 
       date: new Date(r.arrived), nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     });
     await db.insert(folderState).values({
-      messageId: id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: id, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     ids.set(r.label, id);
   }

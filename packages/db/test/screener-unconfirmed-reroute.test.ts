@@ -40,7 +40,7 @@ async function world() {
       nativeLocator: { folder: SCREENER_FOLDER, ref: `1:${Math.floor(Math.random() * 1e6)}` },
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER_FOLDER, observedFolder: SCREENER_FOLDER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;

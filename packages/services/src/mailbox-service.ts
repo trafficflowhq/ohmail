@@ -3060,7 +3060,7 @@ export class MailboxService {
     const meta = Object.keys(metaIn).length > 0 ? metaIn : undefined;
     const now = ctx.now();
     await tx.insert(mailboxCredentials).values({
-      mailboxId, transport, secretEnc: ciphertext, keyVersion,
+      mailboxId, accountId: ctx.accountId, transport, secretEnc: ciphertext, keyVersion,
       ...(meta ? { meta } : {}), updatedAt: now,
     }).onConflictDoUpdate({
       target: [mailboxCredentials.mailboxId, mailboxCredentials.transport],

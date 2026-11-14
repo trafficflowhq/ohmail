@@ -11,6 +11,7 @@ import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
 import {
   accountSettings, accounts, applyScreenerDecision, folderState, listAddresses, listBrandsOf, mailboxes, messages, type Tx,
+  accountPass, readPassProgress,
 } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { listAddressBackfillPass } from "../src/list-address-backfill.js";
@@ -72,10 +73,10 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
         select ${accountId}::uuid, ${mb!.id}::uuid, 'h', 'lbpg:' || g, 'm' || g, 'sender' || g || '@example.test',
                '{"folder":"INBOX","ref":"1:1"}'::jsonb, case when g % 1000 = 0 then 'fail' end
           from generate_series(1, ${MESSAGES}) g
-        returning id, subject
+        returning id, account_id, subject
       )
-      insert into message_bodies (message_id, text, headers)
-      select id, 'x', case
+      insert into message_bodies (message_id, account_id, text, headers)
+      select id, account_id, 'x', case
         when substr(subject, 2)::int % 1000 = 0
           then jsonb_build_object('list-post', jsonb_build_array('<mailto:forged' || (substr(subject, 2)::int % 7) || '@lists.test>'))
         when substr(subject, 2)::int % 20 = 0
@@ -118,9 +119,7 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
     expect(rows.map((x) => x.address).sort()).toEqual(Array.from({ length: 31 }, (_, i) => `list${i}@lists.test`).sort());
     expect(rows.some((x) => x.address.startsWith("forged")), "a failed authentication named a list").toBe(false);
     expect(listBrandsOf(rows.find((x) => x.address === "list0@lists.test")!.brands)).toEqual(["PostFinance"]);
-    const [s] = await db.select({ at: accountSettings.listAddressesScannedAt }).from(accountSettings)
-      .where(eq(accountSettings.accountId, accountId));
-    expect(s?.at).not.toBeNull();
+    expect((await readPassProgress(db as unknown as Tx, accountPass("list_address_backfill", accountId))).doneAt).not.toBeNull();
     expect(await pass()).toEqual({ ran: false, values: 0, addresses: 0 });
   }, 120_000);
 
@@ -134,7 +133,7 @@ describe.skipIf(!AVAILABLE)("the list-address backfill (Postgres)", () => {
         nativeLocator: { folder: "ohmail/Screener", ref: `9:${n}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener", lastSetBy: "us",
         reconcileStatus: "reconciled",
       });
     };

@@ -357,7 +357,7 @@ describe("a drain whose permit stood down writes nothing more to the mailbox", (
       createdAt: new Date(nowMs),
     }).returning();
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: "INBOX",
       desiredFolder: "ohmail/Screener",
       lastSetBy: "us",
@@ -546,7 +546,7 @@ describe("a renewal this install performed is this install's own claim", () => {
       createdAt: new Date(nowMs),
     }).returning();
     await s.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       observedFolder: "INBOX",
       desiredFolder: "ohmail/Screener",
       lastSetBy: "us",

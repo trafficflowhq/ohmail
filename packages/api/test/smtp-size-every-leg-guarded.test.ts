@@ -109,7 +109,7 @@ async function seed(
   }).returning();
   const imap = await deps.keyProvider.encrypt(o.oauthSmtp ? "a-refresh-token" : "imap-fixture");
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: imap.ciphertext, keyVersion: imap.keyVersion,
     meta: o.oauthSmtp
       ? { host: `imap${SUFFIX}`, port: 993, secure: true, user: "o@example.net", authType: "oauth2", provider: "microsoft", tenant: "common", smtp: o.oauthSmtp }
       : { host: o.imapHost ?? `imap${SUFFIX}`, port: 993, secure: true, user: "u@example.net" },
@@ -118,7 +118,7 @@ async function seed(
   if (o.smtp && !o.oauthSmtp) {
     const enc = await deps.keyProvider.encrypt("smtp-fixture");
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: { ...o.smtp, user: "u@example.net" }, updatedAt: new Date(FIXED_NOW.getTime() + 1000),
     });
   }

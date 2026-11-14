@@ -67,9 +67,9 @@ describe.skipIf(!PG_UP)("mail 0073 — per-mailbox folders vs the master, on rea
       .values({ id: randomUUID(), accountId: ACCOUNT, provider: "imap", address: `two-${ACCOUNT.slice(0, 8)}@x.example` }).returning();
     mb1 = a!.id; mb2 = b!.id;
     const [fa] = await db.insert(mailboxFolders)
-      .values({ mailboxId: mb1, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n }).returning();
+      .values({ mailboxId: mb1, accountId: ACCOUNT, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n }).returning();
     const [fb] = await db.insert(mailboxFolders)
-      .values({ mailboxId: mb2, folder: "Clients/Anna", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n }).returning();
+      .values({ mailboxId: mb2, accountId: ACCOUNT, folder: "Clients/Anna", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n }).returning();
     f1 = fa!.id; f2 = fb!.id;
   });
 

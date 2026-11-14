@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -535,7 +536,7 @@ describe.skipIf(!PG_UP)("Art. 17 erasure — real Postgres, real foreign keys", 
           subject: `bulk ${i}`, fromAddress: "bulk@sender.example",
         }).returning({ id: messages.id });
         await db.insert(flagState).values({
-          messageId: m!.id, desiredSeen: false, observedSeen: false, lastSetBy: "us",
+          messageId: m!.id, accountId: accountOfMessage(m!.id), desiredSeen: false, observedSeen: false, lastSetBy: "us",
         });
       }
       expect(await db.select().from(messages).where(eq(messages.accountId, wide.accountId)))

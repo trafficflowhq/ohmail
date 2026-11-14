@@ -132,7 +132,7 @@ async function sqlVerdict(
     id, accountId, mailboxId, bodyHash: "h", dedupKey: id, subject: "",
     fromAddress: OWN, date: new Date(),
   });
-  await db.insert(messageBodies).values({ messageId: id, text: "", headers });
+  await db.insert(messageBodies).values({ messageId: id, accountId, text: "", headers });
   return verdictFor(db, id);
 }
 
@@ -182,7 +182,7 @@ describe("auto-reply-by-us: the TS predicate and the SQL fragment agree", () => 
       fromAddress: "stranger@elsewhere.test", date: new Date(),
     });
     await db.insert(messageBodies).values({
-      messageId: id, text: "", headers: { "auto-submitted": ["auto-replied"] },
+      messageId: id, accountId, text: "", headers: { "auto-submitted": ["auto-replied"] },
     });
     expect(await verdictFor(db, id)).toBe(false);
   });

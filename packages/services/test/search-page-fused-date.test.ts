@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { messageBodies } from "@trafficflow/db";
 import { searchIndexBackfillPass } from "@trafficflow/core/mail";
 import { SearchService } from "../src/index.js";
-import { makeCtx, seedMessage } from "./helpers.js";
+import { FOUND_WITHOUT_DOCUMENT, makeCtx, seedMessage } from "./helpers.js";
 
 /**
  * THE PAGE ORDERS BY THE DATE ITS ARMS CARRY, on both stores (this file runs in the sqlite project
@@ -21,7 +21,7 @@ async function corpus(built: boolean) {
       subject: inSubject ? "lantern notes" : "weekly memo", from: "desk@site.example",
       snippet: "", folder: "INBOX", date: date as Date,
     });
-    await db.insert(messageBodies).values({ messageId: id, text: inSubject ? "nothing here" : "the lantern is lit" });
+    await db.insert(messageBodies).values({ messageId: id, accountId, text: inSubject ? "nothing here" : "the lantern is lit" });
     return { id, date: date === null ? null : date.getTime() };
   };
   // Head and body dates interleave; one of each has no date, and one pair shares a date.
@@ -44,7 +44,8 @@ function oracle(heads: Row[], bodies: Row[]): string[] {
   return h.flatMap((x, i) => [x, b[i]!].sort(newestFirst).map((r) => r.id));
 }
 
-describe.each([["with the search documents built", true], ["before the documents are built", false]])("%s", (_label, built) => {
+describe.each(([["with the search documents built", true], ["before the documents are built", false]] as const)
+  .filter(([, built]) => built || FOUND_WITHOUT_DOCUMENT))("%s", (_label, built) => {
   it("one page: equal scores are ordered by the arms' dates, no date last", async () => {
     const { ctx, heads, bodies } = await corpus(built);
     const r = await new SearchService().search(ctx, { q: '"lantern"', parts: "page" });

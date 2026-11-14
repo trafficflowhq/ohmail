@@ -202,7 +202,7 @@ async function insertShape(
     id, accountId, mailboxId, bodyHash: "h", dedupKey: id, subject: "",
     fromAddress: OWN, date: at, createdAt: at, updatedAt: at,
   });
-  await db.insert(messageBodies).values({ messageId: id, text: "", headers: shape.headers });
+  await db.insert(messageBodies).values({ messageId: id, accountId, text: "", headers: shape.headers });
   for (const contentType of shape.parts) {
     await db.insert(attachments).values({
       accountId, messageId: id, contentType, sizeBytes: 1, createdAt: at,

@@ -238,7 +238,7 @@ describe.skipIf(!PG_UP)("concurrent Idempotency-Key against real Postgres", () =
       nativeLocator: { folder: "INBOX", ref: "1:1" },
     }).returning();
     await dbA.insert(folderState).values({
-      messageId: msg!.id, desiredFolder: "INBOX", observedFolder: "INBOX",
+      messageId: msg!.id, accountId: msg!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
 

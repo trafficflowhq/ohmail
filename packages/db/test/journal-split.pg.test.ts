@@ -9,6 +9,9 @@ import { brandDialect } from "../src/dialect/index.js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
 import postgres from "postgres";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { CLOUD_JOURNAL, MAIL_JOURNAL } from "../src/journal-specs.js";
+import { journalThrough } from "../src/testing-journal.js";
+import { OLD_HEADS } from "../src/journal-heads.js";
 import { LEGACY_CUTOFF_WHEN } from "../src/baseline.js";
 import { MIGRATED_DB_TEARDOWN_BUDGET_MS, PG_TEST_URL, realPgAvailable } from "../src/testing.js";
 import { catalogFingerprint } from "./_catalog.js";
@@ -110,8 +113,16 @@ const entriesIn = (dir: string): number =>
 const entriesAtCutoff = (dir: string): number =>
   (JSON.parse(readFileSync(join(dir, "meta", "_journal.json"), "utf8")) as
     { entries: Array<{ when: number }> }).entries.filter((e) => e.when <= LEGACY_CUTOFF_WHEN).length;
-const MAIL_DIR = join(HERE, "..", "..", "db-mail", "drizzle");
-const CLOUD_DIR = join(HERE, "..", "drizzle-cloud");
+/*
+ * THE 1.0 ROAD, as it stood at the old heads (`journalThrough`). The split is a property of that
+ * road: its entries only ever added to the split's schema, which is what this file holds them
+ * to. 2.0's entries retire objects on purpose and are held by the transition's own tests; read
+ * here, every one of their drops would be a "removed object".
+ */
+const MAIL_CUT = journalThrough(MAIL_JOURNAL, OLD_HEADS.mail.when);
+const CLOUD_CUT = journalThrough(CLOUD_JOURNAL, OLD_HEADS.cloud.when);
+const MAIL_DIR = MAIL_CUT.spec.dir;
+const CLOUD_DIR = CLOUD_CUT.spec.dir;
 
 const ADMIN_URL = PG_TEST_URL;
 
@@ -279,6 +290,8 @@ describe.skipIf(!PG_UP)("the two journals build exactly the schema the single jo
   }, 300_000);
 
   afterAll(async () => {
+    MAIL_CUT.dispose();
+    CLOUD_CUT.dispose();
     await atSplitClient?.end({ timeout: 5 }).catch(() => {});
     await afterClient?.end({ timeout: 5 }).catch(() => {});
     for (const db of [DB_BEFORE, DB_AT_SPLIT, DB_AFTER]) {

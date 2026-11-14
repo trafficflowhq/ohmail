@@ -119,7 +119,7 @@ describe.skipIf(!AVAILABLE)("folder completion — the desire it read is a witne
       nativeLocator: LOC(opts.observed, "1:10"),
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: opts.desired, observedFolder: opts.observed,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: opts.desired, observedFolder: opts.observed,
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
       attempts: opts.attempts ?? 0, nextAttemptAt: opts.nextAttemptAt ?? null,
     });
@@ -131,7 +131,7 @@ describe.skipIf(!AVAILABLE)("folder completion — the desire it read is a witne
       uidvalidity: 1n, isPrimary: true,
     });
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "the original body", html: "<p>the original body</p>", headers: {},
+      messageId: m!.id, accountId: m!.accountId, text: "the original body", html: "<p>the original body</p>", headers: {},
     });
     const repo = makeDrizzleRepo(db as never) as WorkerRepo;
     return { accountId, mailboxId: mb!.id, messageId: m!.id, repo };

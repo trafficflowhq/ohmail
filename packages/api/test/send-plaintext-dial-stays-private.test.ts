@@ -45,13 +45,13 @@ async function seed(
   const [mb] = await d.db.insert(mailboxes).values({ accountId: acct!.id, provider: "imap", address: USER }).returning();
   const i = await d.deps.keyProvider.encrypt("imap-fixture");
   await d.db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: i.ciphertext, keyVersion: i.keyVersion,
+    mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: i.ciphertext, keyVersion: i.keyVersion,
     meta: { host: imap.host, port: imap.port, secure: false, user: USER, ...(imap.consent ? { insecureConsent: true } : {}) },
   });
   if (smtp) {
     const s = await d.deps.keyProvider.encrypt("smtp-fixture");
     await d.db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "smtp", secretEnc: s.ciphertext, keyVersion: s.keyVersion,
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "smtp", secretEnc: s.ciphertext, keyVersion: s.keyVersion,
       meta: { host: smtp.host, port: smtp.port, secure: false, user: USER, ...(smtp.consent ? { insecureConsent: true } : {}) },
     });
   }

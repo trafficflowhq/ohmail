@@ -97,16 +97,16 @@ describe.skipIf(!PG_UP)("GET /mailboxes on the deployed host costs the same at a
     }).returning();
     boxes.push(mb!.id);
     await db.insert(mailboxCredentials).values({
-      mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1, meta: { host: "imap.example.test" },
+      mailboxId: mb!.id, accountId: mb!.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1, meta: { host: "imap.example.test" },
     });
-    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "INBOX", highestmodseq: 1n, serverExists: 10 });
-    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Archive" });
+    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "INBOX", highestmodseq: 1n, serverExists: 10 });
+    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Archive" });
     const [m] = await db.insert(messages).values({
       accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `mbrt:${randomUUID()}`, subject: "s",
       fromAddress: "x@rt.example", date: new Date(), unread: true, hasAttachments: false,
       nativeLocator: { folder: "INBOX", ref: `1:${i}` },
     }).returning();
-    await db.insert(folderState).values({ messageId: m!.id, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
+    await db.insert(folderState).values({ messageId: m!.id, accountId: m!.accountId, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
     await db.insert(messageFailures).values({
       accountId, mailboxId: mb!.id, folder: "INBOX", uidvalidity: 1n, uid: i + 1, code: "mime_unparseable",
     });

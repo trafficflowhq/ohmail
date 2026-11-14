@@ -55,7 +55,7 @@ async function sentTo(address: string): Promise<{ accountId: string; mailboxId: 
     accountId, provider: "imap", address: `me-${accountId.slice(0, 8)}@own.invalid`, status: "connected",
   }).returning();
   // A mailbox the sync has already walked has its Sent folder on record.
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 1n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 1n });
   const [d] = await db.insert(drafts).values({
     accountId, mailboxId: mb!.id, subject: "the north elevation", body: "Thursday?",
     to: [{ name: null, address }], status: "draft",

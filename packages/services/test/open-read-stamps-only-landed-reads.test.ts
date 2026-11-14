@@ -32,7 +32,7 @@ describe("the open read stamps only the members whose read landed", () => {
     const { db, accountId, mailboxId, ctx } = await makeCtx(now);
     const [a1, a2] = await oneConversation(db, accountId, mailboxId, 2);
     await db.insert(flagState).values({
-      messageId: a2!, desiredSeen: false, observedSeen: false, lastSetBy: "us", reconcileStatus: "reconciled",
+      messageId: a2!, accountId, desiredSeen: false, observedSeen: false, lastSetBy: "us", reconcileStatus: "reconciled",
       decidedAt: new Date(now.getTime() - 3_600_000),
     } as typeof flagState.$inferInsert);
     const aged = { ...ctx, pressFloor: new Date(now.getTime() - 2 * 86_400_000), pressAged: true } as ServiceContext;

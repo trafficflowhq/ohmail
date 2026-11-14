@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, isNull, lt, or, sql, type SQL, type SQLWrapper } from "drizzle-orm";
 import {
-  accounts, accountSettings, attachments, messageBodies, messages, messageSearch, type Tx,
+  accounts, attachments, messageBodies, messages, messageSearch, type Tx,
+  accountPass, onPass, passProgress, proposed, readPassProgress, writePassProgress,
 } from "@trafficflow/db";
 import { dialect, SEARCH_NAMES_MARK, type SearchDocumentParts } from "@trafficflow/db/dialect";
 import { htmlWords } from "./html-text.js";
@@ -342,9 +343,12 @@ export async function searchIndexProgress(db: Tx, accountId: string): Promise<{ 
 /** The marker is absent, or older than the document's shape: documents are owed or owed again. */
 function markerOwed(db: unknown): SQL {
   return shaped(db)
-    ? or(isNull(accountSettings.searchIndexBuiltAt), lt(accountSettings.searchIndexBuiltAt, SEARCH_DOCUMENT_SHAPE_AT))!
-    : isNull(accountSettings.searchIndexBuiltAt);
+    ? or(isNull(passProgress.doneAt), lt(passProgress.doneAt, SEARCH_DOCUMENT_SHAPE_AT))!
+    : isNull(passProgress.doneAt);
 }
+
+/** The pass whose done mark is the marker: one row of `pass_progress` per account (mail 0203). */
+const BACKFILL = "search_index_backfill" as const;
 
 /**
  * The accounts the backfill still owes: living mail and no marker, or a marker older than the
@@ -356,7 +360,7 @@ export async function searchIndexOwedAccounts(
   db: Tx, opts: { limit: number; shard?: SQL },
 ): Promise<string[]> {
   const rows = await db.select({ id: accounts.id }).from(accounts)
-    .leftJoin(accountSettings, eq(accountSettings.accountId, accounts.id))
+    .leftJoin(passProgress, onPass(BACKFILL, accounts.id))
     .where(and(
       markerOwed(db),
       sql`exists (select 1 from ${messages} where ${messages.accountId} = ${accounts.id} and ${messages.deletedAt} is null)`,
@@ -367,23 +371,19 @@ export async function searchIndexOwedAccounts(
   return rows.map((r) => r.id);
 }
 
-/** Has this account's backfill finished? `false` for no settings row or a failed read. */
+/** Has this account's backfill finished? `false` for no mark or a failed read. */
 export async function searchIndexBuilt(db: Tx, accountId: string): Promise<boolean> {
   try {
-    const [row] = await db.select({ at: accountSettings.searchIndexBuiltAt }).from(accountSettings)
-      .where(eq(accountSettings.accountId, accountId)).limit(1);
-    return row?.at != null;
+    return (await readPassProgress(db, accountPass(BACKFILL, accountId))).doneAt !== null;
   } catch {
     return false;
   }
 }
 
-/** Are this account's documents all built, in the present shape? `false` for no settings row or a failed read. */
+/** Are this account's documents all built, in the present shape? `false` for no mark or a failed read. */
 async function searchIndexCurrent(db: Tx, accountId: string): Promise<boolean> {
   try {
-    const [row] = await db.select({ at: accountSettings.searchIndexBuiltAt }).from(accountSettings)
-      .where(eq(accountSettings.accountId, accountId)).limit(1);
-    const at = row?.at;
+    const at = (await readPassProgress(db, accountPass(BACKFILL, accountId))).doneAt;
     return at != null && (!shaped(db) || new Date(at).getTime() >= SEARCH_DOCUMENT_SHAPE_AT.getTime());
   } catch {
     return false;
@@ -463,17 +463,18 @@ function olderThan(pos: { date: Date | null; id: string }): SQL {
 
 /**
  * Write the completion marker once, and again over one older than the document's shape. An account
- * with no settings row gains one, but only while it still has living mail — an erased account's
- * empty store must not grow a settings row back.
+ * with no mark gains one, but only while it still has living mail — an erased account's empty
+ * store must not grow a row back.
  */
 async function stampSearchIndexBuilt(db: Tx, accountId: string, at: Date): Promise<boolean> {
   const d = dialect(db);
-  await d.exec(db, sql`
-    insert into account_settings (account_id, search_index_built_at)
-    select ${accountId}, ${d.ts(shapeFloor(at))}
-    where exists (select 1 from messages where account_id = ${accountId} and deleted_at is null)
-    on conflict (account_id) do update
-      set search_index_built_at = case when account_settings.search_index_built_at < ${d.ts(SEARCH_DOCUMENT_SHAPE_AT)}
-        then excluded.search_index_built_at else coalesce(account_settings.search_index_built_at, excluded.search_index_built_at) end`);
+  await writePassProgress(db, accountPass(BACKFILL, accountId), { doneAt: shapeFloor(at) }, {
+    onlyIf: sql`exists (select 1 from messages where account_id = ${accountId} and deleted_at is null)`,
+    onExisting: {
+      doneAt: sql`case when ${passProgress.doneAt} < ${d.ts(SEARCH_DOCUMENT_SHAPE_AT)}
+        then ${proposed("doneAt")} else coalesce(${passProgress.doneAt}, ${proposed("doneAt")}) end`,
+    },
+    now: at,
+  });
   return searchIndexCurrent(db, accountId);
 }

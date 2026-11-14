@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
@@ -42,9 +43,9 @@ async function world(o: { claim: boolean; rule: boolean }) {
     senderCheck: o.claim ? "impersonation" : "none", senderCheckBrand: o.claim ? "PostFinance" : null,
     date: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: "1:1" },
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   // What the act leaves behind when it admits a sender: its promoted rule and an inferred contact.
   if (o.rule) {
@@ -116,9 +117,9 @@ async function consented(cs: readonly Consent[], o: { date?: Date; auth?: string
     date: o.date ?? at, arrivedAt: o.date ?? at, unread: false, createdAt: at, nativeLocator: { folder: GATE, ref: "1:1" },
     ...(o.date ? { senderCheckBy: "ingest" } : {}),
   }).returning();
-  await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+  await db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: {} });
   await db.insert(folderState).values({
-    messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
   for (const c of cs) {
     if ("list" in c) await db.insert(listAddresses).values({ accountId, address: c.list, consentedBrands: [...c.brands] });
@@ -321,9 +322,9 @@ describe("the contact line's press and its offer read one bag", () => {
         senderCheck: o.check, senderCheckBrand: o.check === "impersonation" ? "PostFinance" : null, authVerdict: o.auth ?? null,
         date: at, arrivedAt: at, unread: true, createdAt: at, nativeLocator: { folder: GATE, ref: `1:${randomUUID()}` },
       } as never).returning();
-      await w.db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+      await w.db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), text: "", html: null, headers: {} });
       await w.db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: GATE, observedFolder: o.observed ?? GATE, lastSetBy: o.lastSetBy ?? "us",
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: GATE, observedFolder: o.observed ?? GATE, lastSetBy: o.lastSetBy ?? "us",
         reconcileStatus: "reconciled", conflict: false, decidedAt: o.decidedAt ?? null,
       } as never);
       return m!.id as string;

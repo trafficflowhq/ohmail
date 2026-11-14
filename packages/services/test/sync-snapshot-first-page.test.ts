@@ -45,7 +45,7 @@ async function seedMessages(
       subject: `s${i}`, fromAddress: "f@x.example", date: new Date(NOW.getTime() - i * MINUTE),
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
   }
 }

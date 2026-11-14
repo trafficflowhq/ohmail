@@ -90,7 +90,7 @@ describe("the adapter's ingest order IS the order /sync delivers (real Postgres)
           nativeLocator: { folder: "INBOX", ref: `1:${uid}` },
         }).returning();
         await tx.insert(folderState).values({
-          messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+          messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
         });
         uidOfMessage.set(m!.id, uid);
         await recordChange(tx, {

@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 import { mailboxes, mailboxCredentials, contacts, messages } from "@trafficflow/db";
@@ -43,7 +44,7 @@ async function seedImapCreds(
 ): Promise<void> {
   const enc = await KP.encrypt(pass);
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+    mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
     meta: { host, port, secure: false, user },
   });
 }

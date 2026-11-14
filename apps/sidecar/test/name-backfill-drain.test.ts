@@ -282,7 +282,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     }).returning();
     await seedInstance(s, m!.id);
     await s.db.insert(messageBodies).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       text: norm.textBody,
       html: norm.htmlBody,
       // The spread is load-bearing: `normalizeMime` returns a NULL-PROTOTYPE header map and
@@ -311,7 +311,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     }).returning();
     await seedInstance(s, m!.id);
     await s.db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null,
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null,
       headers: { from: [`Crowd Member ${i} <crowd-${i}@example.test>`] },
     });
     return m!.id;
@@ -340,7 +340,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     });
     await seedInstance(s, id);
     await s.db.insert(messageBodies).values({
-      messageId: id, text: "", html: null,
+      messageId: id, accountId: s.world.accountId, text: "", html: null,
       headers: {
         from: [nameless ? `fixed-${i}@example.test` : `Fixed Name ${i} <fixed-${i}@example.test>`],
       },
@@ -607,7 +607,7 @@ describe("the historical-name repair at the standalone drain's tail", () => {
     }).returning();
     await seedInstance(s, m!.id);
     await s.db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {},
     });
 
     await s.start();

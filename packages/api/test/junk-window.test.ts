@@ -1,3 +1,4 @@
+import { accountOfMailbox, accountOfMessage } from "@trafficflow/db";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ImapAdapter, type FolderPage, type FolderSearchPage } from "@trafficflow/core/adapters/imap";
@@ -77,7 +78,7 @@ async function seed(opts: {
     ...(opts.foldersDisabled ? { foldersDisabledAt: NOW } : {}),
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "enc", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "enc", keyVersion: 1,
     meta: { host: "imap.example.invalid", port: 993, secure: true, user: "u" },
   });
   const deps = {
@@ -751,7 +752,7 @@ describe("the one-time sweep offer", () => {
         nativeLocator: { folder, ref: `1:${50 + i}` }, snippet: "", unread: false,
       }).returning({ id: messages.id });
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: desired, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled",
+        messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: desired, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled",
       });
     }
   }
@@ -822,7 +823,7 @@ describe("the held list", () => {
       ...(at.createdAt ? { createdAt: at.createdAt } : {}),
     }).returning({ id: messages.id });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: at.desired, observedFolder: at.loc, lastSetBy: "us",
+      messageId: m!.id, accountId: accountOfMessage(m!.id), desiredFolder: at.desired, observedFolder: at.loc, lastSetBy: "us",
       reconcileStatus: at.status ?? "reconciled",
     });
     return m!.id;
@@ -879,7 +880,7 @@ describe("the held list", () => {
     }));
     const rows = await a.db.insert(messages).values(values).returning({ id: messages.id, subject: messages.subject });
     await a.db.insert(folderState).values(rows.map((r) => ({
-      messageId: r.id, desiredFolder: Q, observedFolder: Q, lastSetBy: "us" as const, reconcileStatus: "reconciled" as const,
+      messageId: r.id, accountId: accountOfMessage(r.id), desiredFolder: Q, observedFolder: Q, lastSetBy: "us" as const, reconcileStatus: "reconciled" as const,
     })));
     const oldest = rows.find((r) => r.subject === "bulk 0")!.id;
     const newest = rows.find((r) => r.subject === "bulk 500")!.id;
@@ -906,7 +907,7 @@ describe("the held list", () => {
     }));
     const rows = await a.db.insert(messages).values(values).returning({ id: messages.id, subject: messages.subject });
     await a.db.insert(folderState).values(rows.map((r) => ({
-      messageId: r.id, desiredFolder: Q, observedFolder: Q, lastSetBy: "us" as const, reconcileStatus: "reconciled" as const,
+      messageId: r.id, accountId: accountOfMessage(r.id), desiredFolder: Q, observedFolder: Q, lastSetBy: "us" as const, reconcileStatus: "reconciled" as const,
     })));
     const idOf = (i: number) => rows.find((r) => r.subject === `pile ${i}`)!.id;
     const pv = await junkSweepPreview(a.deps, a.accountId);

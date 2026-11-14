@@ -194,6 +194,11 @@ const READERS = new Set([
   // The gone-letter tidy asks whether a letter that left the server still has a document; the
   // delete it runs is the repo's own scrub.
   "apps/worker/src/gone-letter-tidy.ts",
+  // The move of a 1.0.11 store to 2.0 counts the living letters that have no document, before and
+  // after (the old search goes only where that count is zero), and its map of a store's tables
+  // names this one. Counts and a name: neither reads a document's text.
+  "packages/db/src/transition/before.ts",
+  "packages/db/src/transition/expected-counts.ts",
 ]);
 
 /** The AI, knowledge-base and embedding graph, by path shape — none of it may be a reader. */

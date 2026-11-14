@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -64,7 +65,7 @@ async function seed(db: Awaited<ReturnType<typeof makeCtx>>["db"], accountId: st
     }));
     await db.insert(messages).values(rows as never);
     await db.insert(folderState).values(rows.map((r) => ({
-      messageId: r.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: r.id, accountId: accountOfMessage(r.id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     })) as never);
     ids.push(...rows.map((r) => r.id));

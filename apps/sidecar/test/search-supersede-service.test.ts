@@ -86,9 +86,9 @@ describe("a superseded search stops at its next check point", () => {
         timestamptz '2026-09-01T00:00:00Z' - make_interval(mins => g), jsonb_build_object('folder', 'INBOX', 'ref', '1:' || g),
         '[]'::jsonb, '[]'::jsonb
       from generate_series(1, ${N}) g`);
-    await o.db.execute(sql`insert into message_bodies (message_id, text) select m.id, 'harbour letter' from messages m where m.account_id = ${accountId}::uuid`);
-    await o.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-      select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
+    await o.db.execute(sql`insert into message_bodies (message_id, account_id, text) select m.id, m.account_id, 'harbour letter' from messages m where m.account_id = ${accountId}::uuid`);
+    await o.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+      select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${accountId}::uuid`);
     const built = await searchIndexBackfillPass({ db: o.db as unknown as Tx, accountId, rounds: 100, batch: 1_000 });
     expect(built.marked).toBe(true);
   }, 120_000);

@@ -39,10 +39,10 @@ async function seed(db: Awaited<ReturnType<typeof makeTestDb>>, n: number) {
       uid, uidvalidity: 1n, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Quarantine", observedFolder: "ohmail/Quarantine",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
-    await db.insert(messageBodies).values({ messageId: m!.id, text: `buy things ${i}` });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: `buy things ${i}` });
   }
   return { accountId, mailboxId: mb!.id };
 }

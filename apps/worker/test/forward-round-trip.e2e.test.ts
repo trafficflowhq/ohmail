@@ -210,7 +210,7 @@ describe("forward round trip (GreenMail SMTP+IMAP + Postgres)", () => {
         fromAddress: o.from, snippet: o.text.slice(0, 200), date: o.date,
         nativeLocator: { folder: "INBOX", ref: "1:1" },
       }).returning();
-      await h.db.insert(messageBodies).values({ messageId: m!.id, text: o.text, html: null });
+      await h.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: o.text, html: null });
       return m!.id;
     };
     const inboundId = await seed({ from: "colleague@partner.example", text: "Please review the budget numbers before Friday.", date: new Date(Date.now() - 60_000) });

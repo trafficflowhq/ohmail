@@ -119,7 +119,7 @@ describe("the delta materializes the settings entity — and never as a tombston
   it("carries the row's own scalars and the per-mailbox exceptions", async () => {
     const { db, accountId, mailboxId, ctx } = await setup();
     await db.insert(mailboxFolders)
-      .values({ mailboxId, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n });
+      .values({ mailboxId, accountId, folder: "Projects/Acme", uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n });
 
     await setFoldersEnabled(ctx, true);
     await setBlockRemoteImages(ctx, true);

@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { UNMETERED_STORAGE_CAP } from "@trafficflow/core/mail";
 import type { NativeLocator } from "@trafficflow/core";
 import { MessageGoneError, type MoveManyResult } from "@trafficflow/core/adapters/imap";
@@ -594,7 +595,7 @@ describe.skipIf(!AVAILABLE)("a filing for a letter the server no longer holds (G
     expect(id, "the precondition: ingested").toBeDefined();
     // A destination the server does not have: the move is refused, the message is still there.
     await w.h.db.insert(folderState).values({
-      messageId: id!, desiredFolder: `Missing-${tag}`, observedFolder: "INBOX",
+      messageId: id!, accountId: accountOfMessage(id!), desiredFolder: `Missing-${tag}`, observedFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "pending", conflict: false,
     }).onConflictDoUpdate({
       target: folderState.messageId,

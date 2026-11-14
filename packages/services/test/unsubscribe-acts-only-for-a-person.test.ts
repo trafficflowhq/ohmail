@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { and, eq } from "drizzle-orm";
 import {
@@ -47,7 +48,7 @@ const oneClick = (host: string) => ({
 async function decided(w: Ctx, host: string, decidedBy: "person" | "pass", at: Date): Promise<string> {
   const from = `news@${host}`;
   const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from, folder: "ohmail/Screener" });
-  await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: oneClick(host) });
+  await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: oneClick(host) });
   await w.db.transaction((tx) => applyScreenerDecision(carryDialect(w.db, tx), {
     accountId: w.accountId, scope: "sender", address: from, appliedFolder: "ohmail/Screened",
     decision: "no", triggeringActionId: `screener:${id}`, now: NOW, stampBaseline: false, decidedBy, overExisting: "converge",
@@ -60,7 +61,7 @@ async function decided(w: Ctx, host: string, decidedBy: "person" | "pass", at: D
 async function adopted(w: Ctx, host: string, at: Date): Promise<string> {
   const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from: `news@${host}`, folder: "ohmail/Screened" });
   await w.db.update(folderState).set({ lastSetBy: "external", updatedAt: at }).where(eq(folderState.messageId, id));
-  await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: oneClick(host) });
+  await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: oneClick(host) });
   return id;
 }
 
@@ -144,7 +145,7 @@ describe("the automatic unsubscribe acts only for a sender a person screened out
     const host = "imported.example";
     const from = `news@${host}`;
     const id = await seedMessage(w.db, w.accountId, w.mailboxId, { from, folder: "ohmail/Screened" });
-    await w.db.insert(messageBodies).values({ messageId: id, text: "", headers: oneClick(host) });
+    await w.db.insert(messageBodies).values({ messageId: id, accountId: accountOfMessage(id), text: "", headers: oneClick(host) });
     await w.db.update(folderState).set({ updatedAt: secondsAgo(5) }).where(eq(folderState.messageId, id));
     const doc = makeProfileDoc({
       screener: [], notifyRules: [], awayResponder: null, tagNames: [], signature: null,

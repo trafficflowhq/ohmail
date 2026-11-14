@@ -28,9 +28,9 @@ async function world() {
       subject: "Your verification code", fromAddress: from, sensitivityCategory: "otp",
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
-    await (db as unknown as Tx).insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await (db as unknown as Tx).insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await (db as unknown as Tx).insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
@@ -81,9 +81,9 @@ describe("runSensitiveRescreen asks the one engagement question", () => {
       fromAddress: STRANGER, sensitivityCategory: "otp",
       nativeLocator: { folder: OHBOX, ref: `1:${Math.floor(Math.random() * 100000)}` },
     }).returning();
-    await t.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await t.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await t.insert(folderState).values({
-      messageId: m!.id, desiredFolder: OHBOX, observedFolder: OHBOX,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: OHBOX, observedFolder: OHBOX,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     if (ours) {
@@ -95,11 +95,11 @@ describe("runSensitiveRescreen asks the one engagement question", () => {
       }).returning();
       // The responder's reply is marked the way every one it sends is: `Auto-Submitted`.
       await t.insert(messageBodies).values({
-        messageId: s!.id, text: "r", html: null,
+        messageId: s!.id, accountId: s!.accountId, text: "r", html: null,
         headers: { "auto-submitted": [ours.machine ? "auto-replied" : "no"] },
       });
       await t.insert(folderState).values({
-        messageId: s!.id, desiredFolder: "Sent", observedFolder: "Sent",
+        messageId: s!.id, accountId: s!.accountId, desiredFolder: "Sent", observedFolder: "Sent",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
     }

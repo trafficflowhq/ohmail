@@ -316,6 +316,48 @@
       "when": 1794175152143,
       "tag": "0059_account_storage_holds_staff_grant",
       "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "7",
+      "when": 1794689085541,
+      "tag": "0100_account_on_sign_in_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "7",
+      "when": 1794689085542,
+      "tag": "0101_account_counters",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1794689085543,
+      "tag": "0102_alert_subject",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1794689085544,
+      "tag": "0103_census",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1794689085545,
+      "tag": "0104_account_closures",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1794689085546,
+      "tag": "0105_calendar_sign_in",
+      "breakpoints": true
     }
   ]
 }

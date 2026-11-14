@@ -128,7 +128,7 @@ async function seedMailbox(
   const id = mb!.id;
   const imapSecret = await deps.keyProvider.encrypt(opts.oauth ? "a-refresh-token" : "incoming-login-password");
   await db.insert(mailboxCredentials).values({
-    mailboxId: id, transport: "imap",
+    mailboxId: id, accountId, transport: "imap",
     secretEnc: imapSecret.ciphertext, keyVersion: imapSecret.keyVersion,
     meta: opts.oauth
       ? {
@@ -146,7 +146,7 @@ async function seedMailbox(
     const smtp = opts.smtp ?? { host: "smtp.example.net", port: 587, secure: false, user: "u@example.net" };
     const enc = await deps.keyProvider.encrypt("outgoing-login-password");
     await db.insert(mailboxCredentials).values({
-      mailboxId: id, transport: "smtp",
+      mailboxId: id, accountId, transport: "smtp",
       secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: smtp, updatedAt: opts.sameStamp ? FIXED_NOW : new Date(FIXED_NOW.getTime() + 1000),
     });

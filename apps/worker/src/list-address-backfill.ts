@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import {
-  accountSettings, fencedAccountWrite, LIST_ADDRESS_CHUNK, messageBodies, messages, notFailedAuthSql, type Tx,
+  accountPass, fencedAccountWrite, LIST_ADDRESS_CHUNK, messageBodies, messages, notFailedAuthSql, readPassProgress,
+  writePassProgress, type Tx,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { makeDrizzleRepo } from "@trafficflow/core/adapters/drizzle-repo";
@@ -35,9 +36,8 @@ export async function listAddressBackfillPass(
 ): Promise<ListAddressBackfillResult> {
   const { accountId } = deps;
   const log = deps.log ?? silentLogger;
-  const [settings] = await db.select({ at: accountSettings.listAddressesScannedAt }).from(accountSettings)
-    .where(eq(accountSettings.accountId, accountId)).limit(1);
-  if (settings?.at != null) return { ran: false, values: 0, addresses: 0 };
+  const pass = accountPass("list_address_backfill", accountId);
+  if ((await readPassProgress(db, pass)).doneAt !== null) return { ran: false, values: 0, addresses: 0 };
 
   const d = dialect(db);
   const rows = await db.selectDistinct({
@@ -58,8 +58,7 @@ export async function listAddressBackfillPass(
   }
   const now = deps.now?.() ?? new Date();
   await fencedAccountWrite(db, { accountId }, async (tx) => {
-    await tx.insert(accountSettings).values({ accountId, listAddressesScannedAt: now, updatedAt: now })
-      .onConflictDoUpdate({ target: accountSettings.accountId, set: { listAddressesScannedAt: now, updatedAt: now } });
+    await writePassProgress(tx as unknown as Tx, pass, { doneAt: now }, { now });
   });
   log.info("list_address_backfill", { accountId, scanned: rows.length, written: addresses.length });
   return { ran: true, values: rows.length, addresses: addresses.length };

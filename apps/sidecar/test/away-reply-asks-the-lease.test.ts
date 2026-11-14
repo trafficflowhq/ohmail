@@ -209,9 +209,9 @@ describe("an away reply asks the lease at the send boundary", () => {
       date: at,
       createdAt: at,
     }).returning();
-    await s.db.insert(messageBodies).values({ messageId: m!.id, text: "hello", headers: {} });
+    await s.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "hello", headers: {} });
     await s.db.insert(folderState).values({
-      messageId: m!.id, observedFolder: "INBOX", desiredFolder: "INBOX",
+      messageId: m!.id, accountId: m!.accountId, observedFolder: "INBOX", desiredFolder: "INBOX",
       lastSetBy: "us", reconcileStatus: "reconciled",
     });
     // The copy the server holds: without one the sync's reaper takes the letter as gone.
@@ -243,7 +243,7 @@ describe("an away reply asks the lease at the send boundary", () => {
       date: at,
       createdAt: at,
     }).returning();
-    await s.db.insert(messageBodies).values({ messageId: m!.id, text: "Back Monday.", headers: {} });
+    await s.db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "Back Monday.", headers: {} });
   }
 
   const OLDER = new Date(Date.now() - 30 * 60_000);

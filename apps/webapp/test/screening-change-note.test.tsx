@@ -29,7 +29,6 @@ interface Wire {
   ohboxPolicy: "people_only" | "people_and_replied" | null;
   ohboxBar: string | null;
   defaultBar: string;
-  screenerAutoApply: boolean;
   pending?: true;
   change?: Change;
 }
@@ -98,7 +97,7 @@ async function typeInto(el: HTMLTextAreaElement, value: string): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   reader = true;
-  stored = { ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: DEFAULT_BAR, screenerAutoApply: false };
+  stored = { ohboxPolicy: "people_and_replied", ohboxBar: null, defaultBar: DEFAULT_BAR };
   answer = {};
   installFetch();
 });

@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { users, type Tx } from "@trafficflow/db";
+import { accountOfUser, users, type Tx } from "@trafficflow/db";
 import { authThrottle, loginTokens, type AlertDigest } from "@trafficflow/db/cloud";
 import { bridgeTx, type Db } from "../context.js";
 import { generateToken, hashToken } from "../auth/crypto.js";
@@ -480,7 +480,7 @@ export class MailService {
       const raw = generateToken();
       const expiresAt = new Date(ctx.now().getTime() + this.cfg.emailVerifyTtlMs);
       await asTx(ctx).insert(loginTokens).values({
-        userId: input.userId,
+        userId: input.userId, accountId: accountOfUser(input.userId),
         tokenHash: hashToken(raw),
         methods: [],
         purpose: EMAIL_VERIFY_PURPOSE,

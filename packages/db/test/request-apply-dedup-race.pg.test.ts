@@ -100,8 +100,8 @@ describe.skipIf(!PG_UP)("mail 0094 on real Postgres", () => {
       RETURNING id`);
     const id = (rows as unknown as Array<{ id: string }>)[0]!.id;
     await db.execute(sql`
-      INSERT INTO folder_state (message_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
-      VALUES (${id}, ${observed}, ${observed}, 'worker', 'clean', false)`);
+      INSERT INTO folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by, reconcile_status, conflict)
+      SELECT id, account_id, ${observed}, ${observed}, 'worker', 'clean', false FROM messages WHERE id = ${id}`);
     return { id, dedupKey };
   }
 

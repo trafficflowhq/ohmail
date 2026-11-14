@@ -6,7 +6,7 @@ import { brandDialect } from "@trafficflow/db/dialect";
 import { eq } from "drizzle-orm";
 import { runMigrations } from "@trafficflow/db/admin";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
-import { accounts, auditLog, changeLog, mailboxes, messageBodies, messages, type Tx } from "@trafficflow/db";
+import { accounts, auditLog, changeLog, mailboxes, messageBodies, messages, type Tx, mailboxPass, readPassProgress, updatePassProgress } from "@trafficflow/db";
 import { schema } from "@trafficflow/db/cloud";
 import { fingerprintDedupKey, messageFingerprint, normalizeMime } from "@trafficflow/core";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
@@ -135,7 +135,7 @@ describe.skipIf(!AVAILABLE)("sensitive-fp backfill under real Postgres", () => {
       // `{ ...headers }`: the parser builds a null-prototype map and drizzle reflects on every
       // insert value. See `drizzle-repo.ts#insertMessageBody`.
       await db.insert(messageBodies).values({
-        messageId: m!.id, text: STORED_TEXT,
+        messageId: m!.id, accountId: m!.accountId, text: STORED_TEXT,
         // A positively-sensitive row stores NO html; a withheld-but-uncategorised row keeps it.
         html: opts.withheld ? "<p>Usage notice.</p>" : null,
         headers: { ...norm.headers },
@@ -234,9 +234,9 @@ describe.skipIf(!AVAILABLE)("sensitive-fp backfill under real Postgres", () => {
 
     await Promise.all([pass(s, adapterFor(s, 20)), pass(s, adapterFor(s, 20))]);
 
-    const [mb] = await db.select().from(mailboxes).where(eq(mailboxes.id, s.mailboxId));
-    expect(mb!.sensitiveFpBackfillAt).not.toBeNull();
-    // `WHERE sensitive_fp_backfill_at IS NULL … RETURNING` makes "did I stamp it" the DATABASE's
+    const mb = await readPassProgress(db, mailboxPass("sensitive_fp_backfill", s.accountId, s.mailboxId));
+    expect(mb.doneAt).not.toBeNull();
+    // `ON CONFLICT … WHERE done_at IS NULL … RETURNING` makes "did I stamp it" the DATABASE's
     // answer rather than a read-then-write, so exactly one of the two passes reports `marked`.
     const audits = await db.select().from(auditLog).where(eq(auditLog.accountId, s.accountId));
     expect(audits.length).toBeGreaterThanOrEqual(1);
@@ -251,8 +251,7 @@ describe.skipIf(!AVAILABLE)("sensitive-fp backfill under real Postgres", () => {
 
     // Clear the marker — which is also the supported way to ASK for the pass again, so the
     // idempotency claim and the operator's trigger are the same mechanism.
-    await db.update(mailboxes).set({ sensitiveFpBackfillAt: null })
-      .where(eq(mailboxes.id, s.mailboxId));
+    await updatePassProgress(db, mailboxPass("sensitive_fp_backfill", s.accountId, s.mailboxId), { doneAt: null });
     const second = await pass(s, adapterFor(s));
 
     // A repaired message carries no category, so it is not a candidate. Nothing is re-read, and

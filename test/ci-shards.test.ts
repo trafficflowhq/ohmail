@@ -107,7 +107,8 @@ function workflowProblems(text: string, compose: string, imageDrop: string[] = i
   const hostPort = (p: string) => p.split(":").slice(-2).join(":");
   for (const [id, job] of Object.entries(wf.jobs)) {
     for (const [name, svc] of Object.entries(job.services ?? {})) {
-      const twin = services[name === "postgres" ? "db" : name];
+      /* `postgres` is compose's `db`; `postgres-N`, a second server on another major, is its `db-N`. */
+      const twin = services[name === "postgres" ? "db" : name.replace(/^postgres-(\d+)$/, "db-$1")];
       if (!twin) { problems.push(`SERVICE ${id}.${name} has no twin in docker-compose.yml`); continue; }
       if (svc.image !== twin.image) problems.push(`IMAGE ${id}.${name} is ${svc.image}, docker-compose.yml runs ${twin.image}`);
       const want = (twin.ports ?? []).map((p) => hostPort(p.replace(/\s+#.*$/, ""))).sort();
@@ -147,6 +148,28 @@ describe("the suite workflow", () => {
     const loose = text.replace('      TF_REQUIRE_PG: "1"\n', "").replace("image: ghcr.io/trafficflowhq/mirror-postgres:", "image: ghcr.io/x/postgres:");
     expect(workflowProblems(loose, composeText).filter((p) => !absent(p)).map((p) => p.split(" ").slice(0, 2).join(" ")))
       .toEqual(["REQUIRE_PG search-budget", "IMAGE search-budget.postgres"]);
+  });
+
+  it("the transition's nightly on Postgres 17 runs after the budget, on compose's second server", () => {
+    const text = readFileSync(join(ROOT, publicRel("github/workflows/search-budget.yml", ROOT)), "utf8");
+    const wf = yaml.load(text) as Workflow & { jobs: Record<string, { needs?: string | string[] }> };
+    expect([wf.jobs["transition-nightly-pg17"]!.needs].flat()).toEqual(["search-budget"]);
+    // The two files it runs are the ones ci.yml's nightly runs alone on the test stack's server.
+    const run = wf.jobs["transition-nightly-pg17"]!.steps.map((st) => st.run ?? "").find((r) => /\bvitest run\b/.test(r))!;
+    expect(run).toContain("packages/db/test/transition.pg.test.ts packages/db/test/transition-fresh-equals-moved.pg.test.ts");
+    expect(Object.keys(wf.jobs["transition-nightly-pg17"]!.services ?? {})).toEqual(["postgres-17"]);
+    // The budget is judged once, on the first job's quiet runner: the leg after it does not ask for it again.
+    const judges = Object.entries(wf.jobs).filter(([, j]) => "OHMAIL_BUDGET_MUST_JUDGE" in (j.env ?? {})).map(([id]) => id);
+    expect(judges).toEqual(["search-budget"]);
+    // A second server is held to its own twin: an image `db-17` does not run is refused by name, and so is a port.
+    const absent = (p: string) => /^(IMAGE_TREE (webapp-build|proxy-e2e)|BUILD (suite|alone|sqlite)|TYPECHECK|DESKTOP|(IMAGE|PORTS) (rustfs|dovecot)|DOVECOT_CONF) /.test(p);
+    const other = text.replace(/image: postgres:17\.6@sha256:[0-9a-f]{64}/, "image: postgres:17");
+    expect(other).not.toBe(text);
+    expect(workflowProblems(other, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^IMAGE transition-nightly-pg17\.postgres-17 is postgres:17,/)]);
+    const port = text.replace('ports: ["5434:5432"]', 'ports: ["5433:5432"]');
+    expect(workflowProblems(port, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^PORTS transition-nightly-pg17\.postgres-17 /)]);
+    const stranger = text.replace("      postgres-17:\n", "      postgres-18:\n");
+    expect(workflowProblems(stranger, composeText).filter((p) => !absent(p))).toEqual([expect.stringMatching(/^SERVICE transition-nightly-pg17\.postgres-18 has no twin/)]);
   });
 
   it("refuses a vitest job without TF_REQUIRE_PG, a lane database made after the run, and the shared box", () => {

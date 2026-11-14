@@ -27,10 +27,10 @@ describe("schema extension (rules, contacts, folder_state upsert)", () => {
 
     // upsert folder_state twice on the same message → single row, updated values
     await db.insert(folderState)
-      .values({ messageId: msg.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })
+      .values({ messageId: msg.id, accountId: msg.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })
       .onConflictDoUpdate({ target: folderState.messageId, set: { observedFolder: "ohmail/News" } });
     await db.insert(folderState)
-      .values({ messageId: msg.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })
+      .values({ messageId: msg.id, accountId: msg.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" })
       .onConflictDoUpdate({ target: folderState.messageId, set: { observedFolder: "ohmail/Screened" } });
 
     const fs = await db.select().from(folderState).where(eq(folderState.messageId, msg.id));

@@ -118,7 +118,7 @@ describe("the batch thread reader answers what the single-thread reader answers"
     };
     // The seeded pair gains an older letter whose folder_state names the thread's folder.
     const first = await letter(s.pair, 9, { unread: false });
-    await db.insert(folderState).values({ messageId: first, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
+    await db.insert(folderState).values({ messageId: first, accountId: s.accountId, desiredFolder: "Archive", observedFolder: "INBOX", lastSetBy: "us" });
     await letter(s.pair, 8, { gone: true });
     const [mixed] = await db.insert(threads).values({ accountId: s.accountId }).returning();
     await letter(mixed!.id, 20, { folder: "Projects" });

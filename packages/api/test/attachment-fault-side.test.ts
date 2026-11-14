@@ -92,7 +92,7 @@ async function world(o: {
   const enc = await made.deps.keyProvider.encrypt("imap-pass");
   if (!o.noCredential) {
     await made.db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
+      mailboxId, accountId: s.accountId, transport: "imap", secretEnc: enc.ciphertext, keyVersion: enc.keyVersion,
       meta: {
         host: "127.0.0.1", port: o.port ?? await closedPort(), secure: o.secure ?? false, user: "u@fault.example",
         ...(oauth ? { authType: "oauth2", provider: "microsoft" } : {}),

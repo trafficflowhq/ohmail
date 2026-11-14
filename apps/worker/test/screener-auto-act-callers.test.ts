@@ -8,8 +8,7 @@ import { bracketSpan, lineOf, withoutComments } from "../../../scripts/lib/sourc
  * EVERY CALLER HANDS THE ACT ITS OWN CONSENT, AND NOTHING ELSE. `screenerAutoActPass` files a
  * sender on a stored model suggestion; its only arming is `deps.consent`, and every production
  * call builds it with `screenerActConsentFrom(accountId)` — `screener_auto_act_at` joined with
- * `accounts.ai_enabled`. The pass never reads `screener_auto_apply_at`, the switch
- * that says "Deterministic rules only — no AI", and asks the consent before any other read.
+ * `accounts.ai_enabled`. The pass asks the consent before any other read.
  * Exact set, both directions.
  */
 
@@ -96,9 +95,8 @@ describe("the act's callers hand it the constructor's consent and nothing else",
     expect(refused, "a caller hands the act a consent other than the constructor's").toEqual([]);
   });
 
-  it("the pass asks the consent before any read, and never reads the no-AI switch", () => {
+  it("the pass asks the consent before any read", () => {
     const code = withoutComments(readFileSync(join(REPO, PASS), "utf8"));
-    expect(code).not.toMatch(/screenerAutoApplyAt|screener_auto_apply_at/);
     const body = code.slice(code.indexOf("export async function screenerAutoActPass"));
     const probe = body.indexOf("if (!(await consent.stillGiven(db))) return EMPTY();");
     expect(probe, "the consent probe is gone").toBeGreaterThan(0);

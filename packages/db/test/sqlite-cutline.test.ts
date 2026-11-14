@@ -1,3 +1,4 @@
+import { accountOfMessage } from "../src/parent-account.js";
 import { describe, it, expect } from "vitest";
 import { sql } from "drizzle-orm";
 import {
@@ -102,7 +103,7 @@ async function seeded(scope: string) {
       subject: `Note ${n}`, snippet: "", fromAddress: from, date, unread, createdAt: arrivedAt,
     } as never);
     await db.insert(folderState).values({
-      messageId: id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+      messageId: id, accountId: accountOfMessage(id), desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     } as never);
   };

@@ -52,7 +52,7 @@ async function travelled(): Promise<{ deps: ApiDeps; token: string; mailboxId: s
   const s = await seedSession(db, { now: FIXED_NOW });
   const mailboxId = await seedMailbox(db, { accountId: s.accountId, address: user });
   await db.insert(mailboxCredentials).values({
-    mailboxId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId, accountId: s.accountId, transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: "127.0.0.1", port: relay.port, secure: false, user },
   });
   // The credential is the fixture's; the key provider hands it back rather than decrypting a seal.

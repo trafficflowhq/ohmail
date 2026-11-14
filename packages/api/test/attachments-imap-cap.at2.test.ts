@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { randomUUID } from "node:crypto";
 import { ImapAdapter } from "@trafficflow/core/adapters/imap";
@@ -77,7 +78,7 @@ async function seed(): Promise<{ deps: ApiDeps; mailboxId: string; otherMailboxI
       .values({ accountId, provider: "imap", address })
       .returning({ id: mailboxes.id });
     await db.insert(mailboxCredentials).values({
-      mailboxId: row!.id,
+      mailboxId: row!.id, accountId: accountOfMailbox(row!.id),
       transport: "imap",
       secretEnc: "enc",
       keyVersion: 1,

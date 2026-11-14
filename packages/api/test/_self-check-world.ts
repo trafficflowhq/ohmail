@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import net from "node:net";
@@ -114,7 +115,7 @@ export async function world(shape: Shape, user: string, endpoint: { host: string
     accountId, provider: "imap", address: `rc-${randomUUID().slice(0, 8)}@selfcheck.test`,
   }).returning({ id: mailboxes.id });
   await db.insert(mailboxCredentials).values({
-    mailboxId: mb!.id, transport: "imap", secretEnc: "sealed", keyVersion: 1,
+    mailboxId: mb!.id, accountId: accountOfMailbox(mb!.id), transport: "imap", secretEnc: "sealed", keyVersion: 1,
     meta: { host: endpoint.host, port: endpoint.port, secure: false, user },
   });
   const pass = shape.pass;
@@ -129,7 +130,7 @@ export async function world(shape: Shape, user: string, endpoint: { host: string
 
 /** Record a folder in the mirror at `epoch`, holding an instance for each of `uids`. */
 export async function mirrorFolder(w: World, folder: string, epoch: string, uids: readonly number[]): Promise<void> {
-  await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, folder, uidvalidity: BigInt(epoch) });
+  await w.db.insert(mailboxFolders).values({ mailboxId: w.mailboxId, accountId: accountOfMailbox(w.mailboxId), folder, uidvalidity: BigInt(epoch) });
   for (const uid of uids) {
     const key = `rc-${folder}-${uid}-${randomUUID()}`;
     const [m] = await w.db.insert(messages).values({

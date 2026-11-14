@@ -11,7 +11,8 @@ import { migrate } from "drizzle-orm/pglite/migrator";
 import { readMigrationFiles, type MigrationConfig, type MigrationMeta } from "drizzle-orm/migrator";
 import { mailSchema } from "@trafficflow/db/mail";
 import {
-  MAIL_JOURNAL, adoptBaseline, adoptReissuedOriginals, ensureSearchExtensions, readJournalOf,
+  MAIL_JOURNAL, NOTHING_OPENS, OLD_HEADS, TransitionRefused, adoptBaseline, adoptReissuedOriginals, ensureSearchExtensions,
+  inTransitionWindow, readJournalOf, runTransition, sealedOpener, transitionState, type Decrypts,
 } from "@trafficflow/db/journal";
 import {
   INGEST_FOLD_WAL_BYTES, brandDialect, dialect,
@@ -849,6 +850,14 @@ export interface OpenLocalDbOptions {
   /** The {@link SLOW_MIGRATION_MS} floor, injectable so a test can drive both sides of it. */
   slowMigrationFloorMs?: number;
   /**
+   * For the one open that finds a store in 1.0.11's shape and moves it to 2.0 (see
+   * {@link applyMigrations}). `openSealed` is the install's key provider: every value the store
+   * sealed is opened under it before the move commits, and without one a store that holds a sealed
+   * value is not moved. `before` runs once, after the store was found at the old head and before
+   * anything of it changes: a throw refuses the open.
+   */
+  transition?: { openSealed?: Decrypts; before?: () => Promise<void> };
+  /**
    * Run once the data directory's lock is held and before anything in it is read — the one place a
    * caller may remove files beside the database (the cloud door's owner check discards a foreign
    * mirror and its seal). Run before the lock, a second launch deleted a RUNNING engine's files and
@@ -1346,27 +1355,40 @@ async function migratedThrough(client: PGlite, migrationsSchema: string): Promis
 async function applyMigrations(
   db: LocalDb,
   client: PGlite,
-  opts: Pick<OpenLocalDbOptions, "log" | "onPhase" | "slowMigrationFloorMs">,
+  opts: Pick<OpenLocalDbOptions, "log" | "onPhase" | "slowMigrationFloorMs" | "transition">,
 ): Promise<MigrationCensus> {
   const entries = readJournalOf(MAIL_JOURNAL);
-  const through = await migratedThrough(client, MAIL_JOURNAL.migrationsSchema);
-  const pending = entries.filter((e) => through === null || e.when > through);
+  const first = await migratedThrough(client, MAIL_JOURNAL.migrationsSchema);
   const stepwise = db as unknown as StepwiseMigrator;
   const step = stepwise.dialect?.migrate;
+  // A STORE THAT 1.0 MADE takes the 2.0 window as one transaction, never entry by entry: its six
+  // entries take columns a 1.0 engine reads, and a store stopped between two of them opens on
+  // neither release. A store below 1.0.11's head first steps there as it always stepped; at that
+  // head `runTransition` applies the window with its record, its refusal and its checks, or
+  // changes nothing, and a kill rolls back, so the next open begins it again. A store that never
+  // held anything (`first === null`) never comes here: it walks the whole road in the one pass below.
+  const crossed = first === null ? null : await throughTheWindow(db, client, entries, first, step, stepwise, opts);
+  const through = crossed === null ? null : crossed.through;
+  const pending = entries.filter((e) => through === null || e.when > through);
+  // What the window took is part of what this open applied: counted with the rest, and its
+  // slowest entry may be the open's slowest.
+  const before = crossed ?? { through: 0, applied: 0, slowest: null };
 
   // The ordinary launch (nothing pending), the FIRST launch (nothing recorded — see above) and
   // the launch a drizzle upgrade left us unable to narrate take the SAME call this file always
   // made, including the schema and ledger table an empty pass still creates.
   if (through === null || pending.length === 0 || typeof step !== "function") {
-    opts.onPhase?.("migrating");
+    if (before.applied === 0) opts.onPhase?.("migrating");
+    else opts.onPhase?.("migrating", { applied: before.applied, pending: before.applied + pending.length });
     await migrate(db, MAIL_MIGRATION_CONFIG);
-    return { pending: pending.length, applied: pending.length, slowest: null };
+    return { pending: before.applied + pending.length, applied: before.applied + pending.length, slowest: before.slowest };
   }
 
   const metas = new Map(readMigrationFiles(MAIL_MIGRATION_CONFIG).map((m) => [m.folderMillis, m]));
   const floorMs = opts.slowMigrationFloorMs ?? SLOW_MIGRATION_MS;
-  let slowest: MigrationCensus["slowest"] = null;
-  let applied = 0;
+  let slowest: MigrationCensus["slowest"] = before.slowest;
+  let applied = before.applied;
+  const owed = before.applied + pending.length;
   for (const entry of pending) {
     const meta = metas.get(entry.when);
     // A journal entry whose file the migrator did not read is not a case to route around: hand
@@ -1374,9 +1396,9 @@ async function applyMigrations(
     if (!meta) {
       opts.onPhase?.("migrating");
       await migrate(db, MAIL_MIGRATION_CONFIG);
-      return { pending: pending.length, applied: pending.length, slowest };
+      return { pending: owed, applied: owed, slowest };
     }
-    opts.onPhase?.("migrating", { applied, pending: pending.length });
+    opts.onPhase?.("migrating", { applied, pending: owed });
     const began = Date.now();
     await step.call(stepwise.dialect, [meta], stepwise.session, MAIL_MIGRATION_CONFIG);
     const ms = Date.now() - began;
@@ -1390,8 +1412,75 @@ async function applyMigrations(
       });
     }
   }
-  opts.onPhase?.("migrating", { applied, pending: pending.length });
-  return { pending: pending.length, applied, slowest };
+  opts.onPhase?.("migrating", { applied, pending: owed });
+  return { pending: owed, applied, slowest };
+}
+
+/**
+ * Bring a store 1.0 made to the far side of the 2.0 window, and answer the head it then stands at
+ * with what that took: how many entries, and the slowest. A store already past the window is
+ * answered at once. The count a window shows runs over everything this open owes up to the window's
+ * end: each 1.0 entry is one step, and the window's six land together as the last.
+ */
+async function throughTheWindow(
+  db: LocalDb,
+  client: PGlite,
+  entries: readonly { tag: string; when: number }[],
+  through: number,
+  step: NonNullable<StepwiseMigrator["dialect"]>["migrate"],
+  stepwise: StepwiseMigrator,
+  opts: Pick<OpenLocalDbOptions, "log" | "onPhase" | "slowMigrationFloorMs" | "transition">,
+): Promise<{ through: number; applied: number; slowest: MigrationCensus["slowest"] }> {
+  let state = await transitionState(db, { cloud: false });
+  if (state === "moved" || state === "fresh") return { through, applied: 0, slowest: null };
+  const floorMs = opts.slowMigrationFloorMs ?? SLOW_MIGRATION_MS;
+  const old = entries.filter((e) => e.when > through && e.when <= OLD_HEADS.mail.when);
+  const window = entries.filter((e) => e.when > OLD_HEADS.mail.when && inTransitionWindow("mail", e.tag));
+  const owed = old.length + window.length;
+  let slowest: MigrationCensus["slowest"] = null;
+  let applied = 0;
+  const took = (migration: string, ms: number): void => {
+    if (slowest === null || ms > slowest.ms) slowest = { migration, ms };
+    if (ms >= floorMs) {
+      opts.log?.("migration_applied", {
+        migration, totalMs: ms,
+        reason: "a schema upgrade a person waited for, named so the next slow launch can be read",
+      });
+    }
+  };
+  if (state === "below-old-head") {
+    // The 1.0 road, one entry per transaction as before. Without the stepwise pair the only other
+    // call is the whole pass, which would run the window too: refused, never fallen back to.
+    if (typeof step !== "function") {
+      throw new TransitionRefused([{ what: "this store is below 1.0.11's head and the engine cannot step it there one entry at a time", n: 1 }]);
+    }
+    const metas = new Map(readMigrationFiles(MAIL_MIGRATION_CONFIG).map((m) => [m.folderMillis, m]));
+    for (const entry of old) {
+      const meta = metas.get(entry.when);
+      if (!meta) throw new TransitionRefused([{ what: `the journal lists ${entry.tag} and holds no such file`, n: 1 }]);
+      opts.onPhase?.("migrating", { applied, pending: owed });
+      const began = Date.now();
+      await step.call(stepwise.dialect, [meta], stepwise.session, MAIL_MIGRATION_CONFIG);
+      applied += 1;
+      took(entry.tag, Date.now() - began);
+    }
+    state = await transitionState(db, { cloud: false });
+  }
+  if (state !== "at-old-head") {
+    throw new TransitionRefused([{ what: typeof state === "object" ? state.refused : `the store is ${state} after walking the 1.0 road`, n: 1 }]);
+  }
+  await opts.transition?.before?.();
+  opts.onPhase?.("migrating", { applied, pending: owed });
+  const report = await runTransition({
+    kind: "desktop", db,
+    openSealed: opts.transition?.openSealed ? sealedOpener(opts.transition.openSealed) : NOTHING_OPENS,
+    log: (e) => { if (e.type === "entry") took(e.name, e.ms); },
+  });
+  return {
+    through: (await migratedThrough(client, MAIL_JOURNAL.migrationsSchema)) ?? report.heads.mail!,
+    applied: applied + report.entries.length,
+    slowest,
+  };
 }
 
 /**

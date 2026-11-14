@@ -75,7 +75,7 @@ async function seedOneRow(db: Awaited<ReturnType<typeof makeTestDb>>): Promise<s
     bodyHash: "h", dedupKey: "d", subject: "race", fromAddress: "s@example.test",
   });
   await db.insert(folderState).values({
-    id: STATE, messageId: MESSAGE,
+    id: STATE, messageId: MESSAGE, accountId: ACCOUNT,
     desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us", attempts: 0,
   });
   return STATE;

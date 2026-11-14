@@ -75,7 +75,7 @@ async function seedMessage(
   }
   if (o.flag) {
     await db.insert(flagState).values({
-      messageId: m!.id, desiredSeen: o.flag.desiredSeen, observedSeen: o.flag.observedSeen,
+      messageId: m!.id, accountId: m!.accountId, desiredSeen: o.flag.desiredSeen, observedSeen: o.flag.observedSeen,
       lastSetBy: o.flag.lastSetBy,
       reconcileStatus: o.flag.desiredSeen === o.flag.observedSeen ? "reconciled" : "pending",
     });

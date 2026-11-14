@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import { pgDialect } from "@trafficflow/db/dialect";
 import type { MailboxAdapter } from "@trafficflow/core/adapters/imap";
+import { upsertMessageSearch } from "@trafficflow/core/mail";
 import { createSidecar, type Sidecar } from "../src/engine.js";
 import { openLocalDb } from "../src/db.js";
 import { wipeLocalMirror } from "../src/local-mirror.js";
@@ -62,7 +63,17 @@ async function store(s: Sidecar, subject: string, from: string, text: string): P
   const id = randomUUID();
   await s.db.execute(sql`insert into messages (id, account_id, mailbox_id, body_hash, dedup_key, subject, from_address, from_name, date, to_addresses, cc_addresses, native_locator)
     values (${id}, ${s.world.accountId}, ${s.world.mailboxId}, 'h', ${`fx:${id}`}, ${subject}, ${from}, 'Someone', now(), '[]'::jsonb, '[]'::jsonb, ${JSON.stringify({ folder: "INBOX", ref: `1:${id.slice(0, 4)}` })}::jsonb)`);
-  await s.db.execute(sql`insert into message_bodies (message_id, text, html) values (${id}, ${text}, null)`);
+  await s.db.execute(sql`insert into message_bodies (message_id, account_id, text, html) select m.id, m.account_id, ${text}, null from messages m where m.id = ${id}`);
+  return id;
+}
+
+/** A letter as every writer of a body stores it: with its search document. {@link store} leaves that to the backfill. */
+async function storeIndexed(s: Sidecar, subject: string, from: string, text: string): Promise<string> {
+  const id = await store(s, subject, from, text);
+  await upsertMessageSearch(s.db as never, id, {
+    accountId: s.world.accountId, subject, from: { name: "Someone", address: from }, to: [], cc: [],
+    attachmentNames: [], bodyText: text, source: "text",
+  });
   return id;
 }
 
@@ -83,15 +94,18 @@ const substringPlan = (s: Sidecar): Promise<string> => s.db.transaction(async (t
 describe("the local store searches with the server's own indexes", () => {
   it("axa finds myAXA Portal, and the substring arm reads the trigram index", async () => {
     const s = await standUp();
-    const hit = await store(s, "myAXA Portal: your documents", "notices@insure.example", "Your policy summary is ready.");
-    await store(s, "Lunch on Friday", "friend@mail.example", "See you at noon.");
+    const hit = await storeIndexed(s, "myAXA Portal: your documents", "notices@insure.example", "Your policy summary is ready.");
+    await storeIndexed(s, "Lunch on Friday", "friend@mail.example", "See you at noon.");
     const ext = rows(await s.db.execute(sql`select extname from pg_extension order by 1`)).map((r) => r.extname);
     expect(ext).toEqual(expect.arrayContaining(["pg_trgm", "btree_gin"]));
     const idx = rows(await s.db.execute(sql`select indexname from pg_indexes where schemaname = 'public'`)).map((r) => r.indexname);
     expect(idx).toEqual(expect.arrayContaining([
-      "messages_subject_trgm_idx", "messages_from_address_trgm_idx", "message_search_terms_trgm_idx",
+      "message_search_terms_trgm_idx",
       "message_search_head_terms_trgm_idx", "message_search_names_trgm_idx", "messages_account_msg_order_idx",
     ]));
+    // The two trigram indexes on `messages` served the search from before the document; mail 0200 retired it.
+    expect(idx).not.toContain("messages_subject_trgm_idx");
+    expect(idx).not.toContain("messages_from_address_trgm_idx");
     // The server's account-keyed word index is not the desktop's: its arms read the store bounded.
     expect(idx).not.toContain("message_search_words_idx");
     const before = await get(s, "/search?q=axa");
@@ -102,8 +116,8 @@ describe("the local store searches with the server's own indexes", () => {
 
   it("the same one hit through the degrade on a store that refused the extensions", async () => {
     const s = await standUp({ withoutSearchExtensions: true });
-    const hit = await store(s, "myAXA Portal: your documents", "notices@insure.example", "Your policy summary is ready.");
-    await store(s, "Lunch on Friday", "friend@mail.example", "See you at noon.");
+    const hit = await storeIndexed(s, "myAXA Portal: your documents", "notices@insure.example", "Your policy summary is ready.");
+    await storeIndexed(s, "Lunch on Friday", "friend@mail.example", "See you at noon.");
     const ext = rows(await s.db.execute(sql`select extname from pg_extension`)).map((r) => r.extname);
     expect(ext).not.toContain("pg_trgm");
     const res = await get(s, "/search?q=axa");

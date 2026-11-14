@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 import { apiRoutes, createApp, type ApiDeps } from "@trafficflow/api";
 import {
-  accountSettings, drafts as draftsTbl, mailboxFolders, mailboxes, messageBodies,
-  outboundSends, recordChange, rules as rulesTbl, type LedgerTx, type Tx,
+  accountPass, accountSettings, drafts as draftsTbl, mailboxFolders, mailboxes, messageBodies,
+  outboundSends, recordChange, requestPass, rules as rulesTbl, type LedgerTx, type Tx,
 } from "@trafficflow/db";
 import {
   FolderOpsService, setFoldersEnabled, runScheduledSendPass,
@@ -381,7 +381,7 @@ export async function verbWorld(): Promise<VerbWorld> {
     },
 
     async seedHeaders(messageId, headers) {
-      await db.insert(messageBodies).values({ messageId, text: "", html: null, headers });
+      await db.insert(messageBodies).values({ messageId, accountId: s.accountId, text: "", html: null, headers });
     },
 
     async enableFolders() {
@@ -390,7 +390,7 @@ export async function verbWorld(): Promise<VerbWorld> {
 
     async seedSettledFolder(name) {
       const [row] = await db.insert(mailboxFolders)
-        .values({ mailboxId, folder: name, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
+        .values({ mailboxId, accountId: s.accountId, folder: name, uidvalidity: 1n, uidnext: 1n, highestmodseq: 1n })
         .returning();
       // The change row a real discovery would have appended. Inside a transaction because the
       // ledger REFUSES a top-level handle (assertLedgerTx) — the seq allocation and the row
@@ -409,11 +409,9 @@ export async function verbWorld(): Promise<VerbWorld> {
     async armOhboxTidy() {
       const at = clock.now();
       await db.insert(accountSettings)
-        .values({ accountId: s.accountId, ohboxPolicy: "people_only", ohboxTidyRequestedAt: at })
-        .onConflictDoUpdate({
-          target: accountSettings.accountId,
-          set: { ohboxPolicy: "people_only", ohboxTidyRequestedAt: at, ohboxTidyCursor: null },
-        });
+        .values({ accountId: s.accountId, ohboxPolicy: "people_only" })
+        .onConflictDoUpdate({ target: accountSettings.accountId, set: { ohboxPolicy: "people_only" } });
+      await requestPass(db, accountPass("ohbox_tidy", s.accountId), at);
     },
 
     async seedRule(o) {

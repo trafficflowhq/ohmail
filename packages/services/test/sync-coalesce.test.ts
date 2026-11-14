@@ -42,7 +42,7 @@ async function addMessage(db: Db, accountId: string, mailboxId: string, subject:
     accountId, mailboxId, bodyHash: "h", dedupKey: randomUUID(), subject, fromAddress: "f@x.example",
   }).returning();
   await db.insert(folderState).values({
-    messageId: m.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+    messageId: m.id, accountId: m.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
   });
   return m.id;
 }

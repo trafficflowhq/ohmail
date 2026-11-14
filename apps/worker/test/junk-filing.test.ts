@@ -506,13 +506,13 @@ describe("junk-filing — an automatic impersonation filing keeps the pile", () 
         nativeLocator: { folder: "ohmail/Screener", ref: `1:${n}` },
       }).returning();
       await db.insert(folderState).values({
-        messageId: m!.id, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
+        messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/Screener", observedFolder: "ohmail/Screener",
         lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
       });
       await db.insert(messageInstances).values({
         accountId, mailboxId: mb!.id, messageId: m!.id, folder: "ohmail/Screener", uidvalidity: 1n, uid: n, isPrimary: true,
       });
-      await db.insert(messageBodies).values({ messageId: m!.id, text: "the letter's own words" });
+      await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "the letter's own words" });
       return m!.id;
     };
     const phish = await held("Metanet", "billing@hosting-renewals.example", "Metanet");

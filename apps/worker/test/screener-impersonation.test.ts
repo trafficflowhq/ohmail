@@ -53,7 +53,7 @@ describe("the organizer files a held impersonation to Spam on its own", () => {
       accountId, provider: "imap", address: me, status: "connected", createdAt: new Date(Date.now() - 30 * DAY),
       ...(o.role ? { organizerRole: o.role } : {}),
     }).returning();
-    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+    await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
     // 'all_time' so the cutline admits a fixture letter whatever its date.
     await db.insert(accountSettings).values({ accountId, screeningScope: "all_time" });
     return { accountId, mailboxId: mb!.id, me };
@@ -77,14 +77,14 @@ describe("the organizer files a held impersonation to Spam on its own", () => {
       nativeLocator: { folder: SCREENER, ref: `1:${n}` }, ...at,
     }).returning();
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: SCREENER, observedFolder: SCREENER,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: SCREENER, observedFolder: SCREENER,
       lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     await db.insert(messageInstances).values({
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: SCREENER, uidvalidity: 1n, uid: n, isPrimary: true,
     });
     await db.insert(messageBodies).values({
-      messageId: m!.id, text: "Aufgrund einer ausstehenden Zahlung",
+      messageId: m!.id, accountId: m!.accountId, text: "Aufgrund einer ausstehenden Zahlung",
       headers: {
         "list-unsubscribe": ["<https://lure.example/u?t=abc>"],
         "list-unsubscribe-post": ["List-Unsubscribe=One-Click"],
@@ -108,7 +108,7 @@ describe("the organizer files a held impersonation to Spam on its own", () => {
       accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: "Sent", uidvalidity: 7n, uid: n, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
   }
 
@@ -182,7 +182,7 @@ describe("the organizer files a held impersonation to Spam on its own", () => {
           accountId: w.accountId, mailboxId: w.mailboxId, messageId: m!.id, folder: "Sent", uidvalidity: 7n, uid: uid++, isPrimary: true,
         });
         await db.insert(folderState).values({
-          messageId: m!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+          messageId: m!.id, accountId: m!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
         });
       }],
     ];

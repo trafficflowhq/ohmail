@@ -203,7 +203,7 @@ describe("the first import's start and finish, on the standalone door", () => {
       isPrimary: true,
     });
     await s.db.insert(messageBodies).values({
-      messageId: m!.id, text: "", html: null, headers: {},
+      messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {},
     });
   }
 

@@ -94,8 +94,8 @@ describe("the store open before it serves", () => {
     await first.db.execute(sql`insert into messages (account_id, mailbox_id, body_hash, dedup_key, subject, from_address, date, to_addresses, cc_addresses, native_locator)
       select ${accountId}, ${mailboxId}, 'h', 'launch:' || g, 'subject ' || g, 'a@mail.example', now(), '[]'::jsonb, '[]'::jsonb, '{"folder":"INBOX","ref":"1:1"}'::jsonb
       from generate_series(1, 300) g`);
-    await first.db.execute(sql`insert into message_bodies (message_id, text) select id, 'body' from messages`);
-    await first.db.execute(sql`insert into folder_state (message_id, desired_folder, observed_folder, last_set_by) select id, 'INBOX', 'INBOX', 'us' from messages`);
+    await first.db.execute(sql`insert into message_bodies (message_id, account_id, text) select id, account_id, 'body' from messages`);
+    await first.db.execute(sql`insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by) select id, account_id, 'INBOX', 'INBOX', 'us' from messages`);
     await first.close();
     const seen: string[] = [];
     for (const name of ["query", "exec"] as const) {

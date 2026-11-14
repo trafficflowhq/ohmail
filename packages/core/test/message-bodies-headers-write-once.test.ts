@@ -6,15 +6,14 @@ import { describe, expect, it } from "vitest";
 import { bracketSpan, lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
 
 /**
- * `message_bodies.headers` IS WRITTEN BY THE INGEST INSERT, AND AFTER IT ONLY IN ONE MODULE. The
- * Screener auto-apply pass marks a held row whose strong-bulk floor read null and never reads it
- * again; the floor is a function of five header values, so a header rewrite would leave a row
- * skipped that now qualifies. A letter gone from the server has its block cut down, and gets it
- * back whole when it returns (`gone-letter-headers.ts`): that restore withdraws the mark in the
- * same function. So: every `update(messageBodies).set({…})` outside {@link HEADER_DOOR} carries no
- * `headers` key, every `insert(messageBodies)` ends in `onConflictDoNothing` (never
- * `onConflictDoUpdate`), no raw `update message_bodies` names it, and inside the door a write that
- * is not the cut (`goneLetterHeaders(…)`) sits beside `screenerFloorVersion: null`.
+ * `message_bodies.headers` IS WRITTEN BY THE INGEST INSERT, AND AFTER IT ONLY IN ONE MODULE.
+ * Readers take a stored block as what the letter arrived with. A letter gone from the server has
+ * its block cut down, and gets it back whole when it returns (`gone-letter-headers.ts`). So: every
+ * `update(messageBodies).set({…})` outside {@link HEADER_DOOR} carries no `headers` key, every
+ * `insert(messageBodies)` ends in `onConflictDoNothing` (never `onConflictDoUpdate`), no raw
+ * `update message_bodies` names it, and the door holds exactly two writes: the cut
+ * (`goneLetterHeaders(…)`) and the restore. (The restore once withdrew the Screener floor mark
+ * beside it; the mark's column went with mail 0201.)
  */
 
 /** The one module that may write a stored header map after ingest. */
@@ -80,20 +79,18 @@ export function headerWrites(name: string, src: string): { findings: Finding[]; 
 }
 
 /**
- * Inside {@link HEADER_DOOR}: every `update(messageBodies).set({ headers })` that is not the cut —
- * a direct `goneLetterHeaders(…)` call — is a restore, and its function must also run
- * `update(folderState).set({ screenerFloorVersion: null })`. Returns the refusals and how many
- * header writes it read.
+ * Inside {@link HEADER_DOOR}: the `update(messageBodies).set({ headers })` writes, told apart as
+ * the cut (a direct `goneLetterHeaders(…)` call) and the restore.
  */
-export function doorFindings(name: string, src: string): { findings: Finding[]; writes: number } {
+export function doorFindings(name: string, src: string): { cuts: number; restores: number; writes: number } {
   const sf = ts.createSourceFile(name, src, ts.ScriptTarget.Latest, true);
-  const findings: Finding[] = [];
-  let writes = 0;
-  /** The `.set({…})` object of an `update(<table>)` chain this call heads, or null. */
-  const setOf = (call: ts.CallExpression, table: string): ts.ObjectLiteralExpression | null => {
+  let cuts = 0;
+  let restores = 0;
+  /** The `.set({…})` object of an `update(messageBodies)` chain this call heads, or null. */
+  const setOf = (call: ts.CallExpression): ts.ObjectLiteralExpression | null => {
     const arg = call.arguments[0];
     if (!ts.isPropertyAccessExpression(call.expression) || call.expression.name.text !== "update") return null;
-    if (!arg || !ts.isIdentifier(arg) || arg.text !== table) return null;
+    if (!arg || !ts.isIdentifier(arg) || arg.text !== "messageBodies") return null;
     let node: ts.Node = call;
     while (ts.isPropertyAccessExpression(node.parent) && ts.isCallExpression(node.parent.parent)) {
       const next = node.parent.parent;
@@ -105,44 +102,19 @@ export function doorFindings(name: string, src: string): { findings: Finding[]; 
     }
     return null;
   };
-  const prop = (obj: ts.ObjectLiteralExpression, key: string): ts.ObjectLiteralElementLike | undefined =>
-    obj.properties.find((p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === key);
-  const visitFn = (fn: ts.Node): void => {
-    const restores: ts.Node[] = [];
-    let withdraws = false;
-    const walk = (n: ts.Node): void => {
-      if (n !== fn && ts.isFunctionLike(n)) return;
-      if (ts.isCallExpression(n)) {
-        const bodies = setOf(n, "messageBodies");
-        const headers = bodies ? prop(bodies, "headers") : undefined;
-        if (headers) {
-          writes++;
-          const cut = ts.isPropertyAssignment(headers) && ts.isCallExpression(headers.initializer)
-            && ts.isIdentifier(headers.initializer.expression) && headers.initializer.expression.text === "goneLetterHeaders";
-          if (!cut) restores.push(headers);
-        }
-        const floor = setOf(n, "folderState");
-        const version = floor ? prop(floor, "screenerFloorVersion") : undefined;
-        if (version && ts.isPropertyAssignment(version) && version.initializer.kind === ts.SyntaxKind.NullKeyword) withdraws = true;
-      }
-      n.forEachChild(walk);
-    };
-    fn.forEachChild(walk);
-    if (!withdraws) {
-      for (const r of restores) {
-        findings.push({
-          at: `${name}:${sf.getLineAndCharacterOfPosition(r.getStart()).line + 1}`,
-          why: "a restore of message_bodies.headers that does not withdraw the Screener floor mark",
-        });
+  const visit = (n: ts.Node): void => {
+    if (ts.isCallExpression(n)) {
+      const headers = setOf(n)?.properties.find((p) => p.name !== undefined && ts.isIdentifier(p.name) && p.name.text === "headers");
+      if (headers) {
+        const cut = ts.isPropertyAssignment(headers) && ts.isCallExpression(headers.initializer)
+          && ts.isIdentifier(headers.initializer.expression) && headers.initializer.expression.text === "goneLetterHeaders";
+        if (cut) cuts++; else restores++;
       }
     }
-  };
-  const visit = (n: ts.Node): void => {
-    if (ts.isFunctionLike(n)) visitFn(n);
     n.forEachChild(visit);
   };
   visit(sf);
-  return { findings, writes };
+  return { cuts, restores, writes: cuts + restores };
 }
 
 describe("message_bodies.headers is written once", () => {
@@ -160,7 +132,7 @@ describe("message_bodies.headers is written once", () => {
         // In the door an update may set the block; every other shape is refused there too.
         all.push(...r.findings.filter((f) => f.why !== "an update sets message_bodies.headers"));
         const door = doorFindings(rel, text);
-        all.push(...door.findings);
+        expect({ cuts: door.cuts, restores: door.restores }, "the door's two writes").toEqual({ cuts: 1, restores: 1 });
         doorWrites += door.writes;
       }
     }
@@ -189,24 +161,20 @@ describe("message_bodies.headers is written once", () => {
     expect(r.findings).toEqual([]);
   });
 
-  it("refuses a header write outside the door, and a restore in it that leaves the floor mark", () => {
+  it("refuses a header write outside the door, and tells the door's cut from its restore", () => {
     const cut = "await tx.update(messageBodies).set({ headers: goneLetterHeaders(stored) }).where(x);";
     expect(headerWrites("packages/core/src/elsewhere.ts", cut).findings, "a cut outside the door").toHaveLength(1);
-    const restore = (withdrawal: string) => `
+    const door = `
       export async function restoreLetterHeaders(tx, accountId, messageId, headers) {
         await tx.update(messageBodies).set({ headers: { ...headers } }).where(x);
-        ${withdrawal}
       }
       export async function reduceGoneHeaders(tx, accountId, messageId) {
         await tx.update(messageBodies).set({ headers: goneLetterHeaders(stored) }).where(x);
       }`;
-    const bare = doorFindings(HEADER_DOOR, restore(""));
-    expect(bare.writes).toBe(2);
-    expect(bare.findings.map((f) => f.why)).toEqual(["a restore of message_bodies.headers that does not withdraw the Screener floor mark"]);
-    // A withdrawal of another column, or in another function, is no withdrawal.
-    expect(doorFindings(HEADER_DOOR, restore("await tx.update(folderState).set({ screenerFloorVersion: 1 }).where(x);")).findings).toHaveLength(1);
-    expect(doorFindings(HEADER_DOOR, `${restore("")}
-      async function elsewhere(tx) { await tx.update(folderState).set({ screenerFloorVersion: null }).where(x); }`).findings).toHaveLength(1);
-    expect(doorFindings(HEADER_DOOR, restore("await tx.update(folderState).set({ screenerFloorVersion: null }).where(x);")).findings).toEqual([]);
+    expect(doorFindings(HEADER_DOOR, door)).toEqual({ cuts: 1, restores: 1, writes: 2 });
+    // A second restore, or a write that is no header write, is counted as what it is.
+    expect(doorFindings(HEADER_DOOR, `${door}
+      async function again(tx) { await tx.update(messageBodies).set({ headers: {} }).where(x); }`).restores).toBe(2);
+    expect(doorFindings(HEADER_DOOR, "await tx.update(messageBodies).set({ text: '' }).where(x);").writes).toBe(0);
   });
 });

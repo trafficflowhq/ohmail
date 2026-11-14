@@ -1,3 +1,4 @@
+import { accountOfMessage } from "@trafficflow/db";
 import { describe, it, expect } from "vitest";
 import { randomUUID } from "node:crypto";
 import { accounts, mailboxes, messageBodies, messages } from "@trafficflow/db";
@@ -48,7 +49,7 @@ async function seeded(): Promise<{ ctx: ServiceContext; own: string }> {
       fromAddress: own, subject: "a note", date: at,
       nativeLocator: { folder: "Sent Messages", uid: 1 }, snippet: "",
     }).returning({ id: messages.id });
-    await db.insert(messageBodies).values({ messageId: m!.id, headers });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: accountOfMessage(m!.id), headers });
   };
 
   // A person, with NO `cc` — the absent-header case the projection has to preserve: an absent

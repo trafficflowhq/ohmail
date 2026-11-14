@@ -100,6 +100,28 @@ export function parseJournalObjects(
     while ((m = conRe.exec(sql))) checks.add(m[1]!);
   }
 
+  // WHAT A LATER ENTRY DROPPED IS NOT THERE: no marker may name it, and a facet whose every column
+  // is gone asks for none. (An object dropped and made again by one entry is replaced, not gone.)
+  const { gone } = droppedByTheJournal(journal);
+  for (const key of gone) {
+    const [kind, name] = key.split(" ") as [string, string];
+    if (kind === "index") indexes.delete(name);
+    else if (kind === "constraint") checks.delete(name);
+    else if (kind === "table") {
+      tables.delete(name);
+      for (const col of [...columns]) if (col.startsWith(`${name}.`)) columns.delete(col);
+      for (const [facet, f] of [...colFacets]) if (f.table === name) colFacets.delete(facet);
+    } else if (kind === "column") {
+      columns.delete(name);
+      const [table, col] = name.split(".") as [string, string];
+      for (const [facet, f] of [...colFacets]) {
+        if (f.table !== table || !f.cols.includes(col)) continue;
+        f.cols = f.cols.filter((c) => c !== col);
+        if (f.cols.length === 0) colFacets.delete(facet);
+      }
+    }
+  }
+
   return { columns, tables, indexes, checks, colToTag, colFacets };
 }
 
@@ -141,6 +163,86 @@ export const validateOnlySql = (text: string): boolean => {
   return stmts.length > 0
     && stmts.every((t) => /^ALTER TABLE "[a-z_]+" VALIDATE CONSTRAINT "[a-z0-9_]+"$/i.test(t));
 };
+
+/** One object an entry makes or drops: `index messages_x_idx`, `column mailboxes.kickstart_at`. */
+interface NamedObject { key: string; table: string | null }
+
+/**
+ * WHAT ONE ENTRY MAKES AND WHAT IT DROPS, by name. Read per `;`-cut statement, so an `ALTER TABLE`
+ * with several clauses gives each clause its table. `IF EXISTS` and `IF NOT EXISTS` forms count: a
+ * guarded drop is still a drop on every store that had the object.
+ */
+export function entryObjects(text: string): { made: NamedObject[]; dropped: NamedObject[] } {
+  const id = "[A-Za-z0-9_]+";
+  const made: NamedObject[] = [];
+  const dropped: NamedObject[] = [];
+  const all = (s: string, re: RegExp): RegExpMatchArray[] => [...s.matchAll(re)];
+  for (const stmt of stripLineComments(text).split(";")) {
+    const table = new RegExp(`(?:ALTER|CREATE) TABLE (?:ONLY )?(?:IF (?:NOT )?EXISTS )?"(${id})"`, "i").exec(stmt)?.[1] ?? null;
+    const on = new RegExp(`\\bON (?:ONLY )?(?:"?public"?\\.)?"?(${id})"?`, "i").exec(stmt)?.[1] ?? null;
+    const created = new RegExp(`CREATE TABLE (?:IF NOT EXISTS )?"(${id})"\\s*\\(([\\s\\S]*)`, "i").exec(stmt);
+    if (created) {
+      made.push({ key: `table ${created[1]}`, table: created[1]! });
+      for (const line of created[2]!.split("\n")) {
+        const col = new RegExp(`^\\s*"(${id})"\\s+(?!CHECK)`, "i").exec(line);
+        if (col) made.push({ key: `column ${created[1]}.${col[1]}`, table: created[1]! });
+      }
+    }
+    for (const m of all(stmt, new RegExp(`ADD COLUMN (?:IF NOT EXISTS )?"(${id})"`, "gi"))) made.push({ key: `column ${table}.${m[1]}`, table });
+    for (const m of all(stmt, new RegExp(`(?:ADD )?CONSTRAINT "(${id})"\\s+(?:CHECK|FOREIGN KEY|UNIQUE|PRIMARY KEY)`, "gi"))) made.push({ key: `constraint ${m[1]}`, table });
+    for (const m of all(stmt, new RegExp(`CREATE (?:UNIQUE )?INDEX (?:CONCURRENTLY )?(?:IF NOT EXISTS )?"(${id})"`, "gi"))) made.push({ key: `index ${m[1]}`, table: on });
+    for (const m of all(stmt, new RegExp(`CREATE (?:OR REPLACE )?FUNCTION\\s+(?:public\\.)?"?(${id})"?\\s*\\(`, "gi"))) made.push({ key: `function ${m[1]}`, table: null });
+    for (const m of all(stmt, new RegExp(`CREATE (?:OR REPLACE )?(?:CONSTRAINT )?TRIGGER\\s+"?(${id})"?`, "gi"))) made.push({ key: `trigger ${m[1]}`, table: on });
+    for (const m of all(stmt, new RegExp(`DROP TABLE (?:IF EXISTS )?"(${id})"`, "gi"))) dropped.push({ key: `table ${m[1]}`, table: m[1]! });
+    for (const m of all(stmt, new RegExp(`DROP COLUMN (?:IF EXISTS )?"(${id})"`, "gi"))) dropped.push({ key: `column ${table}.${m[1]}`, table });
+    for (const m of all(stmt, new RegExp(`DROP CONSTRAINT (?:IF EXISTS )?"(${id})"`, "gi"))) dropped.push({ key: `constraint ${m[1]}`, table });
+    for (const m of all(stmt, new RegExp(`DROP INDEX (?:CONCURRENTLY )?(?:IF EXISTS )?"(${id})"`, "gi"))) dropped.push({ key: `index ${m[1]}`, table: null });
+    for (const m of all(stmt, new RegExp(`DROP FUNCTION (?:IF EXISTS )?(?:public\\.)?"?(${id})"?`, "gi"))) dropped.push({ key: `function ${m[1]}`, table: null });
+    for (const m of all(stmt, new RegExp(`DROP TRIGGER (?:IF EXISTS )?"?(${id})"?`, "gi"))) dropped.push({ key: `trigger ${m[1]}`, table: null });
+  }
+  return { made, dropped };
+}
+
+/**
+ * THE OBJECTS A LATER ENTRY TOOK AWAY, and the entries they leave with nothing to prove. An object
+ * is gone when the last entry that drops it stands after the last entry that makes it (a drop and
+ * a re-creation in one entry is a replacement, not a drop); a dropped table takes its columns,
+ * indexes, constraints and triggers with it. An entry is `retired` when it made something and all
+ * of it is gone: no catalog object records it any more, so no marker can.
+ */
+export function droppedByTheJournal(journal: JournalSpec): { gone: Set<string>; retired: Set<string> } {
+  const entries = readJournalOf(journal).map((e) => ({ tag: e.tag, ...entryObjects(readFileSync(join(journal.dir, `${e.tag}.sql`), "utf8")) }));
+  const lastMade = new Map<string, number>();
+  const lastDropped = new Map<string, number>();
+  const tableOf = new Map<string, string | null>();
+  entries.forEach((e, i) => {
+    for (const o of e.made) { lastMade.set(o.key, i); tableOf.set(o.key, o.table); }
+    for (const o of e.dropped) lastDropped.set(o.key, i);
+  });
+  const gone = new Set<string>();
+  for (const [key, at] of lastMade) {
+    const own = lastDropped.get(key) ?? -1;
+    const table = tableOf.get(key) ?? null;
+    const withTable = table === null || key === `table ${table}` ? -1 : (lastDropped.get(`table ${table}`) ?? -1);
+    if (Math.max(own, withTable) > at) gone.add(key);
+  }
+  const retired = new Set(entries.filter((e) => e.made.length > 0 && e.made.every((o) => gone.has(o.key))).map((e) => e.tag));
+  return { gone, retired };
+}
+
+/** The markers that probe an object the journal has dropped: each would hold `/health` at 503 for ever. */
+export function markersOfDroppedObjects(journal: JournalSpec, markers: MarkerSet): string[] {
+  const { gone } = droppedByTheJournal(journal);
+  return [
+    ...markers.columns.filter(([t, c]) => gone.has(`column ${t}.${c}`)).map(([t, c]) => `column ${t}.${c}`),
+    ...markers.types.filter(([t, c]) => gone.has(`column ${t}.${c}`)).map(([t, c]) => `type ${t}.${c}`),
+    ...markers.indexes.filter(([n]) => gone.has(`index ${n}`)).map(([n]) => `index ${n}`),
+    ...markers.checks.filter((n) => gone.has(`constraint ${n}`)).map((n) => `check ${n}`),
+    ...markers.definitions.filter(([n]) => gone.has(`constraint ${n}`)).map(([n]) => `definition ${n}`),
+    ...markers.foreignKeys.filter(([n]) => gone.has(`constraint ${n}`)).map(([n]) => `fk ${n}`),
+    ...markers.functions.filter(([n]) => gone.has(`function ${n}`)).map(([n]) => `function ${n}`),
+  ];
+}
 
 /** A migration the census cannot prove: data-only or validate-only. The anti-drift gate's rule. */
 export const unprobeableSql = (text: string): boolean => dataOnlySql(text) || validateOnlySql(text);
@@ -187,7 +289,9 @@ export function pinsByMigration(
   const sqlOf = new Map([...raw].map(([tag, text]) => [tag, stripLineComments(text)]));
   const tags = entries.map((e) => e.tag);
   const pins = new Map<string, string[]>();
-  for (const tag of tags) if (!unprobeableSql(raw.get(tag)!)) pins.set(tag, []);
+  // An entry whose every object a later entry dropped has nothing left to probe (`droppedByTheJournal`).
+  const { retired } = droppedByTheJournal(journal);
+  for (const tag of tags) if (!unprobeableSql(raw.get(tag)!) && !retired.has(tag)) pins.set(tag, []);
   const idle: string[] = [];
   const pin = (label: string, hits: string[]): void => {
     const provable = hits.filter((tag) => pins.has(tag));

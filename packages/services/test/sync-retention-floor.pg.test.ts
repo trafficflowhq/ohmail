@@ -66,7 +66,7 @@ async function commitMessage(
       nativeLocator: { folder: "INBOX", ref: `1:${tag}` },
     }).returning();
     await tx.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us",
     });
     await recordChange(tx, {
       accountId, entityType: "message", entityId: m!.id, op: "create", meta: null,

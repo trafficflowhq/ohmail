@@ -183,7 +183,7 @@ describe("the standalone door writes read-state back to the mailbox", () => {
       isPrimary: true,
     });
     await sidecar.db.insert(folderState).values({
-      messageId: m!.id,
+      messageId: m!.id, accountId: m!.accountId,
       desiredFolder: folder,
       observedFolder: folder,
       lastSetBy: "external",

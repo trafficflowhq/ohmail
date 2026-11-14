@@ -1,3 +1,4 @@
+import { accountOfMailbox } from "@trafficflow/db";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
 import postgres from "postgres";
@@ -121,7 +122,7 @@ describe.skipIf(!AVAILABLE)("env credential bootstrap refuses a tombstone", () =
   it("still never overwrites a DB credential row that already exists", async () => {
     const { mailboxId } = await seed("connected");
     await db.insert(mailboxCredentials).values({
-      mailboxId, transport: "imap", secretEnc: "enc:already-here", keyVersion: 1,
+      mailboxId, accountId: accountOfMailbox(mailboxId), transport: "imap", secretEnc: "enc:already-here", keyVersion: 1,
     });
 
     await bootstrapEnvCreds(db as never, KP, { mailboxId, imap: ENV_IMAP, smtp: ENV_SMTP });

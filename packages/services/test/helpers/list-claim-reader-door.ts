@@ -71,9 +71,9 @@ export async function readerDoorWorld(db: Db, o: { capabilities?: string; claim?
       senderCheck: o.unchecked ? null : brand === null ? "none" : "impersonation",
       date, unread: true, createdAt: date, nativeLocator: { folder, ref: `1:${randomUUID().slice(0, 6)}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: folder, observedFolder: folder, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     return m!.id;
   };

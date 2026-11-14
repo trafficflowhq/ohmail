@@ -104,7 +104,7 @@ describe("migration 0002 round-trip — every new table persists (PGlite)", () =
     const { messageId } = await seedMailbox(db);
 
     const [th] = await db.insert(threads).values({ accountId: ACCT, subject: "T" }).returning();
-    const [body] = await db.insert(messageBodies).values({ messageId, text: "hello", headers: {} }).returning();
+    const [body] = await db.insert(messageBodies).values({ messageId, accountId: ACCT, text: "hello", headers: {} }).returning();
     const [rd] = await db.insert(routingDecisions).values({
       accountId: ACCT, messageId, inputProvenance: "ai", destination: "INBOX", confidence: 0.9, status: "pending_approval",
     }).returning();

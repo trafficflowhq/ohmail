@@ -284,7 +284,7 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
           accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(),
           subject: "recount", date: new Date(Date.UTC(2026, month, 20)),
         }).returning();
-        await t.insert(messageBodies).values({ messageId: m!.id, text: "r".repeat(size), html: null, headers: {} });
+        await t.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "r".repeat(size), html: null, headers: {} });
       });
     }
     await owned.db.transaction(async (tx) =>
@@ -295,7 +295,7 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
       accountId: w.accountId, mailboxId: w.mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(),
       subject: "recount", date: new Date(Date.UTC(2026, 6, 20)),
     }).returning();
-    await owned.db.insert(messageBodies).values({ messageId: late!.id, text: "", html: null, headers: {}, withheldReason: "storage_cap" });
+    await owned.db.insert(messageBodies).values({ messageId: late!.id, accountId: late!.accountId, text: "", html: null, headers: {}, withheldReason: "storage_cap" });
     // The counter wrong in every fact it keeps; the month later than the newest letter the trim emptied.
     await owned.db.update(accountStorage).set({ bytes: 5_777, huskedForSpace: 9, keptFrom: "2026-06-01", withheldOnArrival: 5 })
       .where(eq(accountStorage.accountId, w.accountId));
@@ -525,7 +525,7 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
           dedupKey: randomUUID(), subject: "racing the recompute",
         }).returning();
         await (tx as never as typeof owned.db).insert(messageBodies)
-          .values({ messageId: m!.id, text: BODY, html: null, headers: {} });
+          .values({ messageId: m!.id, accountId: m!.accountId, text: BODY, html: null, headers: {} });
         locked!();
         await held;             // keep the lock until the recompute is provably waiting on it
       });
@@ -602,7 +602,7 @@ describe.skipIf(!AVAILABLE)("the storage cap against real Postgres", () => {
         accountId, mailboxId, bodyHash: randomUUID(), dedupKey: randomUUID(), subject: "erase race",
         date: new Date(NOW.getTime() - daysAgo * 86_400_000),
       }).returning();
-      await t.insert(messageBodies).values({ messageId: m!.id, text: BODY, html: null, headers: {} });
+      await t.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: BODY, html: null, headers: {} });
       return m!.id;
     }
     async function letters(accountId: string, mailboxId: string, n: number, daysAgo: number): Promise<void> {

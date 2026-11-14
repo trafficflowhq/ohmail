@@ -37,7 +37,7 @@ describe("reconcile-on-restart (crash-safety)", () => {
         await c.messageCopy([uid], "ohmail.News", { uid: true }); await c.messageDelete([uid], { uid: true });
       });
     } finally { lock.release(); }
-    await h.db.insert(folderState).values({ messageId: msg.id, desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" })
+    await h.db.insert(folderState).values({ messageId: msg.id, accountId: msg.accountId, desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" })
       .onConflictDoUpdate({ target: folderState.messageId, set: { desiredFolder: "ohmail/News", observedFolder: "INBOX", lastSetBy: "us", reconcileStatus: "pending" } });
 
     // RESTART

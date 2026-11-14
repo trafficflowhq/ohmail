@@ -33,7 +33,7 @@ async function world(rule: string | null) {
     await db.insert(rules).values({ accountId, kind: "domain", match: rule, destination: "INBOX", provenance: "manual", enabled: true });
   }
   // One Sent copy, so a message citing it takes the reply arm.
-  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
+  await db.insert(mailboxFolders).values({ mailboxId: mb!.id, accountId: mb!.accountId, folder: "Sent", uidvalidity: 7n, uidnext: 100n });
   const [sent] = await db.insert(messages).values({
     accountId, mailboxId: mb!.id, bodyHash: "h", dedupKey: `sent:${randomUUID()}`, subject: "Liste", fromAddress: me,
     messageIdHeader: "s-1@own.invalid", date: WROTE, arrivedAt: WROTE,
@@ -41,9 +41,9 @@ async function world(rule: string | null) {
   }).returning();
   await db.insert(messageInstances).values({ accountId, mailboxId: mb!.id, messageId: sent!.id, folder: "Sent", uidvalidity: 7n, uid: 1, isPrimary: true });
   await db.insert(folderState).values({
-    messageId: sent!.id, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+    messageId: sent!.id, accountId: sent!.accountId, desiredFolder: "Sent", observedFolder: "Sent", lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
   });
-  await db.insert(messageBodies).values({ messageId: sent!.id, text: "hi", headers: {} });
+  await db.insert(messageBodies).values({ messageId: sent!.id, accountId: sent!.accountId, text: "hi", headers: {} });
   const fleet = new FakeAdapterFleet();
   const adapter = fleet.factory({ host: "h", port: 143, secure: false, auth: { user: "u", pass: "p" } },
     { accountId, mailboxId: mb!.id, onConnectionError: () => { /* nothing dials */ } });

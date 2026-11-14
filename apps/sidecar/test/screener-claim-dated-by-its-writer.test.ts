@@ -50,9 +50,9 @@ async function world(o: { baselineAt: Date; dormancyDays?: number; importDoneAt:
       date: r.date, arrivedAt: r.arrivedAt, unread: r.unread ?? false, createdAt: r.recordedAt,
       nativeLocator: { folder: GATE, ref: `1:${++n}` },
     }).returning();
-    await db.insert(messageBodies).values({ messageId: m!.id, text: "", html: null, headers: {} });
+    await db.insert(messageBodies).values({ messageId: m!.id, accountId: m!.accountId, text: "", html: null, headers: {} });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: GATE, observedFolder: GATE, lastSetBy: "us", reconcileStatus: "reconciled", conflict: false,
     });
     ids.set(r.from, m!.id);
   };

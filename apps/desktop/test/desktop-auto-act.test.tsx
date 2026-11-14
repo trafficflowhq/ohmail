@@ -110,8 +110,7 @@ function engine(): void {
         impersonationOn = said.impersonationFiling;
       }
       return encode(200, JSON.stringify({
-        ohboxPolicy: peopleOnly ? "people_only" : "people_and_replied", ohboxBar: null, defaultBar: "x", screenerAutoApply: false,
-        ...(impersonationOn === undefined ? {} : { impersonationFiling: impersonationOn }),
+        ohboxPolicy: peopleOnly ? "people_only" : "people_and_replied", ohboxBar: null, defaultBar: "x",        ...(impersonationOn === undefined ? {} : { impersonationFiling: impersonationOn }),
       }));
     },
   };

@@ -79,12 +79,12 @@ async function seed(acct: string, n: number): Promise<void> {
       case when g % 50 = 3 then jsonb_build_array(jsonb_build_object('name', 'Mid', 'address', ${MID}::text)) else '[]'::jsonb end
     from generate_series(1, ${n}) g`);
   await base.execute(sql`
-    insert into message_bodies (message_id, text)
-    select m.id, ${aWords(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
+    insert into message_bodies (message_id, account_id, text)
+    select m.id, m.account_id, ${aWords(sql`x.g`, "b", sql`100 + (hashtext(x.g::text) & 127)`)}
     from messages m cross join lateral (select split_part(m.dedup_key, ':', 3)::int as g) x where m.account_id = ${acct}::uuid`);
   await base.execute(sql`
-    insert into folder_state (message_id, desired_folder, observed_folder, last_set_by)
-    select m.id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
+    insert into folder_state (message_id, account_id, desired_folder, observed_folder, last_set_by)
+    select m.id, m.account_id, 'INBOX', 'INBOX', 'us' from messages m where m.account_id = ${acct}::uuid`);
 }
 
 /** Every row the seeds wrote, by the fixed account ids. */

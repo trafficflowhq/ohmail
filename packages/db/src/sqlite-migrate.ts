@@ -3,10 +3,11 @@
  * server's migrator replays a directory; that cannot work here: the bundler resolves imports, not
  * directory listings, so a journal read from disk is empty on a device and complete in every
  * test. The journal arrives as a MODULE, and a test holds that module to the directory it was
- * generated from. Each entry is applied inside one transaction, with the row recording it written
- * in the SAME transaction: committing the schema change and then recording it can be interrupted
- * between the two, leaving a store that will replay a migration it already applied — loud for a
- * `CREATE TABLE`, silent duplication for an `INSERT`.
+ * generated from. EVERYTHING A STORE OWES IS ONE TRANSACTION, with the row recording each entry
+ * written in it: the entries are applied together or not at all. A store interrupted between two
+ * entries of an upgrade would open on neither release (2.0's entries take columns the 1.0 engine
+ * reads), and a schema change committed apart from its record is replayed, loud for a `CREATE
+ * TABLE`, silent duplication for an `INSERT`.
  */
 import { sql } from "drizzle-orm";
 /* THE JOURNAL'S OWN ENTRANCE, not the package barrel. The barrel computes two migration
@@ -36,9 +37,16 @@ export interface SqliteMigrationTarget {
  * WHAT AN OPEN MAY BE TOLD WHILE IT UPGRADES — narration, never load-bearing. `onEntry` is called
  * BEFORE each owed entry with how many of THIS open's owed entries are done, of how many (never the
  * journal's length), and whether the store is `fresh` (no ledger table before this open: every
- * entry is owed and nobody is waiting on a number). `onApplied` follows each commit with its cost.
+ * entry is owed and nobody is waiting on a number). `onApplied` follows the one commit, once per
+ * entry, with the time that entry's own statements took.
+ *
+ * `beforeApply` is the one that IS load-bearing: called once, after the ledger was read and
+ * before anything is written, with what this open owes. It is where a caller checks that the
+ * upgrade may begin (room for it, a copy of the store). A throw refuses the open with the store
+ * untouched. Not called when nothing is owed.
  */
 export interface SqliteMigrationHooks {
+  beforeApply?(owed: { readonly owed: readonly string[]; readonly fresh: boolean }): Promise<void>;
   onEntry?(applied: number, pending: number, name: string, fresh: boolean): void;
   onApplied?(name: string, ms: number): void;
   now?(): number;
@@ -48,7 +56,8 @@ export interface SqliteMigrationHooks {
 export const SQLITE_MIGRATIONS_TABLE = "ohmail_sqlite_migrations";
 
 /**
- * Apply every journal entry this store has not seen, oldest first; returns the ones applied. The
+ * Apply every journal entry this store has not seen, oldest first, in ONE transaction; returns the
+ * ones applied. The
  * capability check lives HERE, not beside each opener: this is the one function every opener must
  * call, so a build of SQLite that cannot run this schema is refused before a single statement —
  * rather than at the first search, where a missing full-text index otherwise surfaces. Foreign
@@ -73,61 +82,67 @@ export async function migrateSqlite(
     `SELECT name FROM sqlite_master WHERE type = 'table' AND name = '${SQLITE_MIGRATIONS_TABLE}'`,
   );
   const fresh = ledger.length === 0;
-  await target.run(
-    `CREATE TABLE IF NOT EXISTS ${SQLITE_MIGRATIONS_TABLE} (` +
-      "name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)",
-  );
-  const seen = new Set(
-    (await target.all<{ name: string }>(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`))
-      .map((r) => r.name),
-  );
-  const applied: string[] = [];
-  const owed = journal.filter((entry) => !seen.has(entry.name)).length;
+  // Read, not made: a store that owes nothing, or whose upgrade is refused, is not written to.
+  const seen = new Set(fresh ? [] : (await target.all<{ name: string }>(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE}`))
+    .map((r) => r.name));
+  const owed = journal.filter((entry) => !seen.has(entry.name));
+  if (owed.length === 0) {
+    if (fresh) await target.run(`CREATE TABLE IF NOT EXISTS ${SQLITE_MIGRATIONS_TABLE} (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`);
+    return [];
+  }
+  await hooks.beforeApply?.({ owed: owed.map((e) => e.name), fresh });
   const clock = hooks.now ?? Date.now;
-  for (const entry of journal) {
-    if (seen.has(entry.name)) continue;
-    hooks.onEntry?.(applied.length, owed, entry.name, fresh);
-    const startedAt = clock();
-    /* THE DOCUMENTED TABLE-ALTERING DANCE, and the reason every entry pays for it.
-       This store cannot ALTER a constraint, so a constraint change is a table rebuild: create,
-       copy, DROP, rename. With foreign keys ON, `DROP TABLE` performs an implicit DELETE FROM —
-       so every ON DELETE CASCADE child of the table being rebuilt loses its rows, silently, to a
-       migration. Measured on the shipped journal: a fingerprint row seeded before 0095 is gone
-       after it. The pragma is a NO-OP inside a transaction, so it is issued here, outside it. */
-    await target.run("PRAGMA foreign_keys=OFF");
+  const took: [string, number][] = [];
+  /* THE DOCUMENTED TABLE-ALTERING DANCE, once for the whole upgrade.
+     This store cannot ALTER a constraint, so a constraint change is a table rebuild: create,
+     copy, DROP, rename. With foreign keys ON, `DROP TABLE` performs an implicit DELETE FROM —
+     so every ON DELETE CASCADE child of the table being rebuilt loses its rows, silently, to a
+     migration. Measured on the shipped journal: a fingerprint row seeded before 0095 is gone
+     after it. The pragma is a NO-OP inside a transaction, so it is issued here, outside it. */
+  await target.run("PRAGMA foreign_keys=OFF");
+  try {
+    await target.run("BEGIN");
+    let running = owed[0]!.name;
     try {
-      await target.run("BEGIN");
-      try {
+      await target.run(`CREATE TABLE IF NOT EXISTS ${SQLITE_MIGRATIONS_TABLE} (name TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`);
+      for (const entry of owed) {
+        running = entry.name;
+        hooks.onEntry?.(took.length, owed.length, entry.name, fresh);
+        const startedAt = clock();
         for (const statement of entry.statements) await target.run(statement);
         await target.run(
           `INSERT INTO ${SQLITE_MIGRATIONS_TABLE} (name, applied_at) ` +
             `VALUES ('${entry.name.replace(/'/g, "''")}', CAST(unixepoch('subsec') * 1000 AS INTEGER))`,
         );
-        /* BEFORE the commit, not after: a check that runs afterwards can only report damage it
-           can no longer undo. The rows are the whole database's, because an entry that left a
-           reference dangling did not necessarily touch the table now holding it. */
-        const dangling = await target.all<Record<string, unknown>>("PRAGMA foreign_key_check");
-        if (dangling.length > 0) {
-          const where = [...new Set(dangling.map((r) => String(r.table ?? "?")))].sort().join(", ");
-          throw new Error(
-            `left ${dangling.length} dangling reference(s) in ${where} — the entry ran with ` +
-            "foreign keys off and did not put back what it took apart",
-          );
-        }
-        await target.run("COMMIT");
-      } catch (cause) {
-        await target.run("ROLLBACK").catch(() => {});
-        throw new Error(`the SQLite journal stopped at ${entry.name}: ${String(cause)}`, { cause });
+        took.push([entry.name, clock() - startedAt]);
       }
-    } finally {
-      /* Restored on EVERY exit. A throw that left them off would hand the caller a store whose
-         keys are advisory, which is worse than the migration having failed. */
-      await target.run("PRAGMA foreign_keys=ON").catch(() => {});
+      /* BEFORE the commit, not after: a check that runs afterwards can only report damage it
+         can no longer undo. Once, over the whole database: an entry that left a reference
+         dangling did not necessarily touch the table now holding it, and a later entry of the
+         same upgrade may be the one that puts it back. */
+      const dangling = await target.all<Record<string, unknown>>("PRAGMA foreign_key_check");
+      if (dangling.length > 0) {
+        const where = [...new Set(dangling.map((r) => String(r.table ?? "?")))].sort().join(", ");
+        throw new Error(
+          `left ${dangling.length} dangling reference(s) in ${where} — the entries ran with ` +
+          "foreign keys off and did not put back what they took apart",
+        );
+      }
+      await target.run("COMMIT");
+    } catch (cause) {
+      await target.run("ROLLBACK").catch(() => {});
+      throw new Error(
+        `the SQLite journal stopped at ${running} and none of the ${owed.length} entries this open owed was applied: ${String(cause)}`,
+        { cause },
+      );
     }
-    applied.push(entry.name);
-    hooks.onApplied?.(entry.name, clock() - startedAt);
+  } finally {
+    /* Restored on EVERY exit. A throw that left them off would hand the caller a store whose
+       keys are advisory, which is worse than the migration having failed. */
+    await target.run("PRAGMA foreign_keys=ON").catch(() => {});
   }
-  return applied;
+  for (const [name, ms] of took) hooks.onApplied?.(name, ms);
+  return took.map(([name]) => name);
 }
 
 /** The statement that names this store's version, for the capability check at open time. */

@@ -93,8 +93,8 @@ describe.runIf(process.env.OHMAIL_TEST_DIALECT === "sqlite")(`the phone's search
           date: new Date(Date.parse("2026-07-28T09:00:00Z") - i * 600_000), nativeLocator: { folder: "INBOX", ref: `1:${i}` },
           snippet: words.slice(0, 12).join(" "), unread: false, hasAttachments: n > 0,
         });
-        bodies.push({ messageId: id, text: words.join(" ") });
-        states.push({ messageId: id, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
+        bodies.push({ messageId: id, accountId, text: words.join(" ") });
+        states.push({ messageId: id, accountId, desiredFolder: "INBOX", observedFolder: "INBOX", lastSetBy: "us" });
         for (let f = 0; f < n; f++) files.push({ accountId, messageId: id, filename: pick(FILES), contentType: "application/pdf" });
       }
       await db.transaction(async (tx) => {

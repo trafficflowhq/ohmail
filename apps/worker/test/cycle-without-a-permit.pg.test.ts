@@ -51,7 +51,7 @@ describe.skipIf(!AVAILABLE)("a cycle composed without a permit", () => {
       accountId, messageId: m!.id, mailboxId: mb!.id, folder: "INBOX", uid: 200, uidvalidity: 1n, isPrimary: true,
     });
     await db.insert(folderState).values({
-      messageId: m!.id, desiredFolder: "ohmail/News", observedFolder: "INBOX", reconcileStatus: "pending", lastSetBy: "us",
+      messageId: m!.id, accountId: m!.accountId, desiredFolder: "ohmail/News", observedFolder: "INBOX", reconcileStatus: "pending", lastSetBy: "us",
     });
     return { accountId, mailboxId: mb!.id, messageId: m!.id };
   }

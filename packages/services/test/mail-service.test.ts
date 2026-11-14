@@ -1,3 +1,4 @@
+import { accountOfUser } from "@trafficflow/db";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { eq } from "drizzle-orm";
 import { makeTestDb } from "@trafficflow/db/testing";
@@ -720,7 +721,7 @@ describe("mail ↔ login — a mailed verification token is not a login token", 
     const { userId } = await seedUser(h.db);
     const raw = "a-raw-login-token-value";
     await h.db.insert(loginTokens).values({
-      userId, tokenHash: hashToken(raw), methods: ["webauthn"], purpose: "login",
+      userId, accountId: accountOfUser(userId), tokenHash: hashToken(raw), methods: ["webauthn"], purpose: "login",
       expiresAt: new Date(START.getTime() + 5 * 60_000),
     });
 

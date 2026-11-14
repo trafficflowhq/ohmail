@@ -55,7 +55,7 @@ async function seedScreenedOut(headers: Record<string, string[]>): Promise<{
   const messageId = await seedMessage(db, accountId, mb!.id, {
     from: "news@sender.example", folder: "ohmail/Screened",
   });
-  await db.insert(messageBodies).values({ messageId, text: "", headers: { ...CONFIRMED, ...headers } });
+  await db.insert(messageBodies).values({ messageId, accountId, text: "", headers: { ...CONFIRMED, ...headers } });
   await personScreenedOut(db, accountId, "news@sender.example");
   await db.update(folderState)
     .set({ updatedAt: new Date(NOW.getTime() - 60_000) })

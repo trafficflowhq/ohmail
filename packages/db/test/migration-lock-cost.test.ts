@@ -8,7 +8,8 @@ import { afterAll, describe, expect, it } from "vitest";
 import { PgDialect } from "drizzle-orm/pg-core";
 import * as mailSchema from "../src/schema-mail.js";
 import * as cloudSchema from "../src/schema-cloud.js";
-import { PREMIGRATION_PREBUILD_SPECS } from "../src/search-setup.js";
+import { PREMIGRATION_PREBUILD_SPECS, RETIRED_PREBUILD_SPECS } from "../src/search-setup.js";
+import { inTransitionWindow, type ServerJournal } from "../src/journal-heads.js";
 
 /**
  * THE LOCK-COST RULE, ENFORCED — the section "Lock cost on populated tables" in
@@ -42,7 +43,7 @@ const WATERMARKS = {
  * the live schema below, so a rename cannot silently unguard a table.
  */
 const MAIL_GROWTH_TABLES: readonly string[] = [
-  "attachments", "audit_log", "away_replies", "away_responder_sent", "away_sender_state",
+  "attachments", "audit_log", "away_replies", "away_sender_state",
   "change_log", "contacts", "flag_state", "folder_ops", "folder_state", "idempotency_keys",
   "junk_rescues", "learning_signals", "message_bodies", "message_failures", "message_instances",
   "message_search", "message_states", "message_tags", "messages", "outbound_send_fingerprints", "outbound_sends",
@@ -149,7 +150,9 @@ const normalized = (stmt: string): string => stmt.replace(/\s+/g, " ").trim().re
 // Through the SAME noise strip the statement passes: mail 0139's spec carries string literals
 // (`'epoch'`, `'48 hours'`), which the strip blanks in the journal statement. The literals
 // themselves are held byte-equal to the journal by `arrival-order-index.test.ts`.
-const PREBUILT = new Set(PREMIGRATION_PREBUILD_SPECS.map((spec) =>
+// A prebuild a 2.0 entry retired (`RETIRED_PREBUILD_SPECS`) still describes how its 1.0 entry was
+// written and applied: the set admitted is the one it was.
+const PREBUILT = new Set([...PREMIGRATION_PREBUILD_SPECS, ...RETIRED_PREBUILD_SPECS].map((spec) =>
   normalized(stripSqlNoise(new PgDialect().sqlToQuery(spec.ddl).sql.replace(/\bconcurrently\s+/i, "")))));
 
 /**
@@ -237,26 +240,36 @@ interface JournalReading {
   entries: { when: number; tag: string }[];
   scanned: number;
   checked: number;
+  /** Entries of the 2.0 transition's window, read and not judged. */
+  windowed: number;
   violations: Violation[];
 }
 
-/** Reads a journal dir end to end; every entry's file is read, entries past `watermark` are checked. */
-function readJournalViolations(dir: string, watermark: number, growth: ReadonlySet<string>): JournalReading {
-  const journal = JSON.parse(readFileSync(join(dir, "meta", "_journal.json"), "utf8")) as {
+/**
+ * Reads a journal dir end to end; every entry's file is read, entries past `watermark` are checked.
+ * THE ONE EXCEPTION is the 2.0 transition's window (`TRANSITION_WINDOW`): its entries run once, by
+ * one transaction, in a closed window with nothing else on the store (`src/transition/`), so a
+ * validating key or an index build there blocks nobody. An entry numbered past the window is
+ * judged again.
+ */
+function readJournalViolations(dir: string, watermark: number, growth: ReadonlySet<string>, journal: ServerJournal): JournalReading {
+  const { entries } = JSON.parse(readFileSync(join(dir, "meta", "_journal.json"), "utf8")) as {
     entries: { when: number; tag: string }[];
   };
   let scanned = 0;
   let checked = 0;
+  let windowed = 0;
   const violations: Violation[] = [];
-  for (const e of journal.entries) {
+  for (const e of entries) {
     const text = readFileSync(join(dir, `${e.tag}.sql`), "utf8");
     if (text.trim().length === 0) throw new Error(`${e.tag}.sql is empty — the scan read nothing`);
     scanned++;
     if (e.when <= watermark) continue;
+    if (inTransitionWindow(journal, e.tag)) { windowed++; continue; }
     checked++;
     violations.push(...lockCostViolations(`${e.tag}.sql`, text, growth));
   }
-  return { entries: journal.entries, scanned, checked, violations };
+  return { entries, scanned, checked, windowed, violations };
 }
 
 const describeViolations = (v: Violation[]) =>
@@ -274,22 +287,22 @@ describe("migration lock cost — pg journals only", () => {
   });
 
   it("each watermark is a shipped entry of its journal, not an invented number", () => {
-    for (const [dir, mark] of [[MAIL_DIR, WATERMARKS.mail], [CLOUD_DIR, WATERMARKS.cloud]] as const) {
-      const { entries } = readJournalViolations(dir, Number.MAX_SAFE_INTEGER, GROWTH);
+    for (const [dir, mark, name] of [[MAIL_DIR, WATERMARKS.mail, "mail"], [CLOUD_DIR, WATERMARKS.cloud, "cloud"]] as const) {
+      const { entries } = readJournalViolations(dir, Number.MAX_SAFE_INTEGER, GROWTH, name);
       const hit = entries.find((e) => e.when === mark.when);
       expect(hit?.tag, `no entry at when=${mark.when} in ${dir}`).toBe(mark.tag);
     }
   });
 
   it("mail journal: every entry past the watermark is lock-cheap on growth tables", () => {
-    const r = readJournalViolations(MAIL_DIR, WATERMARKS.mail.when, GROWTH);
+    const r = readJournalViolations(MAIL_DIR, WATERMARKS.mail.when, GROWTH, "mail");
     expect(r.scanned).toBe(r.entries.length);
     expect(r.entries.length).toBeGreaterThanOrEqual(120);
     expect(r.violations, describeViolations(r.violations)).toEqual([]);
   });
 
   it("cloud journal: every entry past the watermark is lock-cheap on growth tables", () => {
-    const r = readJournalViolations(CLOUD_DIR, WATERMARKS.cloud.when, GROWTH);
+    const r = readJournalViolations(CLOUD_DIR, WATERMARKS.cloud.when, GROWTH, "cloud");
     expect(r.scanned).toBe(r.entries.length);
     expect(r.entries.length).toBeGreaterThanOrEqual(25);
     expect(r.violations, describeViolations(r.violations)).toEqual([]);
@@ -312,10 +325,31 @@ describe("migration lock cost — pg journals only", () => {
       writeFileSync(join(tmp, "9999_synthetic.sql"),
         `ALTER TABLE "messages" ADD CONSTRAINT "m_fk" FOREIGN KEY ("thread_id","account_id")` +
         ` REFERENCES "threads"("id","account_id");\n`);
-      const r = readJournalViolations(tmp, WATERMARKS.mail.when, GROWTH);
+      const r = readJournalViolations(tmp, WATERMARKS.mail.when, GROWTH, "mail");
       expect(r.checked).toBe(1);
       expect(r.violations.map((v) => v.clazz)).toEqual(["validating-fk"]);
       expect(r.violations[0]!.table).toBe("messages");
+    });
+
+    it("the same statement inside the 2.0 transition's window is admitted, and one entry past it refuses", () => {
+      const dir = join(tmp, "window");
+      mkdirSync(join(dir, "meta"), { recursive: true });
+      const fk = `ALTER TABLE "messages" ADD CONSTRAINT "m_fk" FOREIGN KEY ("thread_id","account_id")` +
+        ` REFERENCES "threads"("id","account_id");\n`;
+      writeFileSync(join(dir, "meta", "_journal.json"), JSON.stringify({
+        entries: [
+          { when: WATERMARKS.mail.when + 1, tag: "0201_synthetic" },
+          { when: WATERMARKS.mail.when + 2, tag: "0206_synthetic" },
+        ],
+      }));
+      writeFileSync(join(dir, "0201_synthetic.sql"), fk);
+      writeFileSync(join(dir, "0206_synthetic.sql"), fk);
+      const r = readJournalViolations(dir, WATERMARKS.mail.when, GROWTH, "mail");
+      expect([r.windowed, r.checked]).toEqual([1, 1]);
+      expect(r.violations.map((v) => `${v.file} ${v.clazz}`)).toEqual(["0206_synthetic.sql validating-fk"]);
+      // The window is each journal's own: the Cloud's is numbered from 0100, and 0201 is past it.
+      const cloud = readJournalViolations(dir, WATERMARKS.mail.when, GROWTH, "cloud");
+      expect([cloud.windowed, cloud.violations.length]).toEqual([0, 2]);
     });
   });
 
