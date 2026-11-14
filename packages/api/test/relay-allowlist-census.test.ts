@@ -7,6 +7,7 @@ import { localRoutes } from "../src/local.js";
 import { selfHostRoutes } from "../src/routes/self-host.js";
 import { desktopHostRoutes } from "../src/routes/desktop-host.js";
 import { mailboxDeviceOAuthRoutes } from "../src/routes/mailbox-oauth-device.js";
+import { calendarRoutes } from "../src/calendar/index.js";
 import type { Route } from "../src/router.js";
 import { RELAY_ALLOWLIST, mayRelay } from "../src/relay-allowlist.js";
 import { normalizePathname } from "../src/canonical-path.js";
@@ -27,6 +28,7 @@ const TABLES: ReadonlyArray<readonly [string, readonly Route[]]> = [
   ["selfHostRoutes", selfHostRoutes],
   ["desktopHostRoutes", desktopHostRoutes],
   ["mailboxDeviceOAuthRoutes", mailboxDeviceOAuthRoutes],
+  ["calendarRoutes", calendarRoutes],
 ];
 
 const key = (r: { method: string; pattern: string }) => `${r.method.toUpperCase()} ${r.pattern}`;
@@ -115,7 +117,9 @@ describe("the projection the sidecar reads matches the table", () => {
     // 193 -> 196 with the storage program: Load it now, read from the server that empties letters for
     // space; the storage choices, kept where `GET /account/access` is read; and the change door,
     // relayed like the manage link beside it.
-    expect(RELAY_ALLOWLIST.length).toBe(196);
+    // 196 -> 198 with the calendar's switch, read and written on the account's server like the
+    // consent settings beside it: a Cloud-mode install keeps only a copy of the switch.
+    expect(RELAY_ALLOWLIST.length).toBe(198);
   });
 
   it("every pattern in the projection is a real route", () => {

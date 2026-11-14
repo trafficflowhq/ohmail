@@ -1,0 +1,219 @@
+/* A page before the app: a top line, then the sentence, what it needs, one line and the buttons. */
+@layer oh {
+  .oh-page {
+    --oh-page-pad: max(var(--s7), calc((100% - 1120px) / 2));
+    --oh-page-lead: 200px;
+    --oh-page-material: 520px;
+    --oh-page-top: var(--s8);
+    --oh-soft: var(--soft);
+    --oh-field-ground: var(--soft);
+    position: relative;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--stage);
+  }
+  .oh-page-top {
+    --oh-page-top-pad: 0 var(--oh-page-pad);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    height: var(--oh-page-top);
+    padding: var(--oh-page-top-pad);
+  }
+  .oh-page-aside {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+  }
+  .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad) var(--s7);
+    --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto auto;
+    --oh-page-areas: "trail" "say" "mat" "line" "acts";
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--oh-page-rows);
+    grid-template-areas: var(--oh-page-areas);
+    align-content: start;
+    min-height: 0;
+    padding: var(--oh-page-body-pad);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  .oh-page-trail {
+    --oh-page-trail-gap: 2px;
+    --oh-page-trail-pad: 0 0 var(--s4);
+    display: flex;
+    flex-direction: column;
+    grid-area: trail;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: var(--oh-page-trail-gap);
+    padding: var(--oh-page-trail-pad);
+  }
+  .oh-page-say {
+    grid-area: say;
+    align-self: start;
+    min-width: 0;
+  }
+  .oh-page-say > .oh-sentence {
+    max-width: 20em;
+  }
+  .oh-page-say > .oh-sentence + .oh-sentence {
+    margin-top: var(--s3);
+  }
+  .oh-page-refusal {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    max-width: 38em;
+    margin-top: var(--s3);
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-page-refusal + .oh-page-refusal {
+    margin-top: var(--s4);
+  }
+  .oh-page-refusal > .oh-icon {
+    --oh-page-icon-gap: 2px 0 0;
+    margin: var(--oh-page-icon-gap);
+  }
+  .oh-page-material {
+    --oh-soft: var(--soft-sheet);
+    --oh-field-ground: var(--soft-sheet);
+    grid-area: mat;
+    min-width: 0;
+    margin-top: var(--s5);
+  }
+  .oh-page-line {
+    display: flex;
+    flex-wrap: wrap;
+    grid-area: line;
+    align-items: center;
+    align-self: start;
+    gap: var(--s2) var(--s3);
+    max-width: 38em;
+    margin-top: var(--s5);
+    font-weight: var(--w-bold);
+  }
+  .oh-page-heavy,
+  .oh-page-note {
+    flex: 1 1 100%;
+  }
+  .oh-page-note {
+    color: var(--ink2);
+    font-weight: var(--w-text);
+  }
+  .oh-page-acts {
+    display: flex;
+    flex-wrap: wrap;
+    grid-area: acts;
+    align-items: center;
+    align-self: start;
+    gap: var(--s2);
+    margin-top: var(--s5);
+  }
+
+  /* The material beside the sentence, where the window is wide. */
+  :root[data-device="desktop"] .oh-page[data-columns="2"] > .oh-page-body,
+  :root[data-device="fold"] .oh-page[data-columns="2"] > .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad) var(--ringw);
+    --oh-page-rows: minmax(var(--oh-page-lead), auto) auto auto auto minmax(0, 1fr);
+    --oh-page-areas: "trail ." "say mat" "line mat" "acts mat" ". mat";
+    grid-template-columns: minmax(0, 1fr) minmax(0, var(--oh-page-material));
+    column-gap: var(--s8);
+    overflow: hidden;
+  }
+  :root[data-device="desktop"] .oh-page[data-columns="2"] .oh-page-material,
+  :root[data-device="fold"] .oh-page[data-columns="2"] .oh-page-material {
+    --oh-page-material-pad: var(--ringw) var(--ringw) var(--s7);
+    min-height: 0;
+    margin-top: 0;
+    padding: var(--oh-page-material-pad);
+    overflow: hidden auto;
+    scrollbar-width: none;
+  }
+  :root[data-device="fold"] .oh-page {
+    --oh-page-pad: 36px;
+    --oh-page-lead: 176px;
+  }
+  :root[data-device="fold"] .oh-page[data-columns="2"] > .oh-page-body {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    column-gap: var(--oh-page-pad);
+  }
+
+  /* The phone: the buttons stay at the foot. */
+  :root[data-device="phone"] .oh-page {
+    --oh-page-pad: var(--s5);
+    --oh-page-lead: 0px;
+    --oh-page-top: 52px;
+  }
+  :root[data-device="phone"] .oh-page-body {
+    --oh-page-body-pad: 0 var(--oh-page-pad);
+    --oh-page-rows: auto auto auto auto minmax(var(--s5), 1fr) auto;
+    --oh-page-areas: "trail" "say" "mat" "line" "." "acts";
+  }
+  :root[data-device="phone"] .oh-page[data-line-first] > .oh-page-body {
+    --oh-page-areas: "trail" "say" "line" "mat" "." "acts";
+  }
+  :root[data-device="phone"] .oh-page-trail {
+    --oh-page-trail-pad: var(--s2) 0 var(--s4);
+  }
+  :root[data-device="phone"] .oh-page-material,
+  :root[data-device="phone"] .oh-page-line {
+    margin-top: var(--s4);
+  }
+  :root[data-device="phone"] .oh-page-acts {
+    --oh-page-acts-out: 0 calc(var(--oh-page-pad) * -1);
+    --oh-page-acts-pad: var(--s3) var(--oh-page-pad) var(--s5);
+    position: sticky;
+    bottom: 0;
+    z-index: var(--oh-layer-jump);
+    margin: var(--oh-page-acts-out);
+    padding: var(--oh-page-acts-pad);
+    background: var(--stage);
+  }
+  :root[data-device="phone"] .oh-page-acts::before {
+    content: "";
+    position: absolute;
+    right: 0;
+    bottom: 100%;
+    left: 0;
+    height: var(--s5);
+    background: linear-gradient(to bottom, transparent, var(--stage));
+    pointer-events: none;
+  }
+  :root[data-device="phone"] .oh-page-acts > .oh-button:not([data-kind="quiet"]) {
+    --oh-page-act-pad: 0 var(--s4);
+    flex: 1 1 0;
+    min-width: 0;
+    padding: var(--oh-page-act-pad);
+  }
+  :root[data-device="phone"] .oh-page-acts > .oh-button[data-kind="quiet"] {
+    flex: 1 1 100%;
+  }
+
+  /* ohmarchy: a window of its own measure in the middle, ringed. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-page {
+    --oh-page-ring: 0 0 0 var(--ringw) var(--focus);
+    box-shadow: var(--oh-page-ring);
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-page {
+    --oh-page-pad: var(--s6);
+    --oh-page-lead: 0px;
+    width: min(100%, 720px);
+    height: auto;
+    min-height: 420px;
+    max-height: 100%;
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-page[data-columns="2"] {
+    width: min(100%, 1120px);
+  }
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-page-say > .oh-sentence {
+    max-width: none;
+    text-wrap: wrap;
+  }
+}

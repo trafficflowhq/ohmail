@@ -1,0 +1,75 @@
+{
+  "component": "Slot",
+  "state": "quiet",
+  "look": "paper-dark-phone",
+  "place": "cell",
+  "target": [112.3281, 48.0156, 77.4219, 23.9688],
+  "clip": [112, 48, 78, 24],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxDecorationBreak": "clone", "borderRadius": "6.4px" },
+    {
+      "borderRight": "1px solid rgb(246, 241, 233)",
+      "borderBottom": "1px solid rgb(246, 241, 233)",
+      "opacity": "0.6",
+      "turn": "45deg"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "History",
+      "box": [0, 0, 77.4, 24],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "oklch(0.959816 0.0119464 none / 0.08)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "700",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "6.4px",
+        "paddingTop": "0.32px",
+        "paddingRight": "4.8px",
+        "paddingBottom": "1.28px",
+        "paddingLeft": "5.76px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [{ "said": "History", "type": 0 }],
+      "surfaces": [
+        { "box": [0, 0, 77.4, 24], "paint": 0 },
+        { "box": [62.7, 5.4, 9, 9], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

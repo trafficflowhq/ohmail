@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { IncomingMessage, Server } from "node:http";
 import { serviceContext, type ApiDeps } from "@trafficflow/api";
 import { canonicalIp } from "@trafficflow/core/adapters/http-host";
+import { makeTestDb } from "@trafficflow/db/testing";
 import {
   makeHttpServer, makeTrustedProxies, toWebRequest,
   type AdapterOptions, type ForwardingNote, type TrustedProxies,
@@ -21,8 +22,11 @@ const PROXY = "172.18.0.10";
 const A = "198.51.100.9";
 const B = "192.0.2.44";
 
+/** A real handle: a request's context binds it to nothing, and the binder refuses no handle at all. */
+const db = await makeTestDb();
+
 /** The client address the route table reads. */
-const clientOf = (r: Request): string => serviceContext({ session: null } as unknown as ApiDeps, r).ip ?? "";
+const clientOf = (r: Request): string => serviceContext({ session: null, db } as unknown as ApiDeps, r).ip ?? "";
 
 /** An inbound request on a socket whose peer the test chooses. GET, so no body path is taken. */
 function fakeReq(peer: string | undefined, headers: Array<[string, string]>): IncomingMessage {

@@ -7,7 +7,7 @@ import {
 } from "@trafficflow/api";
 import {
   runAwayResponderPass, runScheduledSendPass, runSendReconcilePass, runOwedSentCopyPass, SEND_RECONCILE_NET_TIMEOUTS,
-  OWED_COPY_SELF_HOST, type AuthService,
+  OWED_COPY_SELF_HOST, dbFor, type AuthService,
 } from "@trafficflow/services";
 import { ALERT_PASS_EVERY_MS, ALERT_PASS_FIRST_DELAY_MS, ownAlertClock } from "./alert-clock.js";
 import { API_CLOCK_LOCK_KEY, acquireLeaderLock, type LeaderLock } from "./clock-lock.js";
@@ -428,7 +428,7 @@ export function startPlainChain(runtime: Runtime): Stoppable {
           try {
             const auth = rt.services.auth as unknown as { drainSecurityNotices?: AuthService["drainSecurityNotices"] };
             const n = await auth.drainSecurityNotices?.({
-              db: owned.db, accountId: "", userId: null, now: () => new Date(), requestId: "",
+              db: dbFor(owned.db, ""), accountId: "", userId: null, now: () => new Date(), requestId: "",
             });
             if (n && n.sent + n.failed + n.dropped > 0) logger.info("security_notices_drained", { ...n });
           } catch (err) {

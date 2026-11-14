@@ -1,0 +1,143 @@
+{
+  "component": "Seg",
+  "state": "plain",
+  "look": "ohmarchy-dark-phone",
+  "place": "cell",
+  "target": [24, 24, 189.2188, 48],
+  "clip": [24, 24, 190, 48],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(169, 177, 214)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(141, 150, 188)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "19.6px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "boxShadow": "rgb(107, 112, 144) 0px 0px 0px 1px inset" },
+    { "boxShadow": "rgb(169, 177, 214) 0px 0px 0px 1px inset" }
+  ],
+  "nodes": [
+    {
+      "role": "group",
+      "name": "Theme",
+      "box": [0, 0, 189.2, 48],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(37, 39, 52)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "2px",
+        "paddingRight": "2px",
+        "paddingBottom": "2px",
+        "paddingLeft": "2px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "surfaces": [{ "box": [0, 0, 189.2, 48], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Light",
+      "box": [2, 2, 66, 44],
+      "drawn": {
+        "color": "rgb(169, 177, 214)",
+        "backgroundColor": "rgb(26, 27, 38)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "600",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(169, 177, 214)"
+      },
+      "state": ["pressed"],
+      "text": [{ "said": "Light", "type": 0 }],
+      "surfaces": [{ "box": [2, 2, 66, 44], "paint": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Dark",
+      "box": [70, 2, 57.6, 44],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "Dark", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Auto",
+      "box": [129.6, 2, 57.6, 44],
+      "drawn": {
+        "color": "rgb(141, 150, 188)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "400",
+        "lineHeight": "19.6px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(141, 150, 188)"
+      },
+      "text": [{ "said": "Auto", "type": 1 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

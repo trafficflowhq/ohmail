@@ -1,0 +1,56 @@
+{
+  "component": "JumpBack",
+  "state": "top",
+  "look": "ohmarchy-light-fold",
+  "place": "cell",
+  "target": [332, 713, 44, 44],
+  "clip": [332, 713, 44, 44],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "fold",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 719,
+    "height": 781,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [
+    { "boxShadow": "rgb(159, 157, 150) 0px 0px 0px 1px inset, rgb(183, 181, 172) 0px 0px 0px 2px" },
+    { "ink": "stroke rgb(16, 15, 15) 1.6px square miter 4; shapes 2 e8ded7a71b36" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Back to top",
+      "box": [0, 0, 44, 44],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgb(246, 243, 231)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "14px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "surfaces": [
+        { "box": [0, 0, 44, 44], "paint": 0 },
+        { "box": [12, 12, 20, 20], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

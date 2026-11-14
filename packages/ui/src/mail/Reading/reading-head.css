@@ -1,0 +1,160 @@
+/* The reading column's head: it stays, on the ground's own colour, while the sheets scroll under it. */
+@layer oh {
+  .oh-readinghead {
+    --oh-readinghead-lh: 1.12;
+    --oh-readinghead-top: calc(var(--s2) + var(--oh-hair));
+    --oh-readinghead-out: calc(var(--ringw) * -1);
+    --oh-readinghead-cover: 0 calc(var(--ringw) * -1 - 2px) 0 var(--ground);
+    --oh-readinghead-stick: -1px;
+    --oh-readinghead-layer: 2;
+    --oh-readinghead-short: 3ch;
+    --oh-readinghead-basis: 150px;
+    --oh-soft: var(--soft);
+    --oh-tag-ground: var(--soft);
+    --oh-under: var(--ground);
+    --oh-hover: var(--hover-ground);
+
+    position: sticky;
+    top: var(--oh-readinghead-stick);
+    z-index: var(--oh-readinghead-layer);
+    margin: 0 var(--oh-readinghead-out);
+    padding: var(--oh-readinghead-top) var(--sheet-pad) var(--s4);
+    background: var(--ground);
+    box-shadow: var(--oh-readinghead-cover);
+  }
+
+  .oh-readinghead[data-bare] {
+    padding-bottom: var(--s3);
+  }
+
+  .oh-readinghead-subject {
+    font-family: var(--f-display);
+    font-size: var(--t-head);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz-l);
+    line-height: var(--oh-readinghead-lh);
+    letter-spacing: var(--track);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+
+  .oh-readinghead-byline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s2);
+    margin-top: var(--s2);
+    color: var(--ink2);
+  }
+
+  .oh-readinghead-byline > * {
+    flex: none;
+  }
+
+  .oh-readinghead[data-bare] .oh-readinghead-byline {
+    min-height: var(--h-s);
+    margin-top: 0;
+  }
+
+  .oh-readinghead-mailbox {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-readinghead-mailbox::before {
+    content: "·";
+    margin-right: var(--s2);
+  }
+
+  .oh-readinghead-mailbox:first-child::before {
+    content: none;
+  }
+
+  /* Wider than a phone the line is one line: the names give way first, then the mailbox. */
+  :root:not([data-device="phone"]) .oh-readinghead-byline,
+  :root[data-face="ohmarchy"] .oh-readinghead-byline {
+    flex-wrap: nowrap;
+    min-width: 0;
+  }
+
+  :root[data-face="ohmarchy"] .oh-readinghead-byline {
+    overflow: hidden;
+  }
+
+  :root:not([data-device="phone"]) .oh-readinghead-names,
+  :root[data-face="ohmarchy"] .oh-readinghead-names {
+    flex: 0 1 auto;
+    min-width: var(--oh-readinghead-short);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  :root:not([data-device="phone"]) .oh-readinghead-mailbox,
+  :root[data-face="ohmarchy"] .oh-readinghead-mailbox {
+    flex: 0 100 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* On touch the squares lie along the head, at the line's end. */
+  .oh-readinghead-sub {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s3);
+    min-width: 0;
+    margin-top: var(--s2);
+  }
+
+  .oh-readinghead-sub > .oh-readinghead-byline {
+    flex: 1 1 var(--oh-readinghead-basis);
+    min-width: 0;
+    margin-top: 0;
+  }
+
+  /* The unfolded phone, upright: the names take the first line, what follows wraps under them. */
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-readinghead-byline {
+    flex-wrap: wrap;
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-readinghead-sub > .oh-readinghead-byline {
+    display: contents;
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-readinghead-sub .oh-readinghead-names {
+    flex: 1 1 60%;
+    min-width: 0;
+  }
+
+  .oh-readinghead-sub > :last-child {
+    flex: none;
+    margin-left: auto;
+  }
+
+  .oh-readinghead[data-bare] .oh-readinghead-sub {
+    margin-top: 0;
+  }
+
+  :root[data-face="paper"][data-device="desktop"] .oh-readinghead:not([data-bare]) {
+    --oh-readinghead-top: calc(var(--s1) + var(--oh-hair));
+  }
+
+  /* On a phone it scrolls away with the sheets. */
+  :root[data-device="phone"] .oh-readinghead {
+    position: static;
+    padding-top: 0;
+  }
+
+  /* ohmarchy keeps a hairline under it. */
+  :root[data-face="ohmarchy"] .oh-readinghead {
+    --oh-readinghead-lead: calc(var(--sheet-pad) + var(--ringw));
+    --oh-readinghead-lined: var(--oh-readinghead-cover), 0 var(--oh-hair) 0 var(--line);
+
+    padding-left: var(--oh-readinghead-lead);
+    box-shadow: var(--oh-readinghead-lined);
+  }
+}

@@ -142,6 +142,18 @@
       "node": "./dist/lists/column-store.js",
       "default": "./src/lists/column-store.ts"
     },
+    "./lists/drag-slop": {
+      "types": "./src/lists/drag-slop.ts",
+      "ohmail-source": "./src/lists/drag-slop.ts",
+      "node": "./dist/lists/drag-slop.js",
+      "default": "./src/lists/drag-slop.ts"
+    },
+    "./lists/drag-source": {
+      "types": "./src/lists/drag-source.ts",
+      "ohmail-source": "./src/lists/drag-source.ts",
+      "node": "./dist/lists/drag-source.js",
+      "default": "./src/lists/drag-source.ts"
+    },
     "./lists/folder-gone": {
       "types": "./src/lists/folder-gone.ts",
       "ohmail-source": "./src/lists/folder-gone.ts",
@@ -238,11 +250,29 @@
       "node": "./dist/mail-state/mailbox-error-key.js",
       "default": "./src/mail-state/mailbox-error-key.ts"
     },
+    "./ohbox": {
+      "types": "./src/ohbox/index.ts",
+      "ohmail-source": "./src/ohbox/index.ts",
+      "node": "./dist/ohbox/index.js",
+      "default": "./src/ohbox/index.ts"
+    },
+    "./ohbox/ohbox-list": {
+      "types": "./src/ohbox/ohbox-list.ts",
+      "ohmail-source": "./src/ohbox/ohbox-list.ts",
+      "node": "./dist/ohbox/ohbox-list.js",
+      "default": "./src/ohbox/ohbox-list.ts"
+    },
     "./press": {
       "types": "./src/press/index.ts",
       "ohmail-source": "./src/press/index.ts",
       "node": "./dist/press/index.js",
       "default": "./src/press/index.ts"
+    },
+    "./press/actions": {
+      "types": "./src/press/actions.ts",
+      "ohmail-source": "./src/press/actions.ts",
+      "node": "./dist/press/actions.js",
+      "default": "./src/press/actions.ts"
     },
     "./press/after-verb": {
       "types": "./src/press/after-verb.ts",
@@ -387,6 +417,12 @@
       "ohmail-source": "./src/reading/conversation-on-screen.ts",
       "node": "./dist/reading/conversation-on-screen.js",
       "default": "./src/reading/conversation-on-screen.ts"
+    },
+    "./reading/list-meeting": {
+      "types": "./src/reading/list-meeting.ts",
+      "ohmail-source": "./src/reading/list-meeting.ts",
+      "node": "./dist/reading/list-meeting.js",
+      "default": "./src/reading/list-meeting.ts"
     },
     "./reading/live-body": {
       "types": "./src/reading/live-body.ts",
@@ -639,5 +675,8 @@
     "react": "19.2.3",
     "@ohmail/client-engine": "*",
     "@trafficflow/core": "*"
+  },
+  "devDependencies": {
+    "react-dom": "19.2.3"
   }
 }

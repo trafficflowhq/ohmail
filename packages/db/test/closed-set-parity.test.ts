@@ -11,6 +11,7 @@ import * as pgSchema from "../src/schema-mail.js";
 import * as sqliteSchema from "../src/schema-mail-sqlite.js";
 import { CLOSED_SETS, closedSetValue, organizerKindColumn, ClosedSetViolation } from "../src/closed-sets.js";
 import { GROWING_LIST_SHAPE, hasGrowingListShape, shapeCheck } from "../src/closed-set-shape.js";
+import { CALENDAR_CLOSED_SETS } from "../src/calendar/closed-sets.js";
 
 /**
  * A CHECK ON A DEVICE IS A TABLE REBUILD, SO THIS DECIDES WHICH ONES MAY BE THERE.
@@ -89,8 +90,8 @@ function membersOf(body: string): string[] | null {
   return parts.length === 0 ? null : parts;
 }
 
-/** What every registry entry says about itself, as one comparable row. */
-const REGISTERED = new Map(CLOSED_SETS.map((s) => [s.constraint, s]));
+/** What every registry entry says about itself, as one comparable row: the mail's and the calendar's. */
+const REGISTERED = new Map([...CLOSED_SETS, ...CALENDAR_CLOSED_SETS].map((s) => [s.constraint, s]));
 
 describe("closed sets, and which of them a device store may enforce", () => {
   it("reads a pg journal that really carries CHECK constraints, and a device journal", () => {
@@ -229,6 +230,30 @@ describe("closed sets, and which of them a device store may enforce", () => {
         expect(set.isMember(foreign), `${set.constraint}: the validator admits ${JSON.stringify(foreign)}`).toBe(false);
       }
       expect(set.isMember(null)).toBe(false);
+    }
+  });
+
+  it("holds the calendar's lists on the server alone: born in its entry, absent from every device", () => {
+    expect(CALENDAR_CLOSED_SETS.length).toBeGreaterThanOrEqual(5);
+    for (const set of CALENDAR_CLOSED_SETS) {
+      expect(PG_CHECKS.has(set.constraint), `${set.constraint}: the server twin declares no such CHECK`).toBe(true);
+      expect(PG_HISTORY.get(set.constraint), `${set.constraint} is added once, by the calendar's entry`)
+        .toEqual(["0205_calendar.sql"]);
+      // A phone that organizes on its own has no calendar: no twin, no device entry carries one.
+      expect(SQLITE_CHECKS.has(set.constraint), `${set.constraint} is on the device twin`).toBe(false);
+      expect(DEVICE_HISTORY.has(set.constraint), `${set.constraint} is in the device journal`).toBe(false);
+      const body = PG_CHECKS.get(set.constraint) as string;
+      if (set.kind === "shape") {
+        expect(body, set.constraint).toBe(shapeCheck(set.column).replace(/"/g, "").replace(/\s+/g, " ").trim());
+        for (const member of set.members) expect(hasGrowingListShape(member), `${set.constraint}: ${member}`).toBe(true);
+      } else {
+        expect([...(membersOf(body) ?? [])].sort(), `${set.constraint}: the server twin's CHECK`).toEqual([...set.members].sort());
+      }
+      for (const member of set.members) expect(set.isMember(member), `${set.constraint}: ${member}`).toBe(true);
+      for (const foreign of ["Event title", "", "a@b.test", "CONFIRMED"]) {
+        expect(set.isMember(foreign), `${set.constraint} admits ${JSON.stringify(foreign)}`).toBe(false);
+      }
+      expect(set.why.length, `${set.constraint} carries no reason`).toBeGreaterThan(40);
     }
   });
 

@@ -1,0 +1,431 @@
+{
+  "with": {
+    "Rows": "Row",
+    "ReadSquares": "Row",
+    "Files": "FileTile",
+    "FolderFold": "FolderShelf",
+    "Attach": "Composer",
+    "DraftTabs": "Composer",
+    "SettingLine": "SettingsSheet"
+  },
+  "rows": [
+    { "component": "Row", "state": "unread", "looks": "all" },
+    { "component": "Row", "state": "read" },
+    { "component": "Row", "state": "hover" },
+    { "component": "Row", "state": "cursor" },
+    { "component": "Row", "state": "open", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
+    {
+      "component": "Row",
+      "state": "open-unread",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "Row", "state": "picked", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
+    { "component": "Row", "state": "conversation" },
+    { "component": "Row", "state": "thirty" },
+    { "component": "Row", "state": "came-back" },
+    { "component": "Row", "state": "file" },
+    { "component": "Row", "state": "where" },
+    { "component": "Row", "state": "amount" },
+    { "component": "Row", "state": "draft" },
+    {
+      "component": "Row",
+      "state": "entry",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone",
+        "paper-light-fold"
+      ]
+    },
+    { "component": "Row", "state": "entry-open", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
+    {
+      "component": "Row",
+      "state": "entry-hot",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    { "component": "ListHead", "state": "hot", "looks": "all" },
+    { "component": "ListHead", "state": "ink" },
+    { "component": "Doorbell", "state": "rest", "looks": "all" },
+    { "component": "Doorbell", "state": "pressed" },
+    { "component": "Doorbell", "state": "focus" },
+    { "component": "GroupHeading", "state": "hot", "looks": "all" },
+    {
+      "component": "ListTail",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "SelectionBar",
+      "state": "three",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "ColumnHandle", "state": "rest" },
+    {
+      "component": "Rail",
+      "state": "ohbox",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "RailFoot",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "RailEntry",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "RailEntry", "state": "hover" },
+    { "component": "RailEntry", "state": "focus" },
+    { "component": "RailEntry", "state": "current" },
+    { "component": "RailEntry", "state": "key", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
+    { "component": "RailEntry", "state": "tag", "looks": ["paper-light-desktop", "ohmarchy-light-desktop"] },
+    { "component": "RailEntry", "state": "working" },
+    {
+      "component": "Dock",
+      "state": "upright",
+      "looks": ["paper-light-fold", "paper-dark-fold", "ohmarchy-light-fold", "ohmarchy-dark-fold"]
+    },
+    {
+      "component": "Switcher",
+      "state": "mail",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "Sheet", "state": "plain", "looks": "all" },
+    { "component": "ActionPanel", "state": "held", "looks": "all" },
+    { "component": "ActionPanel", "state": "reply" },
+    {
+      "component": "ActionPanel",
+      "state": "decision",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "ActionPanel", "state": "note" },
+    { "component": "Message", "state": "unread", "looks": "all" },
+    { "component": "Message", "state": "read" },
+    { "component": "Message", "state": "own" },
+    {
+      "component": "MessageHead",
+      "state": "details",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "FileTile",
+      "state": "set",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "ReadingHead",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-desktop",
+        "paper-dark-fold",
+        "paper-dark-foldl",
+        "ohmarchy-light-desktop",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-desktop",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    {
+      "component": "ReadingHead",
+      "state": "letter",
+      "looks": ["paper-light-phone", "paper-dark-phone", "ohmarchy-light-phone", "ohmarchy-dark-phone"]
+    },
+    {
+      "component": "BlankColumn",
+      "state": "unread",
+      "looks": [
+        "paper-light-desktop",
+        "paper-light-phone",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-dark-desktop",
+        "paper-dark-phone",
+        "paper-dark-fold",
+        "paper-dark-foldl"
+      ]
+    },
+    {
+      "component": "BlankColumn",
+      "state": "tile",
+      "looks": [
+        "ohmarchy-light-desktop",
+        "ohmarchy-light-fold",
+        "ohmarchy-light-foldl",
+        "ohmarchy-dark-desktop",
+        "ohmarchy-dark-fold",
+        "ohmarchy-dark-foldl"
+      ]
+    },
+    { "component": "BlankColumn", "state": "read" },
+    { "component": "BlankColumn", "state": "none" },
+    {
+      "component": "ContactCard",
+      "state": "card",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "MovePicker",
+      "state": "folders",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "QuickLook",
+      "state": "page",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "FolderShelf",
+      "state": "open",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "AccountRow",
+      "state": "shut",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "BlockedImages", "state": "chip", "looks": "all" },
+    {
+      "component": "BlockedImages",
+      "state": "said",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "MessageHead", "state": "noted", "looks": "all" },
+    {
+      "component": "MessageHead",
+      "state": "marks",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    { "component": "LetterViews", "state": "images", "looks": "all" },
+    {
+      "component": "LetterViews",
+      "state": "adapted",
+      "looks": ["paper-dark-desktop", "ohmarchy-dark-desktop"]
+    },
+    {
+      "component": "DesignedLetter",
+      "state": "framed",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    { "component": "TextNotKept", "state": "kept", "looks": "all" },
+    { "component": "TextNotKept", "state": "loading" },
+    {
+      "component": "TextNotKept",
+      "state": "gone",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "TextNotKept", "state": "loaded" },
+    {
+      "component": "TextNotKept",
+      "state": "refused",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "TextNotKept", "state": "fine" },
+    { "component": "FileNotArrived", "state": "set", "looks": "all" },
+    { "component": "FileNotArrived", "state": "fetching" },
+    { "component": "FileNotArrived", "state": "list" },
+    { "component": "LetterHistory", "state": "folded", "looks": "all" },
+    { "component": "LetterHistory", "state": "shown" },
+    {
+      "component": "LetterQuote",
+      "state": "nested",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "LetterColumns",
+      "state": "ledger",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "Composer", "state": "blank", "looks": "all" },
+    { "component": "Composer", "state": "reply" },
+    { "component": "Composer", "state": "drafted" },
+    {
+      "component": "Composer",
+      "state": "failed",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "Recipients",
+      "state": "refused",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "Recipients", "state": "lines" },
+    {
+      "component": "DraftControl",
+      "state": "ready",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "SendStatus",
+      "state": "foot",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "SendStatus", "state": "top" },
+    {
+      "component": "AttachRoom",
+      "state": "quality",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "SettingsHead",
+      "state": "rest",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-fold",
+        "paper-light-foldl",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsHead",
+      "state": "hot",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    {
+      "component": "SettingsHead",
+      "state": "count",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "SettingsSheet", "state": "lines", "looks": "all" },
+    {
+      "component": "SettingsSheet",
+      "state": "wants",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop",
+        "paper-light-phone",
+        "ohmarchy-light-phone"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "choice",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "sign",
+      "looks": [
+        "paper-light-desktop",
+        "paper-dark-desktop",
+        "ohmarchy-light-desktop",
+        "ohmarchy-dark-desktop"
+      ]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "person",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "aside",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "slot",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop", "paper-light-phone"]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "sub",
+      "looks": ["paper-light-desktop", "ohmarchy-light-desktop"]
+    },
+    { "component": "SettingsSheet", "state": "lead", "looks": ["paper-light-desktop", "paper-light-phone"] },
+    {
+      "component": "SettingsSheet",
+      "state": "under",
+      "looks": ["paper-light-desktop", "paper-light-phone", "ohmarchy-light-phone", "paper-light-fold"]
+    },
+    {
+      "component": "SettingsSheet",
+      "state": "detail",
+      "looks": ["paper-light-desktop", "paper-light-phone", "ohmarchy-light-phone", "paper-light-fold"]
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+/* A sheet of settings: its head, what it wants, its lines. A sheet that wants the person is tinted, and what stands on it takes the sheet's white. */
+@layer oh {
+  .oh-settingssheet {
+    --oh-settingssheet-dot: 10px;
+    --oh-settingssheet-dot-gap: 0 2px 0 0;
+    --oh-settingssheet-say-basis: 14em;
+    --oh-settingssheet-pull: calc(var(--cap-q) * -1);
+
+    min-width: 0;
+    padding: var(--s4) var(--sheet-pad);
+    border-radius: inherit;
+  }
+
+  .oh-settingssheet[data-wants] {
+    --oh-under: var(--sheet-new);
+    --oh-soft: var(--sheet);
+    --oh-tag-ground: var(--sheet);
+    --oh-settingline-wash: var(--sheet);
+
+    background: var(--sheet-new);
+  }
+
+  .oh-settingssheet[data-wants] > .oh-settingssheet-head > .oh-avatar[data-sign] {
+    --oh-avatar-bg: var(--sheet);
+  }
+
+  /* The head: a circle, a sign or the hot dot, the name, and at its end a word, a tag or one word that acts. */
+  .oh-settingssheet-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    min-height: var(--h-m);
+  }
+
+  .oh-settingssheet-head > .oh-avatar {
+    margin-right: var(--s1);
+  }
+
+  .oh-settingssheet-head > .oh-dot {
+    align-self: center;
+    width: var(--oh-settingssheet-dot);
+    height: var(--oh-settingssheet-dot);
+    margin: var(--oh-settingssheet-dot-gap);
+  }
+
+  .oh-settingssheet-title {
+    overflow: hidden;
+    min-width: 0;
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-settingssheet-aside {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-left: auto;
+    padding-left: var(--s2);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* One word that acts ends on the line's edge, in the ink. */
+  .oh-settingssheet-aside:has(> .oh-button[data-kind="quiet"]:last-child) {
+    margin-right: var(--oh-settingssheet-pull);
+    color: var(--ink);
+  }
+
+  /* What it wants: the word that ends in the dot, one line, its buttons. */
+  .oh-settingssheet-say {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s2) var(--s4);
+    padding: var(--s1) 0 var(--s3);
+  }
+
+  .oh-settingssheet-line {
+    flex: 1 1 var(--oh-settingssheet-say-basis);
+    min-width: 0;
+  }
+
+  .oh-settingssheet-word {
+    font-weight: var(--w-bold);
+  }
+
+  .oh-settingssheet-acts {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+
+  :root[data-face="ohmarchy"] .oh-settingssheet {
+    --oh-settingssheet-dot: 8px;
+  }
+}

@@ -134,7 +134,7 @@ function hostedFirstRun(opts: ServerOptions = {}): EngineAdapter {
       // make the whole drain a rules drain — `drainRulesFirst` loops on `hasMore` and writes
       // through `applyChanges`, so no page would ever be pruned and the window would not bite
       // until the settle. Measured: thirty pages down that path before this line existed.
-      if (params.types !== undefined) {
+      if (params.types?.length === 1 && params.types[0] === "rule") {
         return {
           changes: { creates: [], updates: [], moves: [], deletes: [] },
           cursor: params.since, hasMore: false, serverTime: NOW.toISOString(),

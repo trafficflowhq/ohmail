@@ -24,6 +24,7 @@ export const DIAGNOSTIC_BLOCK_REASONS = [
 export const DIAGNOSTIC_ENTITY_TYPES = [
   "message", "thread", "routing_decision", "approval", "draft", "rule", "message_state",
   "folder", "tag", "mailbox", "screener_suggestion", "mailbox_profile",
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
   "screener_sender", "triage_item", "view_meta", "message_body", "held_release_group",
   "unscreened_sender_group", "screener_waiting", "outbox_entry", "outbox_abandoned", "store_page",
 ] as const;

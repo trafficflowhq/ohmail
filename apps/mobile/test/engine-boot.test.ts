@@ -21,8 +21,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   BACKLOG_PAGE_LIMIT,
   LAST_DRAIN_AT_META,
+  NAMED_FEED_KINDS,
   STALE_RESUME_MS,
-  SYNC_ENTITY_TYPES,
   SqlMirrorStore,
   decodeSeqCursor,
   encodeSeqCursor,
@@ -325,7 +325,11 @@ describe("engine boot on the mobile composition", () => {
        `mailbox`, so the phone never asked for the receipt a removal emits. A guard that cannot
        name a wrong answer has no right one. */
     expect(fake.typesSeen.length).toBeGreaterThan(0);
-    for (const t of fake.typesSeen) expect(t).toBe([...SYNC_ENTITY_TYPES].join(","));
+    for (const t of fake.typesSeen) expect(t).toBe([...NAMED_FEED_KINDS].join(","));
+    /* The settings record, by its wire name: it carries the calendar's switch, and a server sends
+       the calendar only to a device that names it, so a phone without it would hold nothing of the
+       calendar, and before that rule held what the switch and an erasure had taken away. */
+    expect(MOBILE_SYNC_TYPES).toContain("settings");
     /* And the member the copy lost, by its WIRE name: the receipt that takes a removed mailbox
        off a phone. Spelled out rather than read from the declaration, because reading it from
        the thing under test is the tautology above wearing a different name. */

@@ -3,7 +3,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { PG_TEST_URL, realPgAvailable } from "../src/testing.js";
-import { makeOwnedDb, WORKER_TIMEOUTS } from "../src/client.js";
+import { makeOwnedDb, POOLED_TIMEOUTS, WORKER_TIMEOUTS } from "../src/client.js";
+import { HANDLE_TABLE } from "../src/handle-table.js";
 import { sql } from "drizzle-orm";
 
 /**
@@ -41,9 +42,9 @@ describe("WORKER_TIMEOUTS — the values", () => {
   });
 
   it("is applied to the factory every worker entry uses, and NOT to the others", () => {
-    const src = readFileSync(`${HERE}../src/client.ts`, "utf8");
-    // `makeOwnedDb` is what `apps/worker`'s index and all four crons construct.
-    expect(src).toMatch(/makeOwnedDb[\s\S]{0,200}connection: WORKER_TIMEOUTS/);
+    // `makeOwnedDb` is what `apps/worker`'s index and all four crons construct: the worker's cell
+    // of the handle's table (its connections are read live below).
+    expect(HANDLE_TABLE.worker.session.connection).toBe(WORKER_TIMEOUTS);
     // The leader-lock session is deliberately exempt: its only statement is a non-blocking
     // `pg_try_advisory_lock` and it MUST stay open and idle for the lock's whole lifetime —
     // `idle_in_transaction_session_timeout` would end the lock it exists to hold.
@@ -57,12 +58,14 @@ describe("WORKER_TIMEOUTS — the values", () => {
     // there: a 60 s `statement_timeout` behind a 60 s platform kill is a race the platform wins,
     // so copying them would look like a fix and change nothing.
     //
-    // The consumer is NAMED rather than the check relaxed: the pooled factory must carry its own
+    // The consumer is NAMED rather than the check relaxed: every pooled cell must carry its own
     // set, sized against the platform ceiling instead of the sync-lag alert.
-    const pooled = src.slice(src.indexOf("export function makePooledDb"));
-    expect(pooled).toMatch(/prepare: false/);
-    expect(pooled).not.toMatch(/connection: WORKER_TIMEOUTS/);
-    expect(pooled).toMatch(/connection: POOLED_TIMEOUTS/);
+    for (const role of ["api", "staff", "roster"] as const) {
+      const pooled = HANDLE_TABLE[role].pooler;
+      expect(pooled.prepare, role).toBe(false);
+      expect(pooled.connection, role).not.toBe(WORKER_TIMEOUTS);
+      expect(pooled.connection, role).toBe(POOLED_TIMEOUTS);
+    }
   });
 });
 
@@ -76,10 +79,11 @@ describe.skipIf(!AVAILABLE)("WORKER_TIMEOUTS — against a real backend", () => 
         current_setting('statement_timeout') as stmt,
         current_setting('idle_in_transaction_session_timeout') as idle`);
       const r = ((rows as { rows?: unknown[] }).rows ?? (rows as unknown[]))[0] as Record<string, string>;
-      // Postgres reports these as strings with units; the point is they are NOT "0" (no limit).
+      // Postgres reports these as strings with units: NOT "0" (no limit), and the worker's own.
       expect(r.lock).not.toBe("0");
       expect(r.stmt).not.toBe("0");
       expect(r.idle).not.toBe("0");
+      expect([r.lock, r.stmt, r.idle]).toEqual(["30s", "1min", "1min"]);
     } finally {
       await owned.close();
     }

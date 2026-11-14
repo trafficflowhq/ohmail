@@ -337,7 +337,20 @@ export const SNAPSHOT_PAGE_1_STATE_KINDS = [
  * {@link SNAPSHOT_PAGE_1_STATE_KINDS}. The drain follows `nextCursor` and nothing else: it stays non-null when drafts
  * outlive the window and its tail, and stopping early leaves them below the cursor adopted.
  */
-export type SnapshotFn = (params: { cursor?: string; limit?: number; phase?: "tail" }) => Promise<SyncSnapshotPage>;
+export type SnapshotFn = (params: SnapshotParams) => Promise<SyncSnapshotPage>;
+
+/**
+ * What a snapshot request carries. `types`: the kinds named, which the calendar's phase is served
+ * to. `phase: "calendar"` with `from`/`to` (instants): the calendar's phase alone over a span.
+ */
+export interface SnapshotParams {
+  cursor?: string;
+  limit?: number;
+  phase?: "tail" | "calendar";
+  types?: readonly string[];
+  from?: string;
+  to?: string;
+}
 
 /**
  * The adapter capability the cold-start path reaches for. Declared STRUCTURALLY, exactly as {@link

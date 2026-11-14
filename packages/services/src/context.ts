@@ -2,8 +2,8 @@ import type { PgliteDatabase } from "drizzle-orm/pglite";
 import type { mailSchema } from "@trafficflow/db/mail";
 import { carryDialect, dialect, type LockMode } from "@trafficflow/db/dialect";
 import {
-  AccountErasedError, claimIdempotencyKey, fencedAccountOf, fencedAccountWrite, inTransactionHandle, markFenced,
-  readAccountErasedAt, type LedgerTx, type Tx,
+  AccountErasedError, bindDb, carryBinding, claimIdempotencyKey, fencedAccountOf, fencedAccountWrite, inTransactionHandle,
+  markFenced, readAccountErasedAt, type AccountBound, type LedgerTx, type NothingBound, type Tx,
 } from "@trafficflow/db";
 import { asServiceRefusal } from "./erasure-fence.js";
 import { IdempotencyRaceLost } from "./errors.js";
@@ -26,6 +26,20 @@ export interface DbRegistry {
 
 /** The database handle services run against: whichever members this program's registry declares. */
 export type Db = DbRegistry[keyof DbRegistry];
+
+/** A handle bound to one account: what a request with a session and a per-account pass hold. Minted only by the binder. */
+export type BoundDb = Db & AccountBound;
+
+/** A handle bound to no account: a route before sign-in, a clock's door. Minted only by the binder. */
+export type UnboundDb = Db & NothingBound;
+
+/**
+ * A context's handle for `accountId`, which the caller read from a row and never from a request:
+ * bound to that account, or to nothing for `""` (a door that runs for no account).
+ */
+export function dbFor(db: Db, accountId: string): BoundDb | UnboundDb {
+  return accountId === "" ? bindDb(db, { account: null }) : bindDb(db, { account: accountId });
+}
 
 /**
  * THE ONE DIALECT BRIDGE (review 020, BACKEND L4). Services are written against the pg builder
@@ -85,7 +99,8 @@ export async function claimOrLose(
  * request body. `now` is an injectable clock for deterministic tests.
  */
 export interface ServiceContext {
-  db: Db;
+  /** Bound to the account this context runs for, or to nothing; never a plain handle (`dbFor`, `serviceContext`). */
+  db: BoundDb | UnboundDb;
   accountId: string;
   userId: string | null;
   now: () => Date;
@@ -199,7 +214,7 @@ export async function runInTransaction<T>(
   let pending: string | null = null;
   const tx = ctx.db as unknown as { transaction: <R>(f: (t: unknown) => Promise<R>) => Promise<R> };
   const result = await tx.transaction(async (handle) => {
-    const db = carryDialect(ctx.db, handle as object) as unknown as ServiceContext["db"];
+    const db = carryBinding(ctx.db, carryDialect(ctx.db, handle as object));
     if (held !== undefined) markFenced(db, held);
     else if (fence !== undefined) {
       // THE FIRST STATEMENT. A stamp ends the transaction here, before the body takes a row.

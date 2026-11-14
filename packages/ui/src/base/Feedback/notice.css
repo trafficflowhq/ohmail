@@ -1,0 +1,36 @@
+/* One thing that needs you: a title that ends in the dot, at most one line, up to two answers. */
+@layer oh {
+  .oh-notice {
+    --oh-notice-pad: var(--s3) var(--s4);
+    --oh-notice-ring: 0 0 0 var(--ringw) var(--ring);
+    --oh-soft: var(--soft-sheet);
+    padding: var(--oh-notice-pad);
+    border-radius: var(--r-row);
+    background: var(--sheet);
+    box-shadow: var(--oh-notice-ring);
+    line-height: 1.35;
+  }
+  /* Over a list it stands on the list's own sheet, a shade off it; on the phone the list is the ground. */
+  .oh-notice[data-place="bar"] {
+    background: var(--soft-sheet);
+  }
+  :root[data-device="phone"] .oh-notice[data-place="bar"] {
+    background: var(--sheet);
+  }
+  .oh-notice-say {
+    --oh-notice-say-gap: 0 0 var(--s2);
+    margin: var(--oh-notice-say-gap);
+  }
+  .oh-notice-title {
+    font-weight: var(--w-bold);
+  }
+  .oh-notice-acts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+  }
+  :root[data-face="ohmarchy"] .oh-notice[data-place="rail"] {
+    --oh-notice-pad: 10px var(--s3);
+    --oh-notice-ring: var(--oh-ring-btn);
+  }
+}

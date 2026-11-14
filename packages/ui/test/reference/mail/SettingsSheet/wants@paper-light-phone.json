@@ -1,0 +1,124 @@
+{
+  "component": "SettingsSheet",
+  "state": "wants",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [8, 128, 374, 118.3906],
+  "clip": [8, 128, 374, 119],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "opacity": "0.5", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(255, 240, 233)", "borderRadius": "20px" },
+    { "backgroundColor": "rgb(248, 67, 26)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "switch",
+      "name": "Notify me on this device",
+      "box": [310, 65.4, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["checked"],
+      "surfaces": [
+        { "box": [310, 65.4, 44, 26], "paint": 0 },
+        { "box": [332, 69.4, 18, 18], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      { "said": "Blocked", "type": 0 },
+      { "said": "In this device’s system settings.", "type": 1 },
+      { "said": "Notify me on this device", "type": 2 },
+      { "said": "This device", "type": 3 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 374, 118.4], "paint": 2 },
+      { "box": [79.3, 30.6, 5.4, 5.4], "paint": 3 },
+      { "box": [201.5, 67.4, 81.7, 22], "paint": 1 }
+    ]
+  }
+}

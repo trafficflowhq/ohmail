@@ -20,5 +20,8 @@
     "@trafficflow/db": "*",
     "@trafficflow/services": "*",
     "@trafficflow/worker": "*"
+  },
+  "devDependencies": {
+    "@ohmail/client-engine": "*"
   }
 }

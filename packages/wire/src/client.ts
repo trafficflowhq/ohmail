@@ -101,6 +101,11 @@ export interface HelloAnswer {
     accountHeader: true;
     /** The send route takes `forwardParts`; a fact of the build, as `accountHeader` is. */
     forwardParts: true;
+    /**
+     * This server keeps a calendar: its records ride the sync feed to a client that names them,
+     * and an account may switch it on. Absent or false: no calendar here.
+     */
+    calendar?: boolean;
   };
 }
 

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { ImapAdapter, IMAP_READ_DEADLINE_MS, ImapBoundExceeded, type ImapConfig } from "../../src/adapters/imap.js";
 import { SentCopyAppendFailed } from "../../src/send.js";
+import { watchTransporters } from "./_smtp-door.js";
 
 /**
  * `ImapAdapter.isLive()` — the send door's admission for reusing a connection. It reads
@@ -58,6 +59,9 @@ async function connected(nowMs?: () => number) {
 }
 
 describe("ImapAdapter.isLive — the reuse admission", () => {
+  let smtp: ReturnType<typeof watchTransporters> | undefined;
+  afterEach(() => { smtp?.restore(); smtp = undefined; });
+
   it("(1) reads true on a connected adapter (the positive control)", async () => {
     const { adapter } = await connected();
     expect(adapter.isLive()).toBe(true);
@@ -86,11 +90,12 @@ describe("ImapAdapter.isLive — the reuse admission", () => {
     let jumping = false;
     let calls = 0;
     const nowMs = (): number => (jumping ? (calls += 1) * (IMAP_READ_DEADLINE_MS + 1) : 0);
+    smtp = watchTransporters();
     const { adapter, client } = await connected(nowMs);
     // The SMTP half is not the subject: a transporter that delivers at once.
-    (adapter as unknown as { transporter: unknown }).transporter = {
+    Object.assign(smtp.last(), {
       sendMail: async () => ({ messageId: "<m@x>" }), close() { /* nothing */ },
-    };
+    });
     jumping = true;
     const outcome = await adapter
       .send({ from: "u@example.test", to: "b@x.test", subject: "s", text: "t" })

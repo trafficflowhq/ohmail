@@ -1,0 +1,81 @@
+/* A Settings section's head: its name on the line of the list's title, at the column's edge, on the ground while the sheets scroll under it. */
+@layer oh {
+  .oh-settingshead {
+    --oh-settingshead-lh: 1.2;
+    --oh-settingshead-count-lh: 1;
+    --oh-settingshead-top: calc(var(--s2) + var(--oh-hair));
+    --oh-settingshead-out: calc(var(--ringw) * -1);
+    --oh-settingshead-cover: 0 calc(var(--ringw) * -1 - 2px) 0 var(--ground);
+    --oh-settingshead-stick: -1px;
+    --oh-settingshead-layer: 2;
+    --oh-settingshead-lead: 0px;
+    --oh-settingshead-line: calc(var(--head) - var(--s2));
+    --oh-settingshead-pull: calc(var(--ringw) * -1);
+
+    position: sticky;
+    top: var(--oh-settingshead-stick);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    z-index: var(--oh-settingshead-layer);
+    margin: 0 var(--oh-settingshead-out);
+    padding: var(--oh-settingshead-top) var(--sheet-pad) var(--s4) var(--oh-settingshead-lead);
+    background: var(--ground);
+    box-shadow: var(--oh-settingshead-cover);
+  }
+
+  .oh-settingshead-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: var(--oh-settingshead-line);
+    margin-top: var(--oh-settingshead-pull);
+  }
+
+  .oh-settingshead-name {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    min-width: 0;
+  }
+
+  .oh-settingshead-title {
+    font-size: var(--t-title);
+    line-height: var(--oh-settingshead-lh);
+    white-space: nowrap;
+  }
+
+  .oh-settingshead-count {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--oh-settingshead-count-lh);
+    white-space: nowrap;
+  }
+
+  /* Beside the list the title stands on the list title's line, scrolled or not. */
+  :root:not([data-device="phone"]) .oh-settingshead {
+    --oh-settingshead-pull: 0px;
+
+    margin-top: var(--oh-settingshead-stick);
+  }
+
+  /* On a phone it scrolls away with the sheets. */
+  :root[data-device="phone"] .oh-settingshead {
+    position: static;
+    padding-top: 0;
+  }
+
+  /* ohmarchy: a hairline under it; beside the list its line is the list head's whole height. */
+  :root[data-face="ohmarchy"] .oh-settingshead {
+    --oh-settingshead-lead: var(--ringw);
+    --oh-settingshead-lined: var(--oh-settingshead-cover), 0 var(--oh-hair) 0 var(--line);
+
+    box-shadow: var(--oh-settingshead-lined);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-settingshead {
+    --oh-settingshead-line: var(--head);
+    --oh-settingshead-pull: calc(var(--s2) * -1);
+  }
+}

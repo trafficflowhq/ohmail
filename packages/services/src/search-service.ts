@@ -1,7 +1,7 @@
 import { sql, type SQL } from "drizzle-orm";
 import { exactAsked, positiveText, showSimilar, substringOpen, type SearchTier } from "@trafficflow/core/search-rank";
 import { searchIndexBuilt, searchIndexProgress } from "@trafficflow/core/mail";
-import { messageSearch, messages, passDone, readFlightOf } from "@trafficflow/db";
+import { messageSearch, messages, passDone, poolKeyOf, readFlightOf } from "@trafficflow/db";
 import type { ServiceContext, Db } from "./context.js";
 import { boolLiteral, dialect, orSidesOf, pgOnly, queryOperandsOf, partSidesOf, type Dialect, type SearchArm } from "@trafficflow/db/dialect";
 import { materializeMessages, materializePage, type MaterializeSource } from "./dto/materialize.js";
@@ -371,7 +371,7 @@ function storeIndexes(db: Db): Promise<IndexFacts> {
   // database that HAS the extension and one that does not; the device is neither, and its answer
   // is a fact about the store.
   if (dialect(db).name !== "pg") return Promise.resolve(NO_INDEXES);
-  const key = db as unknown as object;
+  const key = poolKeyOf(db);
   return trgmProbe(key, () =>
     /* A DECLARED POSTGRES-ONLY ARM, and it is unreachable elsewhere: the guard above answers no
        for any store that is not the server, so this statement is never composed there.
@@ -416,7 +416,7 @@ function docsOf(tuples: unknown, shares: unknown): ReadonlyMap<string, number> {
 
 /** The account's mailbox size for `search_timing`, from the handle's statistics: `small` when they are unknown. */
 function searchSizeOf(db: Db, accountId: string): SearchSize {
-  const docs = indexFacts.get(db as unknown as object)?.docs.get(accountId.toLowerCase()) ?? 0;
+  const docs = indexFacts.get(poolKeyOf(db))?.docs.get(accountId.toLowerCase()) ?? 0;
   return docs >= SEARCH_LARGE_DOCS ? "large" : "small";
 }
 
@@ -1973,7 +1973,7 @@ export class SearchService {
   /** This account's search documents while something is still building them, else nothing. */
   private async indexing(ctx: ServiceContext, db: unknown, store: StoreFacts): Promise<{ done: number; total: number } | undefined> {
     if (store.built || !this.opts.indexFills) return undefined;
-    const handle = ctx.db as unknown as object;
+    const handle = poolKeyOf(ctx.db);
     const memo = progressRead.get(handle) ?? new Map<string, { at: number; p: { done: number; total: number } }>();
     progressRead.set(handle, memo);
     const now = ctx.now().getTime();
@@ -2161,7 +2161,7 @@ export class SearchService {
       const [built, open] = await Promise.all([searchIndexBuilt(ctx.db as never, ctx.accountId), storeStillImporting(ctx)]);
       return covered(await fn(ctx.db, { built, trigram, words, oldColumns, docs: true, ...letters }), open);
     }
-    const handle = ctx.db as unknown as object;
+    const handle = poolKeyOf(ctx.db);
     const known = markerWritten.get(handle) ?? new Set<string>();
     markerWritten.set(handle, known);
     const tx = txOf(ctx);

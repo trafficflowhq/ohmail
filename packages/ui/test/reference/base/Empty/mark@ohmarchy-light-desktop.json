@@ -1,0 +1,81 @@
+{
+  "component": "Empty",
+  "state": "mark",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [134.0781, 83.125, 199.8438, 181.7344],
+  "clip": [134, 83, 200, 182],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "96px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "82.56px",
+      "letterSpacing": "-3.84px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(56, 54, 53)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "19.2px",
+      "letterSpacing": "-0.16px",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [{ "backgroundColor": "rgb(16, 15, 15)" }],
+  "nodes": [
+    {
+      "role": "generic",
+      "name": "oh.",
+      "box": [32, 32, 135.8, 82.5],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "96px",
+        "fontWeight": "700",
+        "lineHeight": "82.56px",
+        "letterSpacing": "-3.84px",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [{ "said": "oh", "type": 0 }],
+      "surfaces": [{ "box": [143.8, 83, 24, 24], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "6 decided", "type": 1 }],
+    "surfaces": [{ "box": [139.7, 138.9, 6.7, 6.7], "paint": 0 }]
+  }
+}

@@ -1,0 +1,208 @@
+@layer oh {
+  .oh-sheet {
+    /* Measures of this part that no token carries yet. */
+    --oh-sheet-foot-room: 104px;
+    --oh-sheet-top-h: 56px;
+    --oh-sheet-layer-foot: 5;
+    --oh-sheet-layer-ring: 4;
+    --oh-sheet-side: 0px;
+    --oh-sheet-out: calc(var(--ringw) * -1);
+    --oh-sheet-scroll-pad: var(--ringw) var(--ringw) var(--oh-sheet-foot-room);
+    --oh-sheet-lead: var(--sq-gutter);
+
+    box-sizing: border-box;
+    min-width: 0;
+    background: var(--sheet);
+    border-radius: var(--r-sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  .oh-sheet[data-kind="list"],
+  .oh-sheet[data-kind="wide"] {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  :root[data-face="ohmarchy"] .oh-sheet[data-kind="list"][data-focused],
+  :root[data-face="ohmarchy"] .oh-sheet[data-kind="wide"][data-focused] {
+    box-shadow: 0 0 0 var(--ringw) var(--focus);
+  }
+
+  /* The reading column: no paper of its own, the sheets stand on the ground. */
+  .oh-sheet[data-kind="reading"] {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    background: none;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  /* In a wide window the column keeps its width and what is read stands centred at a reading width. */
+  :root[data-device="desktop"] .oh-sheet[data-kind="reading"] {
+    --oh-sheet-side: max(0px, calc((100% - var(--readw)) / 2 - var(--ringw)));
+  }
+
+  .oh-sheet-top {
+    display: none;
+  }
+
+  .oh-sheet-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 0 minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    margin-inline: var(--oh-sheet-side);
+  }
+
+  .oh-sheet[data-gutter] > .oh-sheet-body {
+    grid-template-columns: var(--sq-gutter) minmax(0, 1fr);
+  }
+
+  .oh-sheet-gutter {
+    align-self: start;
+    justify-self: start;
+    margin: var(--ringw) 0 0 var(--ringw);
+  }
+
+  .oh-sheet-scroll {
+    box-sizing: border-box;
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    padding: var(--oh-sheet-scroll-pad);
+    outline: none;
+  }
+
+  .oh-sheet-run {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    margin-top: var(--ringw);
+  }
+
+  .oh-sheet-foot {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: var(--s4);
+    z-index: var(--oh-sheet-layer-foot);
+    display: flex;
+    justify-content: center;
+    margin-inline: var(--oh-sheet-side);
+    pointer-events: none;
+  }
+
+  .oh-sheet[data-gutter] > .oh-sheet-foot {
+    left: var(--oh-sheet-lead);
+  }
+
+  /* The column's foot while a sheet runs under it: it ends in the sheets' corners and the last pixels dim. */
+  :root:not([data-device="phone"]) .oh-sheet-scroll {
+    border-radius: 0 0 var(--r-sheet) var(--r-sheet);
+  }
+
+  /* A mask reads only how solid a colour is: the ink stands for "all there". With motion reduced the edge stays round. */
+  @media (prefers-reduced-motion: no-preference) {
+    :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-scroll {
+      --oh-sheet-dim: color-mix(in srgb, var(--ink) 86%, transparent);
+      --oh-sheet-dimmer: color-mix(in srgb, var(--ink) 42%, transparent);
+
+      mask-image: linear-gradient(
+        to bottom,
+        var(--ink) calc(100% - 22px),
+        var(--oh-sheet-dim) calc(100% - 12px),
+        var(--oh-sheet-dimmer)
+      );
+    }
+
+    /* A sheet that arrives at the foot is tilted away and a little narrower until it is up. */
+    @supports (animation-timeline: view()) {
+      :root:not([data-device="phone"], [data-rm="1"]) .oh-sheet-run > * {
+        transform-origin: 50% 0;
+        animation: oh-sheet-pull linear both;
+        animation-timeline: view(block);
+        animation-range: entry 0% entry 190px;
+      }
+    }
+  }
+
+  @keyframes oh-sheet-pull {
+    from {
+      transform: perspective(900px) rotateX(-18deg) scale(0.95);
+      opacity: 0.6;
+    }
+
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+
+  /* The phone: the bar with the way back over the column, and the sheets to the screen's edge. */
+  :root[data-device="phone"] .oh-sheet-top {
+    box-sizing: border-box;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    height: var(--oh-sheet-top-h);
+    padding: 0 var(--s2) 0 var(--s3);
+  }
+
+  :root[data-device="phone"] .oh-sheet-body {
+    padding: 0 var(--s2) 0 var(--s2);
+  }
+
+  :root[data-device="phone"] .oh-sheet[data-gutter] > .oh-sheet-body {
+    padding-left: 0;
+  }
+
+  :root[data-device="phone"] .oh-sheet-gutter {
+    margin-left: var(--s1);
+  }
+
+  :root[data-device="phone"] .oh-sheet > .oh-sheet-foot {
+    left: var(--s4);
+    right: var(--s4);
+  }
+
+  /* Ohmarchy: a tile's ring stands outside it, so the column reaches one ring further on three sides. */
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-kind="reading"] {
+    --oh-sheet-lead: calc(var(--sq-gutter) + var(--ringw));
+
+    margin: var(--oh-sheet-out) var(--oh-sheet-out) 0;
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet > .oh-sheet-foot {
+    left: var(--ringw);
+    right: var(--ringw);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-gutter] > .oh-sheet-foot {
+    left: var(--oh-sheet-lead);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-sheet[data-kind="reading"][data-focused]::after {
+    content: "";
+    position: absolute;
+    z-index: var(--oh-sheet-layer-ring);
+    inset: var(--ringw) var(--ringw) 0 var(--ringw);
+    margin-inline: var(--oh-sheet-side);
+    box-shadow: var(--oh-sheet-focus);
+    pointer-events: none;
+
+    --oh-sheet-focus: inset 0 0 0 var(--ringw) var(--focus);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"])
+    .oh-sheet[data-kind="reading"][data-gutter][data-focused]::after {
+    left: var(--oh-sheet-lead);
+  }
+}

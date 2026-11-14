@@ -191,6 +191,8 @@ const WORKSPACE_MODULE_SUBSTITUTES = {
      `mobile.ts`): the pass and its one store read, each twin refusing by name (about 11 KB). */
   "apps/worker/sync": { "./blank-repair.js": path.join(PHONE, "blank-repair.ts") },
   "packages/core/adapters/drizzle-repo": { "./blank-rows.js": path.join(PHONE, "blank-rows.ts") },
+  /* A mailbox's erasure, its calendar part: a phone's own store keeps no calendar. */
+  "packages/db/mailbox-erasure": { "./calendar/erasure.js": path.join(PHONE, "calendar-erasure.ts") },
 };
 
 /** The {@link WORKSPACE_MODULE_SUBSTITUTES} key of a file in the workspace, or null outside it. */

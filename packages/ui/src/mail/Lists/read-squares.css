@@ -1,0 +1,199 @@
+@layer oh {
+  .oh-readsquares {
+    /* The square, its pitch and the count's slot: the tokens' along a row, the column's own upright. */
+    --oh-readsquares-sq: var(--sq);
+    --oh-readsquares-pitch: calc(var(--sq) + var(--sq-gap));
+    --oh-readsquares-count: var(--sq-more);
+    --oh-readsquares-k: 1;
+    /* Measures of this part that no token carries yet. */
+    --oh-readsquares-h: 22px;
+    --oh-readsquares-pad: 6px;
+    --oh-readsquares-box: inset 0 0 0 1px var(--btn-ring);
+    --oh-readsquares-own: inset 0 0 0 2px var(--sq-mine);
+    --oh-readsquares-own-small: inset 0 0 0 1.5px var(--sq-mine);
+    --oh-readsquares-draft: inset 0 0 0 2px var(--hot);
+    --oh-readsquares-ring-r: calc(var(--r-sq) + 2px);
+    --oh-readsquares-ring-out: -3px;
+    --oh-readsquares-room: calc(var(--sq-slots) * var(--oh-readsquares-pitch) + var(--oh-readsquares-count));
+
+    box-sizing: border-box;
+    position: relative;
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    height: var(--oh-readsquares-h);
+    padding: 0 var(--oh-readsquares-pad);
+    border-radius: var(--r-pill);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-readsquares-box);
+    font-style: normal;
+  }
+
+  /* Longer than its room it keeps one length, so what stands beside it never moves. */
+  .oh-readsquares[data-long] {
+    width: calc(var(--oh-readsquares-room) + 2 * var(--oh-readsquares-pad));
+  }
+
+  .oh-readsquares-slot {
+    position: relative;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: round(calc(var(--oh-readsquares-pitch) * var(--oh-readsquares-k)), 1px);
+    height: 100%;
+    transition:
+      width var(--d-sq) var(--e-swift),
+      height var(--d-sq) var(--e-swift);
+  }
+
+  .oh-readsquares[data-press] > .oh-readsquares-slot {
+    cursor: pointer;
+  }
+
+  .oh-readsquares-slot[data-off] {
+    pointer-events: none;
+  }
+
+  .oh-readsquares-face {
+    display: block;
+    width: calc(var(--oh-readsquares-sq) * var(--oh-readsquares-k));
+    height: calc(var(--oh-readsquares-sq) * var(--oh-readsquares-k));
+    border-radius: var(--r-sq);
+    background: var(--sq-read);
+    transition:
+      width var(--d-sq) var(--e-swift),
+      height var(--d-sq) var(--e-swift),
+      background-color var(--d-mark) var(--e-std),
+      box-shadow var(--d-mark) var(--e-std);
+  }
+
+  .oh-readsquares-slot[data-kind="unseen"] > .oh-readsquares-face {
+    background: var(--hot);
+  }
+
+  .oh-readsquares-slot[data-kind="own"] > .oh-readsquares-face {
+    background: none;
+    box-shadow: var(--oh-readsquares-own);
+  }
+
+  .oh-readsquares-slot[data-kind="own"][data-small] > .oh-readsquares-face {
+    box-shadow: var(--oh-readsquares-own-small);
+  }
+
+  .oh-readsquares-slot[data-kind="draft"] > .oh-readsquares-face {
+    background: none;
+    box-shadow: var(--oh-readsquares-draft);
+  }
+
+  /* The ring: where the reader is. It stands around its square, whatever the square's size. */
+  .oh-readsquares-ring {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(var(--oh-readsquares-sq) + 6px);
+    height: calc(var(--oh-readsquares-sq) + 6px);
+    translate: -50% -50%;
+    border-radius: var(--oh-readsquares-ring-r);
+    box-shadow: 0 0 0 var(--sq-ringw) var(--sq-ring);
+    pointer-events: none;
+  }
+
+  /* "+N": the squares an edge hides, in a slot of its own that folds to nothing. */
+  .oh-readsquares-more {
+    flex: none;
+    overflow: hidden;
+    width: 0;
+    opacity: 0;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-style: normal;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    white-space: nowrap;
+    transition:
+      width var(--d-sq) var(--e-swift),
+      height var(--d-sq) var(--e-swift),
+      opacity var(--d-pop) var(--e-swift);
+  }
+
+  .oh-readsquares-more[data-on] {
+    width: var(--oh-readsquares-count);
+    opacity: 1;
+  }
+
+  .oh-readsquares-more[data-end] {
+    text-align: right;
+  }
+
+  /* The column beside the letters: the same part, upright. */
+  .oh-readsquares[data-axis="column"] {
+    --oh-readsquares-sq: var(--sq-y);
+    --oh-readsquares-pitch: calc(var(--sq-y) + var(--sq-y-gap));
+    --oh-readsquares-count: var(--sq-more-y);
+    --oh-readsquares-pad: var(--s2);
+
+    flex-direction: column;
+    width: 28px;
+    height: auto;
+    padding: var(--s2) 0;
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+  }
+
+  .oh-readsquares[data-axis="column"][data-long] {
+    width: 28px;
+    height: calc(var(--oh-readsquares-room) + 2 * var(--oh-readsquares-pad));
+  }
+
+  .oh-readsquares[data-axis="column"] > .oh-readsquares-slot {
+    width: 100%;
+    height: round(calc(var(--oh-readsquares-pitch) * var(--oh-readsquares-k)), 1px);
+  }
+
+  .oh-readsquares[data-axis="column"] > .oh-readsquares-more {
+    width: 100%;
+    height: 0;
+    overflow: visible clip;
+    line-height: var(--sq-more-y);
+    text-align: center;
+  }
+
+  .oh-readsquares[data-axis="column"] > .oh-readsquares-more[data-on] {
+    height: var(--sq-more-y);
+  }
+
+  /* Along the head, under a finger: larger squares, further apart. */
+  .oh-readsquares[data-axis="head"] {
+    --oh-readsquares-sq: 10px;
+    --oh-readsquares-pitch: 20px;
+    --oh-readsquares-count: 28px;
+    --oh-readsquares-h: 32px;
+    --oh-readsquares-pad: 8px;
+    --oh-readsquares-box: inset 0 0 0 1px var(--ctl-ring);
+
+    background: var(--sheet);
+  }
+
+  :root[data-face="ohmarchy"] .oh-readsquares {
+    --oh-readsquares-box: inset 0 0 0 1px var(--line);
+    --oh-readsquares-ring-r: 0;
+
+    background: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-readsquares[data-axis="column"] {
+    background: var(--sheet);
+  }
+
+  :root[data-face="ohmarchy"] .oh-readsquares[data-axis="head"] {
+    --oh-readsquares-box: inset 0 0 0 1px var(--btn-ring);
+
+    background: var(--sheet);
+  }
+
+  :root[data-touch="1"] .oh-readsquares[data-long] {
+    touch-action: pan-y;
+  }
+}

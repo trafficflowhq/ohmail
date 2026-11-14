@@ -1,0 +1,70 @@
+/* Two answers with consequences: a line each, with what it is about under it. */
+@layer oh {
+  .oh-radiolines {
+    padding-bottom: var(--s1);
+  }
+  .oh-radioline {
+    --oh-radioline-mark: 14px;
+    --oh-radioline-pad: 6px var(--s3);
+    --oh-radioline-ring: none;
+    --oh-radioline-off: inset 0 0 0 1.5px var(--ctl-ring);
+    --oh-radioline-on: inset 0 0 0 4.5px var(--ink);
+    display: grid;
+    grid-template-columns: var(--oh-radioline-mark) minmax(0, 1fr);
+    gap: var(--oh-hair) var(--s2);
+    align-items: center;
+    width: 100%;
+    min-height: var(--h-m);
+    padding: var(--oh-radioline-pad);
+    border-radius: var(--r-row);
+    box-shadow: var(--oh-radioline-ring);
+    font-weight: var(--w-mid);
+    line-height: 1.3;
+  }
+  .oh-radioline::before {
+    content: "";
+    grid-row: 1 / span 2;
+    align-self: start;
+    width: var(--oh-radioline-mark);
+    height: var(--oh-radioline-mark);
+    margin-top: var(--oh-focus);
+    border-radius: var(--dot-r);
+    box-shadow: var(--oh-radioline-off);
+    transition: box-shadow var(--d-hover) var(--e-std);
+  }
+  .oh-radioline:hover {
+    background: var(--hover);
+  }
+  .oh-radioline:focus-visible {
+    --oh-radioline-ring: var(--oh-ring-focus);
+    border-radius: var(--r-row);
+    background: transparent;
+    outline: none;
+  }
+  .oh-radioline[aria-checked="true"]::before {
+    box-shadow: var(--oh-radioline-on);
+  }
+  .oh-radioline-word {
+    grid-column: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    text-overflow: ellipsis;
+  }
+  .oh-radioline-note {
+    grid-column: 2;
+    justify-self: start;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    white-space: nowrap;
+  }
+  :root[data-device="phone"] .oh-radioline {
+    min-height: var(--h-l);
+  }
+  :root[data-face="ohmarchy"] .oh-radioline:hover {
+    background: var(--off);
+  }
+  :root[data-face="ohmarchy"] .oh-radioline:focus-visible {
+    background: transparent;
+  }
+}

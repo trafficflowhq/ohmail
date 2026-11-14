@@ -72,15 +72,24 @@ const EXCLUDED_TREES = ["apps/webapp/app/(marketing)/", "apps/webapp/app/(produc
  *
  * `ts.createSourceFile` answers both: an ImportDeclaration is an import wherever it sits and a
  * comment is not one, and a specifier that fails to resolve is REPORTED rather than skipped.
+ *
+ * A WORKSPACE STYLESHEET IS FOUND THROUGH ITS PACKAGE'S OWN `exports`, as a bundler finds it, so
+ * the census reads the file the screen loads and not a guess at the folder. A subpath the map does
+ * not name, or names with anything but one file, does not resolve and is reported.
  */
-const WORKSPACE_ALIASES: ReadonlyArray<readonly [string, string]> = [
-  ["@ohmail/tokens/", "packages/tokens/src/"],
+const WORKSPACE_PACKAGES: ReadonlyArray<readonly [name: string, dir: string]> = [
+  ["@ohmail/tokens", "packages/tokens"],
 ];
 
 function resolveSpecifier(spec: string, fromFile: string): string | null {
   if (spec.startsWith(".")) return resolve(dirname(fromFile), spec);
-  for (const [prefix, dir] of WORKSPACE_ALIASES) {
-    if (spec.startsWith(prefix)) return resolve(ROOT, dir + spec.slice(prefix.length));
+  for (const [name, dir] of WORKSPACE_PACKAGES) {
+    if (!spec.startsWith(`${name}/`)) continue;
+    const manifest = JSON.parse(readFileSync(resolve(ROOT, dir, "package.json"), "utf8")) as {
+      exports?: Record<string, unknown>;
+    };
+    const target = manifest.exports?.[`.${spec.slice(name.length)}`];
+    return typeof target === "string" ? resolve(ROOT, dir, target) : null;
   }
   return null;
 }

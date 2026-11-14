@@ -1,0 +1,92 @@
+{
+  "component": "Sentence",
+  "state": "proposal",
+  "look": "paper-light-desktop",
+  "place": "cell",
+  "target": [24, 24, 439.8281, 34.1406],
+  "clip": [24, 24, 440, 35],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "28px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "31.36px",
+      "letterSpacing": "-0.616px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "28px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "31.36px",
+      "letterSpacing": "-0.616px",
+      "fontVariationSettings": "\"opsz\" 48",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "boxDecorationBreak": "clone", "borderRadius": "11.2px" },
+    {
+      "borderRight": "2px solid rgb(18, 16, 14)",
+      "borderBottom": "2px solid rgb(18, 16, 14)",
+      "opacity": "0.6",
+      "turn": "45deg"
+    },
+    { "backgroundColor": "rgb(248, 67, 26)", "borderRadius": "999px" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Ohbox",
+      "box": [302, 0, 126.1, 34.1],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgb(248, 67, 26)",
+        "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "28px",
+        "fontWeight": "800",
+        "lineHeight": "31.36px",
+        "letterSpacing": "-0.616px",
+        "borderRadius": "11.2px",
+        "paddingTop": "0.56px",
+        "paddingRight": "9.52px",
+        "paddingBottom": "2.24px",
+        "paddingLeft": "9.52px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Ohbox", "type": 0 }],
+      "surfaces": [
+        { "box": [302, 0, 126.1, 34.1], "paint": 0 },
+        { "box": [401.2, 5.4, 15.8, 15.8], "paint": 1 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "Lena Kaufmann goes to", "type": 1 }],
+    "surfaces": [{ "box": [430.3, 15, 9.5, 9.5], "paint": 2 }]
+  }
+}

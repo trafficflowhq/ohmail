@@ -164,6 +164,13 @@ const ALIASES: Record<string, string> = {
   "@trafficflow/db/admin": r("packages/db/src/admin.ts"),
   "@trafficflow/db/journal": r("packages/db/src/journal.ts"),
   "@trafficflow/db/cloud": r("packages/db/src/cloud.ts"),
+  // The calendar's part of the database package: its bounds, a desktop's copy stores by.
+  "@trafficflow/db/calendar": r("packages/db/src/calendar/index.ts"),
+  // The calendar's builders, which the copy's own feed serves the window with, and the time model
+  // they read a row's range by.
+  "@trafficflow/services/calendar": r("packages/services/src/calendar/index.ts"),
+  "@ohmail/cal-core": r("packages/cal-core/src/index.ts"),
+  "@ohmail/cal-core/recur/span": r("packages/cal-core/src/recur/span.ts"),
   /* The dialect seam, reached from `engine.ts` — which names the store this install actually
      opened, so `/health` can say `sqlite` or `pglite` instead of null. A new workspace edge is an
      unresolved edge until it is listed here, and this census failed naming it, which is the

@@ -6,8 +6,10 @@ import { eq } from "drizzle-orm";
 import type { AnswerOf } from "@ohmail/wire";
 import { mailboxes, recordMailboxRemoved, type LedgerTx, type Tx } from "@trafficflow/db";
 import { deleteMailboxRows } from "./local-mirror.js";
+import { wipeCalendarCopy } from "./cloud-mirror-calendar.js";
+import { calendarFeed } from "@trafficflow/services/calendar";
 import {
-  resolveSession, syncService, ServiceError, isUuid,
+  resolveSession, syncService, ServiceError, dbFor, isUuid,
   type EntityType, type ServiceContext, type SyncResponse,
 } from "@trafficflow/services/mail";
 import {
@@ -1293,7 +1295,7 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
     }
 
     const ctxFor = (accountId: string, userId: string | null, sessionId: string | null): ServiceContext => ({
-      db,
+      db: dbFor(db, accountId),
       accountId,
       userId,
       sessionId,
@@ -1367,6 +1369,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
             await deleteMailboxRows(tx as unknown as Tx, row.id, { unsentDrafts: "delete" });
             await recordMailboxRemoved(tx as unknown as LedgerTx, world.accountId, row.id);
           }
+          // The calendar's copy hangs on no mailbox: it goes whole, each record told to the local feed.
+          await wipeCalendarCopy(tx, world.accountId);
           count = rows.length;
         });
         return { count };
@@ -2322,6 +2326,8 @@ export async function createCloudSidecar(config: CloudSidecarConfig): Promise<Cl
               since,
               ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
               ...(types && types.length > 0 ? { types } : {}),
+              // This copy's calendar, served to the window by the hosted switch it copied.
+              calendar: calendarFeed,
             });
           };
           let result = await ask();

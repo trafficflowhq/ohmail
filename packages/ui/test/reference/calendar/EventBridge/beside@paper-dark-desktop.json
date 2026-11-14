@@ -1,0 +1,28 @@
+{
+  "component": "EventBridge",
+  "state": "beside",
+  "look": "paper-dark-desktop",
+  "place": "window",
+  "target": [761.81, 217, 11.61, 32],
+  "clip": [761, 217, 13, 32],
+  "studioCommit": "8c30a5aa71ce2ae26341c8e607140845746f351a",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [],
+  "paints": [],
+  "nodes": [],
+  "loose": { "text": [], "surfaces": [] }
+}

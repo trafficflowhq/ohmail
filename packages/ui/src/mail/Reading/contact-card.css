@@ -1,0 +1,178 @@
+/* The contact card's own lines. The frame is the menu's card. */
+@layer oh {
+  .oh-contactcard-head {
+    --oh-contactcard-lh: 1.3;
+    --oh-contactcard-lh-name: 1.2;
+
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s1) 0 var(--s3) var(--s1);
+  }
+
+  .oh-contactcard-head > .oh-button {
+    color: var(--ink2);
+  }
+
+  .oh-contactcard-who {
+    flex: 1;
+    display: grid;
+    min-width: 0;
+    line-height: var(--oh-contactcard-lh);
+  }
+
+  .oh-contactcard-name {
+    overflow: hidden;
+    font-size: var(--t-title);
+    line-height: var(--oh-contactcard-lh-name);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-contactcard-address {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    overflow-wrap: anywhere;
+  }
+
+  .oh-contactcard-now {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    min-height: var(--h-m);
+    padding: 0 var(--s1) 0 var(--s3);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+  }
+
+  .oh-contactcard-line {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .oh-contactcard-now > .oh-button {
+    flex: none;
+    color: var(--ink);
+    font-size: var(--t-meta);
+  }
+
+  .oh-contactcard-mark {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+  }
+
+  .oh-contactcard-title {
+    padding: var(--s2) var(--s3) var(--s1);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-contactcard-places {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2) var(--s2);
+  }
+
+  /* A place is a second button; the one their mail goes to is picked. */
+  .oh-contactcard-place {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: var(--h-s);
+    padding: 0 var(--s3);
+    border-radius: var(--r-pill);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-btn);
+    font-weight: var(--w-bold);
+    line-height: var(--oh-lh-tight);
+    white-space: nowrap;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-contactcard-place:hover {
+    background: var(--hover);
+  }
+
+  .oh-contactcard-place[aria-checked="true"] {
+    background: var(--pick);
+    box-shadow: var(--oh-ring-pick);
+    color: var(--on-pick);
+  }
+
+  .oh-contactcard-rules {
+    padding: 0 var(--s3) var(--s2);
+  }
+
+  .oh-contactcard-rule {
+    --oh-contactcard-lh-rule: 1.6;
+
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: var(--oh-contactcard-lh-rule);
+  }
+
+  .oh-contactcard-about {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-contactcard-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    min-height: var(--h-m);
+    padding: 0 var(--s3);
+    font-weight: var(--w-mid);
+  }
+
+  /* ohmarchy sets the places in one track, as its segmented switch. */
+  :root[data-face="ohmarchy"] .oh-contactcard-places {
+    --oh-contactcard-track-gap: 2px;
+    --oh-contactcard-track-pad: 3px 3px var(--s2);
+
+    flex-wrap: nowrap;
+    gap: var(--oh-contactcard-track-gap);
+    margin: var(--s1) var(--s2) var(--s3);
+    padding: var(--oh-contactcard-track-pad);
+    background: var(--seg-track);
+  }
+
+  :root[data-face="ohmarchy"] .oh-contactcard-place {
+    --oh-contactcard-place-h: 24px;
+    --oh-contactcard-place-pad: 0 6px;
+
+    flex: 1 1 auto;
+    height: var(--oh-contactcard-place-h);
+    padding: var(--oh-contactcard-place-pad);
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    font-weight: var(--w-text);
+  }
+
+  :root[data-face="ohmarchy"] .oh-contactcard-place[aria-checked="true"] {
+    background: var(--pick);
+    box-shadow: var(--oh-ring-pick);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"] .oh-contactcard-places {
+    flex-wrap: wrap;
+  }
+
+  :root[data-face="ohmarchy"][data-touch="1"] .oh-contactcard-place {
+    height: var(--h-s);
+  }
+}

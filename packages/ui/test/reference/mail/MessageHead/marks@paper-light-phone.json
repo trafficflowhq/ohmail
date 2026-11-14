@@ -1,0 +1,208 @@
+{
+  "component": "MessageHead",
+  "state": "marks",
+  "look": "paper-light-phone",
+  "place": "block",
+  "target": [28, 180.1406, 334, 85],
+  "clip": [28, 180, 334, 86],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "phone",
+    "face": "paper",
+    "scheme": "light",
+    "width": 390,
+    "height": 844,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 390, "clientWidth": 390, "scrollHeight": 844 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "19.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "19.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(90, 83, 75)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "19.5px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textDecoration": "underline oklch(0.446457 0.015764 none / 0.38) thickness 1px underline-offset 2.6px",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "ink": "stroke rgb(90, 83, 75) 2.8px round round; shapes 1 bda16f424158" }],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [0, 0, 334, 85],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "to", "type": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Message",
+      "box": [173.7, 0, 44, 44],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "surfaces": [{ "box": [185.7, 12, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "Wed 21 Oct 11:02",
+      "box": [221.7, 0, 112.3, 44],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "0px",
+        "paddingRight": "4px",
+        "paddingBottom": "0px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Wed 21 Oct 11:02", "type": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "you",
+      "box": [63.3, 44, 21.4, 19.5],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "600",
+        "lineHeight": "19.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "2px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "you", "type": 2 }]
+    },
+    {
+      "role": "button",
+      "name": "details",
+      "box": [92, 44, 38.6, 19.5],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "19.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "2px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["collapsed"],
+      "text": [{ "said": "details", "type": 3 }]
+    },
+    {
+      "role": "note",
+      "name": "",
+      "box": [48, 65.5, 286, 19.5],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "19.5px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "text": [{ "said": "Answered by the away responder", "type": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

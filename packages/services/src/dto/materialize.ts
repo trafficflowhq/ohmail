@@ -13,9 +13,9 @@ import {
   messages, folderState, messageStates, threads, routingDecisions, approvals, rules, drafts,
   tags, messageTags,
   SCREENER_SUGGESTION_PROVENANCE, isScreenerActRefusal, rulesTheActWrote, pendingRefileFrom, refileOwed,
-  type EntityType,
 } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
+import type { MailRecordKind } from "@ohmail/wire";
 import { draftContentRevision } from "../draft-revision.js";
 import { bridgeTx, type Db } from "../context.js";
 import type {
@@ -946,8 +946,7 @@ export async function materializeDraft(db: Db, accountId: string, id: string): P
 /**
  * Re-materialize the CURRENT DTO for a `change_log` row's entity. Returns
  * `null` when the live entity is gone → SyncService emits a `delete` tombstone.
- * Unknown/not-yet-implemented entity types return `null` (tombstone) rather than
- * throwing, so an unrecognized change never wedges the feed.
+ * A kind with no builder here does not compile (see {@link materialize}).
  */
 /**
  * One `tags` row → `TagDTO`. Its existence is the precondition for growing
@@ -1157,7 +1156,13 @@ async function materializeMailboxProfile(db: Db, accountId: string, id: string):
   return row ? mailboxProfileRowToDTO(row) : null;
 }
 
-export function materialize(db: Db, accountId: string, type: EntityType, id: string): Promise<unknown | null> {
+/**
+ * One mail record as it stands now, or `null` when it is gone. Mail kinds only: the calendar's
+ * are built behind a port this module never reaches (`calendar-port.ts`). No default arm, so a
+ * mail kind added to the wire without its case here does not compile — the silent alternative was
+ * every row of it draining to clients as a deletion.
+ */
+export function materialize(db: Db, accountId: string, type: MailRecordKind, id: string): Promise<unknown | null> {
   switch (type) {
     case "message": return materializeMessage(db, accountId, id);
     case "folder": return materializeFolder(db, accountId, id);
@@ -1171,6 +1176,13 @@ export function materialize(db: Db, accountId: string, type: EntityType, id: str
     case "draft": return materializeDraft(db, accountId, id);
     case "settings": return materializeSettings(db, accountId, id);
     case "mailbox_profile": return materializeMailboxProfile(db, accountId, id);
-    default: return Promise.resolve(null);
+    // A mailbox's receipt is only ever a delete, which the reader answers before it gets here.
+    case "mailbox": return Promise.resolve(null);
+    default: return unbuildable(type);
   }
+}
+
+/** Reached only by a kind the switch above does not name, which the compiler refuses first. */
+function unbuildable(kind: never): Promise<null> {
+  throw new Error(`materialize: no builder for the record kind ${String(kind)}`);
 }

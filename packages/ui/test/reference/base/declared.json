@@ -1,0 +1,243 @@
+[
+  {
+    "key": "JumpBack/top@paper-light-fold",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "JumpBack/top@paper-light-foldl",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "JumpBack/top@paper-dark-fold",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "JumpBack/top@paper-dark-foldl",
+    "question": "picture",
+    "reason": "The reference stands over a list's rows; their text shows beside the circle.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RadioLines",
+    "reason": "The reference marks each line as a menu item; the kit says what it is, a radio in its group.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "radio", "as": "menuitem" }]
+  },
+  {
+    "key": "Menu",
+    "reason": "The reference's menu has no name and marks a choice as a plain item with a check; the kit names every menu and says menuitemradio.",
+    "since": "2026-11-14",
+    "alike": [
+      { "role": "menu", "unnamed": true },
+      { "role": "menuitemradio", "as": "menuitem" }
+    ]
+  },
+  {
+    "key": "PhoneSheet",
+    "reason": "The reference's sheet is a menu without a name; the kit names it.",
+    "since": "2026-11-14",
+    "alike": [
+      { "role": "menu", "unnamed": true },
+      { "role": "dialog", "as": "menu", "unnamed": true }
+    ]
+  },
+  {
+    "key": "Menu/field",
+    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "menu", "name": "" }]
+  },
+  {
+    "key": "Menu/context",
+    "reason": "The reference's specimen is a still box without the menu's role; the kit's is the menu itself.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "menu", "name": "" }]
+  },
+  {
+    "key": "Dialog/delete",
+    "reason": "The reference's specimen is a still box: no dialog role, and its sentence is a paragraph. The kit's is the dialog, named by its sentence as a heading.",
+    "since": "2026-11-14",
+    "nodes": [
+      { "role": "dialog", "name": "" },
+      { "role": "heading", "name": "Move to Trash" }
+    ]
+  },
+  {
+    "key": "JumpBack/end@paper-light-phone",
+    "reason": "The reference reads the list's own way back as well: it lies behind this one, at the same place.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "button", "name": "Back to top" }]
+  },
+  {
+    "key": "JumpBack/end@paper-dark-phone",
+    "reason": "The reference reads the list's own way back as well: it lies behind this one, at the same place.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "button", "name": "Back to top" }]
+  },
+  {
+    "key": "Dialog",
+    "reason": "The reference's dialog has no name; the kit names every dialog by its sentence.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "dialog", "unnamed": true }]
+  },
+  {
+    "key": "Dialog/keys",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "heading", "name": "Sign out ohmail on a phone" }]
+  },
+  {
+    "key": "Dialog/field",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "heading", "name": "Delete this account" }]
+  },
+  {
+    "key": "Dialog/waiting",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "heading", "name": "Waiting for the other ohmail" }]
+  },
+  {
+    "key": "Dialog/store",
+    "reason": "The reference's sentence is a paragraph; the kit's is the heading that names the dialog.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "heading", "name": "ohcal is the calendar beside ohmail" }]
+  },
+  {
+    "key": "NoticeSlot/listed",
+    "reason": "The reference's menu has no name; the kit names it by the line that opens it.",
+    "since": "2026-11-14",
+    "alike": [{ "role": "menu", "unnamed": true }]
+  },
+  {
+    "key": "Palette",
+    "reason": "The reference's line is a plain text box over an unnamed list; the kit's is a combobox that owns a named listbox and says it is open, so a screen reader hears the row the arrows are on.",
+    "since": "2026-11-15",
+    "alike": [
+      { "role": "combobox", "as": "textbox" },
+      { "role": "listbox", "unnamed": true },
+      { "role": "combobox", "unstated": ["expanded"] }
+    ]
+  },
+  {
+    "key": "Opening",
+    "reason": "The reference reads the app's own main column as well: it holds the part and is exactly as large. The landmark is the frame's, not this part's.",
+    "since": "2026-11-14",
+    "nodes": [{ "role": "main", "name": "" }]
+  },
+  {
+    "key": "Palette/typed@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "Palette/typed@paper-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "Report/why@paper-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@paper-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/way@ohmarchy-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "RefusalLine/start@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "WaitRow/refused@paper-light-desktop",
+    "question": "picture",
+    "reason": "The reference's last row of pixels is the rule of the next row in its list.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "WaitRow/refused@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "The reference's last row of pixels is the rule of the next row in its list.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "WaitRow/refused@ohmarchy-dark-desktop",
+    "question": "picture",
+    "reason": "The reference's last row of pixels is the rule of the next row in its list.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "Report/why@ohmarchy-light-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "Report/why@ohmarchy-dark-desktop",
+    "question": "picture",
+    "reason": "The reference stands over the app's own screen: what lies behind it shows at the picture's edge.",
+    "since": "2026-11-14"
+  },
+  {
+    "key": "InfoMark",
+    "reason": "The reference's (i) is a plain button; the kit's says whether its card is open (aria-expanded), as a disclosure does. The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Slot",
+    "reason": "The reference's slot is a plain button; the kit's opens its menu and says whether it is open (aria-expanded). The new reader reads that state.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Sentence",
+    "reason": "The sentence's slots are the kit's Slot: each says whether its menu is open (aria-expanded), which the reference's plain buttons do not.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "NoticeSlot",
+    "reason": "The kit's way to the other notices says whether their list is open (aria-expanded); the reference's is a plain button.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "button", "unstated": ["collapsed"] }]
+  },
+  {
+    "key": "Field/refused",
+    "reason": "The kit marks a refused field invalid (aria-invalid), so a screen reader says it with the field; the reference's field carries only the line under it.",
+    "since": "2026-11-15",
+    "alike": [{ "role": "textbox", "unstated": ["invalid"] }]
+  }
+]

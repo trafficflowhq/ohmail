@@ -1,5 +1,5 @@
 import { and, eq, gt, isNull, sql } from "drizzle-orm";
-import { pairingTokens, users } from "@trafficflow/db";
+import { bindDb, carryBinding, pairingTokens, users } from "@trafficflow/db";
 import { mintPairingToken, type PairingTokenMinted } from "@trafficflow/services";
 import type { ServiceContext } from "@trafficflow/services";
 import type { PostgresJsDatabase } from "drizzle-orm/postgres-js";
@@ -56,7 +56,9 @@ export async function mintFirstRunSetupToken(
   opts: { now?: () => Date } = {},
 ): Promise<PairingTokenMinted | null> {
   const now = opts.now ?? ((): Date => new Date());
-  return db.transaction(async (tx) => {
+  // The ownerless mint runs for no account: bound to nothing, and the transaction carries it.
+  const unbound = bindDb(db, { account: null });
+  return unbound.transaction(async (tx) => {
     // postgres.js takes bigint at runtime; its published types omit it — migrate.ts's own cast,
     // for migrate.ts's reason: the 64-bit key must stay exact.
     await tx.execute(sql`select pg_advisory_xact_lock(${SETUP_TOKEN_LOCK_KEY as unknown as number})`);
@@ -80,7 +82,7 @@ export async function mintFirstRunSetupToken(
     // The boot context: `userId: null` is what makes this the ownerless mint, and it falls out
     // of the context rather than a special-case flag — pairing.ts designed the seam this way.
     const bootCtx: ServiceContext = {
-      db: tx as unknown as ServiceContext["db"],
+      db: carryBinding(unbound, tx),
       accountId: "",
       userId: null,
       now,
@@ -130,7 +132,8 @@ export async function ensureSetupTokenInvariant(
   const consistent = anyUser.length === 0 ? live.length === 1 : live.length === 0;
   if (consistent) return;
 
-  await db.transaction(async (tx) => {
+  const unbound = bindDb(db, { account: null });
+  await unbound.transaction(async (tx) => {
     await tx.execute(sql`select pg_advisory_xact_lock(${SETUP_TOKEN_LOCK_KEY as unknown as number})`);
     const t = now();
     const usersNow = await tx.select({ id: users.id }).from(users).limit(1);
@@ -142,7 +145,7 @@ export async function ensureSetupTokenInvariant(
     const liveNow = await tx.select({ id: pairingTokens.id }).from(pairingTokens).where(liveWhere(t)).limit(1);
     if (liveNow.length > 0) return;              // another request already healed it
     const bootCtx: ServiceContext = {
-      db: tx as unknown as ServiceContext["db"],
+      db: carryBinding(unbound, tx),
       accountId: "",
       userId: null,
       now,

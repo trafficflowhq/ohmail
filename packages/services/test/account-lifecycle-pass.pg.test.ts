@@ -2,13 +2,10 @@
  * so its window is deployment-wide whatever the assertions below scope. */
 import { describe, it, expect, afterAll } from "vitest";
 import { randomUUID } from "node:crypto";
-import postgres from "postgres";
-import { drizzle } from "drizzle-orm/postgres-js";
-import { brandDialect } from "@trafficflow/db/dialect";
 import { and, eq } from "drizzle-orm";
 import { accounts, users, mailboxes, closedSetValue, ClosedSetViolation } from "@trafficflow/db";
 import {
-  accountLifecycleNotices, schema, makeEntitlementsClient, ACCESS_TTL_MS,
+  accountLifecycleNotices, makeEntitlementsClient, makeOwnedDb, ACCESS_TTL_MS,
 } from "@trafficflow/db/cloud";
 import type { EntitlementsFetch } from "@trafficflow/db/cloud";
 import { PG_TEST_URL, realPgAvailable } from "@trafficflow/db/testing";
@@ -30,13 +27,15 @@ import type { AccountLifecyclePassDeps, AccountLifecyclePassResult } from "../sr
 
 const PG_UP = await realPgAvailable();
 
-const sql = postgres(PG_TEST_URL, { max: 4, onnotice: () => {} });
-const db = brandDialect(drizzle(sql, { schema }), "pg");
+// The factory's handle: the erasure binds the account it erases, and the binder takes a server
+// handle only from the factory that registered its door.
+const owned = makeOwnedDb(PG_TEST_URL);
+const db = owned.db;
 
 const NOW = new Date("2026-09-20T12:00:00.000Z");
 const DAY = 24 * 60 * 60 * 1000;
 
-afterAll(async () => { await sql.end(); });
+afterAll(async () => { await owned.close(); });
 
 async function seedAccount(): Promise<{ accountId: string; email: string }> {
   const [a] = await db.insert(accounts).values({ name: "wall-test" }).returning();

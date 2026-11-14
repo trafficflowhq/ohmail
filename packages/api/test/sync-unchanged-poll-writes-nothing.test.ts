@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { createApp, apiRoutes, type ApiDeps, type ResolvedSession } from "@trafficflow/api";
-import { devices, recordChange, sessions, type EntityType } from "@trafficflow/db";
+import { devices, isCalendarRecordKind, recordChange, sessions, type EntityType } from "@trafficflow/db";
 import { dialect } from "@trafficflow/db/dialect";
 import { DEVICE_SYNC_STAMP_MIN_GAP_MS, VALID_TYPE_LIST, syncRoutes } from "../src/routes/sync.js";
 import { makeDeps, seedDevice, seedSession, seedSessionFor, req, FIXED_NOW } from "./helpers.js";
@@ -164,7 +164,10 @@ describe("an unchanged /sync poll writes nothing", () => {
       const id = await change(db, s.accountId, type, type === "settings" ? s.accountId : randomUUID());
       const full = await statementsOf(db, () => H(req("GET", poll(cursor), { bearer: s.token }), deps));
       const body = await full.value.json() as SyncBody;
-      expect(delivered(body), `a ${type} change was answered as unchanged`).toEqual([[type, id]]);
+      // A calendar change reaches only a request that names it, on a server that keeps a calendar;
+      // this one keeps none, so the poll moves past it and sends nothing.
+      expect(delivered(body), `a ${type} change was answered as unchanged`)
+        .toEqual(isCalendarRecordKind(type) ? [] : [[type, id]]);
       expect(body.cursor).not.toBe(cursor);
       expect(body.hasMore).toBe(false);
       expect(full.seen.length, full.seen.join("\n")).toBeGreaterThan(2);

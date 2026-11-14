@@ -1,0 +1,76 @@
+/* A message is a sheet. Unread, the sheet is tinted and what stands on it takes the tint as its ground. */
+@layer oh {
+  .oh-message {
+    --oh-message-lh-subject: 1.2;
+    --oh-message-tint: color-mix(in srgb, var(--hot) 16%, var(--sheet-new));
+    --oh-message-top: 28px;
+    --oh-message-new:
+      0 0 0 var(--ringw) var(--new-ring), inset var(--new-bar) 0 0 0 var(--hot),
+      inset 0 0 0 var(--oh-hair) var(--oh-message-tint);
+
+    box-sizing: border-box;
+    min-width: 0;
+    padding: var(--s5) var(--sheet-pad) var(--s6);
+    border-radius: var(--r-sheet);
+    background: var(--sheet);
+    box-shadow: 0 0 0 var(--ringw) var(--ring);
+    transition:
+      background-color var(--d-tint) var(--e-std),
+      box-shadow var(--d-tint) var(--e-std);
+  }
+
+  /* What stands on an unread sheet takes the tint as its ground, and the sheet's own colour where it is raised. */
+  .oh-message[data-unread] {
+    --oh-under: var(--sheet-new);
+    --oh-soft: var(--sheet);
+    --oh-tag-ground: var(--sheet);
+    --oh-messagehead-over: var(--sheet);
+    --oh-file-over: var(--soft-sheet);
+    --oh-file-kind: var(--sheet-new);
+    --oh-file-way: var(--soft-sheet);
+    --oh-columns-ground: var(--sheet);
+
+    background: var(--sheet-new);
+    box-shadow: var(--oh-message-new);
+  }
+
+  .oh-message:not([data-unread]) {
+    --oh-under: var(--sheet);
+    --oh-soft: var(--soft-sheet);
+  }
+
+  .oh-message-line {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-bottom: var(--s3);
+    color: var(--ink2);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-message-subject {
+    max-width: var(--measure);
+    margin-bottom: var(--s3);
+    font-size: var(--t-title);
+    line-height: var(--oh-message-lh-subject);
+    text-wrap: balance;
+    overflow-wrap: anywhere;
+  }
+
+  .oh-message-body {
+    max-width: var(--measure);
+    font-size: var(--t-read);
+    line-height: var(--lh-read);
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    text-wrap: pretty;
+  }
+
+  :root[data-face="ohmarchy"] .oh-message {
+    --oh-message-new: 0 0 0 var(--ringw) var(--new-ring), inset var(--new-bar) 0 0 0 var(--hot);
+  }
+
+  :root[data-face="ohmarchy"][data-touch="0"] .oh-message {
+    padding-top: var(--oh-message-top);
+  }
+}

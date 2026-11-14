@@ -4,7 +4,7 @@ import { and, asc, eq, exists, gt, isNull, lt, sql } from "drizzle-orm";
 import { accounts, users, accountSettings, mailboxes } from "@trafficflow/db";
 import { accountLifecycleNotices } from "@trafficflow/db/cloud";
 import type { AccessLifecycle, AccessTrial, AccessVerdict, ReleaseOutcome } from "@trafficflow/db";
-import { bridgeTx, type Db } from "./context.js";
+import { bridgeTx, dbFor, type Db } from "./context.js";
 import { silentLogger, type Logger } from "@trafficflow/core";
 import { deleteAccount } from "./account-deletion-service.js";
 import type { MailContext } from "./mail/index.js";
@@ -478,7 +478,7 @@ export async function eraseOneDueAccount(
   const outcome = await deps.port.releaseAccount(accountId);
   // This pass runs only against an entitlements program, so a refund drain runs beside it.
   await deleteAccount(
-    { db, accountId, userId: null, now, requestId: randomUUID() },
+    { db: dbFor(db, accountId), accountId, userId: null, now, requestId: randomUUID() },
     { throttleKeys: deps.throttleKeys, drainsRefunds: true, warnedFor: anchor },
   );
   log.info("account_lifecycle_erased", {

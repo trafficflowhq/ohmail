@@ -1,0 +1,130 @@
+{
+  "component": "RadioLines",
+  "state": "two",
+  "look": "paper-dark-fold",
+  "place": "block",
+  "target": [379, 84, 320, 126.1719],
+  "clip": [379, 84, 320, 127],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": { "device": "fold", "face": "paper", "scheme": "dark", "width": 719, "height": 781, "scale": 2 },
+  "reader": 7,
+  "page": { "scrollWidth": 719, "clientWidth": 719, "scrollHeight": 781 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "20.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    {
+      "before.boxShadow": "rgb(246, 241, 233) 0px 0px 0px 4.5px inset",
+      "before.borderRadius": "999px",
+      "borderRadius": "12px"
+    },
+    {
+      "before.boxShadow": "rgb(125, 117, 107) 0px 0px 0px 1.5px inset",
+      "before.borderRadius": "999px",
+      "borderRadius": "12px"
+    }
+  ],
+  "nodes": [
+    {
+      "role": "radiogroup",
+      "name": "Whose mail",
+      "box": [0, 0, 320, 126.2],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "4px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(246, 241, 233)"
+      }
+    },
+    {
+      "role": "menuitem",
+      "name": "This address 2 messages",
+      "box": [0, 0, 320, 50.7],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "20.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "state": ["checked"],
+      "text": [
+        { "said": "This address", "type": 0 },
+        { "said": "2 messages", "type": 1 }
+      ],
+      "surfaces": [{ "box": [0, 0, 320, 50.7], "paint": 0, "parts": { "before": [14, 14] } }]
+    },
+    {
+      "role": "menuitem",
+      "name": "Everyone at terracotta-milano.example 2 messages · 1 sender",
+      "box": [0, 50.7, 320, 71.5],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "20.8px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "6px",
+        "paddingRight": "12px",
+        "paddingBottom": "6px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [
+        { "said": "Everyone at terracotta-milano.example", "type": 0 },
+        { "said": "2 messages · 1 sender", "type": 1 }
+      ],
+      "surfaces": [{ "box": [0, 50.7, 320, 71.5], "paint": 1, "parts": { "before": [14, 14] } }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

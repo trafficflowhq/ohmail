@@ -1,0 +1,282 @@
+/* The time grid: the week, and the day (the same grid with one column). The day heads and the all-day
+   lane stay put; the hours scroll. Every row keeps the same columns: the gutter, then the days. */
+@layer oh {
+  .oh-tg {
+    --oh-tg-gutter: var(--cgutter);
+    --oh-tg-cols: var(--oh-tg-gutter) repeat(var(--oh-tg-days, 7), minmax(0, 1fr));
+    --oh-tg-end: var(--s2);
+    --oh-tg-foot: 0px;
+    --oh-tg-air: 10px;
+  }
+  .oh-tg[data-dense] {
+    --t-ev: var(--t-meta);
+  }
+  :root[data-face="ohmarchy"] .oh-tg {
+    --oh-tg-gutter: 62px;
+  }
+  :root[data-face="ohmarchy"][data-device="fold"] .oh-tg {
+    --oh-tg-gutter: 56px;
+  }
+  :root[data-device="phone"] .oh-tg {
+    --oh-tg-foot: 104px;
+  }
+  /* The unfolded phone: the days after the hinge start after it. */
+  :root[data-device="fold"] .oh-tg[data-crease] {
+    --oh-tg-cols: var(--oh-tg-gutter) repeat(var(--oh-tg-a, 3), minmax(0, 1fr)) 8px
+      repeat(var(--oh-tg-b, 4), minmax(0, 1fr));
+    --oh-tg-end: var(--s1);
+  }
+  .oh-tg-hinge {
+    display: none;
+  }
+  :root[data-device="fold"] .oh-tg[data-crease] .oh-tg-hinge {
+    display: block;
+  }
+
+  .oh-tg-heads,
+  .oh-tg-grid,
+  .oh-tg-edge {
+    display: grid;
+    grid-template-columns: var(--oh-tg-cols);
+    padding-right: var(--oh-tg-end);
+  }
+
+  /* The day heads. */
+  .oh-tg-heads {
+    flex: none;
+    align-items: center;
+    height: var(--dayhead);
+  }
+  :root[data-device="phone"] .oh-tg-heads {
+    display: none;
+  }
+  .oh-tg-day {
+    --oh-tg-day-out: 0 6px 0 2px;
+    --oh-tg-day-pad: 0 var(--s2);
+    --oh-tg-day-gap: 6px;
+    display: flex;
+    align-items: center;
+    gap: var(--oh-tg-day-gap);
+    min-width: 0;
+    height: var(--h-s);
+    margin: var(--oh-tg-day-out);
+    padding: var(--oh-tg-day-pad);
+    border-radius: var(--r-pill);
+    text-align: left;
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+  .oh-tg-day:hover {
+    background: var(--hover);
+  }
+  .oh-tg-day:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-tg-wd {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-mid);
+  }
+  .oh-tg-dn {
+    --oh-tg-dn-pull: 0 0 0 -4px;
+    --oh-tg-dn-pad: 0 4px;
+    display: inline-grid;
+    place-items: center;
+    min-width: 28px;
+    height: 28px;
+    margin: var(--oh-tg-dn-pull);
+    padding: var(--oh-tg-dn-pad);
+    border-radius: var(--dot-r);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+  }
+  .oh-tg-day[data-today] .oh-tg-wd {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-tg-day[data-today] .oh-tg-dn {
+    --oh-tg-dn-pull: 0;
+    background: var(--hot);
+    color: var(--on-hot);
+  }
+  .oh-tg-day[data-picked] .oh-tg-dn {
+    --oh-tg-dn-pull: 0;
+    background: var(--solid);
+    color: var(--on-solid);
+  }
+  :root[data-device="fold"] .oh-tg-day {
+    --oh-tg-day-out: 0 2px;
+    --oh-tg-day-pad: 0 4px;
+    --oh-tg-day-gap: 4px;
+  }
+
+  /* The hours: what scrolls. */
+  .oh-tg-scroll {
+    position: relative;
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden auto;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+  }
+  .oh-tg-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .oh-tg-scroll::after {
+    content: "";
+    flex: none;
+    height: var(--oh-tg-foot);
+  }
+  :root[data-device="phone"] .oh-tg-scroll {
+    touch-action: pan-y;
+  }
+  .oh-tg-grid {
+    --oh-tg-grid-pad: var(--oh-tg-air) var(--oh-tg-end) var(--oh-tg-air) 0;
+    position: relative;
+    flex: none;
+    height: calc(var(--oh-tg-hours) * var(--oh-tg-hour) + 2 * var(--oh-tg-air));
+    padding: var(--oh-tg-grid-pad);
+  }
+  .oh-tg-axis {
+    position: relative;
+  }
+  .oh-tg-hr {
+    --oh-tg-hr-in: 10px;
+    position: absolute;
+    right: var(--oh-tg-hr-in);
+    transform: translateY(-50%);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    line-height: var(--oh-lh-tight);
+  }
+  :root[data-device="fold"] .oh-tg-hr {
+    --oh-tg-hr-in: 6px;
+  }
+  /* The time of now, in place of the hour it is nearest to. */
+  .oh-tg-hr[data-now] {
+    --oh-tg-now-pad: 2px 0 2px 4px;
+    --oh-tg-now-z: 1;
+    z-index: var(--oh-tg-now-z);
+    padding: var(--oh-tg-now-pad);
+    background: var(--sheet);
+    color: var(--hot-ink);
+    font-weight: var(--w-bold);
+  }
+  .oh-tg-col {
+    position: relative;
+    min-width: 0;
+    touch-action: pan-y;
+  }
+  /* The hours' lines: a row of dots on paper, a rule on ohmarchy. */
+  .oh-tg-col::before {
+    content: "";
+    position: absolute;
+    inset: 0 6px 0 2px;
+    background-image: radial-gradient(circle at 1px 1px, var(--rule) 1px, transparent 1.3px);
+    background-size: 6px var(--oh-tg-hour);
+    pointer-events: none;
+  }
+  :root[data-face="ohmarchy"] .oh-tg-col::before {
+    background-image: linear-gradient(var(--rule) 1px, transparent 1px);
+    background-repeat: repeat-y;
+    background-size: 100% var(--oh-tg-hour);
+  }
+  .oh-tg-in {
+    position: absolute;
+    inset: 0;
+    cursor: cell;
+  }
+
+  /* Between two events an hour or more apart, the day alone prints the free stretch. */
+  .oh-tg-free {
+    --oh-tg-free-pad: 0 6px;
+    position: absolute;
+    left: 4px;
+    transform: translateY(-50%);
+    padding: var(--oh-tg-free-pad);
+    background: var(--sheet);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    pointer-events: none;
+  }
+  /* Dated mail at its hour: a round mark at the column's end. */
+  .oh-tg-mark {
+    --oh-tg-mark-size: 20px;
+    --oh-tg-mark-ring: inset 0 0 0 var(--oh-hair) var(--line);
+    --oh-tg-mark-ring-on: inset 0 0 0 var(--ev-line) var(--ink2);
+    --oh-tg-mark-z: 2;
+    --oh-tg-mark-pull: calc(var(--oh-tg-mark-size) / -2);
+    position: absolute;
+    right: 2px;
+    z-index: var(--oh-tg-mark-z);
+    display: grid;
+    place-items: center;
+    width: var(--oh-tg-mark-size);
+    height: var(--oh-tg-mark-size);
+    margin-top: var(--oh-tg-mark-pull);
+    border-radius: var(--dot-r);
+    background: var(--sheet);
+    box-shadow: var(--oh-tg-mark-ring);
+    color: var(--ink2);
+  }
+  .oh-tg-mark:hover {
+    box-shadow: var(--oh-tg-mark-ring-on);
+    color: var(--ink);
+  }
+  .oh-tg-mark:focus-visible {
+    border-radius: var(--dot-r);
+  }
+  .oh-tg-mark-ico {
+    width: 14px;
+    height: 14px;
+  }
+  .oh-tg[data-dense] .oh-tg-mark {
+    --oh-tg-mark-size: 18px;
+  }
+  .oh-tg[data-dense] .oh-tg-mark-ico {
+    width: 12px;
+    height: 12px;
+  }
+  :root[data-touch="1"] .oh-tg-mark::after {
+    content: "";
+    position: absolute;
+    inset: -11px;
+  }
+  /* The hour the keys stand on. */
+  .oh-tg-cursor {
+    --oh-tg-cursor-z: 1;
+    position: absolute;
+    right: 6px;
+    left: 2px;
+    z-index: var(--oh-tg-cursor-z);
+    border-radius: var(--ev-r);
+    box-shadow: var(--oh-ring-focus);
+    pointer-events: none;
+  }
+
+  /* The edges: what lies out of sight stands at the top and at the foot of the hours, under its day. */
+  .oh-tg-edge {
+    --oh-tg-edge-z: 5;
+    position: sticky;
+    z-index: var(--oh-tg-edge-z);
+    flex: none;
+    align-items: start;
+    height: 0;
+    pointer-events: none;
+  }
+  .oh-tg-edge[data-side="above"] {
+    top: 0;
+  }
+  .oh-tg-edge[data-side="below"] {
+    bottom: var(--oh-tg-foot);
+    align-content: end;
+  }
+  .oh-tg-edge-cell {
+    display: flex;
+    grid-row: 1;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+}

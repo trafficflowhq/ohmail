@@ -1,0 +1,29 @@
+/* A number, where the thing it counts is. What it stands in may redraw it. */
+@layer oh {
+  .oh-count {
+    color: var(--ink2);
+    font-family: var(--f-text);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+  }
+  /* A number that is the point. */
+  .oh-count[data-kind="point"] {
+    color: inherit;
+    font-family: var(--f-display);
+    font-size: var(--t-head);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz-l);
+    line-height: var(--oh-lh-tight);
+    letter-spacing: var(--track);
+  }
+  .oh-count[data-kind="point"][data-size="xl"] {
+    font-size: var(--t-display);
+  }
+  /* No heavier than the plain rule, so what a count stands in still redraws it. */
+  :where(:root[data-face="ohmarchy"]) .oh-count:where(:not([data-kind])) {
+    color: var(--ink3);
+    font-weight: var(--w-text);
+  }
+}

@@ -1,0 +1,185 @@
+{
+  "component": "SettingsSheet",
+  "state": "lines",
+  "look": "paper-light-foldl",
+  "place": "block",
+  "target": [427, 188, 402, 268],
+  "clip": [427, 188, 402, 268],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "foldl",
+    "face": "paper",
+    "scheme": "light",
+    "width": 841,
+    "height": 673,
+    "scale": 2
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 841, "clientWidth": 841, "scrollHeight": 673 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "rgb(18, 16, 14)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "999px" },
+    { "boxShadow": "rgb(138, 129, 118) 0px 0px 0px 1.5px inset", "borderRadius": "999px" },
+    {
+      "backgroundColor": "rgb(255, 255, 255)",
+      "boxShadow": "rgb(138, 129, 118) 0px 0px 0px 1.5px",
+      "borderRadius": "999px"
+    },
+    { "backgroundColor": "rgb(255, 255, 255)", "borderRadius": "20px" }
+  ],
+  "nodes": [
+    {
+      "role": "banner",
+      "name": "",
+      "box": [20, 16, 362, 44],
+      "drawn": {
+        "color": "rgb(18, 16, 14)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(18, 16, 14)"
+      },
+      "text": [{ "said": "Notify about", "type": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "New mail in Ohbox",
+      "box": [338, 71, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["checked"],
+      "surfaces": [{ "box": [360, 75, 18, 18], "paint": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "A new sender is waiting",
+      "box": [338, 119, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["checked"],
+      "surfaces": [{ "box": [360, 123, 18, 18], "paint": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "A scheduled message was sent",
+      "box": [338, 167, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(18, 16, 14)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "state": ["checked"],
+      "surfaces": [{ "box": [360, 171, 18, 18], "paint": 0 }]
+    },
+    {
+      "role": "switch",
+      "name": "A device paired or was signed out",
+      "box": [338, 215, 44, 26],
+      "drawn": {
+        "color": "rgb(90, 83, 75)",
+        "backgroundColor": "rgb(221, 213, 201)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(90, 83, 75)"
+      },
+      "surfaces": [
+        { "box": [338, 215, 44, 26], "paint": 1 },
+        { "box": [342, 219, 18, 18], "paint": 2 }
+      ]
+    }
+  ],
+  "loose": {
+    "text": [
+      {
+        "said": "New mail in Ohbox A new sender is waiting A scheduled message was sent A device paired or was signed out",
+        "type": 1
+      }
+    ],
+    "surfaces": [{ "box": [0, 0, 402, 268], "paint": 3 }]
+  }
+}

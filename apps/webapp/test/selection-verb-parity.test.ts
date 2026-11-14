@@ -13,13 +13,14 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
  * classification key nobody can reach (the last two read the map the other way).
  */
 
-const PANE = join(__dirname, "..", "app", "shell", "MessagePane.tsx");
+/* Both unions are declared in the behaviour's own file since the Ohbox's lift; the pane imports them. */
+const DECLARED = join(__dirname, "..", "..", "..", "packages", "app-logic", "src", "press", "actions.ts");
 
 /** The members of a string-literal union, in declaration order. */
 function unionMembers(name: string): string[] {
-  const src = withoutComments(readFileSync(PANE, "utf8"));
+  const src = withoutComments(readFileSync(DECLARED, "utf8"));
   const from = src.indexOf(`export type ${name} =`);
-  expect(from, `${name} is not declared in MessagePane.tsx`).toBeGreaterThan(-1);
+  expect(from, `${name} is not declared in packages/app-logic/src/press/actions.ts`).toBeGreaterThan(-1);
   const to = src.indexOf(";", from);
   const body = src.slice(from, to);
   return [...body.matchAll(/"([^"]+)"|`([^`]+)`/g)].map((m) => m[1] ?? m[2]!);

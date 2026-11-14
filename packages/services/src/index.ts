@@ -9,10 +9,10 @@ export {
   ACCOUNT_MAILBOXES_MAX_READ, accountMailboxesProbe, refuseOverAccountMailboxes,
   type ReadBoundKind,
 } from "./read-bounds.js";
-export type { ServiceContext, Db, IdempotencyClaim, SearchSupersede } from "./context.js";
+export type { ServiceContext, Db, BoundDb, UnboundDb, IdempotencyClaim, SearchSupersede } from "./context.js";
 // The fenced transaction door — every request-scoped write against a table Art. 17 erasure
 // empties opens here, so the fence cannot be forgotten. See `context.ts`.
-export { withAccountTx, claimOrLose } from "./context.js";
+export { withAccountTx, claimOrLose, dbFor } from "./context.js";
 /* THE HOSTED DATABASE HANDLES. `context.ts` declares the registry with the one member a local
  * install can offer; this adds the two a hosted deployment has, by augmenting that interface.
  * Re-exporting a name from it is what carries the augmentation into every program built from this
@@ -24,9 +24,10 @@ export type { CloudDb } from "./context-cloud.js";
 export {
   SyncService, syncService, SNAPSHOT_WINDOW, SNAPSHOT_DRAFT_PAGE, SNAPSHOT_FIRST_PAGE_MESSAGES,
   assertSnapshotWindow,
-  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW,
+  STALE_COALESCE_SPAN, COALESCE_SCAN_WINDOW, namedCalendarSpan, NAMED_CALENDAR_SPAN_MAX_MS,
   type GetChangesOptions, type GetSnapshotOptions,
 } from "./sync-service.js";
+export type { CalendarFeedPort, CalendarSpanMs } from "./calendar-port.js";
 /* The byte bound a `/sync` page is built to, and the row floor the walk holds back for the draft
  * phase. Exported because the transport arm measures them against the codec's own cap. */
 export { DRAFT_ROW_MAX_BYTES, PageByteBudget, weighChange } from "./sync-page-byte-budget.js";

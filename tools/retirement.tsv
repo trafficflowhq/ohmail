@@ -319,6 +319,7 @@ apps/sidecar/test/blank-repair-mode.test.ts	data	through apps/sidecar/test/_data
 apps/sidecar/test/boot-host-contract.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/boot-phase-narration.test.ts	data	reads data files (json)	none	desktop-engine	
 apps/sidecar/test/bound-breach-redial.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
+apps/sidecar/test/calendar-every-kind-walks.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	cal-store	
 apps/sidecar/test/calendar-facts-keyed.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/ceiling-named-in-log.test.ts	data	through apps/sidecar/test/_datadir.ts: reads the migrations and a data folder it made	none	desktop-engine	
 apps/sidecar/test/client-route-coverage.test.ts	source-text	reads source as text (ts, tsx)	layer 1	desktop-engine	
@@ -775,7 +776,7 @@ apps/webapp/test/secondary-ink-contrast.test.ts	source-text	reads source as text
 apps/webapp/test/security-headers.test.ts	source-text	reads source as text (js, ts)	layer 2	removals	
 apps/webapp/test/seed-offer-needs-a-mailbox.test.tsx	source-text	reads source as text (tsx)	layer 2	mailboxes	
 apps/webapp/test/selection-pill.test.tsx	source-text	reads source as text (css, ts, tsx)	layer 2	removals	
-apps/webapp/test/selection-verb-parity.test.ts	source-text	reads source as text (tsx)	layer 2	removals	
+apps/webapp/test/selection-verb-parity.test.ts	source-text	reads source as text (ts)	layer 2	removals	
 apps/webapp/test/selfhost-account-kept.test.tsx	source-text	reads source as text (ts): a constant of the API's account route	layer 2	account	
 apps/webapp/test/selfhost-hsts.test.ts	data	reads data files (caddy, env, example, yml)	none	removals	
 apps/webapp/test/selfhost-private-origin-tls.test.ts	source-text	an import census: reads source as text (ts)	ohmail/package-borders	tools	
@@ -1114,7 +1115,7 @@ packages/db/test/entitlements-fault-census.test.ts	source-text	reads source as t
 packages/db/test/entitlements-fault-row.pg.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/flag-intent-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/folder-state-outstanding-parity.test.ts	data	reads data files (sql)	none	services-proof	
-packages/db/test/folder-state-outstanding-prebuild.pg.test.ts	data	mail 0160's trigger-kept account copy on folder_state, built ahead of the migrator (mail 0201 removes it); read the journal through the product's reader	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
+packages/db/test/folder-state-outstanding-prebuild.pg.test.ts	behaviour	mail 0160's trigger-kept account copy on folder_state, built ahead of the migrator (mail 0201 removes it); read the journal through the product's reader	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/inbound-header-index-bounds.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/journal-drops-a-referenced-table.test.ts	data	reads data files (sql)	none	services-proof	
 packages/db/test/journal-heads.test.ts	data	reads data files (json, sql): the released-migrations lock, the journals and the migration folders	none	services-proof	
@@ -1159,7 +1160,7 @@ packages/db/test/phantom-rollback.pg.test.ts	source-text	reads source as text (j
 packages/db/test/plane-ops.test.ts	data	reads data files (json)	none	services-proof	
 packages/db/test/pool-wedge.pg.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/recipient-keys-index.test.ts	data	reads data files (json, sql)	none	services-proof	
-packages/db/test/reconcile-queue-account.test.ts	data	mail 0181's account copy on the reconcile queues' pending rows, kept by triggers for every writer (mail 0201 removes it); read no file of its own	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
+packages/db/test/reconcile-queue-account.test.ts	behaviour	mail 0181's account copy on the reconcile queues' pending rows, kept by triggers for every writer (mail 0201 removes it); read no file of its own	test on real Postgres: packages/db/test/transition.pg.test.ts	db-shape	docs/invariant-verdicts/12.json
 packages/db/test/released-migrations-are-frozen.test.ts	data	reads data files (json, sql)	none	services-proof	
 packages/db/test/request-apply-by-key-census.test.ts	source-text	reads source as text (ts)	layer 1	services-proof	
 packages/db/test/retire-billing-functions.pg.test.ts	data	reads data files (sql)	none	services-proof	
@@ -1263,9 +1264,12 @@ packages/ui/test/bulk-strip.test.tsx	source-text	reads source as text (css)	styl
 packages/ui/test/date-picker.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
 packages/ui/test/doorbell-stack.test.ts	source-text	reads source as text (css, mjs)	layer 2	kit	
 packages/ui/test/interactions.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/mail/letters.test.tsx	source-text	reads source as text (css): the kit's quote sheet, loaded into the page it draws in	layer 2	kit	
 packages/ui/test/motion.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/old-new-apart.test.ts	source-text	an import census: reads source as text (css, ts, tsx)	lint rule: the kit's new folders import only what stands below them, and today's folders none of them	kit	
 packages/ui/test/phone-type-census.test.ts	source-text	reads source as text (css)	layer 2	kit	
 packages/ui/test/reader-close.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	kit	
+packages/ui/test/reference/count.test.ts	data	reads data files (json): the kit's reference lists, manifests and picture data	none	kit	
 packages/ui/test/segmented-control.test.tsx	source-text	reads source as text (css, tsx)	layer 2	kit	
 packages/ui/test/segmented-pair-fill.test.tsx	source-text	reads source as text (css, tsx)	layer 2	kit	
 packages/ui/test/smoke.test.tsx	source-text	through test/support/wordmark.ts: reads the product folders, for the wordmark's spelling	layer 2	kit	

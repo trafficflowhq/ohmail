@@ -14,6 +14,7 @@ import type { Tx } from "@trafficflow/db";
 import {
   makeSubscriber, openAes128Gcm, parseVapidAuthorization, type FakeSubscriber,
 } from "../../../packages/core/test/webpush-subscriber.js";
+import { farSide, SWITCH } from "../../../packages/core/test/far-side.js";
 
 /**
  * ══════════════════════════════════════════════════════════════════════════════════════════
@@ -883,6 +884,46 @@ describe("a HOSTILE distributor response cannot hold a socket or kill the organi
       wake.stop();
     } finally {
       hostile.close();
+      good.close();
+    }
+  });
+
+  it("a change of protocol (101) is a non-delivery, not a hold — the endpoint beside it is still woken", async () => {
+    // The 101 endpoint first: a request that never settled held the whole pass, so the second row never got its wake.
+    let switched = 0;
+    const switching = await farSide((socket) => { switched += 1; socket.write(SWITCH); });
+    let goodHits = 0;
+    const good = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => { goodHits += 1; res.writeHead(201).end(); });
+    });
+    good.listen(0, "127.0.0.1");
+    await once(good, "listening");
+    const goodPort = (good.address() as AddressInfo).port;
+
+    try {
+      const { db, deleted } = fakeDb([
+        { id: "switching", endpoint: `${switching.url}/up/switch` },
+        { id: "good", endpoint: `http://127.0.0.1:${goodPort}/up/ok` },
+      ]);
+      const { source, emit } = fakeSource();
+      const wake = startPushWake({
+        db, source, ownsAccount: OWN_ALL,
+        guard: { async check() { return ["127.0.0.1"]; } },
+        vapid: NO_VAPID,
+        debounceMs: 5, minIntervalMs: 0, timeoutMs: 1_000,
+      });
+      emit("acct-1", 1n);
+
+      for (let i = 0; i < 120 && goodHits === 0; i++) await tick(25);
+      expect(switched, "the switching endpoint was never dialled, so nothing was proven").toBe(1);
+      expect(goodHits, "a 101 on one endpoint held the pass, and the endpoint beside it was never woken").toBe(1);
+      // Given up as any failed POST is: not counted as sent, not pruned, tried again on the next wake.
+      expect(wake.sent()).toBe(1);
+      expect(deleted).toEqual([]);
+      wake.stop();
+    } finally {
+      await switching.close();
       good.close();
     }
   });

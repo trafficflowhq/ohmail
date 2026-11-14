@@ -177,7 +177,9 @@ describe("no container takes the line breaks away", () => {
 
 describe("one rule, declared once", () => {
   /* Every stylesheet the product ships (the web app, the desktop's shell, the ui kit, the tokens).
-     A second `pre-line` is a second copy of the rule some other container will lack. */
+     Each design has one plain-text rule: `.msg-plain` for today's views, `.oh-history-quote` for the
+     kit's quoted history (its own case: packages/ui/test/mail/letters.test.tsx). A third `pre-line`
+     is a second copy of one of them, which some other container will lack. */
   const ROOTS = ["apps/webapp/app", "apps/desktop/src", "packages/ui/src", "packages/tokens/src"];
   const sheets = (dir: string): string[] => readdirSync(dir).flatMap((name) => {
     const p = join(dir, name);
@@ -186,7 +188,7 @@ describe("one rule, declared once", () => {
     return name.endsWith(".css") ? [p] : [];
   });
 
-  it("`white-space: pre-line` appears in exactly one rule, `.msg-plain`", () => {
+  it("`white-space: pre-line` appears in exactly one rule of each design, `.msg-plain` and `.oh-history-quote`", () => {
     const found: string[] = [];
     let scanned = 0;
     for (const r of ROOTS) {
@@ -200,6 +202,9 @@ describe("one rule, declared once", () => {
     }
     // Positive control: the walk read the sheets it claims to, the one holding the rule among them.
     expect(scanned).toBeGreaterThan(30);
-    expect(found).toEqual(["packages/ui/src/composites/message.css .msg-plain"]);
+    expect(found).toEqual([
+      "packages/ui/src/composites/message.css .msg-plain",
+      "packages/ui/src/mail/Reading/letter-history.css .oh-history-quote",
+    ]);
   });
 });

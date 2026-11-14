@@ -8,8 +8,10 @@ import { recordChange, recordChanges, recordRuleDelta, accountSettings, CAPABILI
   // MAILBOX owns, and SKIPS rather than throws on either stamp; see the folder arm for why a
   // throw is the wrong verb here.
   readAccountErasedAt, readMailboxErasedAt, fenceErased, AccountErasedError, MailboxErasedError,
+  isCalendarRecordKind,
 } from "@trafficflow/db";
 import {
+  calCalendars, calConnections, calEvents, calSettings, calSuggestions,
   accountSyncState, approvals, attachments, awayReplies, drafts, flagState, folderOps, folderState,
   junkRescues, listAddresses, mailboxCredentials, mailboxFolders, mailboxProfileMirror,
   mailboxes, messageBodies, messageFailures, messageInstances, messageSearch, messageStates, messages,
@@ -37,6 +39,7 @@ import type {
 } from "@trafficflow/services/mail";
 import type { LocalDb } from "./db.js";
 import type { LocalWorld } from "./identity.js";
+import { removeCalendarChange, storeCalendarSwitch, upsertCalendarChange } from "./cloud-mirror-calendar.js";
 import { answeredByCloud, retryAfterMs, type CloudAuth } from "./cloud-auth.js";
 import { stampSynced } from "./sync-stamp.js";
 import { createFirstSyncReporter } from "./first-sync.js";
@@ -102,6 +105,11 @@ export const CLOUD_SYNC_TYPES = [
    * local door judges that mailbox by the organizer's rules as the web and the phone do.
    */
   "mailbox_profile",
+  /**
+   * THE CALENDAR'S FOUR KINDS. Named, because the hosted reader serves them only to a request
+   * that names one; stored by `cloud-mirror-calendar.ts` into this store's own `cal_*` tables.
+   */
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const satisfies readonly EntityType[];
 
 /**
@@ -131,7 +139,7 @@ void cloudSyncTypesAreComplete;
  * it can be assigned — so within a page ordered by seq the tag's own change is already in hand by
  * the time the message carrying the assignment is applied.
  */
-export const APPLY_ORDER: readonly EntityType[] = [
+export const APPLY_ORDER = [
   /* `mailbox` is FIRST so that in the REVERSED delete pass it is LAST: the mailbox receipt takes
      everything keyed by that mailbox, and running it after the page's own per-row deletes leaves
      them nothing to find rather than the other way round. It never appears as a non-delete — the
@@ -150,7 +158,21 @@ export const APPLY_ORDER: readonly EntityType[] = [
      first-pull wedge (`approvals_routing_decision_id_account_fk`, measured 2026-09-19). In the
      REVERSED delete pass, last means the approval's tombstone clears before its holders'. */
   "approval",
-];
+  /* The calendar's kinds, each after the one it hangs on: in the REVERSED delete pass an event's
+     tombstone clears before its calendar's and a calendar's before its connection's. */
+  "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
+] as const satisfies readonly EntityType[];
+
+/**
+ * AND EVERY KIND THE MIRROR ASKS FOR HAS A PLACE IN THAT ORDER. A kind asked for and missing here
+ * is fetched and then never applied: the page commits its cursor past rows nobody wrote. The same
+ * compile-time proof as the request list's above.
+ */
+type ApplyOrderMissing = Exclude<(typeof CLOUD_SYNC_TYPES)[number], (typeof APPLY_ORDER)[number]>;
+type ApplyOrderIsComplete = [ApplyOrderMissing] extends [never] ? true
+  : { "a kind CLOUD_SYNC_TYPES asks for has no place in APPLY_ORDER": ApplyOrderMissing };
+const applyOrderIsComplete: ApplyOrderIsComplete = true;
+void applyOrderIsComplete;
 
 const DEFAULT_PAGE_LIMIT = 500;
 
@@ -399,6 +421,13 @@ interface CursorState {
    * the steady state and the file then carries no key for it.
    */
   overflow: QuarantineOverflow;
+  /**
+   * The switch's instant this copy last read the hosted calendar whole for, `null` when it holds
+   * none. The feed sends no calendar change while the switch is off, so a copy whose switch went on
+   * again owes a read of the calendar as it stands (`reconcileCalendarCopy`). Absent from older
+   * files, which reads `null`: such a copy reads it once.
+   */
+  calendarLoadedFor: string | null;
 }
 
 /** A hosted mailbox's gap offer: the rules' letters and, from a server that counts them, the strangers'. */
@@ -748,6 +777,8 @@ interface CursorFile {
   quarantineOverflow?: unknown;
   /** `"stale"`/`"fresh"` once the overflow reached {@link OVERFLOW_MAX}; absent while exact. */
   quarantineFloor?: unknown;
+  /** The switch's instant the calendar was last read whole for; absent when none was. */
+  calendarLoadedFor?: unknown;
 }
 
 /**
@@ -820,6 +851,7 @@ function readCursor(path: string): CursorState {
       lastDrainAt: typeof j.lastDrainAt === "string" && j.lastDrainAt !== "" ? j.lastDrainAt : null,
       quarantine: readQuarantine(j.quarantine),
       overflow: readOverflow(j.quarantineOverflow, j.quarantineFloor),
+      calendarLoadedFor: typeof j.calendarLoadedFor === "string" && j.calendarLoadedFor !== "" ? j.calendarLoadedFor : null,
     };
   } catch {
     // No file at all is a FRESH install, not an upgraded one: there are no rows to re-key, and the
@@ -843,6 +875,8 @@ function readCursor(path: string): CursorState {
       lastDrainAt: null,
       quarantine: [],
       overflow: { keys: new Map(), floor: null },
+      // A fresh copy holds no calendar; its bootstrap reads the calendar with the rest.
+      calendarLoadedFor: null,
     };
   }
 }
@@ -871,6 +905,8 @@ function writeCursor(path: string, state: CursorState): void {
       ? { quarantineOverflow: [...state.overflow.keys].map(([k, e]) => [k, e.seq, e.fresh ? 1 : 0]) }
       : {}),
     ...(state.overflow.floor !== null ? { quarantineFloor: state.overflow.floor } : {}),
+    // Absent while the copy holds no calendar, so such a file is byte-identical to an older one.
+    ...(state.calendarLoadedFor !== null ? { calendarLoadedFor: state.calendarLoadedFor } : {}),
   };
   writeFileSync(path, JSON.stringify(onDisk));
 }
@@ -918,6 +954,11 @@ interface BootstrapGen {
   routing_decision: MarkSet;
   tag: MarkSet;
   mailbox_profile: MarkSet;
+  /** The calendar's records, swept after the mail by `sweepPhantoms`, children first. */
+  calendar_connection: MarkSet;
+  calendar: MarkSet;
+  calendar_event: MarkSet;
+  calendar_suggestion: MarkSet;
   /**
    * Append every id marked since the last flush to the generation file, fsynced. Called after
    * a page's transaction commits and BEFORE the cursor advances past it — the cursor is the
@@ -956,7 +997,7 @@ function genPathFor(cursorPath: string): string {
 
 const GEN_TYPES = [
   "folder", "thread", "message", "message_state", "rule", "draft", "approval", "routing_decision", "tag",
-  "mailbox_profile",
+  "mailbox_profile", "calendar_connection", "calendar", "calendar_event", "calendar_suggestion",
 ] as const;
 type GenType = (typeof GEN_TYPES)[number];
 
@@ -979,6 +1020,8 @@ function genOver(path: string, sets: Record<GenType, Set<string>>, keyingStale =
     rule: mark("rule"), draft: mark("draft"), approval: mark("approval"),
     routing_decision: mark("routing_decision"), tag: mark("tag"),
     mailbox_profile: mark("mailbox_profile"),
+    calendar_connection: mark("calendar_connection"), calendar: mark("calendar"),
+    calendar_event: mark("calendar_event"), calendar_suggestion: mark("calendar_suggestion"),
     flush(): void {
       if (pending.length === 0) return;
       const fd = openSync(path, "a");
@@ -1007,6 +1050,7 @@ const emptyGenSets = (): Record<GenType, Set<string>> => ({
   thread: new Set(), message: new Set(), message_state: new Set(), rule: new Set(),
   draft: new Set(), approval: new Set(), routing_decision: new Set(), tag: new Set(),
   mailbox_profile: new Set(),
+  calendar_connection: new Set(), calendar: new Set(), calendar_event: new Set(), calendar_suggestion: new Set(),
 });
 
 /** A FRESH generation: truncate the file, stamp the keying, start marking from nothing. */
@@ -1535,6 +1579,7 @@ async function applyAccountUpsert(
         dormancyDays?: number | null; autoSuggestAt?: string | null;
         blockRemoteImagesAt?: string | null; loadTrackingPixelsAt?: string | null;
         blockAutoUnsubscribeAt?: string | null; locale?: string | null; updatedAt?: string;
+        calendarEnabledAt?: string | null;
       } | undefined;
       if (!st) return false;
       const stamp = asDate(st.updatedAt) ?? now;
@@ -1550,6 +1595,8 @@ async function applyAccountUpsert(
       await tx.insert(accountSettings)
         .values({ accountId: world.accountId, ...cols })
         .onConflictDoUpdate({ target: accountSettings.accountId, set: cols });
+      // And the calendar's switch, which the local feed's gate reads (`cloud-mirror-calendar.ts`).
+      await storeCalendarSwitch(tx, dia, world.accountId, st.calendarEnabledAt);
       return true;
     }
     case "thread": {
@@ -2115,10 +2162,14 @@ async function applyUpsert(
       gen?.routing_decision.add(s.id);
       return true;
     }
-    default:
-      // Forward-compatible: an unknown type (e.g. "folder", which has no local table) is skipped
-      // exactly as `apply.ts` tolerates an unknown entity rather than wedging the feed.
-      return false;
+    default: {
+      // The calendar's kinds are stored by their own file, and marked for the bootstrap's sweep.
+      // Anything else is forward-compatible: an unknown type is skipped exactly as `apply.ts`
+      // tolerates an unknown entity rather than wedging the feed.
+      const stored = await upsertCalendarChange(tx, dia, world, ch, now);
+      if (stored && isCalendarRecordKind(ch.type)) gen?.[ch.type].add(ch.id);
+      return stored;
+    }
   }
 }
 
@@ -2153,7 +2204,9 @@ async function recordDetached(tx: Tx, world: LocalWorld, detached: readonly Deta
   }
 }
 
-async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]): Promise<boolean> {
+async function applyDelete(
+  tx: Tx, ch: SyncChange, detached: DetachedSurvivor[] | undefined, world: LocalWorld,
+): Promise<boolean> {
   switch (ch.type) {
     case "mailbox": {
       /* THE HOSTED ACCOUNT ERASED A MAILBOX. The same table walk the standalone removal runs, in
@@ -2270,7 +2323,8 @@ async function applyDelete(tx: Tx, ch: SyncChange, detached?: DetachedSurvivor[]
       await tx.delete(routingDecisions).where(eq(routingDecisions.id, ch.id));
       return true;
     default:
-      return false;
+      // The calendar's kinds, children first; anything else is a kind this copy keeps nothing of.
+      return removeCalendarChange(tx, world, ch);
   }
 }
 
@@ -2383,7 +2437,7 @@ async function applyPage(
       /* An erased mailbox's own conversations are announced before the walk takes them — the hosted
          feed tombstones them itself; these are rows it never named (an older erasure, a standalone era). */
       if (ch.type === "mailbox") await announceExclusiveThreads(t, world.accountId, ch.id);
-      if (await applyDelete(t, ch, detached)) {
+      if (await applyDelete(t, ch, detached, world)) {
         await record(t, ch.type, ch.id, "delete");
         appliedKeys?.add(`${ch.type}:${ch.id}`);
         // The survivors the delete DETACHED (a draft losing its reply target, a message losing
@@ -2476,7 +2530,7 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
       await hold();
       const ch: SyncChange = { type, op: "delete", id, seq: 0, updatedAt: now.toISOString() };
       const detached: DetachedSurvivor[] = [];
-      if (await applyDelete(tx, ch, detached)) {
+      if (await applyDelete(tx, ch, detached, world)) {
         await recordChange(tx, { accountId: world.accountId, entityType: type, entityId: id, op: "delete", meta: null });
         // Survivors the sweep detached are announced exactly as the incremental path announces
         // them — a change the projection never hears about is a row it never redraws. Batched
@@ -2529,6 +2583,16 @@ async function sweepPhantoms(db: LocalDb, world: LocalWorld, gen: BootstrapGen, 
     for (const r of await tx.select({ id: mailboxProfileMirror.mailboxId }).from(mailboxProfileMirror)
       .where(eq(mailboxProfileMirror.accountId, world.accountId)))
       if (!gen.mailbox_profile.has(r.id)) await sweepOne("mailbox_profile", r.id);
+    /* The calendar's records the bootstrap never named: removed upstream while this copy was away,
+       their deletes since compacted. Children first, each its own local deletion. */
+    for (const r of await tx.select({ id: calEvents.id }).from(calEvents).where(eq(calEvents.accountId, world.accountId)))
+      if (!gen.calendar_event.has(r.id)) await sweepOne("calendar_event", r.id);
+    for (const r of await tx.select({ id: calSuggestions.id }).from(calSuggestions).where(eq(calSuggestions.accountId, world.accountId)))
+      if (!gen.calendar_suggestion.has(r.id)) await sweepOne("calendar_suggestion", r.id);
+    for (const r of await tx.select({ id: calCalendars.id }).from(calCalendars).where(eq(calCalendars.accountId, world.accountId)))
+      if (!gen.calendar.has(r.id)) await sweepOne("calendar", r.id);
+    for (const r of await tx.select({ id: calConnections.id }).from(calConnections).where(eq(calConnections.accountId, world.accountId)))
+      if (!gen.calendar_connection.has(r.id)) await sweepOne("calendar_connection", r.id);
 
     await reconcileLocalFoldersFlag(tx, dialect(db), world, now);
     await loopTurn();
@@ -3637,6 +3701,53 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   };
 
   /**
+   * THE CALENDAR, READ WHOLE WHEN ITS SWITCH WENT ON. The feed sends no calendar change while the
+   * account's switch is off, and a copy whose switch went off let its calendar go
+   * (`storeCalendarSwitch`), so a switch turned on again finds this copy without the events nobody
+   * changed since. Read once per instant the switch went on: the calendar's phase of the hosted
+   * snapshot, applied as a page is, every record re-emitted on the local feed. A bootstrap read the
+   * calendar with the rest and owes nothing. A page that does not answer leaves it owed; a server
+   * that serves no calendar leaves nothing to read.
+   */
+  const reconcileCalendarCopy = async (bootstrapped: boolean): Promise<void> => {
+    const [row] = await cfg.db.select({ at: calSettings.enabledAt }).from(calSettings)
+      .where(eq(calSettings.accountId, cfg.world.accountId)).limit(1);
+    const on = row?.at ? row.at.toISOString() : null;
+    if (on === cursor.calendarLoadedFor) return;
+    const settle = (): void => {
+      cursor.calendarLoadedFor = on;
+      writeCursor(cfg.cursorPath, cursor);
+    };
+    if (on === null || bootstrapped) return settle();
+    // The settings record named too: the hosted reader serves the calendar only to a request that hears its switch.
+    const types = "settings,calendar_connection,calendar,calendar_event,calendar_suggestion";
+    let pageCursor: string | undefined;
+    try {
+      for (;;) {
+        if (aborted) return;
+        const q = new URLSearchParams({ phase: "calendar", types, limit: String(pageLimit) });
+        if (pageCursor) q.set("cursor", pageCursor);
+        const res = await fetchCloud(`/sync/snapshot?${q.toString()}`);
+        // Left owed: the next pull reads it again.
+        if (!res.ok) return;
+        const page = (await res.json()) as SnapshotResponse;
+        // Not the calendar's phase: this account's server serves it no calendar, so there is none to read.
+        if (page.calendarWindow === undefined || !Array.isArray(page.changes)) return settle();
+        await applyPage(cfg.db, cfg.world, {
+          changes: { creates: page.changes, updates: [], moves: [], deletes: [] },
+          cursor: cursor.sync, hasMore: false, serverTime: now().toISOString(),
+        }, now(), null, knownMailboxes);
+        if (!page.nextCursor) break;
+        pageCursor = page.nextCursor;
+      }
+    } catch {
+      // Left owed, and the pull goes on: the mail never waits on the calendar.
+      return;
+    }
+    settle();
+  };
+
+  /**
    * The one-time folder backfill — `repairStaleTags`' shape for its reason, with one gate
    * difference. Between the drain first asking for `folder` entities and the apply loop learning to
    * store them, a mirror could drain folder creates, drop them, and persist a cursor past them — a
@@ -4267,6 +4378,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       // AFTER the drain, so a bootstrap has already delivered the tags natively and is skipped by
       // the zero-tags gate rather than by a special case for it.
       await repairStaleTags();
+      await reconcileCalendarCopy(sweep !== null && sweep !== undefined);
       await repairStaleFolders(sweep !== null && sweep !== undefined);
       await repairRuleInstants(sweep !== null && sweep !== undefined);
       await repairProfiles();

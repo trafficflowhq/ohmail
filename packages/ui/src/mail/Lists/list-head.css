@@ -1,0 +1,151 @@
+/* The head of a list: the place's name at the column's edge, the list's tools at the line's end. */
+@layer oh {
+  .oh-listhead {
+    --oh-listhead-lh: 1.2;
+    --oh-listhead-line: calc(var(--head) - var(--s2));
+    --oh-listhead-pad: var(--s2) var(--s3) 0 var(--flush);
+
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 var(--s2);
+    min-height: var(--head);
+    padding: var(--oh-listhead-pad);
+  }
+
+  .oh-listhead-title {
+    font-size: var(--t-title);
+    line-height: var(--oh-listhead-lh);
+    white-space: nowrap;
+  }
+
+  /* The list's tools are quiet: the one loud thing among them brings its own colour. */
+  .oh-listhead-aside {
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-height: var(--oh-listhead-line);
+    margin-left: auto;
+    color: var(--ink2);
+  }
+
+  /* A word that acts in the head stands closer to its neighbours than a button elsewhere. */
+  .oh-listhead-aside > .oh-button[data-kind="quiet"][data-size="s"]:not([data-bare]) {
+    --oh-button-pad: 0 var(--s2);
+  }
+
+  .oh-listhead-below {
+    flex-basis: 100%;
+    min-width: 0;
+    max-width: 100%;
+    padding: var(--s1) 0 var(--s2);
+  }
+
+  /* A place inside a tree: its name is content and breaks onto a second line before it is cut. */
+  .oh-listhead[data-way] > .oh-listhead-title {
+    --oh-listhead-descent: 0.08em;
+
+    flex: 1 1 0;
+    min-width: 0;
+    display: -webkit-box;
+    overflow: hidden;
+    padding-bottom: var(--oh-listhead-descent);
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .oh-listhead[data-way] > .oh-listhead-aside {
+    align-self: flex-start;
+    margin-left: var(--s2);
+  }
+
+  /* The way to it: small, one line, each part a step. */
+  .oh-listhead-way {
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    min-width: 0;
+    max-width: 100%;
+    margin-bottom: var(--s2);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+  }
+
+  .oh-listhead-step {
+    --oh-listhead-under: 0.16em;
+
+    flex: none;
+    order: 2;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-text);
+  }
+
+  .oh-listhead-step[hidden] {
+    display: none;
+  }
+
+  .oh-listhead-step[data-first] {
+    order: 0;
+  }
+
+  .oh-listhead-step[data-more] {
+    order: 1;
+  }
+
+  .oh-listhead-step:not([data-first])::before {
+    content: "›";
+    display: inline-block;
+    margin: 0 var(--s1);
+    color: var(--ink3);
+    text-decoration: none;
+  }
+
+  .oh-control.oh-listhead-step:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: var(--oh-listhead-under);
+  }
+
+  :root[data-touch="1"] .oh-listhead-step {
+    --oh-listhead-reach: calc(var(--s2) * -1);
+
+    margin: var(--oh-listhead-reach) 0;
+    padding: var(--s2) 0;
+  }
+
+  :root[data-device="phone"] .oh-listhead {
+    --oh-listhead-line: calc(var(--head) - var(--s3) - var(--s1));
+    --oh-listhead-pad: var(--s3) var(--s3) var(--s1) var(--flush);
+  }
+
+  /* On a phone a second button and a segmented control in the head stand on the soft tone. */
+  :root[data-device="phone"] .oh-listhead-aside {
+    --oh-soft: var(--soft);
+  }
+
+  :root[data-face="ohmarchy"]:not([data-device="phone"]) .oh-listhead {
+    --oh-listhead-line: var(--head);
+    --oh-listhead-pad: 0 var(--s3) 0 var(--flush);
+  }
+
+  /* Stand-in: the sheet gives ohmarchy this edge in a window, and the tokens do not carry it yet. */
+  :root[data-face="ohmarchy"][data-device="desktop"] .oh-listhead {
+    --flush: 26px;
+  }
+
+  :root[data-face="ohmarchy"]
+    .oh-listhead-aside
+    > .oh-button[data-kind="quiet"][data-size="s"]:not([data-bare]) {
+    --oh-button-pad: 0 var(--s2);
+  }
+
+  :root[data-face="ohmarchy"][data-device="phone"] .oh-listhead {
+    --oh-listhead-lead: calc(var(--flush) + var(--s2));
+    --oh-listhead-pad: var(--s3) var(--s3) var(--s1) var(--oh-listhead-lead);
+  }
+}

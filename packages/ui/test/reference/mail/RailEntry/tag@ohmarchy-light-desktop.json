@@ -1,0 +1,81 @@
+{
+  "component": "RailEntry",
+  "state": "tag",
+  "look": "ohmarchy-light-desktop",
+  "place": "cell",
+  "target": [34, 34, 180, 28],
+  "clip": [34, 34, 180, 28],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "light",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(16, 15, 15)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(95, 94, 90)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [{ "backgroundColor": "oklch(0.55 0.12 150)" }],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Pottery Project 4",
+      "box": [0, 0, 180, 28],
+      "drawn": {
+        "color": "rgb(16, 15, 15)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+        "fontSize": "13px",
+        "fontWeight": "400",
+        "lineHeight": "18.2px",
+        "letterSpacing": "normal",
+        "borderRadius": "0px",
+        "paddingTop": "0px",
+        "paddingRight": "8px",
+        "paddingBottom": "0px",
+        "paddingLeft": "24px",
+        "borderColor": "rgb(16, 15, 15)"
+      },
+      "text": [
+        { "said": "Pottery Project", "type": 0 },
+        { "said": "4", "type": 1 }
+      ],
+      "surfaces": [{ "box": [30, 10, 8, 8], "paint": 0 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

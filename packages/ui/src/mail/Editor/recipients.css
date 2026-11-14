@@ -1,0 +1,417 @@
+/* From, To, Cc, Bcc, Subject: a label, the value, and the place to type the next. */
+@layer oh {
+  .oh-recipients {
+    --oh-recipients-label: 3.2em;
+    --oh-recipients-chip: var(--h-s);
+    --oh-recipients-chip-touch: 36px;
+    --oh-recipients-type: 9em;
+    --oh-recipients-type-touch: 6em;
+    --oh-recipients-in: 3em;
+    --oh-recipients-in-touch: 1em;
+    --oh-recipients-pull: calc(var(--s1) * -1);
+    --oh-recipients-lh-subject: 1.25;
+    --oh-recipients-bad: inset 0 0 0 2px var(--ink);
+    --oh-recipients-land: inset 0 0 0 1.5px var(--ctl-ring);
+    --oh-recipients-reach: 0 calc(var(--s2) * -1);
+    --oh-recipients-layer-ghost: 60;
+    --oh-recipients-layer-caret: 59;
+    --oh-recipients-layer-under: -1;
+    --oh-recipients-caret: 2px;
+    --oh-recipients-caret-out: -1px;
+    --oh-recipients-caret-r: 1px;
+    --oh-recipients-faint: 0.32;
+    --oh-recipients-who-pad: 0 var(--s1) 0 calc((var(--oh-recipients-chip) - var(--av-xs)) / 2);
+
+    position: relative;
+    display: grid;
+    gap: var(--s1);
+    margin-bottom: var(--s3);
+  }
+
+  .oh-recipients-line {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+    min-height: var(--h-s);
+  }
+
+  .oh-recipients-label {
+    flex: none;
+    width: var(--oh-recipients-label);
+    color: var(--ink2);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-recipients-line[data-line="from"] {
+    flex-wrap: nowrap;
+    gap: var(--s2);
+  }
+
+  .oh-recipients-line[data-line="from"] > .oh-recipients-label {
+    margin-right: var(--oh-recipients-pull);
+  }
+
+  .oh-recipients-line[data-line="from"] > .oh-slot,
+  .oh-recipients-static {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-recipients-static {
+    font-weight: var(--w-bold);
+  }
+
+  .oh-recipients-state {
+    flex: none;
+    margin-left: auto;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* The people stand in a column of their own, so a long line wraps under its first person, not under its label. */
+  .oh-recipients-line[data-line="people"] {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+  }
+
+  .oh-recipients-line[data-line="people"] > .oh-recipients-label {
+    height: var(--oh-recipients-chip);
+    line-height: var(--oh-recipients-chip);
+  }
+
+  .oh-recipients-flow {
+    flex: 1 1 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1);
+    min-width: 0;
+  }
+
+  /* The place to type the next and the way to more lines travel together: after the last person, or on a line of their own. */
+  .oh-recipients-type {
+    flex: 1 1 var(--oh-recipients-type);
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    min-width: min(var(--oh-recipients-type), 100%);
+  }
+
+  .oh-recipients-in {
+    flex: 1 1 0;
+    min-width: var(--oh-recipients-in);
+    height: var(--oh-recipients-chip);
+    padding: 0 var(--s1);
+    color: var(--ink);
+    cursor: text;
+  }
+
+  .oh-recipients-in:focus-visible,
+  .oh-recipients-subject:focus-visible {
+    outline: none;
+  }
+
+  .oh-recipients-more,
+  .oh-recipients-change {
+    flex: none;
+    display: inline-flex;
+    margin-left: auto;
+    color: var(--ink2);
+  }
+
+  .oh-recipients-names {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 0 var(--s1);
+    overflow: hidden;
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* With a pointer the way to change them is its words; under a finger, its sign. */
+  .oh-recipients-change > .oh-button > .oh-icon {
+    display: none;
+  }
+
+  /* A person: the circle, the name, the address, and a way off. */
+  .oh-recipients-person {
+    flex: 0 1 auto;
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 100%;
+    height: var(--oh-recipients-chip);
+    border-radius: var(--r-pill);
+    background: var(--soft-sheet);
+    box-shadow: var(--oh-ring-btn);
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  .oh-recipients-who {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    height: 100%;
+    padding: var(--oh-recipients-who-pad);
+    border-radius: var(--r-pill);
+  }
+
+  .oh-recipients-who:focus-visible {
+    border-radius: var(--r-pill);
+  }
+
+  .oh-recipients-name {
+    flex: 0 0 auto;
+    max-width: calc(100% - var(--av-xs) - var(--s2));
+    overflow: hidden;
+    font-weight: var(--w-mid);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-recipients-address {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-recipients-off {
+    flex: none;
+    display: inline-flex;
+    color: var(--ink2);
+  }
+
+  .oh-recipients-off:hover {
+    color: var(--ink);
+  }
+
+  /* A refused person's way off: its sign in ink, the button's own colour stays. */
+  .oh-recipients-person[data-refused] > .oh-recipients-off .oh-icon {
+    color: var(--ink);
+  }
+
+  /* Refused: it stays, ringed in ink. */
+  .oh-recipients-person[data-refused] {
+    box-shadow: var(--oh-recipients-bad);
+  }
+
+  .oh-recipients-refusal {
+    --oh-recipients-refusal-gap: 6px;
+    --oh-recipients-refusal-in: calc(3.2 * var(--t-ui));
+
+    display: flex;
+    align-items: flex-start;
+    gap: var(--oh-recipients-refusal-gap);
+    padding-left: var(--oh-recipients-refusal-in);
+    color: var(--ink);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  /* Moved: lifted, a person follows the pointer and its own place gives way; every line is marked as a place to land,
+     the one it is over is filled, and a caret stands where it lands. */
+  :root[data-touch="0"] .oh-recipients-who:not(:disabled) {
+    cursor: grab;
+  }
+
+  .oh-recipients-person[data-lifted] {
+    opacity: var(--oh-recipients-faint);
+  }
+
+  .oh-recipients-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: var(--oh-recipients-layer-ghost);
+    pointer-events: none;
+    will-change: transform;
+  }
+
+  .oh-recipients-ghost > .oh-recipients-person {
+    background: var(--sheet);
+    box-shadow: var(--lift), var(--oh-ring-ctl);
+  }
+
+  .oh-recipients[data-drag],
+  .oh-recipients[data-drag] .oh-recipients-who {
+    cursor: grabbing;
+    user-select: none;
+  }
+
+  .oh-recipients[data-drag] > .oh-recipients-line[data-line="people"] {
+    isolation: isolate;
+  }
+
+  .oh-recipients[data-drag] > .oh-recipients-line[data-line="people"]::before {
+    content: "";
+    position: absolute;
+    inset: var(--oh-recipients-reach);
+    z-index: var(--oh-recipients-layer-under);
+    border-radius: var(--r-row);
+    box-shadow: var(--oh-ring-line);
+    pointer-events: none;
+  }
+
+  .oh-recipients[data-drag] > .oh-recipients-line[data-over]::before {
+    background: var(--hover);
+    box-shadow: var(--oh-recipients-land);
+  }
+
+  /* On the filled line the people stand out as the sheet does on the ground, so the place between two of them can be seen. */
+  .oh-recipients[data-drag] > .oh-recipients-line[data-over] .oh-recipients-person {
+    background: var(--sheet);
+  }
+
+  .oh-recipients-caret {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: var(--oh-recipients-layer-caret);
+    width: var(--oh-recipients-caret);
+    margin-left: var(--oh-recipients-caret-out);
+    border-radius: var(--oh-recipients-caret-r);
+    background: var(--focus);
+    pointer-events: none;
+  }
+
+  /* The subject: the letter's own heading, typed; it runs on to a second line instead of being cut. */
+  .oh-recipients-line[data-line="subject"] {
+    margin-top: var(--s2);
+  }
+
+  .oh-recipients-subject {
+    --oh-recipients-subject-in: calc(3.2 * var(--t-ui) + var(--s1) + var(--s1));
+    --oh-recipients-subject-pad: calc((var(--h-m) - 1.25em) / 2) 0 calc((var(--h-m) - 1.25em) / 2)
+      var(--oh-recipients-subject-in);
+
+    flex: 1;
+    display: block;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    height: auto;
+    padding: var(--oh-recipients-subject-pad);
+    overflow: hidden;
+    color: var(--ink);
+    font-size: var(--t-title);
+    line-height: var(--oh-recipients-lh-subject);
+    resize: none;
+    cursor: text;
+    field-sizing: content;
+  }
+
+  .oh-recipients-subject::placeholder {
+    color: var(--ink2);
+    opacity: 1;
+  }
+
+  /* A reply's subject is one more line of its head, not a heading: the conversation's subject already stands above. */
+  .oh-recipients[data-reply] > .oh-recipients-line[data-line="subject"] {
+    margin-top: 0;
+  }
+
+  .oh-recipients[data-reply] .oh-recipients-subject {
+    --oh-recipients-subject-pad: 0 0 0 calc(3.2em + var(--s1) + var(--s1));
+
+    height: var(--h-s);
+    font-family: var(--f-text);
+    font-size: var(--t-ui);
+    line-height: var(--oh-lh);
+    font-weight: var(--w-mid);
+    font-variation-settings: normal;
+    letter-spacing: 0;
+    text-overflow: ellipsis;
+  }
+
+  /* ohmarchy: hairlines inside. The lines are parted by rules, and the one with the keys takes the hot one. */
+  :root[data-face="ohmarchy"] .oh-recipients {
+    --oh-recipients-rule: 0 var(--oh-hair) 0 var(--line-soft);
+    --oh-recipients-rule-on: 0 var(--oh-hair) 0 var(--hot);
+
+    gap: 0;
+  }
+
+  :root[data-face="ohmarchy"] .oh-recipients > .oh-recipients-line {
+    min-height: var(--h-m);
+    box-shadow: var(--oh-recipients-rule);
+  }
+
+  :root[data-face="ohmarchy"] .oh-recipients > .oh-recipients-line:focus-within {
+    box-shadow: var(--oh-recipients-rule-on);
+  }
+
+  :root[data-face="ohmarchy"] .oh-recipients > .oh-recipients-line[data-line="subject"] {
+    margin-top: 0;
+  }
+
+  /* Under a finger a person is the circle and the name, so several stand on a line; the mailbox's tag leaves the From line. */
+  :root[data-touch="1"] .oh-recipients {
+    --oh-recipients-chip: var(--oh-recipients-chip-touch);
+    --oh-recipients-type: var(--oh-recipients-type-touch);
+  }
+
+  :root[data-touch="1"] .oh-recipients-address,
+  :root[data-touch="1"] .oh-recipients-line[data-line="from"] > .oh-tag {
+    display: none;
+  }
+
+  :root[data-touch="1"] .oh-recipients-off > .oh-button,
+  :root[data-touch="1"] .oh-recipients-more > .oh-button {
+    height: var(--oh-recipients-chip);
+  }
+
+  :root[data-touch="1"] .oh-recipients-off > .oh-button {
+    width: var(--oh-recipients-chip);
+  }
+
+  /* On a narrow sheet the place to type stays beside one person; with the keys in it, it takes a line of its own. */
+  :root[data-touch="1"] .oh-recipients-flow:has(.oh-recipients-person) .oh-recipients-in {
+    min-width: var(--oh-recipients-in-touch);
+  }
+
+  :root[data-touch="1"]
+    .oh-recipients-flow:has(.oh-recipients-person)
+    .oh-recipients-type:has(.oh-recipients-in:focus) {
+    flex-basis: 100%;
+  }
+
+  /* A long state takes the line under the address there, so the address stays whole. */
+  :root[data-touch="1"] .oh-recipients-line[data-line="from"][data-long] {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  :root[data-touch="1"] .oh-recipients-line[data-line="from"][data-long] > .oh-recipients-state {
+    flex-basis: 100%;
+    margin-top: var(--oh-recipients-pull);
+    text-align: right;
+  }
+
+  :root[data-touch="1"] .oh-recipients-change > .oh-button {
+    --oh-button-pad: 0;
+
+    width: var(--h-s);
+  }
+
+  :root[data-touch="1"] .oh-recipients-change > .oh-button > .oh-icon {
+    display: block;
+  }
+
+  :root[data-touch="1"] .oh-recipients-change > .oh-button > :not(.oh-icon) {
+    display: none;
+  }
+}

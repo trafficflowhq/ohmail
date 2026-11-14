@@ -1,0 +1,176 @@
+{
+  "component": "RailFoot",
+  "state": "rest",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [12, 796, 232, 92],
+  "clip": [12, 796, 232, 92],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "22.4px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "oklch(0.91 0.065 25)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "13px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "700",
+      "fontStyle": "normal",
+      "lineHeight": "20px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.25px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    }
+  ],
+  "paints": [
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 2 9fecf372871b" },
+    { "backgroundColor": "oklch(0.38 0.06 25)", "borderRadius": "999px" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 2 552686fe5ce4" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 2 e90048f24709" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "Pull new mail",
+      "box": [0, 0, 232, 40],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "12px",
+        "paddingBottom": "0px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "text": [{ "said": "Pull new mail", "type": 0 }],
+      "surfaces": [{ "box": [12, 10, 20, 20], "paint": 0 }]
+    },
+    {
+      "role": "button",
+      "name": "M Mila Brunner 2 mailboxes",
+      "box": [0, 44, 166, 48],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "20px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "4px",
+        "paddingRight": "12px",
+        "paddingBottom": "4px",
+        "paddingLeft": "12px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "text": [
+        { "said": "M", "type": 1 },
+        { "said": "Mila Brunner", "type": 2 },
+        { "said": "2 mailboxes", "type": 3 }
+      ],
+      "surfaces": [{ "box": [12, 54, 28, 28], "paint": 1 }]
+    },
+    {
+      "role": "button",
+      "name": "Command palette · Ctrl K",
+      "box": [168, 52, 32, 32],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "surfaces": [{ "box": [174, 58, 20, 20], "paint": 2 }]
+    },
+    {
+      "role": "button",
+      "name": "Light",
+      "box": [200, 52, 32, 32],
+      "drawn": {
+        "color": "rgb(184, 175, 163)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "600",
+        "lineHeight": "16px",
+        "letterSpacing": "normal",
+        "borderRadius": "999px",
+        "paddingTop": "0px",
+        "paddingRight": "0px",
+        "paddingBottom": "0px",
+        "paddingLeft": "0px",
+        "borderColor": "rgb(184, 175, 163)"
+      },
+      "surfaces": [{ "box": [206, 58, 20, 20], "paint": 3 }]
+    }
+  ],
+  "loose": { "text": [], "surfaces": [] }
+}

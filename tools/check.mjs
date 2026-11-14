@@ -218,8 +218,19 @@ function retirement(root, files, base) {
       present: new Set(tests),
       deleted,
       verdictExists: (rel) => existsSync(path.join(root, rel)),
+      tree: textOf,
+      base: base ? (rel) => showAt(root, base, rel) : undefined,
     }),
   ];
+}
+
+/** A file's text at a revision, null when git refuses (no such file there, or a folder: a blob only). */
+function showAt(root, rev, rel) {
+  try {
+    return git(root, "cat-file", "blob", `${rev}:${rel}`);
+  } catch {
+    return null;
+  }
 }
 
 function baseBaseline(root, base) {

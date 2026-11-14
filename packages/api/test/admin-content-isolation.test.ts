@@ -63,6 +63,13 @@ import {
   mailboxPass,
   writePassProgress,
   listAddresses,
+  calConnections,
+  calCalendars,
+  calEvents,
+  calAttendees,
+  calAlarms,
+  calSettings,
+  calSuggestions,
 } from "@trafficflow/db";
 import {
   accountLifecycleNotices,
@@ -414,6 +421,12 @@ const PREDICATE_COLUMNS: ReadonlySet<string> = new Set([
  */
 const REFUSED_BY_CONSTRAINT: readonly string[] = [
   "sessions.scope",   // CHECK scope in ('full','enrollment')
+  // mail 0205: a connection's three growing lists are held to one lower-case word by a CHECK, and an
+  // event's kinds of time are a closed set; a zone, an end and an occurrence key stand only beside
+  // the kind or moment that CHECKs tie them to, and none is a person's words.
+  "cal_connections.provider", "cal_connections.status", "cal_connections.error_code",
+  "cal_events.start_kind", "cal_events.end_kind", "cal_events.start_zone", "cal_events.end_zone",
+  "cal_events.end_local", "cal_events.recurrence_id",
   // cloud 0040 / 0037 — both seeded since the account page reads their tables (cloud 0047):
   // a lifecycle notice's kind and an owed reversal's reason are closed sets behind a CHECK.
   "account_lifecycle_notices.kind",
@@ -1697,6 +1710,30 @@ async function seedWorld(db: Db, tag: string): Promise<World> {
     accountId, messageId: message.id, mailboxId, uid: `event-${tag}@calendar.example`, method: "REQUEST",
     startRaw: "20261201T100000Z", organizer: `organizer-${tag}@example.com`, invitedAddress: `invited-${tag}@example.com`,
   });
+  // THE CALENDAR (mail 0205). SEEDED rather than exempted: a calendar is the person's own diary,
+  // as private as their mail, and the staff role reads six columns of a connection (its kind and
+  // how its sync stands) and nothing else of the family. The sweep taints every text column.
+  const [calConn] = await db.insert(calConnections).values({
+    accountId, provider: "caldav", label: `Diary ${tag}`, serverUrl: `https://dav-${tag}.example/cal/`,
+    principal: `/principals/${tag}/`, sourceHost: `dav-${tag}.example`, mailboxId,
+  }).returning();
+  const [calCal] = await db.insert(calCalendars).values({
+    accountId, connectionId: calConn!.id, providerId: `/cal/${tag}/`, name: `Clinic ${tag}`, timeZone: "Europe/Zurich",
+  }).returning();
+  const [calEv] = await db.insert(calEvents).values({
+    accountId, calendarId: calCal!.id, providerId: `/cal/${tag}/1.ics`, uid: `appt-${tag}@calendar.example`,
+    title: `Appointment ${tag}`, notes: `notes ${tag}`, place: `Room ${tag}`, startKind: "instant",
+    startLocal: "20261201T100000Z", startsAt: FIXED_NOW, endsAt: FIXED_NOW,
+  }).returning();
+  await db.insert(calAttendees).values({ accountId, eventId: calEv!.id, address: `guest-${tag}@example.com`, name: `Guest ${tag}` });
+  await db.insert(calAlarms).values({ accountId, eventId: calEv!.id, minutesBefore: 15 });
+  await db.insert(calSuggestions).values({
+    accountId, messageId: message.id, mailboxId, evidence: "dates",
+    proposed: { title: `Lunch ${tag}` }, sourceWords: `lunch on Saturday ${tag}`,
+  });
+  // The account's calendar settings (the switch): no staff role reads the table, and the sweep
+  // taints its one text column, the second zone.
+  await db.insert(calSettings).values({ accountId, enabledAt: FIXED_NOW, secondZone: "Asia/Tokyo", newEventsCalendarId: calCal!.id });
   // Where a one-time pass stands (mail 0203). SEEDED rather than exempted: the staff role is
   // granted the table's names and timestamps and never `cursor`, which names the letter a pass
   // stopped at. The sweep taints both text columns, and every staff response is checked for them.

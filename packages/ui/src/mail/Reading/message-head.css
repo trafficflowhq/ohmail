@@ -1,0 +1,304 @@
+/* A message's head: the sender as one button, the tools and the time at the line's end, the recipients under the name. */
+@layer oh {
+  .oh-messagehead {
+    --oh-messagehead-lh: 1.5;
+    --oh-messagehead-lh-touch: 1.3;
+    --oh-messagehead-out: calc(var(--s1) * -1);
+    --oh-messagehead-under: 2px;
+    --oh-messagehead-offset: 0.18em;
+    --oh-messagehead-offset-fine: 0.2em;
+    --oh-messagehead-short: 2ch;
+    --oh-messagehead-reach: -7px -3px -18px;
+    --oh-messagehead-touch: 44px;
+    --oh-messagehead-row-gap: 2px;
+    --oh-messagehead-beside: 84px;
+    --oh-messagehead-beside-note: 148px;
+    --oh-messagehead-pull: calc(var(--s2) * -1);
+    --oh-messagehead-reach-stamp: -12px -4px;
+    --oh-messagehead-layer-note: 2;
+    --oh-messagehead-layer: 1;
+
+    display: grid;
+    grid-template-columns: var(--av) minmax(0, 1fr) auto;
+    grid-template-rows: minmax(var(--h-s), auto);
+    column-gap: var(--s3);
+    align-items: center;
+    margin-bottom: var(--s4);
+  }
+
+  .oh-messagehead-sender {
+    grid-column: 1 / 3;
+    grid-row: 1 / 3;
+    align-self: stretch;
+    display: grid;
+    grid-template-columns: var(--av) minmax(0, 1fr);
+    column-gap: var(--s3);
+    align-items: center;
+    align-content: start;
+    min-width: 0;
+    margin: var(--oh-messagehead-out);
+    padding: var(--s1);
+    border-radius: var(--r-row);
+    text-align: left;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-messagehead-sender:hover {
+    background: var(--oh-messagehead-over, var(--hover));
+  }
+
+  .oh-messagehead-sender > .oh-avatar {
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .oh-messagehead-who {
+    grid-column: 2;
+    grid-row: 1;
+    display: flex;
+    align-items: baseline;
+    gap: var(--s2);
+    min-width: 0;
+    line-height: var(--h-s);
+  }
+
+  .oh-messagehead-name {
+    flex: 0 1 auto;
+    min-width: var(--oh-messagehead-short);
+    overflow: hidden;
+    font-weight: var(--w-bold);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-messagehead-address {
+    flex: 0 2 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .oh-messagehead-tools {
+    grid-column: 3;
+    grid-row: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--s1);
+    color: var(--ink2);
+  }
+
+  .oh-messagehead-tools > .oh-button {
+    color: var(--ink2);
+  }
+
+  .oh-messagehead-stamp {
+    display: inline-flex;
+    align-items: center;
+    min-height: var(--h-s);
+    padding: 0 var(--s1);
+    border-radius: var(--r-row);
+    color: var(--ink2);
+  }
+
+  .oh-messagehead-when {
+    font-size: var(--t-meta);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* The chip stands among the tools itself, so that what it opens is held by nothing of the head. */
+  .oh-messagehead-noted {
+    display: contents;
+  }
+
+  .oh-messagehead-stamp:hover {
+    color: var(--ink);
+  }
+
+  /* The line lets a press through to the sender behind it; its names take their own. */
+  .oh-messagehead-to {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    position: relative;
+    z-index: var(--oh-messagehead-layer);
+    justify-self: start;
+    min-width: 0;
+    max-width: 100%;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: var(--oh-messagehead-lh);
+    pointer-events: none;
+  }
+
+  .oh-messagehead-person {
+    display: inline;
+    border-radius: var(--r-sq);
+    font-weight: var(--w-mid);
+    cursor: pointer;
+    pointer-events: auto;
+  }
+
+  .oh-messagehead-person:hover {
+    color: var(--ink);
+    text-decoration: underline;
+    text-decoration-thickness: var(--oh-messagehead-under);
+    text-underline-offset: var(--oh-messagehead-offset);
+  }
+
+  .oh-messagehead-person[data-details] {
+    margin-left: var(--s1);
+    font-weight: var(--w-text);
+    text-decoration: underline solid var(--oh-hair) var(--link-line);
+    text-underline-offset: var(--oh-messagehead-offset-fine);
+  }
+
+  .oh-messagehead-person[data-details]:hover {
+    text-decoration-color: var(--ink);
+  }
+
+  .oh-messagehead-lines {
+    grid-column: 2 / -1;
+    grid-row: 3;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: var(--oh-messagehead-row-gap) var(--s3);
+    margin: var(--s2) 0 0;
+    font-size: var(--t-meta);
+    line-height: var(--oh-messagehead-lh);
+  }
+
+  /* A mark: one quiet line under who it went to. */
+  .oh-messagehead-mark {
+    grid-column: 2 / -1;
+    margin-top: var(--oh-messagehead-row-gap);
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    line-height: var(--oh-messagehead-lh);
+  }
+
+  .oh-messagehead-term,
+  .oh-messagehead-note {
+    color: var(--ink2);
+  }
+
+  .oh-messagehead-value {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  /* ohmarchy rings the sender in place of a tint. */
+  :root[data-face="ohmarchy"] .oh-messagehead-sender:hover {
+    background: transparent;
+    box-shadow: var(--oh-ring-line);
+  }
+
+  /* Under a finger the name stands over the address, and a name's press area reaches past its letters. */
+  :root[data-touch="1"] .oh-messagehead-who {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: var(--oh-messagehead-lh-touch);
+  }
+
+  :root[data-touch="1"] .oh-messagehead-name,
+  :root[data-touch="1"] .oh-messagehead-address {
+    max-width: 100%;
+  }
+
+  :root[data-touch="1"] .oh-messagehead-stamp {
+    min-height: var(--oh-messagehead-touch);
+  }
+
+  :root[data-touch="1"] .oh-messagehead-person {
+    position: relative;
+  }
+
+  :root[data-touch="1"] .oh-messagehead-person::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-messagehead-reach);
+  }
+
+  :root[data-device="phone"] .oh-messagehead-markwhen {
+    display: none;
+  }
+
+  /* Under a finger a head that carries a note gives it the second line's end, and the time a column of its own. */
+  :root[data-touch="1"] .oh-messagehead[data-noted] {
+    grid-template-columns: var(--av) minmax(0, 1fr) auto auto;
+  }
+
+  :root[data-touch="1"] .oh-messagehead[data-noted] > .oh-messagehead-tools {
+    display: contents;
+  }
+
+  :root[data-touch="1"] .oh-messagehead[data-noted] .oh-messagehead-tools > .oh-button {
+    grid-column: 3;
+    grid-row: 1;
+    margin-right: var(--oh-messagehead-pull);
+  }
+
+  :root[data-touch="1"] .oh-messagehead[data-noted] .oh-messagehead-stamp {
+    grid-column: 4;
+    grid-row: 1;
+  }
+
+  :root[data-touch="1"] .oh-messagehead[data-noted] .oh-messagehead-noted > .oh-blocked {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    position: relative;
+    z-index: var(--oh-messagehead-layer-note);
+    justify-self: end;
+    align-self: center;
+  }
+
+  :root[data-touch="1"] .oh-messagehead[data-noted] > .oh-messagehead-to {
+    max-width: calc(100% - var(--oh-messagehead-beside-note));
+  }
+
+  /* The unfolded phone, upright: the time ends the recipients' line, and a note takes a line of its own. */
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead-tools {
+    display: contents;
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead .oh-messagehead-tools > .oh-button {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+    margin-right: var(--oh-messagehead-pull);
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"])
+    .oh-messagehead[data-noted]
+    .oh-messagehead-noted
+    > .oh-blocked {
+    grid-row: 3;
+    justify-self: start;
+    margin-top: var(--s1);
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead-stamp::after {
+    content: "";
+    position: absolute;
+    inset: var(--oh-messagehead-reach-stamp);
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead .oh-messagehead-stamp {
+    grid-column: 2 / -1;
+    grid-row: 2;
+    position: relative;
+    z-index: var(--oh-messagehead-layer);
+    justify-self: end;
+    align-self: start;
+    min-height: 0;
+    font-size: var(--t-meta);
+    line-height: var(--oh-messagehead-lh);
+  }
+
+  :root[data-device="fold"]:not([data-pose="land"]) .oh-messagehead > .oh-messagehead-to {
+    max-width: calc(100% - var(--oh-messagehead-beside));
+  }
+}

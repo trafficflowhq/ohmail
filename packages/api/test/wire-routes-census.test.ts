@@ -3,6 +3,7 @@ import { apiRoutes } from "../src/routes/index.js";
 import { localRoutes } from "../src/local.js";
 import { selfHostRoutes } from "../src/routes/self-host.js";
 import { desktopHostRoutes } from "../src/routes/desktop-host.js";
+import { calendarRoutes } from "../src/calendar/index.js";
 import type { Route } from "../src/router.js";
 import { SERVER_ONLY_ROUTES, UNBOUND_CALLS, WIRE_ROUTES } from "../src/wire-routes.js";
 
@@ -22,6 +23,8 @@ const TABLES: ReadonlyArray<readonly [string, readonly Route[]]> = [
   ["localRoutes", localRoutes],
   ["selfHostRoutes", selfHostRoutes],
   ["desktopHostRoutes", desktopHostRoutes],
+  // Mounted beside either server table by a composition that keeps a calendar.
+  ["calendarRoutes", calendarRoutes],
 ];
 const key = (r: { method: string; pattern: string }) => `${r.method.toUpperCase()} ${r.pattern}`;
 const everyRoute = TABLES.flatMap(([, routes]) => routes);

@@ -1,0 +1,86 @@
+{
+  "component": "Tag",
+  "state": "own",
+  "look": "ohmarchy-dark-desktop",
+  "place": "cell",
+  "target": [24, 25, 308.8438, 22],
+  "clip": [24, 25, 309, 22],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "ohmarchy",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.84 0.075 150)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "oklch(0.84 0.075 78)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    },
+    {
+      "color": "oklch(0.84 0.075 25)",
+      "fontFamily": "\"JetBrains Mono\", ui-monospace, \"Cascadia Mono\", Menlo, Consolas, monospace",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "oklch(0.298206 0.033779 262.244)" },
+    { "backgroundColor": "oklch(0.298206 0.033779 302.564)" },
+    { "backgroundColor": "oklch(0.298206 0.033779 295.144)" }
+  ],
+  "nodes": [],
+  "loose": {
+    "text": [
+      { "said": "Pottery Project", "type": 0 },
+      { "said": "Paperwork", "type": 1 },
+      { "said": "Adventures", "type": 2 }
+    ],
+    "surfaces": [
+      { "box": [0, 0, 124, 22], "paint": 0 },
+      { "box": [132, 0, 80.8, 22], "paint": 1 },
+      { "box": [220.8, 0, 88, 22], "paint": 2 }
+    ]
+  }
+}

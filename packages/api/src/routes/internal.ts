@@ -17,7 +17,7 @@ import {
   TransientDialRefusal, type AdminDb,
 } from "@trafficflow/services";
 import { UNSUB_DRAIN_RUN_BUDGET_MS, type SendAdapter } from "@trafficflow/core/mail";
-import { isUuid } from "@trafficflow/services/mail";
+import { dbFor, isUuid } from "@trafficflow/services/mail";
 import { presentsSecret, secretRouteJson as json } from "../secret-auth.js";
 import { makeSendAdapter } from "../send-adapter.js";
 import { MAX_IMAP_PER_MAILBOX } from "../attachments-adapter.js";
@@ -1236,7 +1236,7 @@ export const internalRoutes: Route[] = [
       }
       try {
         const result = await auth(deps).drainSecurityNotices({
-          db: deps.db, accountId: "", userId: null, now: deps.now, requestId: deps.requestId,
+          db: dbFor(deps.db, ""), accountId: "", userId: null, now: deps.now, requestId: deps.requestId,
         });
         if (result.sent + result.failed + result.dropped > 0) log.info("security_notices_drained", { ...result });
         return json(200, { now: deps.now().toISOString(), ...result });

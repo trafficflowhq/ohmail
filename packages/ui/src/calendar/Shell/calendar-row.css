@@ -1,0 +1,91 @@
+/* A calendar in the rail: its square shows or hides it, its name opens its menu. */
+@layer oh {
+  .oh-calrow {
+    --oh-calrow-gap: 10px;
+    --oh-calrow-pad: 0 var(--s2) 0 var(--s3);
+    --oh-calrow-ground: var(--oh-hover, var(--hover-ground));
+    --oh-calrow-halo: 0 0 0 3px var(--sheet);
+    --oh-calrow-halo-off:
+      inset 0 0 0 var(--ev-line) var(--oh-cal-mark, var(--cal-grey)), 0 0 0 3px var(--sheet);
+    display: flex;
+    align-items: center;
+    gap: var(--oh-calrow-gap);
+    width: 100%;
+    height: var(--h-s);
+    padding: var(--oh-calrow-pad);
+    border-radius: var(--r-pill);
+    font-weight: var(--w-text);
+    white-space: nowrap;
+    transition: background-color var(--d-fade) var(--e-std);
+  }
+  .oh-calrow:hover {
+    background: var(--oh-calrow-ground);
+  }
+  .oh-calrow[data-hidden] {
+    color: var(--ink2);
+  }
+  .oh-calrow:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-calrow-sq {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 20px;
+    height: var(--h-s);
+    border-radius: var(--r-pill);
+  }
+  .oh-calrow-sq:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-calrow-sq:hover .oh-csq {
+    box-shadow: var(--oh-calrow-halo);
+  }
+  .oh-calrow-sq:hover .oh-csq[data-hollow] {
+    box-shadow: var(--oh-calrow-halo-off);
+  }
+  .oh-calrow-name {
+    --oh-calrow-name-gap: 6px;
+    display: flex;
+    flex: 1;
+    align-items: center;
+    gap: var(--oh-calrow-name-gap);
+    min-width: 0;
+    height: 100%;
+    text-align: left;
+  }
+  .oh-calrow-name:focus-visible {
+    border-radius: var(--r-pill);
+  }
+  .oh-calrow-word {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* Where new events go: the ink dot after the name. */
+  .oh-calrow-word .oh-dot {
+    --dot-size: 5px;
+    --oh-dot-gap: 2px;
+  }
+  .oh-calrow-ico {
+    display: block;
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--ink2);
+  }
+  /* In a quiet rail the lock shows when the row is pointed at or holds the keys. */
+  .oh-calrow[data-quiet] .oh-calrow-name > .oh-calrow-ico {
+    opacity: 0;
+    transition: opacity var(--d-fade) var(--e-std);
+  }
+  .oh-calrow[data-quiet]:hover .oh-calrow-name > .oh-calrow-ico,
+  .oh-calrow[data-quiet]:focus-within .oh-calrow-name > .oh-calrow-ico {
+    opacity: 1;
+  }
+  :root[data-face="ohmarchy"] .oh-calrow {
+    --oh-calrow-gap: var(--s2);
+    --oh-calrow-pad: 0 var(--s2) 0 var(--s4);
+  }
+}

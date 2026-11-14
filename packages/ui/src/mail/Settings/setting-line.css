@@ -1,0 +1,181 @@
+/* A setting: the name at the left, the value and one control at the right. A line whose control is a switch or a slot answers a press anywhere on it. */
+@layer oh {
+  .oh-settingline {
+    --oh-settingline-dim: 0.5;
+    --oh-settingline-sign: 20px;
+    --oh-settingline-between: 2px;
+    --oh-settingline-pull: calc(var(--cap-q) * -1);
+    --oh-settingline-reach: 0 calc(var(--s3) * -1);
+    --oh-settingline-rise: calc(var(--s1) * -1);
+    --oh-settingline-under-sign: calc(var(--oh-settingline-sign) + var(--s2));
+
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s1) var(--s4);
+    min-height: var(--h-l);
+    padding: var(--s1) 0;
+  }
+
+  .oh-settingline-name {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    font-weight: var(--w-mid);
+    overflow-wrap: anywhere;
+  }
+
+  .oh-settingline-name > .oh-icon {
+    color: var(--ink2);
+  }
+
+  .oh-settingline-label {
+    min-width: 0;
+  }
+
+  .oh-settingline-value {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-width: 0;
+    max-width: 100%;
+    margin-left: auto;
+    color: var(--ink2);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-settingline-text {
+    overflow: hidden;
+    min-width: 0;
+    color: var(--ink2);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  /* A word that acts is in the ink, its value beside it in the second ink. */
+  .oh-settingline-value:has(> .oh-button[data-kind="quiet"]) {
+    color: var(--ink);
+  }
+
+  /* A word that acts ends on the line's edge; words that act side by side stand as one group. */
+  .oh-settingline-value:has(> .oh-button[data-kind="quiet"]:last-child) {
+    margin-right: var(--oh-settingline-pull);
+  }
+
+  .oh-settingline-value:not(:has(> .oh-settingline-text)):has(> .oh-button[data-kind="quiet"] + .oh-button) {
+    gap: 0;
+  }
+
+  /* A switch never drops under its name: the name wraps instead. */
+  .oh-settingline[data-switch] {
+    flex-wrap: nowrap;
+  }
+
+  .oh-settingline[data-switch] > .oh-settingline-name {
+    flex: 1 1 0;
+    flex-wrap: wrap;
+    row-gap: var(--oh-settingline-between);
+  }
+
+  /* Pressable as a whole: the pointer finds it like a row of the list. */
+  .oh-settingline[data-press] {
+    margin: var(--oh-settingline-reach);
+    padding-right: var(--s3);
+    padding-left: var(--s3);
+    border-radius: var(--r-row);
+    cursor: pointer;
+    transition: background-color var(--d-hover) var(--e-std);
+  }
+
+  .oh-settingline[data-press][data-off] {
+    cursor: default;
+  }
+
+  @media (hover: hover) {
+    .oh-settingline[data-press]:not([data-off]):hover {
+      background: var(--oh-settingline-wash, var(--hover));
+    }
+  }
+
+  /* Off: the markup disables it; here it only dims. */
+  .oh-settingline[data-off] {
+    color: var(--on-off);
+  }
+
+  .oh-settingline[data-off] > .oh-settingline-value > * {
+    opacity: var(--oh-settingline-dim);
+  }
+
+  .oh-settingline[data-sub] > .oh-settingline-name {
+    padding-left: var(--s5);
+  }
+
+  /* Under a finger, a wide control goes under its name, starting where the name's text starts. */
+  :root[data-touch="1"] .oh-settingline[data-narrow="under"] {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--s2);
+    padding-top: var(--s2);
+    padding-bottom: var(--s3);
+  }
+
+  :root[data-touch="1"] .oh-settingline[data-narrow="under"] > .oh-settingline-value {
+    flex-wrap: wrap;
+    align-self: stretch;
+    max-width: none;
+    margin-left: 0;
+  }
+
+  :root[data-touch="1"]
+    .oh-settingline[data-narrow="under"]
+    > .oh-settingline-value:has(> .oh-button[data-kind="quiet"]:first-child) {
+    margin-left: var(--oh-settingline-pull);
+  }
+
+  :root[data-touch="1"] .oh-settingline[data-narrow="under"] .oh-settingline-text:not(:last-child) {
+    margin-right: auto;
+  }
+
+  /* Under a finger, a line of three keeps the name and the word that acts on one line, the detail under the name. */
+  :root[data-touch="1"] .oh-settingline[data-narrow="detail"] {
+    padding-top: var(--s1);
+    padding-bottom: var(--s2);
+  }
+
+  :root[data-touch="1"] .oh-settingline[data-narrow="detail"] > .oh-settingline-name {
+    min-height: var(--h-s);
+  }
+
+  :root[data-touch="1"] .oh-settingline[data-narrow="detail"] > .oh-settingline-value {
+    display: contents;
+  }
+
+  /* Its word that acts still ends on the line's edge: the value has no box to pull, so the line is pulled. */
+  :root[data-touch="1"]
+    .oh-settingline[data-narrow="detail"]:has(
+      > .oh-settingline-value > .oh-button[data-kind="quiet"]:last-child
+    ) {
+    margin-right: var(--oh-settingline-pull);
+  }
+
+  :root[data-touch="1"] .oh-settingline[data-narrow="detail"] .oh-settingline-text {
+    order: 3;
+    flex-basis: 100%;
+    margin-top: var(--oh-settingline-rise);
+    white-space: normal;
+  }
+
+  :root[data-touch="1"]
+    .oh-settingline[data-narrow="detail"]:has(> .oh-settingline-name > .oh-icon)
+    .oh-settingline-text {
+    padding-left: var(--oh-settingline-under-sign);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .oh-settingline[data-press] {
+      transition: none;
+    }
+  }
+}

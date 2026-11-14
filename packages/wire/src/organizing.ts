@@ -74,6 +74,11 @@ export interface SettingsDTO {
   folderMailboxesOff: Record<string, ISODateTime>;
   /** The account's interface language, or null for "no preference stored". */
   locale: string | null;
+  /**
+   * When the account switched its calendar on, `null` while it is off. ABSENT from a server that
+   * has no calendar, which a client reads as off too.
+   */
+  calendarEnabledAt?: ISODateTime | null;
   updatedAt: ISODateTime;
 }
 

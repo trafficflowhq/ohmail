@@ -32,6 +32,18 @@ export const KEEP: Readonly<Record<string, string>> = {
   // them. That list is held to the tree; a table's first writer takes it off, and it is then in
   // the domain and owed by the walk.
   ...unwrittenBySqlName(),
+  // THE CALENDAR, whose tables a phone's store has none of, so this walk (which the phone runs too)
+  // may not name them. A desktop's copy of a Cloud account takes each calendar record by its own
+  // deletion, which the server sends for everything that rode an erased mailbox, children first,
+  // before the mailbox's receipt (`cloud-mirror-calendar.ts`); sign-out takes the copy whole
+  // (`wipeCalendarCopy`). A standalone desktop writes no calendar row yet. Held by
+  // `calendar-every-kind-walks.test.ts`.
+  cal_connections:
+    "a connection only names the mailbox whose sign-in it rides; it and its family leave by their "
+    + "own deletions and the sign-out wipe, never by this walk (see above)",
+  cal_suggestions:
+    "a suggestion leaves by its own deletion, which the server sends for every one an erased "
+    + "mailbox's letters made, and by the sign-out wipe (see above)",
 };
 
 /**

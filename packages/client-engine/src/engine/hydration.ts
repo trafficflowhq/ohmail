@@ -535,10 +535,14 @@ export abstract class EngineHydration extends EnginePastEnd {
     let cursor: string | undefined;
     let applied = false;
     let draftsIn = false;
+    let calendarRead = false;
     for (;;) {
       let page: SyncSnapshotPage;
       try {
-        page = await this.readCeiling(snapshot(cursor !== undefined ? { cursor } : {}));
+        // Naming the kinds is what lets the calendar's phase follow the mail's, where it is served.
+        page = await this.readCeiling(snapshot({
+          ...(cursor !== undefined ? { cursor } : {}), ...(this.types ? { types: this.types } : {}),
+        }));
       } catch (err) {
         if (applied) throw err; // unsound to fall back — see the note above
         // A TIMEOUT SAYS NOTHING ABOUT THE ROUTE: latched, a dead connection would put this tab on
@@ -548,6 +552,10 @@ export abstract class EngineHydration extends EnginePastEnd {
         return false; // nothing was written; `since=0` takes over
       }
       if (!applied) await this.claimSnapshotPrefix(page.asOfSeq);
+      if (page.calendarWindow !== undefined) {
+        this.calendarWindow = page.calendarWindow;
+        calendarRead = true;
+      }
       // Before the count and before the apply, so neither the received count nor the store ever
       // sees the bytes. See {@link OhmailEngine.withoutSentDraftText}.
       page = { ...page, changes: OhmailEngine.withoutSentDraftText(page.changes) };
@@ -567,6 +575,8 @@ export abstract class EngineHydration extends EnginePastEnd {
           serverTime: this.now().toISOString(),
         });
         await this.persistReceived();
+        // Whether this first load read the calendar whole, for the switch it brought (`calendar.ts`).
+        await this.noteCalendarRead(calendarRead);
       } else {
         this.noteApplied(page.changes);
         await this.store.applyChanges(page.changes); // rows only — the cursor stays "0"
@@ -610,6 +620,7 @@ export abstract class EngineHydration extends EnginePastEnd {
     this.noteQueueChanges(changes);
     this.noteOfferChanges(changes);
     this.storePages.adopt(changes);
+    this.noteCalendarSwitch(changes);
   }
 
   /**
@@ -971,6 +982,8 @@ export abstract class EngineHydration extends EnginePastEnd {
 
   // Written in a later file of the engine; named here because this one calls them.
   protected abstract readCeiling<T>(read: Promise<T>): Promise<T>;
+  protected abstract noteCalendarSwitch(changes: SyncChange[]): void;
+  protected abstract noteCalendarRead(served: boolean): Promise<void>;
 }
 
 /** The engine's class as this file's bodies name it: the statics they read are declared here. */

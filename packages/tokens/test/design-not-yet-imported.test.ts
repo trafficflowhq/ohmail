@@ -18,8 +18,10 @@ import { describe, expect, it } from "vitest";
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 
 /** Who imports the design's subpaths, and how. `type` is erased before anything runs. */
-const MAY_IMPORT: Record<string, "type"> = {
+const MAY_IMPORT: Record<string, "type" | "value"> = {
   "packages/ui/src/motion/motion.ts": "type",
+  "packages/ui/src/base/index.ts": "value",
+  "packages/ui/src/base/tokens.ts": "value",
 };
 
 const OLD_SHEET = /^@ohmail\/tokens\/(tokens|faces|ohmarchy)\.css$|^packages\/tokens\/src\/(tokens|faces|ohmarchy)\.css$/;
@@ -27,7 +29,7 @@ const NEW_SHEET = /^@ohmail\/tokens\/design(\.css$|\/.+\.css$)|^packages\/tokens
 const DESIGN = /^@ohmail\/tokens\/design(\.css)?($|\/)/;
 
 type Files = Map<string, string>;
-const IMPORT = /(import\s+type\s[^"';]*?from\s*|\bfrom\s*|\bimport\s*\(?\s*|@import\s+(?:url\()?\s*|\brequire\(\s*)["']([^"']+)["']/g;
+const IMPORT = /(import\s+type\s[^"';]*?from\s*|\bfrom\s+|\bimport\s*\(?\s*|@import\s+(?:url\()?\s*|\brequire\(\s*)["']([^"']+)["']/g;
 const importsOf = (text: string) => [...text.matchAll(IMPORT)].map((m) => ({ specifier: m[2], typeOnly: m[1].startsWith("import type") }));
 
 /** The file of `files` a specifier names from `from`, or the specifier itself when it names none. */
@@ -126,6 +128,9 @@ describe("what the new folders import", () => {
     ["packages/tokens/omarchy/design-slots.ts", /^\.\//],
     ["packages/ui/src/icons/", /^\.\/|^react(\/jsx-runtime)?$/],
     ["packages/ui/src/motion/", /^\.\/|^\.\.\/ui-zoom\.js$|^react$|^@ohmail\/tokens(\/design)?$/],
+    ["packages/ui/src/base/", /^\.{1,2}\/|^react(\/jsx-runtime)?$|^@ohmail\/tokens\/design(\.css|\/motion\.css)?$/],
+    ["packages/ui/src/mail/", /^\.{1,2}\/|^react(\/jsx-runtime)?$/],
+    ["packages/ui/src/calendar/", /^\.{1,2}\/|^react(\/jsx-runtime)?$/],
   ];
   const outside = (files: Files) =>
     [...files].flatMap(([file, text]) => {

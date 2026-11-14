@@ -161,6 +161,7 @@ No name an operator has in a file changed. A refusal names the variable and neve
 | `MS_OAUTH_CLIENT_ID`, `MS_OAUTH_CLIENT_SECRET`, `MS_OAUTH_TENANT`, `MS_OAUTH_REDIRECT_URI` | none | its own registration, if any |
 | `TF_VAPID_PUBLIC_KEY` | none | its generated public key |
 | `TF_API_CLOCKS` | off | nothing (see Clocks) |
+| `OHMAIL_CALENDAR` | off: no calendar routes, and `/hello` says nothing of one | nothing yet |
 
 Mail to customers is one setting: the transport is whichever of `SMTP_URL` and `RESEND_API_KEY` is set.
 Both refuse; so does either without `MAIL_FROM`, or `MAIL_FROM` alone. `TF_ALERT_EMAIL` without a mailer

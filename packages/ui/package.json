@@ -21,6 +21,24 @@
       "ohmail-source": "./src/squares-window.ts",
       "node": "./dist/squares-window.js",
       "default": "./src/squares-window.ts"
+    },
+    "./base": {
+      "types": "./src/base/index.ts",
+      "ohmail-source": "./src/base/index.ts",
+      "node": "./dist/base/index.js",
+      "default": "./src/base/index.ts"
+    },
+    "./mail": {
+      "types": "./src/mail/index.ts",
+      "ohmail-source": "./src/mail/index.ts",
+      "node": "./dist/mail/index.js",
+      "default": "./src/mail/index.ts"
+    },
+    "./calendar": {
+      "types": "./src/calendar/index.ts",
+      "ohmail-source": "./src/calendar/index.ts",
+      "node": "./dist/calendar/index.js",
+      "default": "./src/calendar/index.ts"
     }
   },
   "dependencies": {

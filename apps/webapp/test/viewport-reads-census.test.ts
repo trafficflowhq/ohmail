@@ -25,7 +25,7 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
     count: 6,
     why: "the drag's slop compares two pointer reads, and the hit test `elementFromPoint` takes viewport px",
   },
-  "apps/webapp/app/views/OhboxView.tsx": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
+  "packages/app-logic/src/ohbox/pointer.ts": { count: 4, why: "a press-and-hold slop: two pointer reads compared" },
   "packages/app-logic/src/lists/list-window.ts": {
     count: 2,
     why: "the page-scroll half: the ROOT scroller's scrollTop is viewport px under the zoom (measured)",
@@ -34,6 +34,27 @@ const ADMITTED: Record<string, { count: number; why: string }> = {
     count: 1,
     why: "mirrors a `max-width: 640px` media query, and media queries are viewport px",
   },
+};
+
+/**
+ * OWED, NOT ADMITTED: the kit's parts place things by raw reads (a menu at its anchor or pointer, a
+ * ring's glide, a width or a pull or a swipe from a pointer's travel, a drag's ghost and caret), the
+ * very reads this census exists for, and may not import `ui-zoom.ts` yet (their border:
+ * `packages/ui/test/old-new-apart.test.ts`). Exact counts, printed below; the list only shrinks, and
+ * a new raw read in one of these files is red like any other.
+ */
+const OWED_WHY = "the kit's second step moves these reads through ui-zoom before the frame draws the part for a person";
+const OWED: Record<string, number> = {
+  "packages/ui/src/base/Overlays/Menu.tsx": 2,
+  "packages/ui/src/base/Overlays/menu-place.ts": 2,
+  "packages/ui/src/calendar/Event/EventCard.tsx": 2,
+  "packages/ui/src/calendar/Grids/AgendaRow.tsx": 2,
+  "packages/ui/src/mail/Editor/recipient-drag.ts": 17,
+  "packages/ui/src/mail/Lists/ReadSquares.tsx": 1,
+  "packages/ui/src/mail/Lists/Row.tsx": 2,
+  "packages/ui/src/mail/Lists/row-swipe.tsx": 5,
+  "packages/ui/src/mail/Shell/ColumnHandle.tsx": 2,
+  "packages/ui/src/mail/Shell/Switcher.tsx": 1,
 };
 
 function walk(dir: string): string[] {
@@ -103,9 +124,15 @@ describe("viewport reads in the shell go through ui-zoom", () => {
   });
 
   it("every raw read is admitted, by file and by count, and no admission is stale", () => {
-    const unadmitted = [...counts].filter(([f, n]) => ADMITTED[f]?.count !== n);
+    const unadmitted = [...counts].filter(([f, n]) => ADMITTED[f]?.count !== n && OWED[f] !== n);
     expect(unadmitted, "a raw viewport read outside ui-zoom.ts — use cssRect / cssPoint / cssViewport").toEqual([]);
     const stale = Object.keys(ADMITTED).filter((f) => !counts.has(f));
     expect(stale, "an admission whose reads are gone").toEqual([]);
+  });
+
+  it("the reads the kit owes are printed, each exact: one that moved through ui-zoom edits its line down", () => {
+    for (const [file, count] of Object.entries(OWED)) console.info(`OWED ${file} ${count}: ${OWED_WHY}`);
+    expect(Object.keys(OWED).filter((f) => !/^packages\/ui\/src\/(base|mail|calendar)\//.test(f)), "only the kit's parts owe").toEqual([]);
+    expect(Object.entries(OWED).filter(([f, n]) => counts.get(f) !== n), "an owed count that is no longer exact").toEqual([]);
   });
 });

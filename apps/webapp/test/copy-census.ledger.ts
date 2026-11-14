@@ -165,6 +165,26 @@ export const EXEMPT: Record<string, Exemption[]> = {
     { text: "oh", why: "wordmark — the pairing screen's mark" },
     { text: "mail", why: "wordmark — its second half" },
   ],
+  "packages/ui/src/base/Primitives/Dot.tsx": [
+    { text: "--oh-dot-light", why: "a CSS custom property's name — an app's own colour in the light scheme, set as the dot's style" },
+    { text: "--oh-dot-dark", why: "the same property in the dark scheme" },
+  ],
+  "packages/ui/src/calendar/Event/EventCard.tsx": [
+    { text: ".oh-ecard-grab", why: "a CSS selector — `Element.closest` asks whether a pull started on the card's grab handle" },
+  ],
+  "packages/ui/src/calendar/Letter/TodayList.tsx": [
+    { text: "--oh-today-hot-pl", why: "a CSS custom property's name — the calendar's colour inside mail, paper light, set as a style" },
+    { text: "--oh-today-hot-pd", why: "the same, paper dark" },
+    { text: "--oh-today-hot-ol", why: "the same, ohmarchy light" },
+    { text: "--oh-today-hot-od", why: "the same, ohmarchy dark" },
+    { text: "--oh-today-ink-pl", why: "a CSS custom property's name — the ink on the calendar's colour, paper light, set as a style" },
+    { text: "--oh-today-ink-pd", why: "the same, paper dark" },
+    { text: "--oh-today-ink-ol", why: "the same, ohmarchy light" },
+    { text: "--oh-today-ink-od", why: "the same, ohmarchy dark" },
+  ],
+  "packages/ui/src/mail/Lists/row-swipe.tsx": [
+    { text: "translateX({}px)", why: "a CSS transform the browser parses — the row's travel under a swipe" },
+  ],
 };
 
 /**

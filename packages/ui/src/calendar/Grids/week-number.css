@@ -1,0 +1,22 @@
+/* The week of a row, as a number: it takes no room and is the way to that week. */
+@layer oh {
+  .oh-wn {
+    --oh-wn-size: 11px;
+    color: var(--ink2);
+    font-size: var(--oh-wn-size);
+    font-weight: var(--w-mid);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
+    line-height: var(--oh-lh-tight);
+    transition: color var(--d-hover) var(--e-std);
+  }
+  .oh-wn:hover {
+    color: var(--ink);
+  }
+  /* A finger's room round a number that is 16 high. */
+  :root[data-touch="1"] .oh-wn::after {
+    content: "";
+    position: absolute;
+    inset: -8px -6px;
+  }
+}

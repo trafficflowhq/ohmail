@@ -127,6 +127,12 @@ export interface Settings {
   lifecycle: { connectReminder: "log" | "send"; connectReminderSince: string | null; connectAttempts: "off" | "record" };
   /** `TF_API_CLOCKS=1`: the passes a scheduler pokes run on this program's own clock. Off by default. */
   clocks: { inProcess: boolean };
+  /**
+   * `OHMAIL_CALENDAR=1`: this program keeps a calendar. It hands the calendar's port to the feed,
+   * mounts the calendar's routes and says so on `/hello`. Off by default, and off reads exactly
+   * as a server that has never heard of a calendar.
+   */
+  calendar: { enabled: boolean };
   /** Who this deployment is to a mailbox it organizes (`resolveCloudInstallId`). */
   installId: string;
 }
@@ -514,6 +520,8 @@ export function loadSettings(env: NodeJS.ProcessEnv, door: SettingsDoorInput): S
       connectAttempts: chosen.funnel && trimmed(env, "TF_CONNECT_ATTEMPTS") === "record" ? "record" : "off",
     },
     clocks: loadClocks(env, door, alerts, database),
+    // On the exact word, as the other switches: a mistyped value keeps the calendar off.
+    calendar: { enabled: trimmed(env, "OHMAIL_CALENDAR") === "1" },
     installId: resolveCloudInstallId(env),
   };
 }

@@ -1,0 +1,121 @@
+{
+  "component": "AccountRow",
+  "state": "shut",
+  "look": "paper-dark-desktop",
+  "place": "block",
+  "target": [688, 88, 740, 72],
+  "clip": [688, 88, 740, 72],
+  "studioCommit": "ef39f74114ff0779087ed33515e530530d6d195b",
+  "variant": {
+    "device": "desktop",
+    "face": "paper",
+    "scheme": "dark",
+    "width": 1440,
+    "height": 900,
+    "scale": 1
+  },
+  "reader": 7,
+  "page": { "scrollWidth": 1440, "clientWidth": 1440, "scrollHeight": 900 },
+  "fonts": [
+    { "family": "Bricolage Grotesque", "weight": "200 800", "style": "normal" },
+    { "family": "Hanken Grotesk", "weight": "100 900", "style": "normal" },
+    { "family": "JetBrains Mono", "weight": "100 800", "style": "normal" }
+  ],
+  "types": [
+    {
+      "color": "oklch(0.91 0.065 25)",
+      "fontFamily": "\"Bricolage Grotesque\", \"Arial Black\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "800",
+      "fontStyle": "normal",
+      "lineHeight": "16px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "\"opsz\" 24",
+      "textTransform": "none",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(246, 241, 233)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "16px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "20.8px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "fontStyle": "normal",
+      "lineHeight": "16.9px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "fontVariantNumeric": "tabular-nums",
+      "textOverflow": "ellipsis",
+      "webkitLocale": "\"en\""
+    },
+    {
+      "color": "rgb(184, 175, 163)",
+      "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+      "fontSize": "13px",
+      "fontWeight": "600",
+      "fontStyle": "normal",
+      "lineHeight": "18.2px",
+      "letterSpacing": "normal",
+      "fontVariationSettings": "normal",
+      "textTransform": "none",
+      "webkitLocale": "\"en\"",
+      "textRendering": "optimizelegibility"
+    }
+  ],
+  "paints": [
+    { "backgroundColor": "oklch(0.38 0.06 25)", "borderRadius": "999px" },
+    { "backgroundColor": "rgb(35, 32, 28)", "borderRadius": "20px" },
+    { "backgroundColor": "rgb(52, 48, 43)", "borderRadius": "999px" },
+    { "ink": "stroke rgb(184, 175, 163) 1.8px round round; shapes 1 c1f057e5865e" }
+  ],
+  "nodes": [
+    {
+      "role": "button",
+      "name": "M mila@lichtgrat.example Synced 09:23 · 7,912 messages · ohmail Cloud",
+      "box": [28, 8, 551.9, 56],
+      "drawn": {
+        "color": "rgb(246, 241, 233)",
+        "backgroundColor": "rgba(0, 0, 0, 0)",
+        "fontFamily": "\"Hanken Grotesk\", \"Helvetica Neue\", Arial, sans-serif",
+        "fontSize": "16px",
+        "fontWeight": "400",
+        "lineHeight": "22.4px",
+        "letterSpacing": "normal",
+        "borderRadius": "12px",
+        "paddingTop": "4px",
+        "paddingRight": "4px",
+        "paddingBottom": "4px",
+        "paddingLeft": "4px",
+        "borderColor": "rgb(246, 241, 233)"
+      },
+      "state": ["collapsed"],
+      "text": [
+        { "said": "M", "type": 0 },
+        { "said": "mila@lichtgrat.example", "type": 1 },
+        { "said": "Synced 09:23 · 7,912 messages · ohmail Cloud", "type": 2 }
+      ],
+      "surfaces": [{ "box": [32, 18, 36, 36], "paint": 0 }]
+    }
+  ],
+  "loose": {
+    "text": [{ "said": "Connected", "type": 3 }],
+    "surfaces": [
+      { "box": [0, 0, 740, 72], "paint": 1 },
+      { "box": [595.9, 25, 80.1, 22], "paint": 2 },
+      { "box": [692, 28, 16, 16], "paint": 3 }
+    ]
+  }
+}

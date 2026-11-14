@@ -1,0 +1,291 @@
+@layer oh {
+  .oh-switcher,
+  .oh-switcher-round {
+    /* Each product's own colour, picked from the four the part is handed. */
+    --oh-switcher-mail: var(--oh-switcher-mail-pl);
+    --oh-switcher-cal: var(--oh-switcher-cal-pl);
+    /* Measures of this part that no token carries yet. */
+    --oh-switcher-pad: 3px;
+    --oh-switcher-gap: 2px;
+    --oh-switcher-in: 6px;
+    --oh-switcher-box: inset 0 0 0 1px var(--btn-ring);
+    --oh-switcher-layer: 1;
+  }
+
+  :root[data-scheme="dark"] .oh-switcher,
+  :root[data-scheme="dark"] .oh-switcher-round {
+    --oh-switcher-mail: var(--oh-switcher-mail-pd);
+    --oh-switcher-cal: var(--oh-switcher-cal-pd);
+  }
+
+  :root[data-face="ohmarchy"] .oh-switcher,
+  :root[data-face="ohmarchy"] .oh-switcher-round {
+    --oh-switcher-mail: var(--oh-switcher-mail-ol);
+    --oh-switcher-cal: var(--oh-switcher-cal-ol);
+  }
+
+  :root[data-face="ohmarchy"][data-scheme="dark"] .oh-switcher,
+  :root[data-face="ohmarchy"][data-scheme="dark"] .oh-switcher-round {
+    --oh-switcher-mail: var(--oh-switcher-mail-od);
+    --oh-switcher-cal: var(--oh-switcher-cal-od);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-scheme]) .oh-switcher,
+    :root:not([data-scheme]) .oh-switcher-round {
+      --oh-switcher-mail: var(--oh-switcher-mail-pd);
+      --oh-switcher-cal: var(--oh-switcher-cal-pd);
+    }
+
+    :root[data-face="ohmarchy"]:not([data-scheme]) .oh-switcher,
+    :root[data-face="ohmarchy"]:not([data-scheme]) .oh-switcher-round {
+      --oh-switcher-mail: var(--oh-switcher-mail-od);
+      --oh-switcher-cal: var(--oh-switcher-cal-od);
+    }
+  }
+
+  .oh-switcher {
+    box-sizing: border-box;
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    flex: none;
+    gap: var(--oh-switcher-gap);
+    height: var(--h-m);
+    padding: var(--oh-switcher-pad);
+    border-radius: var(--r-pill);
+    background: var(--soft);
+    box-shadow: var(--oh-switcher-box);
+  }
+
+  .oh-switcher-knob {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    left: 3px;
+    width: calc(50% - 4px);
+    border-radius: var(--r-pill);
+    background: var(--solid);
+    transform-origin: 0 50%;
+  }
+
+  .oh-switcher[data-current="cal"] > .oh-switcher-knob {
+    left: calc(50% + 1px);
+  }
+
+  .oh-switcher-half {
+    box-sizing: border-box;
+    position: relative;
+    z-index: var(--oh-switcher-layer);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--oh-switcher-in);
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: none;
+    color: var(--ink2);
+    font: inherit;
+    font-weight: var(--w-mid);
+    letter-spacing: inherit;
+    cursor: pointer;
+    transition: color var(--d-fade) var(--e-std);
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .oh-switcher-half:hover {
+    color: var(--ink);
+  }
+
+  .oh-switcher-half[aria-current="true"] {
+    color: var(--on-solid);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-switcher-half:focus,
+  .oh-switcher-round:focus {
+    outline: none;
+  }
+
+  .oh-switcher-half:focus-visible,
+  .oh-switcher-round:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  .oh-switcher-sign {
+    display: grid;
+    flex: none;
+  }
+
+  :root[data-icons="0"] .oh-switcher-sign {
+    display: none;
+  }
+
+  /* A half reads as its product's wordmark; the dot is the product's own, bare. */
+  .oh-switcher-word {
+    font-family: var(--f-display);
+    font-weight: var(--w-display);
+    font-variation-settings: var(--opsz);
+    letter-spacing: var(--track);
+    white-space: nowrap;
+  }
+
+  .oh-switcher-dot {
+    --oh-switcher-dot-lead: 0.07em;
+
+    position: relative;
+    display: inline-block;
+    width: var(--dot-size);
+    height: var(--dot-size);
+    margin-left: var(--oh-switcher-dot-lead);
+    border-radius: var(--dot-r);
+    background: var(--oh-switcher-mail);
+    transition: background-color var(--d-dot) var(--e-std);
+  }
+
+  .oh-switcher-dot[data-product="cal"] {
+    background: var(--oh-switcher-cal);
+  }
+
+  .oh-switcher-half[data-absent],
+  .oh-switcher-half[data-absent]:hover {
+    color: var(--ink3);
+  }
+
+  .oh-switcher-half[data-absent] .oh-switcher-dot {
+    background: currentColor;
+  }
+
+  .oh-switcher-key {
+    display: none;
+  }
+
+  /* With key hints on, the halves show their keys and the two signs give way: the longer word gets the wider half. */
+  :root[data-touch="0"] .oh-switcher[data-keys] .oh-switcher-key {
+    display: inline-flex;
+  }
+
+  :root[data-face="paper"] .oh-switcher[data-keys] {
+    --oh-switcher-in: 5px;
+
+    grid-template-columns: 6fr 5fr;
+  }
+
+  :root[data-face="paper"] .oh-switcher[data-keys] .oh-switcher-sign {
+    display: none;
+  }
+
+  :root[data-face="paper"] .oh-switcher[data-keys] > .oh-switcher-knob {
+    width: calc(6 / 11 * (100% - 8px));
+  }
+
+  :root[data-face="paper"] .oh-switcher[data-keys][data-current="cal"] > .oh-switcher-knob {
+    left: calc(3px + 6 / 11 * (100% - 8px) + 2px);
+    width: calc(5 / 11 * (100% - 8px));
+  }
+
+  /* The unfolded phone with a rail of words: the capsule on two rows. */
+  :root[data-device="fold"][data-icons="0"] .oh-switcher {
+    --oh-switcher-two-r: calc(var(--h-s) / 2 + 3px);
+
+    order: -2;
+    grid-template-columns: 1fr;
+    height: auto;
+    border-radius: var(--oh-switcher-two-r);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-switcher-half {
+    height: var(--h-s);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-switcher-knob {
+    right: 3px;
+    bottom: auto;
+    width: auto;
+    height: var(--h-s);
+  }
+
+  :root[data-device="fold"][data-icons="0"] .oh-switcher[data-current="cal"] > .oh-switcher-knob {
+    left: 3px;
+    top: calc(3px + var(--h-s) + 2px);
+  }
+
+  /* One round button that shows where it leads. */
+  .oh-switcher-round {
+    box-sizing: border-box;
+    position: relative;
+    display: grid;
+    place-items: center;
+    flex: none;
+    width: 44px;
+    height: 44px;
+    margin: 0 var(--s2) 0 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-pill);
+    background: var(--soft);
+    color: var(--ink);
+    font: inherit;
+    letter-spacing: inherit;
+    box-shadow: var(--oh-switcher-box);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* In an upright rail it stands first, over the way to write. */
+  .oh-switcher-round[data-rail] {
+    order: -2;
+    align-self: center;
+    margin: 0 0 var(--s1);
+  }
+
+  .oh-switcher-wants {
+    position: absolute;
+    top: 3px;
+    right: 3px;
+    width: 10px;
+    height: 10px;
+    border-radius: var(--dot-r);
+    background: var(--oh-switcher-mail);
+    box-shadow: 0 0 0 var(--oh-switcher-gap) var(--ground);
+  }
+
+  .oh-switcher-wants[data-product="cal"] {
+    background: var(--oh-switcher-cal);
+  }
+
+  .oh-switcher-round[data-absent] {
+    background: none;
+    color: var(--ink2);
+    box-shadow: none;
+    outline: 1.5px dashed var(--ctl-ring);
+    outline-offset: -2px;
+  }
+
+  :root[data-face="ohmarchy"] .oh-switcher,
+  :root[data-face="ohmarchy"] .oh-switcher-round {
+    background: var(--off);
+    box-shadow: none;
+  }
+
+  :root[data-face="ohmarchy"] .oh-switcher-knob {
+    --oh-switcher-boxed: inset 0 0 0 1px var(--ink);
+
+    background: var(--sheet);
+    box-shadow: var(--oh-switcher-boxed);
+  }
+
+  :root[data-face="ohmarchy"] .oh-switcher-half[aria-current="true"] {
+    color: var(--ink);
+  }
+
+  :root[data-face="ohmarchy"] .oh-switcher-round[data-absent] {
+    background: none;
+    outline-width: 1px;
+    outline-offset: -1px;
+  }
+}
