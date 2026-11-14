@@ -1,0 +1,15 @@
+M	apps/mobile/app/standalone.tsx
+M	apps/mobile/src/copy.de.ts
+M	apps/mobile/src/copy.en.ts
+M	apps/mobile/src/engine/organizer-session.ts
+M	apps/mobile/src/engine/standalone-door.ts
+M	apps/mobile/src/net/connection.tsx
+M	apps/mobile/src/net/pairing.ts
+M	apps/mobile/src/state/servers.ts
+M	apps/mobile/test/phone-state-is-the-accounts.test.ts
+M	apps/mobile/test/servers-pane-is-never-a-dead-end.test.ts
+M	apps/mobile/test/standalone-dial-refusal.test.ts
+M	apps/sidecar/src/mobile.ts
+M	apps/sidecar/test/log-census.test.ts
+M	apps/sidecar/test/phone-engine-boot.test.ts
+A	changelog.d/phone-one-mailbox-guard-after-forget.md

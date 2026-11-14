@@ -1,0 +1,7 @@
+M	docs/INVARIANTS.tsv
+A	docs/invariant-verdicts/8a.json
+M	packages/db/released-migrations.lock.json
+M	packages/db/test/released-migrations-are-frozen.test.ts
+A	scripts/pin-released-migrations.d.mts
+A	scripts/pin-released-migrations.mjs
+A	test/pin-released-migrations.test.ts

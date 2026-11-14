@@ -21,6 +21,14 @@
  * or packages as a bare name, and a path under either changes); dovecot (a test/dovecot change, and it
  * dials Dovecot). A deleted module is whole.
  *
+ * Into main that selection is the run: the reach set, and main is proven whole by the batch and the
+ * nightly. Into next (DIRECT_BASES) the run is the DIRECT set, the part of the same selection the change
+ * can break where it is and what names it: every rule as above, with graph held to the apps and packages
+ * the change touches (root test/ counts as each one's; a changed module outside apps/ and packages/ keeps
+ * the whole reach) and root to the files a reader rule would select. The rest is deferred, not dropped:
+ * the plan names each file with its rule (the FAST line and its log group), and the whole suite runs it
+ * on next itself after landing. main merged across into next (pr/merge-main-*) runs the reach set.
+ *
  * Test hooks: --root, --event <json> (the github context: event_name, actor, triggering_actor,
  * repository, event), --files <name-status file>; select takes its graph as a parameter.
  */
@@ -46,6 +54,8 @@ export const TREE_PATH_OK = /^(?:[A-Za-z0-9@._/+-]|(?<=^|\/)\([A-Za-z0-9@._+-]+\
 const MAINTAINER = ["OWNER", "MEMBER", "COLLABORATOR"];
 /** The long-lived lines a lane lands on: main and next, the second line. A pull request into any other branch runs whole. */
 const BASES = ["main", "next"];
+/** The lines whose pull requests run the direct set: the whole suite runs on the line itself, after landing. */
+export const DIRECT_BASES = ["next"];
 
 const oneLine = (s) => String(s).replace(/[^\x20-\x7e]/g, "?").slice(0, 400);
 
@@ -123,6 +133,15 @@ export function eventWhole(ctx) {
   if (String(ctx.actor).endsWith("[bot]") || String(ctx.triggering_actor).endsWith("[bot]")) return "a bot started the run";
   if (!BASES.includes(pr.base?.ref)) return "the base is not main or next";
   return null;
+}
+
+/** The base whose direct set this event runs, or null: a maintainer's pull request into one of DIRECT_BASES,
+ *  read from the event alone. main merged across (pr/merge-main-*) keeps the reach set: its diff is main's
+ *  whole delta, met by the line's own code for the first time. */
+export function directBase(ctx) {
+  if (eventWhole(ctx) !== null) return null;
+  const pr = ctx.event.pull_request;
+  return DIRECT_BASES.includes(pr.base.ref) && !String(pr.head.ref).startsWith("pr/merge-main-") ? pr.base.ref : null;
 }
 
 /** `git diff --name-status` output, plain or -z, as {s, p}. */
@@ -412,9 +431,10 @@ const HELPER = /^(?:(?:apps|packages)\/[^/]+\/)?test\//;
 /**
  * Every test file outside root test/ that reads the tree or spawns, with the paths it names. Its own
  * code and the test helpers it imports by relative path count; only its own code anchors it or scans.
- * `code` strips comments, `relativeImports` follows helpers (service-needs.mjs).
+ * `code` strips comments, `relativeImports` follows helpers (service-needs.mjs). `includeRoot` reads the
+ * files under root test/ as well (the direct set keeps the ones a change reaches).
  */
-export function readersOf(root, files, { code, relativeImports, deleted = [] }) {
+export function readersOf(root, files, { code, relativeImports, deleted = [], includeRoot = false }) {
   const tops = new Set(readdirSync(root).filter((e) => e !== "node_modules" && e !== ".git"));
   const fileSet = new Set(files);
   const memo = new Map();
@@ -452,7 +472,7 @@ export function readersOf(root, files, { code, relativeImports, deleted = [] }) 
   };
   const readers = new Map();
   for (const t of files) {
-    if (t.startsWith("test/")) continue;
+    if (t.startsWith("test/") && !includeRoot) continue;
     const own = analyse(t);
     const holders = [own];
     const seen = new Set([t]);
@@ -701,7 +721,47 @@ export function planProblems(plan, { files, alone, desktop, sqliteAll }) {
       seenSqlite.add(f);
     }
   }
+  // A direct plan's deferred lists: test files of this run, none of them handed on as well.
+  for (const { file } of plan.deferred ?? []) {
+    check(file, "deferred", fileSet);
+    if (seen.has(file)) problems.push(`${file} is handed on and deferred`);
+  }
+  for (const f of plan.sqliteDeferred ?? []) {
+    check(f, "sqlite deferred", sqliteSet);
+    if (seenSqlite.has(f)) problems.push(`${f} is handed to the sqlite run and deferred`);
+  }
   return problems;
+}
+
+/* ── THE DIRECT SET ────────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Whether a test file the import graph relates to a change is the change's own: it lives in an app or a
+ * package the change touches (`related`: the changed paths, test files included) or under root test/, which
+ * is every workspace's. A changed module that no workspace owns (scripts/, test/support/) keeps the whole reach.
+ */
+export function border(related) {
+  const areas = new Set(related.map(areaOf));
+  const wide = related.some((p) => !areaOf(p) && MODULE.test(p) && !TEST_FILE.test(p));
+  return (f) => wide || !areaOf(f) || areas.has(areaOf(f));
+}
+
+/**
+ * A selection split in two. Direct: a changed test file, a reader the change reaches (`hits`, and
+ * `rootHits` for the readers under root test/), a Dovecot file when its fixture changed (`dovecot`), and
+ * a file the graph relates inside the border. Deferred, each with the rule that had selected it: the
+ * rest, which is a test the graph reaches from another workspace or a root test the change does not reach.
+ */
+export function directSet({ picked, rule, hits, rootHits, graphRelated, related, dovecot = new Set() }) {
+  const near = border(related);
+  const graph = new Set(graphRelated);
+  const direct = [];
+  const deferred = [];
+  for (const f of picked) {
+    if (rule.get(f) === "changed" || hits.has(f) || rootHits.has(f) || dovecot.has(f) || (graph.has(f) && near(f))) direct.push(f);
+    else deferred.push({ file: f, rule: rule.get(f) });
+  }
+  return { direct, deferred };
 }
 
 /* ── SELECT ────────────────────────────────────────────────────────────────────────────────────── */
@@ -729,14 +789,27 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
   for (const p of present) add(p, "changed");
   const related = relatedInputs(root, present);
   const deleted = scope.changes.filter((x) => x.s === "D").map((x) => x.p);
-  const readers = readersOf(root, files, { code: stripComments, relativeImports, deleted });
-  const main = await graph(root, related, { config: "vitest.config.ts", entries: sourceEntries(readers) });
+  // The direct set reads root test/ as well, in a map of its own: a root reader claims no path from the rest.
+  const base = directBase(ctx);
+  const everyReader = readersOf(root, files, { code: stripComments, relativeImports, deleted, includeRoot: base !== null });
+  const underRoot = ([t]) => t.startsWith("test/");
+  const readers = base === null ? everyReader : new Map([...everyReader].filter((e) => !underRoot(e)));
+  const main = await graph(root, related, { config: "vitest.config.ts", entries: sourceEntries(everyReader) });
   for (const f of main.related) add(f, "graph");
   for (const f of files) if (f.startsWith("test/")) add(f, "root");
-  for (const [f, r] of readerHits(root, scope.changes, readers, main.reached ?? [])) add(f, r);
-  if (scope.dovecotAll) for (const f of files) if (cs.dovecotPinned(root, f)) add(f, "dovecot");
+  const hits = readerHits(root, scope.changes, readers, main.reached ?? []);
+  for (const [f, r] of hits) add(f, r);
+  const pinned = scope.dovecotAll ? files.filter((f) => cs.dovecotPinned(root, f)) : [];
+  for (const f of pinned) add(f, "dovecot");
 
-  const picked = [...rule.keys()].sort();
+  // Reach: everything a rule selected. Direct: what the change can break in its own workspaces and what
+  // names it; the rest is deferred to the whole run on the base, and named.
+  const reach = [...rule.keys()].sort();
+  const cut = base === null ? null : directSet({
+    picked: reach, rule, hits, graphRelated: main.related, related, dovecot: new Set(pinned),
+    rootHits: readerHits(root, scope.changes, new Map([...everyReader].filter(underRoot)), main.reached ?? []),
+  });
+  const picked = cut ? cut.direct : reach;
   const mainPicked = picked.filter((f) => !alone.has(f) && !desktop.has(f));
   const alonePicked = picked.filter((f) => alone.has(f));
   const suiteMs = (f) => c.suite?.[f] ?? UNMEASURED_MS;
@@ -748,25 +821,32 @@ export async function select({ root = ROOT, ctx, changes = null, graph = vitestG
 
   let sqliteFiles = null;
   let sqliteAll = null;
+  let sqliteDeferred = [];
   if (!scope.sqliteWhole) {
     const sq = await graph(root, related, { config: "vitest.sqlite.config.ts" });
     sqliteAll = sq.all;
     const inProject = new Set(sq.all);
-    sqliteFiles = [...new Set([...sq.related, ...picked.filter((f) => inProject.has(f))])].filter((f) => inProject.has(f)).sort();
+    const ofProject = (graphed, selected) => [...new Set([...graphed, ...selected.filter((f) => inProject.has(f))])].filter((f) => inProject.has(f)).sort();
+    // The same border on the second store's graph.
+    sqliteFiles = ofProject(cut ? sq.related.filter(border(related)) : sq.related, picked);
+    if (cut) sqliteDeferred = ofProject(sq.related, reach).filter((f) => !sqliteFiles.includes(f));
   }
   const shards = packFiles(mainPicked, suiteMs, MAX_SHARDS, (f) => (cs.dovecotPinned(root, f) ? "dovecot" : null))
     .map((fs, shard) => ({ shard, files: fs.join("\n"), dovecot: fs.some((f) => cs.dovecotPinned(root, f)) ? "yes" : "no" }));
   const sqlite = sqliteFiles === null ? null : packFiles(sqliteFiles, sqliteMs, MAX_SQLITE).map((fs, shard) => ({ shard, files: fs.join("\n") }));
-  const plan = { scope: "selected", why: scope.why, shards, alone: alonePicked, sqlite };
+  // The desktop job runs its files on every run: none of them waits for the whole one.
+  const deferred = cut ? cut.deferred.filter((d) => !desktop.has(d.file)) : [];
+  const plan = { scope: "selected", why: scope.why, shards, alone: alonePicked, sqlite, ...(cut ? { mode: "direct", deferred, sqliteDeferred } : {}) };
   const problems = planProblems(plan, { files, alone, desktop, sqliteAll: sqliteAll ?? [] });
   if (problems.length) return { scope: "whole", why: `the plan is refused: ${problems[0]}` };
-  const counts = Object.fromEntries(RULES.map((r) => [r, [...rule.values()].filter((v) => v === r).length]));
+  const counts = Object.fromEntries(RULES.map((r) => [r, picked.filter((f) => rule.get(f) === r).length]));
   return {
     ...plan,
     summary: {
       changed: scope.changes.length, rules: counts, main: mainPicked.length, alone: alonePicked.length,
       sqlite: sqliteFiles === null ? "whole" : sqliteFiles.length, share: Math.round(share * 1000) / 10,
       costsMeasuredAt: c.measuredAt ?? "none",
+      ...(cut ? { base, deferred: deferred.length, deferredS: Math.round(sum(deferred.map((d) => d.file), suiteMs) / 1000) } : {}),
     },
   };
 }
@@ -805,13 +885,39 @@ export function summaryText(out) {
   const lines = [`### suite plan: ${out.scope}`, "", oneLine(out.why), ""];
   if (out.scope === "selected") {
     const s = out.summary ?? {};
-    lines.push("partial run: the whole suite runs on the batch and nightly.", "");
+    lines.push(s.deferred === undefined
+      ? "partial run: the whole suite runs on the batch and nightly."
+      : `fast run: ${s.deferred} more file(s) (${s.deferredS} s measured) run in the whole suite on ${oneLine(s.base)} after landing; the plan job's log lists them.`, "");
     lines.push(`- ${out.shards.length} suite job(s), ${out.alone.length} alone file(s), ${out.sqlite.length} sqlite job(s)`);
     if (s.rules) lines.push(`- files by rule: ${Object.entries(s.rules).map(([k, v]) => `${k} ${v}`).join(", ")}`);
     if (s.share !== undefined) lines.push(`- ${s.main} main file(s), ${s.share}% of the whole suite's measured time (costs ${oneLine(s.costsMeasuredAt)})`);
     if (s.sqlite === "whole") lines.push("- the SQLite run is whole");
   } else {
     lines.push(`- ${out.shards.length} suite shards, ${out.alone.length} alone file(s), ${out.sqlite.length} sqlite shards`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * What a direct plan says in the plan job's log, so a red in the whole run can be traced to a deferral:
+ * one FAST line with the pull request and its head, then each deferred file under the rule that had
+ * selected it, and the second store's list. Any other plan says nothing.
+ */
+export function deferredLog(plan, ctx = {}) {
+  if (plan?.scope !== "selected" || plan.mode !== "direct") return "";
+  const pr = ctx.event?.pull_request ?? {};
+  const base = oneLine(plan.summary.base);
+  const group = (title, rows) => [`::group::${title} (${rows.length})`, ...rows, "::endgroup::"];
+  const lines = [
+    `FAST ${base}: pr #${oneLine(pr.number ?? "?")} head ${oneLine(pr.head?.sha ?? "?")}: runs ${plan.summary.main + plan.alone.length} file(s) in ${plan.shards.length} suite job(s) + ${plan.alone.length} alone, `
+      + `defers ${plan.deferred.length} file(s) (${plan.summary.deferredS} s measured) to the whole run on ${base}`,
+    ...group(`deferred to the whole run on ${base}`, plan.deferred.map((d) => `${d.rule}\t${d.file}`)),
+  ];
+  if (plan.sqlite !== null) {
+    lines.push(
+      `FAST ${base} sqlite: runs ${plan.summary.sqlite} file(s) in ${plan.sqlite.length} job(s), defers ${plan.sqliteDeferred.length} file(s) to the whole run on ${base}`,
+      ...group(`deferred to the whole run on ${base}, sqlite`, plan.sqliteDeferred),
+    );
   }
   return `${lines.join("\n")}\n`;
 }
@@ -838,9 +944,11 @@ async function main(argv) {
   if (verb === "select") {
     const out = flag(rest, "--out");
     if (!out) throw new Error("select takes --out <file>");
-    const plan = await select({ root, ctx: ctx(), changes: changes() });
+    const event = ctx();
+    const plan = await select({ root, ctx: event, changes: changes() });
     writeFileSync(out, `${JSON.stringify(plan)}\n`);
     process.stdout.write(`SELECT ${plan.scope}: ${oneLine(plan.why)}${plan.scope === "selected" ? `; ${plan.shards.length} suite job(s), ${plan.alone.length} alone, ${plan.sqlite === null ? "whole" : plan.sqlite.length} sqlite` : ""}\n`);
+    process.stdout.write(deferredLog(plan, event));
     return 0;
   }
   if (verb === "outputs") {
