@@ -15,6 +15,9 @@ export function avatarHue(address: string): number {
   return HUES[h % HUES.length]!;
 }
 
+/** A tag's dot in its hue: the one place the dot's colour is put together. */
+export const tagDot = (hue: number): string => `oklch(${v("tag-dot")} ${hue})`;
+
 /**
  * A hue in the colours the parts wear it in. How light and how strong each is comes from the tokens;
  * the hue is the person's or the tag's own, so the colour is put together here and not in a stylesheet.
@@ -23,7 +26,7 @@ export const hueStyle = (hue: number): CSSProperties =>
   ({
     "--oh-hue-bg": `oklch(${v("av-bg")} ${hue})`,
     "--oh-hue-fg": `oklch(${v("av-fg")} ${hue})`,
-    "--oh-hue-dot": `oklch(${v("tag-dot")} ${hue})`,
+    "--oh-hue-dot": tagDot(hue),
     /* The tint ohmarchy mixes into a circle: no token carries it yet. */
     "--oh-hue-tint": `oklch(0.62 0.13 ${hue})`,
   }) as CSSProperties;

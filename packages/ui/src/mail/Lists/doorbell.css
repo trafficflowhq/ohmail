@@ -5,7 +5,6 @@
     --oh-doorbell-lead: var(--s2);
     --oh-doorbell-reach: -6px;
     --oh-doorbell-ring: 0 0 0 3px var(--hot);
-    --oh-doorbell-far: -14px;
     --oh-doorbell-key: color-mix(in srgb, var(--on-hot) 16%, transparent);
     --oh-doorbell-key-ring: none;
 
@@ -51,9 +50,9 @@
     color: var(--on-hot);
   }
 
-  /* Arriving: it knocks, and a ring leaves it once. */
+  /* Arriving: it knocks, and a ring leaves it once (the base sheet's ring). */
   .oh-doorbell[data-ringing] {
-    animation: oh-doorbell-knock var(--d-ring) var(--e-knock);
+    animation: oh-knock var(--d-ring) var(--e-knock);
   }
 
   .oh-doorbell[data-ringing]::before {
@@ -62,38 +61,8 @@
     inset: 0;
     border-radius: inherit;
     box-shadow: var(--oh-doorbell-ring);
-    animation: oh-doorbell-ringout var(--d-ring) var(--e-out) both;
+    animation: oh-ringout var(--d-ring) var(--e-out) both;
     pointer-events: none;
-  }
-
-  @keyframes oh-doorbell-knock {
-    0% {
-      transform: scale(1);
-    }
-
-    18% {
-      transform: scale(0.92);
-    }
-
-    45% {
-      transform: scale(1.06);
-    }
-
-    100% {
-      transform: scale(1);
-    }
-  }
-
-  @keyframes oh-doorbell-ringout {
-    0% {
-      inset: 0;
-      opacity: 0.9;
-    }
-
-    100% {
-      inset: var(--oh-doorbell-far);
-      opacity: 0;
-    }
   }
 
   :root[data-rm="1"] .oh-doorbell[data-ringing],

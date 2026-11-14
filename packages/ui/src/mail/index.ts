@@ -12,6 +12,8 @@ export { Rail } from "./Shell/Rail.js";
 export type { RailProps } from "./Shell/Rail.js";
 export { RailEntry } from "./Shell/RailEntry.js";
 export type { RailEntryProps } from "./Shell/RailEntry.js";
+export { RailField } from "./Shell/RailField.js";
+export type { RailFieldProps } from "./Shell/RailField.js";
 export { RailFoot } from "./Shell/RailFoot.js";
 export type { RailFootProps, RailFootTool } from "./Shell/RailFoot.js";
 export { readingScroller, Sheet } from "./Shell/Sheet.js";

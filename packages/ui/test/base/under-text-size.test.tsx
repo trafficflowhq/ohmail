@@ -1008,8 +1008,11 @@ describe("words a part measures for itself, in German at the largest Text size",
 
 describe("a report that fades", () => {
   /** The scene with its report fading: the fade slowed, so that a press surely lands inside it, and set at its half. */
-  async function fading(face: "paper" | "ohmarchy"): Promise<Page> {
-    const page = await mount("report", 1, { face, moving: true });
+  async function fading(
+    face: "paper" | "ohmarchy",
+    scene: "report" | "reportOverARow" = "report",
+  ): Promise<Page> {
+    const page = await mount(scene, 1, { face, moving: true });
     await frames(page);
     await page.evaluate(() => {
       document.documentElement.style.setProperty("--m-time", "40");
@@ -1063,6 +1066,53 @@ describe("a report that fades", () => {
       await page.keyboard.press("Enter");
       await page.keyboard.press("Space");
       expect(await seen(page)).toEqual({ there: true, fading: ["running"], faded: true, taken: 2 });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  /** Where the keys are, how often the holder was told that the report took them along, and whether it still stands. */
+  const keys = (page: Page) =>
+    page.evaluate(() => ({
+      there: document.querySelector(".oh-report") !== null,
+      on: document.activeElement === document.body ? "the page" : (document.activeElement?.textContent ?? ""),
+      told: Number(document.getElementById("told")!.textContent),
+    }));
+  /** The scene with a row and its fading report, the keys walked onto the report's way back. */
+  async function onTheWayBack(): Promise<Page> {
+    const page = await fading("paper", "reportOverARow");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    expect(await keys(page)).toEqual({ there: true, on: "Undo", told: 0 });
+    return page;
+  }
+
+  it("its way back pressed by the keys while it fades: it is taken away, and the keys are on the row its holder hands them to, never on the page", async () => {
+    const page = await onTheWayBack();
+    try {
+      await page.keyboard.press("Enter");
+      await frames(page);
+      expect(await keys(page)).toEqual({ there: false, on: "A letter in the list", told: 1 });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("its fade run out with the keys on its way back: the holder is told the same, once", async () => {
+    const page = await onTheWayBack();
+    try {
+      await ended(page);
+      expect(await keys(page)).toEqual({ there: false, on: "A letter in the list", told: 1 });
+    } finally {
+      await page.close();
+    }
+  }, 60_000);
+
+  it("gone while the keys are elsewhere, it tells nothing and moves no keys", async () => {
+    const page = await fading("paper", "reportOverARow");
+    try {
+      await ended(page);
+      expect(await keys(page)).toEqual({ there: false, on: "the page", told: 0 });
     } finally {
       await page.close();
     }

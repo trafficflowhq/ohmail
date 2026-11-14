@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { KeyHint } from "../../base/index.js";
-import { v } from "../../base/tokens.js";
+import { tagDot } from "../../base/Primitives/hue.js";
 import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import { animate, motionShape } from "../../motion/motion.js";
@@ -35,12 +35,20 @@ export interface RailEntryProps {
   keyShown?: boolean;
   /** The key also stands at rest in the face that prints keys on its controls. */
   keyStands?: boolean;
-  /** Its digit. Handed in while the keys are in the rail: it stands in place of the key. */
+  /**
+   * Its digit. Handed in while the keys are in the rail: it stands in place of the key, and is said to a screen
+   * reader as a key that goes there, beside `shortcut`.
+   */
   digit?: string;
   /** The place you are in. */
   current?: boolean;
   /** A line that shuts and opens what is under it: whether that is open. A `fold` always has it; a `sub` may. */
   expanded?: boolean;
+  /**
+   * What a line that folds says while it is open and nothing is under it ("No tags yet."): a quiet line under
+   * the entry that is read, never pressed, and no stop for the keys.
+   */
+  none?: string;
   /** A `tool` that is working: its sign turns once. */
   busy?: boolean;
   /** How deep a folder lies under its line. */
@@ -85,7 +93,7 @@ export function RailEntry(props: RailEntryProps) {
   }, [count]);
 
   const style = {
-    ...(hue === undefined ? {} : { "--oh-railentry-dot": `oklch(${v("tag-dot")} ${hue})` }),
+    ...(hue === undefined ? {} : { "--oh-railentry-dot": tagDot(hue) }),
     ...(depth ? { "--oh-railentry-depth": depth } : {}),
   } as CSSProperties;
   const folds = kind === "fold" || expanded !== undefined;
@@ -97,7 +105,7 @@ export function RailEntry(props: RailEntryProps) {
       }
     : undefined;
 
-  return (
+  const entry = (
     <button
       type="button"
       className="oh-railentry"
@@ -109,7 +117,7 @@ export function RailEntry(props: RailEntryProps) {
       aria-expanded={folds ? Boolean(expanded) : undefined}
       aria-busy={props.busy ? true : undefined}
       aria-label={props.label}
-      aria-keyshortcuts={props.shortcut}
+      aria-keyshortcuts={[props.shortcut, digit].filter(Boolean).join(" ") || undefined}
       title={props.title}
       style={style}
       onClick={onPress}
@@ -151,5 +159,12 @@ export function RailEntry(props: RailEntryProps) {
         </span>
       ) : null}
     </button>
+  );
+  if (!(folds && expanded && props.none)) return entry;
+  return (
+    <>
+      {entry}
+      <p className="oh-text oh-railnote">{props.none}</p>
+    </>
   );
 }

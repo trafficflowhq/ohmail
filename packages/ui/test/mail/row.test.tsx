@@ -380,6 +380,85 @@ describe("Row, in a listbox", () => {
     expect(screen.getByRole("option", { name: listing.name }).getAttribute("tabindex")).toBe("0");
   });
 
+  /** A list of three letters, its one stop on the one named. */
+  const three = (stop: string) => (
+    <>
+      <input aria-label="Find" />
+      <div tabIndex={-1} aria-label="The list's own box" role="group">
+        <Rows label="Letters">
+          {["Ada", "Ben", "Cleo"].map((who) => (
+            <Row
+              key={who}
+              {...base}
+              who={who}
+              listing={{ name: who, selected: who === stop, stop: who === stop }}
+            />
+          ))}
+        </Rows>
+      </div>
+    </>
+  );
+  const keysOn = () => document.activeElement?.getAttribute("aria-label") ?? "the page";
+
+  it("takes the keys along when the list's stop moves to it while they stand on another row of its list, or on a box around the list", () => {
+    const { rerender } = render(three("Ada"));
+    screen.getByRole("option", { name: "Ada" }).focus();
+    rerender(three("Ben"));
+    expect(keysOn()).toBe("Ben");
+    screen.getByRole("group", { name: "The list's own box" }).focus();
+    rerender(three("Cleo"));
+    expect(keysOn()).toBe("Cleo");
+  });
+
+  it("takes them along from a row of another group too: a list set in groups has one stop", () => {
+    const groups = (stop: string) => (
+      <>
+        {[
+          ["New", "Ada"],
+          ["Earlier", "Dora"],
+        ].map(([group, who]) => (
+          <Rows key={group} label={group!}>
+            <Row {...base} who={who!} listing={{ name: who!, selected: who === stop, stop: who === stop }} />
+          </Rows>
+        ))}
+      </>
+    );
+    const { rerender } = render(groups("Ada"));
+    screen.getByRole("option", { name: "Ada" }).focus();
+    rerender(groups("Dora"));
+    expect(keysOn()).toBe("Dora");
+  });
+
+  it("takes no keys that stand elsewhere: in a field beside the list, or nowhere", () => {
+    const { rerender } = render(three("Ada"));
+    rerender(three("Ben"));
+    expect(keysOn()).toBe("the page");
+    screen.getByRole("textbox", { name: "Find" }).focus();
+    rerender(three("Cleo"));
+    expect(keysOn()).toBe("Find");
+  });
+
+  it("takes no keys from an option of another list that is no row: a command of the palette keeps them", () => {
+    const beside = (stop: string) => (
+      <>
+        {three(stop)}
+        <div role="listbox" aria-label="Commands">
+          <button
+            type="button"
+            role="option"
+            aria-selected={false}
+            tabIndex={-1}
+            aria-label="Open Settings"
+          />
+        </div>
+      </>
+    );
+    const { rerender } = render(beside("Ada"));
+    screen.getByRole("option", { name: "Open Settings" }).focus();
+    rerender(beside("Ben"));
+    expect(keysOn()).toBe("Open Settings");
+  });
+
   it("names nothing it was not given", () => {
     render(<Row {...base} listing={{ name: listing.name, selected: false }} />);
     const option = screen.getByRole("option", { name: listing.name });

@@ -4,6 +4,7 @@ import { cssPoint } from "../../base/ui-zoom.js";
 import { Icon, type IconName } from "../../icons/Icon.js";
 import "./row.css";
 import { RowPlaceFace, type RowPlace } from "./row-place.js";
+import { useKeysFollowStop } from "./row-stop.js";
 import { rowSwipe, type RowSwipe } from "./row-swipe.js";
 import { breakable, RowAmount, RowTickMark, type RowTick } from "./row-tick.js";
 
@@ -31,7 +32,10 @@ export interface RowListing {
   selected: boolean;
   /** Its place in its group, "2 of 7", where the list draws only some of its rows. */
   place?: { at: number; of: number };
-  /** The list's one tab stop (the row the cursor is on) or not; left out, the row is a stop as every row is. */
+  /**
+   * The list's one tab stop (the row the cursor is on) or not; left out, the row is a stop as every row is. A row
+   * that becomes the stop takes the keys along from a row that lost it: `row-stop.ts` says when.
+   */
   stop?: boolean;
 }
 
@@ -141,6 +145,7 @@ export function Row(props: RowProps) {
   const { subject, preview, unread, open, picked, entry, quick, own, onOpen, onContact, onMenu } = props;
   const swipe = rowSwipe(props.swipe);
   const { listing, mark, place, tick } = props;
+  const el = useKeysFollowStop(listing?.stop);
   const slotted = Boolean(props.swipe || quick || own || place);
   /* WebKitGTK does not expose aria-description; a description a hidden node carries, it does. */
   const saidId = useId();
@@ -171,6 +176,7 @@ export function Row(props: RowProps) {
 
   const row = (
     <div
+      ref={el}
       className="oh-row"
       role={tick ? "checkbox" : listing ? "option" : "button"}
       tabIndex={listing?.stop === false ? -1 : 0}

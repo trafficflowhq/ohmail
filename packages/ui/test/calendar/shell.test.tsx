@@ -130,6 +130,23 @@ describe("the view switch", () => {
     expect(screen.getByRole("button", { name: "Day" }).getAttribute("aria-pressed")).toBe("false");
   });
 
+  it("a view's key reaches a screen reader on its segment where the app names it, and stays out of the segment's name", () => {
+    render(
+      <ViewSwitch
+        label="View"
+        views={[
+          { value: "day", label: "Day", keyHint: "1", shortcut: "1" },
+          { value: "week", label: "Week", keyHint: "2", shortcut: "2" },
+          { value: "year", label: "Year" },
+        ]}
+        value="week"
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Week" }).getAttribute("aria-keyshortcuts")).toBe("2");
+    expect(screen.getByRole("button", { name: "Day" }).getAttribute("aria-keyshortcuts")).toBe("1");
+    expect(screen.getByRole("button", { name: "Year" }).hasAttribute("aria-keyshortcuts")).toBe(false);
+  });
+
   it("is one capsule that names the view and opens the views' menu where there is no room for four", () => {
     const onOpen = vi.fn();
     const { rerender } = render(

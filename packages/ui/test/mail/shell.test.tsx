@@ -7,6 +7,7 @@ import {
   Dock,
   Rail,
   RailEntry,
+  RailField,
   RailFoot,
   readingScroller,
   Sheet,
@@ -195,6 +196,79 @@ describe("RailEntry", () => {
     );
     expect(screen.getByRole("button", { name: "Search" }).getAttribute("aria-keyshortcuts")).toBe("/");
     expect(screen.getByRole("button", { name: "Ohbox" }).hasAttribute("aria-keyshortcuts")).toBe(false);
+  });
+
+  it("its digit reaches a screen reader as the key that goes there, beside its own key, and is still not in its name", () => {
+    const { rerender } = render(
+      <RailEntry kind="place" icon="ohbox" keyHint="g o" keyShown digit="1">
+        Ohbox
+      </RailEntry>,
+    );
+    expect(screen.getByRole("button", { name: "Ohbox" }).getAttribute("aria-keyshortcuts")).toBe("1");
+    rerender(
+      <RailEntry kind="place" icon="search" shortcut="/" digit="7">
+        Search
+      </RailEntry>,
+    );
+    expect(screen.getByRole("button", { name: "Search" }).getAttribute("aria-keyshortcuts")).toBe("/ 7");
+  });
+});
+
+describe("the lines under a fold that are no entry", () => {
+  it("an open fold that holds nothing says so under itself, in a line that is no control; shut, or holding something, it says nothing", () => {
+    const fold = (expanded: boolean, none?: string) => (
+      <RailEntry kind="fold" expanded={expanded} none={none}>
+        Tags
+      </RailEntry>
+    );
+    const { rerender } = render(fold(true, "No tags yet."));
+    const note = screen.getByText("No tags yet.");
+    expect(screen.getAllByRole("button").map((button) => button.textContent)).toEqual(["Tags"]);
+    expect(screen.getByRole("button", { name: "Tags" }).contains(note)).toBe(false);
+    expect(note.closest("[tabindex]")).toBeNull();
+    rerender(fold(false, "No tags yet."));
+    expect(screen.queryByText("No tags yet.")).toBeNull();
+    rerender(fold(true));
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+  });
+
+  it("a field takes the keys as it appears, is named by its label, and Enter hands the typed name without the space around it", () => {
+    const [onCommit, onCancel] = [vi.fn(), vi.fn()];
+    render(
+      <RailField
+        label="New tag"
+        placeholder="Name a new tag…"
+        hue={150}
+        onCommit={onCommit}
+        onCancel={onCancel}
+      />,
+    );
+    const field = screen.getByRole("textbox", { name: "New tag" });
+    expect(document.activeElement).toBe(field);
+    expect(field.getAttribute("placeholder")).toBe("Name a new tag…");
+    fireEvent.change(field, { target: { value: "  Invoices " } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect(onCommit.mock.calls).toEqual([["Invoices"]]);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it("Escape names nothing and goes no further; Enter on nothing names nothing; Enter that ends a composed word is not the field's", () => {
+    const [onCommit, onCancel, beyond] = [vi.fn(), vi.fn(), vi.fn()];
+    render(
+      <div onKeyDown={(event) => beyond(event.key)}>
+        <RailField label="New tag" hue={150} onCommit={onCommit} onCancel={onCancel} />
+      </div>,
+    );
+    const field = screen.getByRole("textbox", { name: "New tag" });
+    fireEvent.change(field, { target: { value: "Inv" } });
+    fireEvent.keyDown(field, { key: "Enter", isComposing: true });
+    expect([onCommit.mock.calls.length, onCancel.mock.calls.length]).toEqual([0, 0]);
+    fireEvent.keyDown(field, { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+    expect(beyond.mock.calls.flat()).not.toContain("Escape");
+    fireEvent.change(field, { target: { value: "   " } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    expect([onCommit.mock.calls.length, onCancel.mock.calls.length]).toEqual([0, 2]);
   });
 });
 
@@ -488,6 +562,21 @@ describe("Dock", () => {
       expect(within(dock).getByRole("button", { name })).toBeTruthy();
   });
 
+  it("draws no way to search and no way to write where the host hands none, and either alone where it hands one", () => {
+    const { label, floor, more, search, write } = parts;
+    const { rerender } = render(<Dock label={label} floor={floor} more={more} places={places} />);
+    const dock = screen.getByRole("navigation", { name: "Places" });
+    const names = () =>
+      within(dock)
+        .getAllByRole("button")
+        .map((button) => button.getAttribute("aria-label"));
+    expect(names()).toEqual(["Ohbox, 5", "Screener, 6", "News", "Answer Later", "Parked", "More"]);
+    rerender(<Dock label={label} floor={floor} more={more} search={search} places={places} />);
+    expect(names().slice(-2)).toEqual(["More", "Search"]);
+    rerender(<Dock label={label} floor={floor} more={more} write={write} places={places} />);
+    expect(names().slice(-2)).toEqual(["More", "Write"]);
+  });
+
   it("lets places go from the end while it is higher than its room, never the first ones, and says which stand", () => {
     /* The page has no layout here: the rail is as high as its shown places, 48 px each, in a room of 150. */
     const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
@@ -504,6 +593,39 @@ describe("Dock", () => {
     cleanup();
     render(<Dock {...parts} places={places} onFit={onFit} />);
     expect(onFit).toHaveBeenLastCalledWith(["ohbox", "screener"]);
+    height.mockRestore();
+    room.mockRestore();
+  });
+
+  it("fits again when its way to search and its way to write come or go while it stands upright", () => {
+    /* Every button that stands is 48 px high, in a room of 200. */
+    const height = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.querySelectorAll("button:not([hidden])").length * 48;
+    });
+    const room = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(200);
+    const onFit = vi.fn();
+    const { label, floor, more, search, write } = parts;
+    const { rerender } = render(
+      <Dock label={label} floor={floor} more={more} places={places} upright onFit={onFit} />,
+    );
+    expect(onFit).toHaveBeenLastCalledWith(["ohbox", "screener", "news"]);
+    rerender(
+      <Dock
+        label={label}
+        floor={floor}
+        more={more}
+        search={search}
+        write={write}
+        places={places}
+        upright
+        onFit={onFit}
+      />,
+    );
+    expect(onFit).toHaveBeenLastCalledWith(["ohbox", "screener"]);
+    rerender(<Dock label={label} floor={floor} more={more} places={places} upright onFit={onFit} />);
+    expect(onFit).toHaveBeenLastCalledWith(["ohbox", "screener", "news"]);
     height.mockRestore();
     room.mockRestore();
   });

@@ -442,8 +442,42 @@ function ReportLeaving() {
   );
 }
 
+/**
+ * A report over a list, held as a frame's slot holds one: a press on its way back takes it away at once, and so
+ * does the end of its fade. Told that it went with the keys on it, the holder puts them on the list's row.
+ */
+function ReportOverARow() {
+  const [leaving, setLeaving] = useState(false);
+  const [there, setThere] = useState(true);
+  const [told, setTold] = useState(0);
+  const row = useRef<HTMLButtonElement>(null);
+  step = () => setLeaving(true);
+  return (
+    <div style={{ position: "absolute", left: 40, top: 40 }}>
+      <button ref={row} id="row" type="button">
+        A letter in the list
+      </button>
+      <output id="told">{told}</output>
+      {there ? (
+        <Report
+          leaving={leaving}
+          onGone={() => setThere(false)}
+          onKeysGone={() => {
+            setTold((n) => n + 1);
+            row.current?.focus();
+          }}
+          undo={{ label: "Undo", onPress: () => setThere(false) }}
+        >
+          Moved to News
+        </Report>
+      ) : null}
+    </div>
+  );
+}
+
 const SCENES = {
   report: ReportLeaving,
+  reportOverARow: ReportOverARow,
   lineFold: LineFold,
   tiles: Tiles,
   piles: Piles,
