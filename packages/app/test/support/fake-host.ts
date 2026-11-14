@@ -6,11 +6,13 @@
  */
 import type { OhmailEngine } from "@ohmail/client-engine";
 import {
+  OVER_IDS,
   PLACE_IDS,
   STAGE_IDS,
   type Appearance,
   type CalendarEntry,
   type FrameHost,
+  type FrameOvers,
   type FramePlaces,
   type FrameStages,
   type Recover,
@@ -65,6 +67,7 @@ const WIRES = [
 
 export const NO_PLACES: FramePlaces = Object.fromEntries(PLACE_IDS.map((id) => [id, NONE])) as FramePlaces;
 export const NO_STAGES: FrameStages = Object.fromEntries(STAGE_IDS.map((id) => [id, NONE])) as FrameStages;
+export const NO_OVERS: FrameOvers = Object.fromEntries(OVER_IDS.map((id) => [id, NONE])) as FrameOvers;
 
 export interface FakeHostInput {
   readonly engine: OhmailEngine;
@@ -75,6 +78,7 @@ export interface FakeHostInput {
   readonly recover?: Recover;
   readonly places?: Partial<FramePlaces>;
   readonly stages?: Partial<FrameStages>;
+  readonly overs?: Partial<FrameOvers>;
   /** The calendar's entry; `none` unless given. The switch also needs `capabilities.products`. */
   readonly calendar?: CalendarEntry | None;
   readonly products?: HostCapabilities["products"];
@@ -127,6 +131,7 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       ...input.features,
       places: { ...NO_PLACES, ...input.places },
       stages: { ...NO_STAGES, ...input.stages },
+      overs: { ...NO_OVERS, ...input.overs },
       reader: input.reader ?? NONE,
       above: input.above ?? NONE,
       calendar: input.calendar ?? NONE,

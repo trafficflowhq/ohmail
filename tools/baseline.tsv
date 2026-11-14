@@ -582,7 +582,7 @@ apps/webapp/app/views/HistoryView.tsx	eslint:unused-directive	2	removals
 apps/webapp/app/views/ReadsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/views/ReceiptsView.tsx	eslint:unused-directive	3	removals
 apps/webapp/app/views/ScreenerView.tsx	eslint:unused-directive	3	removals
-apps/webapp/app/views/SearchView.tsx	eslint:unused-directive	5	removals
+apps/webapp/app/views/SearchView.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/views/SettingsView.tsx	eslint:unused-directive	1	removals
 apps/webapp/app/views/TrashView.tsx	eslint:unused-directive	2	removals
 apps/webapp/test/api-rewrite.test.ts	ohmail/package-borders:apps/api-vercel	1	lift-a

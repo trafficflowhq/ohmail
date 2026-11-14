@@ -33,6 +33,7 @@ import {
   type FrameHost,
   type FramePlaces,
   type LayoutPlan,
+  type OverId,
   type PaneProps,
   type PlaceEntry,
   type RailModel,
@@ -44,6 +45,7 @@ import { FrameParts } from "./FrameParts.js";
 import { FrameRoot } from "./FrameRoot.js";
 import { layoutPlan } from "./layout-plan.js";
 import { createNoticeStore } from "./notice-store.js";
+import { createOfferStore } from "./offers.js";
 import { RoomGate } from "./room.js";
 import { useReportSlot } from "./report-slot.js";
 import { attributesOf } from "./root-attributes.js";
@@ -80,6 +82,7 @@ const HOME: Route = { place: MAIL_HOME, sub: null, open: null, stage: null, word
 function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraft | null }) {
   const [railOpen, setRailOpen] = useState(false);
   const [held, setHeld] = useState(false);
+  const [over, setOver] = useState<OverId | null>(null);
   const now = useRef(route);
   now.current = route;
   /* The place the calendar's side was last in: an event opened from mail goes there. Kept for the frame's life only. */
@@ -90,6 +93,7 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
       const next: Route = { sub: null, open: null, stage: null, words: {}, ...to };
       host.device.address.write(fragmentOf(next), "push");
       setRailOpen(false);
+      setOver(null);
     },
     [host],
   );
@@ -105,6 +109,7 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
       },
       rail: setRailOpen,
       hold: setHeld,
+      over: setOver,
       event: (ref: EventRef | null) => {
         if (calendarOf(host) === null) return;
         const here = now.current;
@@ -124,7 +129,7 @@ function useCommands(host: FrameHost, route: Route, draft: { current: LinkedDraf
     }),
     [go, host, draft],
   );
-  return { commands, railOpen, setRailOpen, held };
+  return { commands, railOpen, setRailOpen, held, over };
 }
 
 /** The body a host's places keep, with the pane that draws it: the first entry whose wide arm says `kept`. */
@@ -234,18 +239,18 @@ function FrameBody({ host }: { host: FrameHost }) {
     draft: { current: null as LinkedDraft | null },
     bars: createFeed<readonly string[]>([]),
     keeps: createFeed<readonly string[]>([]),
+    offers: createOfferStore(),
   }));
-  const { commands, railOpen, setRailOpen, held } = useCommands(host, route, inner.draft);
+  const { commands, railOpen, setRailOpen, held, over } = useCommands(host, route, inner.draft);
   const api: FrameApi = useMemo(
-    () => ({ host, route, plan, commands, report: slot.report, product: productOf(route.place) }),
-    [host, route, plan, commands, slot.report],
+    () => ({ host, route, plan, commands, report: slot.report, over, product: productOf(route.place) }),
+    [host, route, plan, commands, slot.report, over],
   );
   const context: FrameInner = useMemo(
     () => ({ ...inner, api, railOpen: [railOpen, setRailOpen] as const }),
     [inner, api, railOpen, setRailOpen],
   );
   const places = host.features.places;
-
   const place = isCalendarPlace(route.place) ? (calendar?.places[route.place] ?? NONE) : places[route.place];
   const entry = place === NONE ? null : place;
   const stageEntry = !route.stage
@@ -277,6 +282,7 @@ function FrameBody({ host }: { host: FrameHost }) {
       railOpen={railOpen}
       held={held}
       holds={holdsItsReading(entry)}
+      over={over}
     />
   );
   const Above = host.features.above;

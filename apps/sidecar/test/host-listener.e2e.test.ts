@@ -398,7 +398,7 @@ describe("armed with origin and port — the door the phone reaches", () => {
     expect(body.features).toEqual({
       sse: false, staging: false, ai: false, pairing: true,
       // Same composition, same armed egress as the window's own door.
-      remoteImages: true, accountHeader: true, forwardParts: true, invitationAnswer: true,
+      remoteImages: true, accountHeader: true, forwardParts: true, invitationAnswer: true, searchPeople: true,
       // Same store and the same pass: a scheduled letter's files wait here (mail 0179).
       scheduleFiles: true,
     });

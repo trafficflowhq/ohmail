@@ -23,7 +23,7 @@ const engine = named<HostContract["engine"]>("engine");
 
 /** What every shell hands the frame, the same stand-ins for both doors here. */
 const FRAME = {
-  places: named("places"), stages: named("stages"), above: named("above"), address: named("address"),
+  places: named("places"), stages: named("stages"), above: named("above"), overs: named("overs"), address: named("address"),
   window: named("window"), appearance: named("appearance"), recover: named("recover"), calendar: named("calendar"),
 } as DesktopSupplies["frame"];
 const has: DesktopSupplies = {
@@ -70,6 +70,7 @@ const entries = (from: object, ...handedOn: FeatureName[]) =>
     ...Object.fromEntries(FEATURE_NAMES.map((feature) => [feature, handedOn.includes(feature) ? (from as Record<string, unknown>)[feature] : NONE])),
     places: FRAME.places,
     stages: FRAME.stages,
+    overs: FRAME.overs,
     reader: NONE,
     above: FRAME.above,
     calendar: FRAME.calendar,
@@ -105,7 +106,7 @@ describe("the desktop on its own", () => {
     expect(host.capabilities).toEqual({
       service: "ownComputer", prices: "none", sendCeiling: desktopSendSurface(onItsOwn.status), awayRunsOn: "thisComputer",
       rulesMarked: true, imagesFrom: "computer", unsubscribeFrom: "computer", foldersStorable: false, suggest: "ownModel",
-      pairing: "hostMode", account: "none", firstRunDoor: "local", mailboxes: "here", language: "install", products: "none",
+      pairing: "hostMode", account: "none", firstRunDoor: "local", mailboxes: "here", language: "install", searchBy: "words", products: "none",
     });
     expect(typeof host.capabilities.sendCeiling).toBe("number");
   });
@@ -141,7 +142,7 @@ describe("the desktop signed in to the managed service", () => {
     expect(host.capabilities).toEqual({
       service: "managed", prices: "none", sendCeiling: desktopSendSurface(managed.status), awayRunsOn: "service",
       rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced",
-      pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", products: "none",
+      pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", searchBy: "words", products: "none",
     });
     expect(typeof host.capabilities.sendCeiling).toBe("number");
   });
@@ -197,7 +198,7 @@ describe("the desktop signed in to a self-hosted server", () => {
     expect(host.capabilities).toEqual({
       service: "self", prices: "none", sendCeiling: DESKTOP_SELFHOST_SEND_MAX_TOTAL_BYTES, awayRunsOn: "service",
       rulesMarked: false, imagesFrom: "service", unsubscribeFrom: "service", foldersStorable: true, suggest: "priced",
-      pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", products: "none",
+      pairing: "inBrowser", account: "inBrowser", firstRunDoor: "none", mailboxes: "resyncAndOut", language: "install", searchBy: "words", products: "none",
     });
   });
 });
@@ -213,7 +214,7 @@ describe("the desktop paired to another computer", () => {
     expect(host.capabilities).toEqual({
       service: "ownComputer", prices: "none", sendCeiling: "strict", awayRunsOn: { host: "kestrel" }, rulesMarked: false,
       imagesFrom: "computer", unsubscribeFrom: "computer", foldersStorable: false, suggest: "none", pairing: "none",
-      account: "none", firstRunDoor: "none", mailboxes: "resyncOnly", language: "install", products: "none",
+      account: "none", firstRunDoor: "none", mailboxes: "resyncOnly", language: "install", searchBy: "words", products: "none",
     });
   });
 
@@ -271,7 +272,7 @@ describe("the page a desktop serves to a phone's browser", () => {
     expect(host.capabilities).toEqual({
       service: "ownComputer", prices: "none", sendCeiling: 32 * 1024 * 1024, awayRunsOn: "none", rulesMarked: true,
       imagesFrom: "none", unsubscribeFrom: "computer", foldersStorable: false, suggest: "none", pairing: "none",
-      account: "signOutOnly", firstRunDoor: "none", mailboxes: "none", language: "install", products: "none",
+      account: "signOutOnly", firstRunDoor: "none", mailboxes: "none", language: "install", searchBy: "words", products: "none",
     });
   });
 

@@ -25,7 +25,7 @@ const ROOTS: Array<[string, URL]> = [
 /** Every render bind the roots hold today, by file. A new one is named here on purpose. */
 const BINDS: Record<string, number> = {
   "packages/app-logic/src/session/store-timeline.ts": 1,
-  "apps/webapp/app/views/SearchView.tsx": 1,
+  "packages/app-logic/src/search/store-pass.ts": 1,
   "apps/mobile/src/state/store-views.ts": 2,
 };
 

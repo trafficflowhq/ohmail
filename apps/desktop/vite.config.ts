@@ -894,6 +894,7 @@ export default defineConfig({
       { find: /^@ohmail\/letter-body$/, replacement: r("../../packages/letter-body/src/index.ts") },
       { find: "@ohmail/app/host/browser", replacement: r("../../packages/app/src/host/browser/index.ts") },
       { find: "@ohmail/app/host", replacement: r("../../packages/app/src/host/index.ts") },
+      { find: "@ohmail/app/keys/sheet", replacement: r("../../packages/app/src/keys/sheet/index.ts") },
       { find: "@ohmail/app/keys", replacement: r("../../packages/app/src/keys/index.ts") },
       { find: "@ohmail/app/mail-state", replacement: r("../../packages/app/src/mail-state/index.ts") },
       { find: "@ohmail/app/ohbox", replacement: r("../../packages/app/src/ohbox/index.ts") },
@@ -901,6 +902,8 @@ export default defineConfig({
       { find: "@ohmail/app/write/editor/schema", replacement: r("../../packages/app/src/write/editor/schema.ts") },
       { find: "@ohmail/app/write/editor/commands", replacement: r("../../packages/app/src/write/editor/commands.ts") },
       { find: "@ohmail/app/write/editor/marks", replacement: r("../../packages/app/src/write/editor/marks.ts") },
+      { find: "@ohmail/app/search", replacement: r("../../packages/app/src/search/index.ts") },
+      { find: "@ohmail/app/palette", replacement: r("../../packages/app/src/palette/index.ts") },
       /* The text reader, and the translator it builds on, from this install: no root install stands beside the package
          when the platform jobs build this window. */
       { find: "@ohmail/app/text/fill", replacement: r("../../packages/app/src/text/fill.ts") },

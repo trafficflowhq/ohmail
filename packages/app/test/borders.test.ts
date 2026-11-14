@@ -125,6 +125,24 @@ describe("write's three entries", () => {
   });
 });
 
+describe("search and the two overs", () => {
+  const OWN = ["packages/app/src/search/", "packages/app/src/palette/", "packages/app/src/keys/sheet/"];
+
+  it("the frame reaches no file of Search, the palette or the key sheet", async () => {
+    const { inputs } = await readPlanted(BORDERS, 'export * from "./frame/index.js";\n');
+    expect(inputs.filter((input) => OWN.some((own) => input.startsWith(own)))).toEqual([]);
+  });
+
+  it("the palette and the key sheet reach no place's folder and no reader", async () => {
+    const reach = async (planted: string) =>
+      (await readPlanted(WHOLE, planted)).inputs.filter((input) =>
+        ["packages/app/src/search/", "packages/app/src/ohbox/", "packages/app/src/reader/"].some((own) => input.startsWith(own)),
+      );
+    expect(await reach('export * from "./palette/index.js";\nexport * from "./keys/sheet/index.js";\n')).toEqual([]);
+    expect(await reach('export * from "./palette/index.js";\nexport * from "./search/index.js";\n')).not.toEqual([]);
+  });
+});
+
 /** What the frame may reach of the product: its own folder, the host contract (not a shell's browser door) and the text reader. */
 function outsideTheFrame(input: string): boolean {
   if (input.includes("node_modules/") || input === "<stdin>") return false;

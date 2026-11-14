@@ -39,7 +39,7 @@ import { BUILD_SHA, BUILD_VERSION } from "../src/build-id.js";
 
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
-  places: named("places"), stages: named("stages"), address: named("address"), window: named("window"),
+  places: named("places"), stages: named("stages"), overs: named("overs"), address: named("address"), window: named("window"),
   appearance: named("appearance"), recover: NONE,
 } as FrameSupplies;
 

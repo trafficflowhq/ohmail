@@ -1006,6 +1006,12 @@
       "node": "./dist/screener/suggestion-overlay.js",
       "default": "./src/screener/suggestion-overlay.ts"
     },
+    "./search": {
+      "types": "./src/search/index.ts",
+      "ohmail-source": "./src/search/index.ts",
+      "node": "./dist/search/index.js",
+      "default": "./src/search/index.ts"
+    },
     "./session": {
       "types": "./src/session/index.ts",
       "ohmail-source": "./src/session/index.ts",

@@ -88,6 +88,8 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       firstRunDoor: CANNOT.firstRunDoor,
       mailboxes: CANNOT.mailboxes,
       language: "install",
+      // No hello is held where this is built: no person on the wire until one is.
+      searchBy: CANNOT.searchBy,
       products: CANNOT.products,
     },
     features: {
@@ -107,6 +109,7 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      overs: has.frame.overs,
       reader: NONE,
       above: has.frame.above,
       calendar: has.frame.calendar,

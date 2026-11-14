@@ -69,6 +69,8 @@ export function phoneFrameSupplies(
     stages: mounted.stages,
     /* No old shell stands on the phone: nothing above the panes. */
     above: NONE,
+    // A phone shell holds no keyboard registry, so it hands no over.
+    overs: { palette: NONE, keys: NONE },
     address: keptAddress(address, kept),
     window: browserWindowFacts(win),
     appearance: systemAppearance(win),

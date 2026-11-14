@@ -791,9 +791,11 @@ apps/webapp/test/screener-held-body-door.test.tsx	source-text	reads source as te
 apps/webapp/test/screener-last-decision-narrow.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screener-row-actions-overlay.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	screener	
 apps/webapp/test/screening-count-is-what-you-gain.test.tsx	source-text	through apps/webapp/test/source-anchor.ts: reads the web shell's source	layer 2	screener	
+apps/webapp/test/search-calls-per-setting.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	search	
 apps/webapp/test/search-locate.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	search	
 apps/webapp/test/search-open-exact.test.tsx	source-text	reads source as text (tsx)	layer 2	search	
 apps/webapp/test/search-render-budget.test.tsx	data	through apps/webapp/test/_search-mount.tsx: reads the process's own scheduler reading	none	removals	
+apps/webapp/test/search-screen/german-in-a-browser.test.ts	artifact	builds Search's states page (the feature bundled, the tokens' sheets) and reads the comparison's manifest for every state's window, and draws each in German and English at Text size 1.5 in a real browser	none	search	
 apps/webapp/test/secondary-ink-contrast.test.ts	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	removals	
 apps/webapp/test/security-headers.test.ts	source-text	reads source as text (js, ts)	layer 2	removals	
 apps/webapp/test/seed-offer-needs-a-mailbox.test.tsx	source-text	reads source as text (tsx)	layer 2	mailboxes	

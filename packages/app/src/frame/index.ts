@@ -8,6 +8,8 @@ export {
   useKeptPane,
   useLinkedDraft,
   useNotice,
+  usePaletteFeeds,
+  usePaletteOffers,
   useRailModel,
   useRailOpen,
   useReport,

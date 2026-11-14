@@ -495,6 +495,24 @@
       "ohmail-source": "./src/screener/index.ts",
       "node": "./dist/screener/index.js",
       "default": "./src/screener/index.ts"
+    },
+    "./search": {
+      "types": "./src/search/index.ts",
+      "ohmail-source": "./src/search/index.ts",
+      "node": "./dist/search/index.js",
+      "default": "./src/search/index.ts"
+    },
+    "./palette": {
+      "types": "./src/palette/index.ts",
+      "ohmail-source": "./src/palette/index.ts",
+      "node": "./dist/palette/index.js",
+      "default": "./src/palette/index.ts"
+    },
+    "./keys/sheet": {
+      "types": "./src/keys/sheet/index.ts",
+      "ohmail-source": "./src/keys/sheet/index.ts",
+      "node": "./dist/keys/sheet/index.js",
+      "default": "./src/keys/sheet/index.ts"
     }
   },
   "dependencies": {

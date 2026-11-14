@@ -352,6 +352,14 @@ export const HANDED_READERS: Record<string, HandedReaders> = {
     readers: { t: "ohbox" },
     glue: { call: "useOhboxList" },
   },
+  "packages/app-logic/src/search/facets.ts": {
+    readers: { t: "search" },
+    glue: { call: "useSearchList" },
+  },
+  "packages/app-logic/src/search/keys.ts": {
+    readers: { t: "search" },
+    glue: { call: "useSearchList" },
+  },
 };
 
 /** `useTranslations()` → "", `useTranslations("ns")` → "ns", a variable namespace → null, anything else → undefined. */

@@ -89,7 +89,7 @@ describe("GET /hello — the local engine's capability statement", () => {
       /* This door's image proxy fetches — the composition wires the real egress and the gate's
          own resolver. It was effectively `false` while that fetch was a refusal, and the route
          being mounted never said otherwise, which is why the word exists. */
-      remoteImages: true, accountHeader: true, forwardParts: true, invitationAnswer: true,
+      remoteImages: true, accountHeader: true, forwardParts: true, invitationAnswer: true, searchPeople: true,
       // This install keeps a scheduled letter's files and runs the pass that sends them (mail 0179).
       scheduleFiles: true,
     });

@@ -6,7 +6,7 @@ import { demoHost } from "../../app/(product)/demo/host";
 /** The invented world reaches nothing: every wire, read, feature and signal is none, and it says its own service. */
 const named = <T,>(name: string) => ({ named: name }) as unknown as T;
 const frame = {
-  places: named("places"), stages: named("stages"), above: named("above"), address: named("address"),
+  places: named("places"), stages: named("stages"), above: named("above"), overs: named("overs"), address: named("address"),
   window: named("window"), appearance: named("appearance"), recover: NONE,
 } as FrameSupplies;
 const engine = named<HostContract["engine"]>("engine");

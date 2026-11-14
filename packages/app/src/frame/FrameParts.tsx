@@ -3,20 +3,23 @@
  * dock, the report), the whole rail as a sheet, and the stage. The frame's body (`Frame.tsx`) decides what is on
  * screen and hands it down; what a shell stands above every pane wraps all of this.
  */
-import { useEffect, type ComponentProps } from "react";
+import { useCallback, useEffect, type ComponentProps } from "react";
 import { Overlay } from "@ohmail/ui/base";
 import { NONE, type None } from "../host/index.js";
 import { Columns } from "./Columns.js";
 import type { ConnectionFeed, FrameInner } from "./commands.js";
 import { useConnectionNotice } from "./connection.js";
-import type {
-  ColumnsProps,
-  FrameCommands,
-  FrameHost,
-  LayoutPlan,
-  PaneProps,
-  Route,
-  StageEntry,
+import {
+  OVER_IDS,
+  type ColumnsProps,
+  type FrameCommands,
+  type FrameHost,
+  type FrameOvers,
+  type LayoutPlan,
+  type OverId,
+  type PaneProps,
+  type Route,
+  type StageEntry,
 } from "./contract.js";
 import { useSignal, type Feed } from "./feeds.js";
 import { FeatureNotices } from "./FeatureNotices.js";
@@ -82,6 +85,29 @@ function FootDock({
   ) : null;
 }
 
+/** Every over handed stands mounted, open while the frame names it: one at a time, and going closes it. */
+function Overs({
+  overs,
+  over,
+  close,
+}: {
+  overs: FrameOvers;
+  over: OverId | null;
+  close: (to: null) => void;
+}) {
+  const onClose = useCallback(() => close(null), [close]);
+  return (
+    <>
+      {OVER_IDS.map((id) => {
+        const entry = overs[id];
+        if (entry === NONE) return null;
+        if (entry.id !== id) throw new Error(`an over handed as "${id}" names itself "${entry.id}"`);
+        return <entry.Body key={id} open={over === id} onClose={onClose} />;
+      })}
+    </>
+  );
+}
+
 /** What the frame's root holds, as the frame's body hands it down. */
 interface FramePartsProps {
   readonly host: FrameHost;
@@ -100,6 +126,8 @@ interface FramePartsProps {
   readonly held: boolean;
   /** The place on screen holds its reading column whatever is open (its panes say `holds: "always"`). */
   readonly holds: boolean;
+  /** The over the frame names open now (the palette, the key sheet), or none. */
+  readonly over: OverId | null;
 }
 
 /**
@@ -120,6 +148,7 @@ export function FrameParts({
   railOpen,
   held,
   holds,
+  over,
 }: FramePartsProps) {
   const t = useText("frame");
   const { list, reading, wide, kept, above } = panes;
@@ -196,6 +225,7 @@ export function FrameParts({
       <Stage open={staged} label={t("landmark.stage")}>
         {stage !== NONE ? <stage.Body {...pane} keysHere /> : null}
       </Stage>
+      <Overs overs={host.features.overs} over={over} close={commands.over} />
     </>
   );
 }
