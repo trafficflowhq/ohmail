@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  startHealthServer, publicHealth, PUBLIC_HEALTH_KEYS, type HealthSnapshot, type HealthServer, type PublicHealth,
+  startHealthServer, publicHealth, errorTokenOf, PUBLIC_HEALTH_KEYS, type HealthSnapshot, type HealthServer, type PublicHealth,
 } from "../src/health.js";
 
 /**
@@ -16,6 +16,7 @@ const snap: HealthSnapshot = {
   degradedReason: "roster_shortfall",
   unserved: { total: 2, quarantined: 1, awaitingCredentials: 1, standDown: 0, leaseUnreadable: 0, unaccounted: 0 },
   databaseFaultSeconds: null, healthy: true, unhealthyReason: null, waitingForLockSeconds: null, takingOver: false,
+  waitingForDatabaseSeconds: null, waitingForDatabaseCode: null,
   lastCycleAt: "2026-09-26T00:00:00.000Z", lagSeconds: 12, kekFingerprint: "fp", kekActiveVersion: 1, kekVersionCount: 1,
   kek: { active: 1, count: 1, fingerprint: "fp" }, shard: { index: 0, shards: 1 }, alertSinks: [], pager: "dead", apiCron: [],
   parkedReader: "composed", dbTls: true, lastRotationMs: null, lastTailMs: null, tail: null,
@@ -54,6 +55,32 @@ describe("worker /health — public liveness, counts behind the credential", () 
     expect("accounts" in (await read({ authorization: `Bearer ${"y".repeat(32)}` }))).toBe(false);
     await server?.close(); server = null;
     expect("accounts" in (await read({ authorization: `Bearer ${SECRET}` }, null))).toBe(false);
+  });
+
+  it("an instance waiting for its database says so, and since when, to anyone", async () => {
+    // What an outside watchdog reads: the word tells it a restart cannot help.
+    const waiting: HealthSnapshot = {
+      ...snap, leader: false, healthy: false, unhealthyReason: "waiting_for_database",
+      waitingForDatabaseSeconds: 93_600, waitingForDatabaseCode: "08006",
+    };
+    server = await startHealthServer({ port: 0, snapshot: () => waiting, detailSecret: SECRET });
+    const res = await fetch(`http://127.0.0.1:${server.port}/health`);
+    expect(res.status).toBe(503);
+    expect(await res.json()).toMatchObject({
+      ok: false, healthy: false, leader: false, unhealthyReason: "waiting_for_database",
+      waitingForDatabaseSeconds: 93_600, waitingForDatabaseCode: "08006",
+    });
+  });
+
+  it("an error is named by its class and code: a driver's message, and the host in it, stays off the endpoint", () => {
+    const refused = Object.assign(new Error("connect ECONNREFUSED 10.20.30.40:5432"), { code: "ECONNREFUSED" });
+    expect(errorTokenOf(refused)).toBe("Error ECONNREFUSED");
+    class PostgresError extends Error { name = "PostgresError"; code = "28P01"; }
+    expect(errorTokenOf(new PostgresError('password authentication failed for user "tf" at db.internal:6543')))
+      .toBe("PostgresError 28P01");
+    // A name or a code that is not a plain token is not published either.
+    expect(errorTokenOf(Object.assign(new Error("x"), { name: "at db.internal:5432", code: "host=db.internal" }))).toBe("Error");
+    expect(errorTokenOf("connect to db.internal:5432 failed")).toBe("Error");
   });
 
   it("the allow-list names no count, so a count added to the snapshot later stays private", () => {

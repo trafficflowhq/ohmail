@@ -21,7 +21,7 @@ import {
   newDeliveryStreak,
   newLastResortState, lastResortFailed, lastResortSucceeded, lastResortLogLines,
   alertHeartbeatFor, heartbeatLogLine, type LastResortReport, type HeartbeatLogMemory,
-  writeHeartbeat,
+  claimHeartbeat,
   refreshHeartbeat,
   clearHeartbeat,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
@@ -54,7 +54,7 @@ import {
 import {
   aiProviderLine, loadConfig, keyProviderFromKekEnv, selectionOf, instanceIdFrom, WorkerConfigError,
   DEFAULT_MAX_MAILBOXES, DEFAULT_SHARDS, DEFAULT_ROSTER_INTERVAL_MS,
-  DEFAULT_LOCK_HEARTBEAT_MS, DEFAULT_MAILBOX_RETRY_MS, DEFAULT_MAX_SYNC_FAILURES,
+  DEFAULT_LOCK_HEARTBEAT_MS, LOCK_UNPROVEN_HEARTBEATS, DEFAULT_MAILBOX_RETRY_MS, DEFAULT_MAX_SYNC_FAILURES,
   DEFAULT_ALERT_INTERVAL_MS, DEFAULT_SYNC_BLOCK_GRACE_MS,
   DEFAULT_LEASE_UNAVAILABLE_DETACH_MS, resolveCycleLanes, CYCLE_FAST_LANES, CYCLE_WAKE_REVISITS,
   resolveTailTurn, TAIL_SLICE_BUDGET_MS, resolveAttachConcurrency, ATTACH_DEADLINE_MS,
@@ -88,7 +88,7 @@ import {
  */
 const JUNK_SWEEP_PER_CYCLE = 200;
 import { makeStorageCapResolver } from "./storage-cap.js";
-import { breachSetAside, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
+import { breachSetAside, DatabaseFaultError, DeadLetterLedger, isDatabaseFault, isSharedDatabaseFault } from "./dead-letter.js";
 import { KnownSetCache } from "./known-set.js";
 import { checkedDial, dialHostGuardFromEnv } from "./dial-host-guard.js";
 import { markDatabaseFaults, asDatabaseFault } from "./db-fault.js";
@@ -295,6 +295,16 @@ export interface WorkerStats {
    * or all-failed cycle must not refresh freshness, or `/health` lies about a dead leader.
    */
   lastCycleAt: Date | null;
+  /**
+   * Up to when the cycle is known to have MOVED: the later of the last rotation that ended and the
+   * last mailbox turn that returned, whatever their outcome, and never later than the start of the
+   * oldest turn still running. Null before the first. What `/health`'s stuck rule measures, and it
+   * is about movement, not success: a turn that fails has returned (a mailbox that keeps failing is
+   * quarantined, and a restart mends no password), a rotation is one turn per mailbox and may run
+   * long while its turns keep ending, and one turn that never returns holds the clock back however
+   * many others end beside it.
+   */
+  cycleProgressAt: Date | null;
   /** The last rotation's wall clock, and the last completed tail walk's work time (ms). */
   lastRotationMs: number | null;
   lastTailMs: number | null;
@@ -341,7 +351,8 @@ export interface WorkerHooks {
   /**
    * The advisory lock is provably gone (session dropped / another backend owns it). The
    * worker has ALREADY quiesced — every mailbox detached, every timer cleared — so this is
-   * purely the signal for the supervisor to stop advertising leadership and go 503.
+   * purely the signal for the supervisor to stop advertising leadership, close this worker
+   * (`stop()`) and start over as a waiting start.
    */
   onLockLost?: (err: LockLostError) => void;
   }
@@ -732,8 +743,11 @@ export async function startWorkerWithLock(
     // now the ONLY use of `config.accountId` in the worker: it VALIDATES the pairing, so a
     // stale TF_ACCOUNT_ID next to a live TF_MAILBOX_ID is a loud refusal instead of a
     // credential row written under the wrong account.
+    // Both reads name the database as their origin, as the roster read does (`loadRosterMailboxes`):
+    // a start that meets a refused or reset dial here waits for the database (`supervisor.ts`).
     if (config.mailboxId && config.imap) {
-      const row = await loadMailboxById(db, config.mailboxId);
+      const envMailboxId = config.mailboxId;
+      const row = await asDatabaseFault("boot.envMailbox", () => loadMailboxById(db, envMailboxId));
       if (!row) throw new Error(`TF_MAILBOX_ID ${config.mailboxId} does not exist`);
       if (config.accountId && row.accountId !== config.accountId) {
         throw new Error(
@@ -741,20 +755,20 @@ export async function startWorkerWithLock(
           `(it belongs to account ${row.accountId}); refusing to bootstrap credentials`,
         );
       }
+      const envCreds = { mailboxId: envMailboxId, imap: config.imap, smtp: config.smtp };
       try {
-        await bootstrapEnvCreds(db, keyProvider, {
-          mailboxId: config.mailboxId, imap: config.imap, smtp: config.smtp,
-        });
+        await asDatabaseFault("boot.envCreds", () => bootstrapEnvCreds(db, keyProvider, envCreds));
       } catch (err) {
         // A REFUSAL IS NOT A FAULT, AND IT IS NOT SILENT EITHER. The mailbox this deployment is
         // configured for has been removed, or its account erased; recreating its sealed
         // credentials is the one thing a restart must not do, and taking the whole worker down
         // over it would stop every other mailbox this process serves. So: one named line, and
         // the run continues with the removal standing.
-        if (!(err instanceof BootstrapRefusedError) && !(err instanceof AccountErasedError)) throw err;
+        const refusal = err instanceof DatabaseFaultError ? err.cause : err;
+        if (!(refusal instanceof BootstrapRefusedError) && !(refusal instanceof AccountErasedError)) throw err;
         (config.logger ?? silentLogger).warn("env_creds_bootstrap_refused", {
           mailboxId: config.mailboxId,
-          reason: err instanceof BootstrapRefusedError
+          reason: refusal instanceof BootstrapRefusedError
             ? "this mailbox has been removed; its credentials were deleted with it and env will "
               + "not put them back"
             : "this mailbox's account has been erased; nothing may be written against it",
@@ -823,16 +837,24 @@ export async function startWorkerWithLock(
     });
 
     /**
+     * THIS TAKEOVER'S NAME in `worker_heartbeats`: the instance id and eight hex of its own. The row
+     * is renewed, surrendered and the write fence passed BY NAME, so the name has to be one takeover's
+     * and nobody else's. `instanceId` alone is a host's (a replica id, else the hostname): two workers
+     * on one host would renew, and write mail, on each other's claim.
+     */
+    const leaderToken = `${instanceId}:${randomUUID().slice(0, 8)}`;
+    /**
      * The leader epoch, as the two mailbox lifecycle writes see it. `worker_heartbeats` is already
-     * the durable, atomically-claimed record of "who leads shard N" — `writeHeartbeat` overwrites
-     * `instance_id` on takeover and `refreshHeartbeat` refuses a surrendered leader's late pulse
-     * against exactly this predicate. Passing it into `markMailboxFailed`/`markMailboxConnected`
+     * the durable, atomically-claimed record of "who leads shard N" — the takeover's claim overwrites
+     * `instance_id` (`claimHeartbeat`, once, and only while the database shows the lock held), and
+     * every later beat renews that row or finds it gone (`refreshHeartbeat`), against exactly this
+     * predicate. Passing it into `markMailboxFailed`/`markMailboxConnected`
      * fences those writes with the SAME definition, and `clearHeartbeat` takes it so a surrender
      * cannot clobber a successor's claim. The first beat is written before any attach, so the row
      * exists by the time either write fires; a failed beat closes the fence and the write is refused
      * and LOGGED (`mailbox_failure_write_fenced`) rather than landing unfenced — the safe direction.
      */
-    const fence: LeaderFence = { shardIndex, instanceId };
+    const fence: LeaderFence = { shardIndex, instanceId: leaderToken };
     const alertIntervalMs = config.alertIntervalMs ?? DEFAULT_ALERT_INTERVAL_MS;
     const alertSinks: AlertSink[] = [];
     const hook = webhookAlertSink(config.alertWebhookUrl, config.alertPost);
@@ -879,6 +901,10 @@ export async function startWorkerWithLock(
     let stopped = false;
     let lockLost = false;
     let lastCycleAt: Date | null = null;
+    /** When a rotation and a mailbox's turn last ended, and when each turn still running began (`cycleProgressAt`). */
+    let lastRotationEndAt: number | null = null;
+    let lastTurnEndAt: number | null = null;
+    const visitStarts = new Map<string, number>();
     /** The last rotation's and the last completed tail's wall clock, for `/health` and `cycle_phases`. */
     let lastRotationMs: number | null = null;
     /** How many due turns (`admitDue`) the last rotation gave, for `cycle_phases`. */
@@ -1000,6 +1026,11 @@ export async function startWorkerWithLock(
     let booted = false;
     /** The boot beat, which fires once the first roster pass knows what the duty IS. */
     let firstBeatPending = true;
+    /**
+     * This takeover's claim of the heartbeat row has landed (`beat`). Kept by the beat itself and not by
+     * the boot beat's place above: which beat comes first is call order, and a claim must not rest on it.
+     */
+    let claimed = false;
     let expected = 0;
     let truncated = 0;
     let dutyGap = false;
@@ -3562,7 +3593,8 @@ export async function startWorkerWithLock(
       const scheduled: string[] = [];
       if (toSchedule.length > 0) {
         // One read of the hosts, only when there is something to schedule.
-        const hosts = await loadAttachHosts(db, toSchedule.map((m) => m.mailboxId));
+        const hosts = await asDatabaseFault("roster.attachHosts",
+          () => loadAttachHosts(db, toSchedule.map((m) => m.mailboxId)));
         if (stopped) return;
         for (const mb of toSchedule) {
           const queued = attachPool.enqueue({
@@ -3782,11 +3814,9 @@ export async function startWorkerWithLock(
       // A roster pass that throws must not take the rotation with it. `requestRoster`'s queued entry
       // always caught this (a roster pass is a DB read, a failure a blip, not a reason to stop serving
       // attached mailboxes), and the in-cycle path had no catch — the same failure tolerated on one
-      // path and fatal on the other. It is not cosmetic: `loadEnabledMailboxes` reads through the bare
-      // handle, so a dead database throws an UNTAGGED `ECONNREFUSED` here, which `isSharedDatabaseFault`
-      // correctly declines to call ours (byte-identical to a dead IMAP host). Uncaught, it left
-      // `cycle()` before a lane ran, so no tagged fault was raised, `noteDatabaseFault` never fired,
-      // and `/health` answered `degraded: false` through a total outage. Caught here, the pass is
+      // path and fatal on the other. It is not cosmetic: uncaught, a dead database's throw out of the
+      // roster read left `cycle()` before a lane ran, so `noteDatabaseFault` never fired and
+      // `/health` answered `degraded: false` through a total outage. Caught here, the pass is
       // skipped, the lanes meet the database through the tagged repo, and the outage is announced
       // (`shared-db-fault.pg.test.ts`).
       try {
@@ -4635,7 +4665,7 @@ export async function startWorkerWithLock(
                 "names this instance as the shard leader — quiescing instead of counting a " +
                 "failure against the mailbox",
             });
-            handleLockLoss(new LockLostError("a mail-bearing write was fenced out mid-cycle"));
+            handleLockLoss(new LockLostError("a mail-bearing write was fenced out mid-cycle", "LOCK_FENCED"));
             // `stopPass` and not a bare `return` since the lanes: `handleLockLoss` sets `stopped`, so
             // the dispatcher would stop taking work anyway, but the flag is what makes THIS arm's
             // meaning explicit and independent of that side effect. The lanes already running are
@@ -4880,10 +4910,13 @@ export async function startWorkerWithLock(
           // maps it re-reads on the next turn.
           const lane = (async () => {
             const visitStarted = Date.now();
+            visitStarts.set(rt.mailboxId, visitStarted);
             const successBefore = rt.lastSuccessAt;
             try {
               await visitMailbox(rt, wokenVisit);
             } finally {
+              visitStarts.delete(rt.mailboxId);
+              lastTurnEndAt = Date.now();
               const visitMs = Date.now() - visitStarted;
               const asked = rt.turnMessages;
               // Every turn's wall clock, so the lane that holds a pass open has a name: the
@@ -5028,6 +5061,7 @@ export async function startWorkerWithLock(
       // nothing to sync, so a dead leader never looks fresh.
       const rotationMs = Date.now() - passStartedMs;
       lastRotationMs = rotationMs;
+      lastRotationEndAt = Date.now();
       lastDueRevisits = dueRevisits;
       if (succeeded > 0 || expected === 0) lastCycleAt = new Date();
       await beat();
@@ -6204,16 +6238,42 @@ export async function startWorkerWithLock(
      * BEST EFFORT, always. A failed beat must never abort a sync cycle: the worst case is a
      * false "worker down" alert, and the alternative — observability code that can take a
      * working worker offline — is strictly worse than the fault it reports.
+     *
+     * THE FIRST BEAT OF A TAKEOVER CLAIMS THE ROW AND NO LATER ONE DOES. Every beat used to be the
+     * claiming upsert, written with no proof of the lock behind it: a leader whose lock session had
+     * gone mute and been ended at the server took the row back from its lawful successor at the end of
+     * its next rotation, and from then on the write fence let the one without the lock write and
+     * refused the one with it. The claim now writes the row and, holding it, asks the database whether
+     * the lock's session (its pid and its mark) holds the lock; on a no the write is taken back. A
+     * claim that fails is tried again by the next beat, which is safe because it asks again. After it,
+     * a beat only renews, and what a renewal finds is final: a row that no longer names this takeover
+     * is a lost lock ({@link renew}).
      */
     async function beat(): Promise<void> {
       if (stopped) return;
       try {
-        await writeHeartbeat(db as unknown as Tx, {
-          shardIndex, instanceId, shards, startedAt, ...counters(),
-        });
+        if (claimed) { await renew(); return; }
+        const landed = await claimHeartbeat(
+          db as unknown as Tx,
+          { shardIndex, instanceId: leaderToken, shards, startedAt, ...counters() },
+          { pid: lock.backendPid, key: leaderLockKeyFor(shardIndex), mark: lock.mark },
+        );
+        if (landed) claimed = true;
+        else handleLockLoss(new LockLostError("the database does not show this instance's session holding the lock", "LOCK_UNCLAIMED"));
       } catch (err) {
         log.warn("heartbeat_write_failed", { err });
       }
+    }
+
+    /**
+     * Renew the row this takeover claimed. A renewal that THROWS is a failed beat and nothing more (the
+     * database being away deposes nobody). One that matches NO ROW has been told something: the row
+     * names another holder, or nobody. That is a lost lock, quiesced as one; it is never claimed again
+     * from here.
+     */
+    async function renew(): Promise<void> {
+      const mine = await refreshHeartbeat(db as unknown as Tx, { shardIndex, instanceId: leaderToken, ...counters() });
+      if (!mine) handleLockLoss(new LockLostError("the heartbeat row no longer names this instance", "LOCK_SUPERSEDED"));
     }
 
     /**
@@ -6322,12 +6382,14 @@ export async function startWorkerWithLock(
      * and nothing else — at two minutes it pages about a worker ingesting as fast as the provider
      * serves. So the pulse runs on the LOCK-VERIFY timer, off the serial queue, and only after
      * `lock.verify()` answered `held: true` (the claim is backed by the lock, not a process asserting
-     * about itself). It uses `refreshHeartbeat`, whose UPDATE is guarded on `(shard, instance, leader = true)` in the statement — a timer must never resurrect a surrendered leader. The cost: a wedged serial queue keeps beating, caught instead by `sync_lag` at fifteen minutes (a recorded follow-up).
+     * about itself). It renews like every beat after the claim (`renew`): the UPDATE is guarded on `(shard, instance, leader = true)` in the statement — a timer must never resurrect a surrendered leader. The cost: a wedged serial queue keeps beating, caught instead by `sync_lag` at fifteen minutes (a recorded follow-up).
+     * NOT BEFORE THE CLAIM: the timer's first tick can come before the boot beat, and a renewal that
+     * finds no row of its own yet would read that as superseded and depose every leader at its start.
      */
     async function pulse(): Promise<void> {
-      if (stopped) return;
+      if (stopped || !claimed) return;
       try {
-        await refreshHeartbeat(db as unknown as Tx, { shardIndex, instanceId, ...counters() });
+        await renew();
       } catch (err) {
         log.warn("heartbeat_refresh_failed", { err });
       }
@@ -6603,23 +6665,65 @@ export async function startWorkerWithLock(
       hooks.onLockLost?.(err);
     }
     void lock.lost.then(handleLockLoss);
+    /**
+     * PROVEN, OR NOT SURE. Each heartbeat asks the lock's own session whether it still holds the lock.
+     * Two answers were acted on, a close and "not held", and a session that gives neither (it stays
+     * open and nothing comes back) left its leader believing for good, with every later check queued
+     * behind the first: a successor took the lock the server had freed and two processes led. So the
+     * heartbeats since the last proof are counted, BEFORE anything is awaited, and after
+     * `LOCK_UNPROVEN_HEARTBEATS` of them this instance is not sure: it quiesces as on any lost lock.
+     * One check is out at a time. A check that is REJECTED is logged and asked again at the next
+     * heartbeat; it proves nothing either way, so the count runs on.
+     *
+     * Heartbeats that ASKED, and not an age read off the clock: a process that did not run for a
+     * while (a stalled loop, a suspended host) has not gone unanswered, it has not asked, and a step
+     * of the wall clock is no evidence about a lock in either direction.
+     *
+     * The pulse follows a proof and is not waited for: it is a write on the POOL, and a pool that
+     * does not answer must not stop the lock from being proven. That case is the cycle's (a database
+     * fault, a stuck cycle), not a lost lock.
+     *
+     * When lock and pool both stop answering, this ends the leadership after those heartbeats;
+     * closing the worker then waits for statements that never answer, and the process exits at its
+     * close deadline, where it used to exit at the stuck bound. Under `startWorker()`, which has no
+     * supervisor, a quiesced worker stays quiesced, as on any lost lock.
+     */
+    let unproven = 0;
+    let verifying = false;
+    let pulsing = false;
     hbTimer = setInterval(() => {
+      if (stopped) return;
+      if (unproven >= LOCK_UNPROVEN_HEARTBEATS) {
+        handleLockLoss(new LockLostError(`the lock was not proven for ${unproven} heartbeats`, "LOCK_UNPROVEN"));
+        return;
+      }
+      unproven++;
+      if (verifying) return;
+      verifying = true;
       void (async () => {
-        if (stopped) return;
         try {
           const held = await lock.verify();
+          if (stopped) return;
           verifyErrors = 0;
-          if (!held) { handleLockLoss(new LockLostError("heartbeat found the lock no longer held")); return; }
+          if (!held) { handleLockLoss(new LockLostError("heartbeat found the lock no longer held", "LOCK_NOT_HELD")); return; }
+          unproven = 0;
           // PROVEN LEADER, THEN PULSE. The order is the point: the row's claim that this shard
           // has a live leader is now backed by the advisory lock answering `held`, not by a
           // process asserting it about itself. A verify that FAILS deliberately skips the
           // pulse — an unproven leader should go stale, which is what the alert reads.
-          await pulse();
+          if (!pulsing) {
+            pulsing = true;
+            void pulse().finally(() => { pulsing = false; });
+          }
         } catch (err) {
+          if (stopped) return;
           // A failed heartbeat QUERY is not proof of loss (a slow DB, a statement timeout).
-          // Genuine loss arrives via `lock.lost` (connection close) or a `held: false` answer.
+          // Genuine loss arrives via `lock.lost` (connection close), a `held: false` answer,
+          // or the count above.
           verifyErrors++;
           log.error("lock_verify_failed", { consecutiveFailures: verifyErrors, err });
+        } finally {
+          verifying = false;
         }
       })();
     }, heartbeatMs);
@@ -6805,6 +6909,14 @@ export async function startWorkerWithLock(
       wakeHub = null;
     }
 
+    /** {@link WorkerStats.cycleProgressAt}. A memory read. */
+    function cycleProgressAt(): Date | null {
+      const moved = Math.max(lastRotationEndAt ?? 0, lastTurnEndAt ?? 0);
+      const running = visitStarts.size > 0 ? Math.min(...visitStarts.values()) : null;
+      if (running === null) return moved > 0 ? new Date(moved) : null;
+      return new Date(moved > 0 ? Math.min(moved, running) : running);
+    }
+
     let teardown: Promise<void> | null = null;
     return {
       stats(): WorkerStats {
@@ -6839,6 +6951,7 @@ export async function startWorkerWithLock(
           // here. `[]` when the arm is unconfigured, on shards > 0, or after quiescing.
           apiCron: apiCron?.health() ?? [],
           parkedReader: parkedAccountsReader ? "composed" : "absent",
+          cycleProgressAt: cycleProgressAt(),
           lastRotationMs,
           lastTailMs,
           tail: tailPosition(),
@@ -6895,7 +7008,9 @@ export async function startWorkerWithLock(
       try { await rt.adapter.close(); } catch { /* ignore */ }
     }
     try { await owned.close(); } catch { /* ignore */ }
-    await lock.release();
+    // The start's own error is the one that travels: the caller reads it to tell a database that
+    // went away from an instance that is broken.
+    try { await lock.release(); } catch (e) { (config.logger ?? silentLogger).error("lock_release_failed", { err: e }); }
     throw err;
   }
 }
@@ -6916,7 +7031,12 @@ function sample(mbs: readonly EnabledMailbox[], n = 3): string {
  * match) and starts THIS function explicitly (`scripts/bundle-host.mjs` carries the other half). Under
  * `node dist/index.js` and `tsx src/index.ts` nothing changes — the guard below calls the same function.
  */
-export async function runWorkerCli(): Promise<void> {
+export async function runWorkerCli(
+  seams: {
+    /** TEST SEAM: the parsed configuration, before anything reads it. Absent in every deployed process. */
+    configure?: (config: WorkerConfig) => WorkerConfig;
+  } = {},
+): Promise<void> {
   await (async () => {
     // THE composition root for logging. `startWorkerWithLock` defaults to `silentLogger` so no test or
     // embedder inherits stdout noise; the process a human deploys is the one that turns the logger on,
@@ -6940,7 +7060,8 @@ export async function runWorkerCli(): Promise<void> {
       // handler: the rejection escaped a discarded async IIFE. See `installCrashHandlers`.
       const { runWorkerSupervised } = await import("./supervisor.js");
       // The model client's `ai_call` lines read `cliLog` at each call, after it is rebuilt below.
-      const config = loadConfig(process.env, { log: () => cliLog });
+      const parsed = loadConfig(process.env, { log: () => cliLog });
+      const config = seams.configure ? seams.configure(parsed) : parsed;
       cliLog = createLogger({
         service: "worker",
         fields: { instanceId: config.instanceId ?? instanceIdFrom(), environment: config.environment },
@@ -6994,9 +7115,11 @@ export async function runWorkerCli(): Promise<void> {
   })();
 }
 
-// CLI bootstrap. It runs SUPERVISED: a lock-held start stands by with backoff and
-// serves health 200 instead of exiting, so a rolling deploy cannot crash-loop the
-// new instance. The dynamic import inside keeps supervisor.ts → index.ts a one-way
+// CLI bootstrap. It runs SUPERVISED: a lock-held start stands by and serves health 200 instead of
+// exiting, so a rolling deploy cannot crash-loop the new instance, and a start that cannot reach the
+// database waits and retries instead of exiting, so an outage cannot spend the host's restarts. What
+// still exits 1: a refused or broken deployment, a cycle that stopped moving, a worker that could not
+// be closed (`supervisor.ts`). The dynamic import inside keeps supervisor.ts → index.ts a one-way
 // dependency.
 if (isCliEntry(import.meta.url)) {
   void runWorkerCli();

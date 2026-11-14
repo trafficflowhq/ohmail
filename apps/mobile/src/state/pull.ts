@@ -11,6 +11,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnection } from "../net/connection";
 import { networkNow } from "../net/network-door";
+import { lateWho } from "../ui/late-lines";
 import { pullRound } from "./pull-round";
 import { useWorldToast } from "./world";
 
@@ -34,7 +35,9 @@ export function usePullToSync(): PullToSync {
   const onRefresh = useCallback(() => {
     setRefreshing(true);
     // With no network the pull says so and asks nothing (`pull-round.ts`); the spinner ends at once.
-    void pullRound(networkNow(), () => conn.syncNow(), toast.say).finally(() => {
+    // A server that is not fetching is said the moment the ring answers; the spinner is the drain's.
+    const who = lateWho(conn.state.k === "live" ? conn.state.session : null);
+    void pullRound(networkNow(), (heard) => conn.syncNow(heard), toast.say, who).finally(() => {
       if (alive.current) setRefreshing(false);
     });
   }, [conn, toast]);

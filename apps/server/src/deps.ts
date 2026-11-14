@@ -9,8 +9,8 @@ import {
   recordApiFault, entitlementsFaultRecorder, accountsAtCapOf, planeOpsReaderOf, ALERT_PARKED_READ_BOUND,
   resolveOAuthProviderConfig, rotateMailboxOAuthSecret, MICROSOFT_PROVIDER,
   makeSupabaseStagingStorage, makeS3StagingStorage,
-  // The organizer's last completed pass, for the filing strip (mail 0097).
-  organizerCycleReader,
+  // How the organizer stands: its last completed pass (mail 0097), and whether fetching is behind.
+  organizerStandingReader,
   acquireCeilingHandle, SESSION_ACQUIRE_TIMEOUT_MS, makePooledDb, readDbTls, alertHeartbeatFor,
   makeEntitlementsClient, refundObligationsOn, heldStorageLimitOf, freshConnectProbe,
   kekRetiredReferences, retiredVersionInUseFault, retiredVersionUnreadFault,
@@ -560,10 +560,11 @@ export function buildServices(cfg: Wiring, door: DoorInput, parts: BagParts): Ap
        it with. If the two ever derive different ids the hand-back is refused everywhere, which is
        the safe direction and a visible one. */
     installId: cfg.installId,
-    /* WHEN THE ORGANIZER'S LAST PASS FINISHED, for the filing strip (mail 0097). Injected rather
+    /* HOW THE ORGANIZER STANDS: when its last pass finished, for the filing strip (mail 0097), and
+       whether fetching is behind, for the mailbox's `fetching` and the pull answer. Injected rather
        than imported by the builder: `worker_heartbeats` is a Cloud table and that module is inside
        the desktop engine's import closure. Passed BY REFERENCE, so the wiring is greppable. */
-    lastOrganizerCycleAt: organizerCycleReader,
+    organizerStanding: organizerStandingReader,
   }));
 
   /**

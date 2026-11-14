@@ -12,7 +12,7 @@ import {
   filingDue, filingDeferred, filingStuck, ourOutstandingFiling, outstandingFilingsOf, isFilingRefusalClass,
   ACCOUNT_THREAD_STRUCTURE_LOCK_CLASS,
   OrganizedElsewhereError, auditAction, auditLog,
-  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type Tx, type OrganizerIntent,
+  type AccessVerdict, type LedgerTx, type MailboxErrorCode, type MailboxSyncBlockReason, type Tx, type OrganizerIntent,
 } from "@trafficflow/db";
 import { holderIsLive } from "@trafficflow/core/reader-refusal";
 import { agreeRecordPayload } from "@trafficflow/core/adapters/drizzle-repo";
@@ -37,7 +37,7 @@ import {
   leaveMailboxFilings, readMailboxFilings, retryMailboxFilings, type MailboxFilingsDTO,
 } from "./mailbox-filings.js";
 import type { KeyProvider } from "./auth/crypto.js";
-import type { MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
+import type { FetchingDTO, MailboxDTO, MailboxFolderSummary } from "./dto/types.js";
 // The window's vocabulary, from the one place it is defined (core), so the ceremony that writes
 // `dormancy_days` and `screening_scope` cannot disagree with the two cutlines that read them.
 import { DEFAULT_DORMANCY_DAYS, createLogger, providerAuthservIds, type ScreeningScope } from "@trafficflow/core/mail";
@@ -816,6 +816,11 @@ export type MailboxAllowancePolicy = (
   input: { access: AccessVerdict | null; excludeMailboxId?: string },
 ) => Promise<unknown>;
 
+/** What {@link MailboxServiceDeps.organizerStanding} answers: the last finished pass, and whether fetching is behind. */
+export interface OrganizerStandingFact extends FetchingDTO {
+  lastCycleAt: string | null;
+}
+
 export interface MailboxServiceDeps {
   /**
    * Who this deployment is to a mailbox — the id it writes into a claim. The release asks "is the
@@ -852,16 +857,17 @@ export interface MailboxServiceDeps {
    */
   accessOf?: (accountId: string) => Promise<AccessVerdict>;
   /**
-   * When the organizer's last pass finished, for {@link MailboxDTO.filing}'s `lastCycleAt` —
-   * hosted only, injected: the fact is in `worker_heartbeats`, a CLOUD table this module may not
-   * import (`packages/services` is in the desktop engine's import closure). Worth a dependency
+   * How the organizer stands: when its last pass finished, for {@link MailboxDTO.filing}'s
+   * `lastCycleAt`, and whether fetching is behind, for {@link MailboxDTO.fetching} and the pull
+   * answer — hosted only, injected: the fact is in `worker_heartbeats`, a CLOUD table this module may
+   * not import (`packages/services` is in the desktop engine's import closure). Worth a dependency
    * because it separates a TURN from a STALL: one outstanding move is unremarkable while passes
    * land, alarming while none do. ABSENT resolves to `null`, rendered as SILENCE, never "no pass
-   * has ever run" — a local install keeps no heartbeat and must not be told its organizer is
-   * dead. A throw resolves to `null` too: half a status sentence beats a heartbeat read failing
-   * `GET /mailboxes`.
+   * has ever run" and never "fetching is current" — a local install keeps no heartbeat and must not
+   * be told its organizer is dead. A throw resolves to `null` too: half a status sentence beats a
+   * heartbeat read failing `GET /mailboxes`.
    */
-  lastOrganizerCycleAt?: (ctx: ServiceContext) => Promise<string | null>;
+  organizerStanding?: (ctx: ServiceContext) => Promise<OrganizerStandingFact>;
   /**
    * Does this deployment's organizer check a sender's own DKIM signature at ingest where a mailbox's
    * provider is named by no authserv-id (`pipeline.ts#signatureVerdict`)? Then a sender can be
@@ -2341,6 +2347,12 @@ export class MailboxService {
     /** The NEWEST effective stamp — a convenience for logging; the per-mailbox list is the contract. */
     requestedAt: string;
     mailboxes: Array<{ id: string; requestedAt: string }>;
+    /**
+     * Whether anything will serve this request now ({@link MailboxDTO.fetching}'s fact, once): the
+     * request is kept either way, and a client whose answer says `behind` can stop waiting and say so.
+     * Null when none of the account's rows carries it.
+     */
+    fetching: FetchingDTO | null;
   }> {
     // Ring the worker's doorbell for every connected mailbox — the "Pull new mail" server half
     // (mail 0049). NOT {@link requestResync}: a resync clears every CONDSTORE cursor and re-walks
@@ -2403,10 +2415,18 @@ export class MailboxService {
     const newest = rows.reduce<string | null>(
       (acc, r) => (acc === null || r.requestedAt > acc ? r.requestedAt : acc), null,
     );
+    // The rows' own rule, over all of the account's rows: a mailbox in error is fetched and is not
+    // rung above, and an account with nothing to fetch is told nothing.
+    const standing = await this.standingFor(ctx);
+    const all = standing
+      ? await ctx.db.select({ status: mailboxes.status, syncBlockedReason: mailboxes.syncBlockedReason })
+        .from(mailboxes).where(eq(mailboxes.accountId, ctx.accountId))
+      : [];
     return {
       requested: rows.length,
       requestedAt: newest ?? ctx.now().toISOString(),
       mailboxes: rows,
+      fetching: fetchingFor(standing, all),
     };
   }
 
@@ -3124,26 +3144,26 @@ export class MailboxService {
     return m as MailboxRow;
   }
 
-  private async lastCycleAtFor(ctx: ServiceContext): Promise<string | null> {
-    // When the organizer's last pass finished — one read per REQUEST, whichever door asked.
+  private async standingFor(ctx: ServiceContext): Promise<OrganizerStandingFact | null> {
+    // How the organizer stands — one read per REQUEST, whichever door asked.
     // Memoized on the `ServiceContext` OBJECT, not the service: the service is a singleton across
     // requests, and a cached heartbeat would serve one tab's poll the figure from another tab's
     // poll minutes earlier — a stale "last pass" is exactly the lie this field replaces. The
     // context is minted per request, so a WeakMap keyed on it is per-request by construction and
     // collects itself. It sits here rather than in `list`'s pre-loop so EVERY door answers the same
     // way — hoisting it would leave the write doors' DTOs reporting `null` for a deployment that
-    // can tell. A throw resolves to `null`.
-    const read = this.deps.lastOrganizerCycleAt;
+    // can tell. A throw resolves to `null`, and so does a host with no reader: never "current".
+    const read = this.deps.organizerStanding;
     if (!read) return null;
-    const memo = MailboxService.lastCycleMemo.get(ctx);
+    const memo = MailboxService.standingMemo.get(ctx);
     if (memo) return memo;
     const pending = read(ctx).catch(() => null);
-    MailboxService.lastCycleMemo.set(ctx, pending);
+    MailboxService.standingMemo.set(ctx, pending);
     return pending;
   }
 
-  private static readonly lastCycleMemo =
-    new WeakMap<ServiceContext, Promise<string | null>>();
+  private static readonly standingMemo =
+    new WeakMap<ServiceContext, Promise<OrganizerStandingFact | null>>();
 
   private async toDTO(
     ctx: ServiceContext, m: MailboxRow, messageCount?: number,
@@ -3159,7 +3179,8 @@ export class MailboxService {
     //
     // `given` is `list`'s clock reading and this row's share of the facts it read for all rows
     // at once. A single-row door passes nothing, and the same read runs here for its one row.
-    const lastCycleAt = await this.lastCycleAtFor(ctx);
+    const standing = await this.standingFor(ctx);
+    const lastCycleAt = standing?.lastCycleAt ?? null;
     const now = given?.now ?? ctx.now();
     const facts = given?.facts ?? (await this.factsFor(ctx, now, [m.id])).get(m.id) ?? NO_FACTS;
     const fRows = facts.folders;
@@ -3305,6 +3326,9 @@ export class MailboxService {
       // than an object of three nulls, so the copy layer has ONE thing to test: a reader with no
       // holder is a mailbox nobody has consented to organize, and its banner says something
       // different.
+      // The deployment's one fact, on the rows its organizer is on duty to fetch. Null on any other
+      // row and where it cannot tell (no reader wired).
+      fetching: fetchingFor(standing, [m]),
       organizerRole: isOrganizerRole(m.organizerRole) ? m.organizerRole : "reader",
       organizedBy: (m.organizedByKind !== null || m.organizedByName !== null || m.organizedSince !== null)
         ? {
@@ -3424,6 +3448,24 @@ export class MailboxService {
       createdAt: m.createdAt.toISOString(),
     };
   }
+}
+
+/**
+ * {@link FetchingDTO} for these rows: the organizer's standing when at least one of them is a row it
+ * is on duty to fetch. The rule is the worker's own (`reconcileRoster`'s `served`, its heartbeat's
+ * `expected`): every row that is not disabled, so also one it reads for another install's organizer
+ * and one in error, less the rows it leaves out and says so on (a closed account's, those past its
+ * capacity). A row's answer and the pull's both ask here; `mailbox-facts-batched.pg.test.ts` holds
+ * the rule to that roster.
+ */
+function fetchingFor(
+  standing: OrganizerStandingFact | null, rows: ReadonlyArray<{ status: string; syncBlockedReason: string | null }>,
+): FetchingDTO | null {
+  // What the worker writes on a row its roster left out; every other block is a row it keeps trying.
+  const offDuty: ReadonlyArray<string | null> = ["account_closed", "at_capacity"] satisfies MailboxSyncBlockReason[];
+  return standing && rows.some((m) => m.status !== "disabled" && !offDuty.includes(m.syncBlockedReason))
+    ? { behind: standing.behind, since: standing.since }
+    : null;
 }
 
 /**

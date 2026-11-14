@@ -25,7 +25,7 @@ import {
 } from "../src/theme";
 import { usePrefs } from "../src/state/store";
 import { useWorld } from "../src/state/world";
-import { connectionSaid, firstSyncSaid } from "../src/state/live";
+import { connectionSaid, firstSyncSaid, readerZone } from "../src/state/live";
 import { Button, Chip, Panel, Rule, Screen, Scroller, Section, TapRow, Txt } from "../src/ui/base";
 import { Sheet, SheetRow } from "../src/ui/Sheet";
 import { Nav } from "../src/ui/MoreNav";
@@ -78,7 +78,7 @@ import {
   type StandaloneFields,
 } from "../src/ui/standalone-form";
 import { useLocale, useLocaleControls } from "../src/i18n/LocaleProvider";
-import { type AppLocale } from "../src/i18n/locale";
+import { activeLocale, type AppLocale } from "../src/i18n/locale";
 import { DetailBar, PaneTop } from "../src/ui/chrome";
 import { YieldToMore } from "../src/ui/more-move";
 import { useMorePick } from "../src/ui/more-pane";
@@ -110,6 +110,7 @@ import { WaitingStrip } from "../src/ui/WaitingStrip";
 import { FilingStrip } from "../src/ui/FilingStrip";
 import { FilingsBlocks } from "../src/ui/FilingsBlock";
 import { filingsWaiting } from "../src/ui/filing-lines";
+import { lateWho, notCheckedNoteSaid } from "../src/ui/late-lines";
 
 /** Gated like the tabs: the About block states a live session's facts, so it needs one. */
 export default function SettingsScreen({ inPane = false }: { inPane?: boolean }) {
@@ -632,7 +633,9 @@ function ThisPhonePanel() {
      "Reconnecting…" on its own sends somebody to look at their network. Silent in every other
      state (`live.ts#firstSyncSaid`). */
   const unreadable = firstSyncSaid(w.boot.firstSync);
-  const cards: readonly { key: string; address: string; claim: PhoneClaim }[] = here !== null
+  /* Who checks the mailboxes behind this session, for a row whose server says it is not fetching. */
+  const lateBy = lateWho(conn.state.k === "live" ? conn.state.session : null);
+  const cards: readonly { key: string; address: string; claim: PhoneClaim; late?: string | null }[] = here !== null
     ? [{
         key: HERE_CARD,
         address: here.address,
@@ -663,6 +666,8 @@ function ThisPhonePanel() {
           parked: (row.organizerParkedAt ?? null) !== null,
           organizer: claimHolderOf(row),
         }),
+        /* NEW MAIL IS LATE for this mailbox: the strip's sentence, for the row it is about. */
+        late: notCheckedNoteSaid(row, Date.now(), readerZone(), activeLocale(), lateBy),
       }));
   if (cards.length === 0) return null;
 
@@ -698,6 +703,9 @@ function ThisPhonePanel() {
                     {claimNoteLine(claim, Platform.OS, { declined: declinedHere(row.key) })}
                   </Txt>
                 )}
+                {/* THE SERVER IS NOT CHECKING THIS MAILBOX — calm, no alert and no press: nothing
+                    here is the person's to do, and it leaves when the server says fetching runs. */}
+                {row.late == null ? null : <Txt variant="note" tone="ink2">{row.late}</Txt>}
                 {/* THE CONNECTION, WHERE SOMEBODY ASKING "IS MY MAIL BEING FILED?" IS LOOKING.
                     The chip above answers who ORGANIZES the mailbox; this answers whether
                     anything can reach it. Both, because they are true at once: this phone is

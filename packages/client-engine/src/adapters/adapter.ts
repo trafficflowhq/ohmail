@@ -9,8 +9,11 @@ import type {
   AttachmentWire, AutoFiledItemWire, AutoFiledUndoWire, AutoFiledWire, HeldReleaseGroupWire, HeldReleaseResultWire,
   HeldReleaseSenderWire, HeldReleaseWire, MutationAnswer, MutationOutcome, MutationQueued, ScreenerWaitingItemWire,
   ScreenerWaitingWire, StayedWhy, StayedWire, UnscreenedGroupWire, UnscreenedPileWire, UnscreenedResultWire, UnscreenedWire,
-  WithdrawSendOutcome,
+  WithdrawSendOutcome, FetchingDTO as FetchingStanding,
 } from "@ohmail/wire";
+
+/* Is the server fetching new mail (`behind`, and `since` the last finished pass): from its one home, under the engine's name. */
+export type { FetchingDTO as FetchingStanding } from "@ohmail/wire";
 
 /* What an act comes back as, and the Screener's and the attachment list's answers: from their one home. */
 export type {
@@ -70,6 +73,24 @@ export interface CreatedDraftRow {
   fingerprint?: string | null;
 }
 
+/** What the worker doorbell (`POST /sync/pull`) answers. */
+export interface PullRing {
+  requested: number;
+  requestedAt: string;
+  /**
+   * Each mailbox's OWN effective request instant, at the DATABASE's clock — the honest-settle
+   * baseline. A mailbox holding a young standing request answers with THAT stamp, not with
+   * this call's, so a settle that compares per mailbox never waits on a bar an already-owed
+   * visit could not have aimed at.
+   */
+  mailboxes: Array<{ id: string; requestedAt: string }>;
+  /**
+   * The server's word on fetching at the ring. `null`: this server does not say. Absent: an older
+   * server, or an answer this build cannot read. Neither is "not behind".
+   */
+  fetching?: FetchingStanding | null;
+}
+
 export interface EngineAdapter {
   /** Fetch one /sync page. Throws CursorExpiredError on a 410 (§3.2). */
   sync(params: SyncParams): Promise<SyncResponse>;
@@ -93,17 +114,7 @@ export interface EngineAdapter {
   /** One Search's timings ({@link WindowSearchPhases}), to the same door; absent on the hosted client. */
   reportSearchPhases?(record: WindowSearchPhases): Promise<void>;
   /** `mailboxIds`: the mailboxes a press is about; a local organizer rings only those. Absent, all. */
-  requestPull?(opts?: { mailboxIds?: readonly string[] }): Promise<{
-    requested: number;
-    requestedAt: string;
-    /**
-     * Each mailbox's OWN effective request instant, at the DATABASE's clock — the honest-settle
-     * baseline. A mailbox holding a young standing request answers with THAT stamp, not with
-     * this call's, so a settle that compares per mailbox never waits on a bar an already-owed
-     * visit could not have aimed at.
-     */
-    mailboxes: Array<{ id: string; requestedAt: string }>;
-  }>;
+  requestPull?(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing>;
   /**
    * Execute a mutation. `idempotencyKey` is stable across retries of the SAME
    * logical intent (contract §1.6) — a replay must not double-apply.

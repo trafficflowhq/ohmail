@@ -1,6 +1,6 @@
 {
-  "release": "1.0.11",
-  "tag": "aa2b4124cb9d0dc0e6eb3828620858d7f3384bba",
+  "release": "1.0.12",
+  "tag": "1834df28cb48b8caa9cb05ece451d561d8672dc4",
   "note": "Every migration file the three journals (mail, Cloud, device store) named at this commit, with the sha256 drizzle records when it applies one. A released migration is immutable: edit it and released-migrations-are-frozen.test.ts reddens. Write a new migration instead. A device store knows an applied entry by its file name alone, so a device-store file is also never renamed or removed, no allowance admits an edit of one, and no new entry sorts below the highest one pinned here. scripts/pin-released-migrations.mjs writes this file.",
   "files": {
     "packages/db-mail/drizzle-sqlite/0001_baseline.sql": "cfb0daa1bf793284760283078d736564bb5fcdca3472a2ef3df03bde2be7d53d",

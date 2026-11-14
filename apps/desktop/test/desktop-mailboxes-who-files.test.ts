@@ -2,12 +2,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { IntlProvider } from "use-intl";
+import { IntlProvider, createTranslator } from "use-intl";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 
 import messages from "../../webapp/messages/en.json";
 import messagesDe from "../../webapp/messages/de.json";
 import type { MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
+import { waterlineStamp } from "../../webapp/app/shell/format";
+import { activeFormatLocale, setActiveFormatZone } from "../../webapp/app/shell/locale";
 
 /**
  * THE DESKTOP PANE SAYS WHO FILES THE MAILBOX. On its own door this computer files what it
@@ -213,5 +215,110 @@ describe("the desktop pane's heading names the door, never ohmail Cloud for a se
     await render({ door: "cloud", host: "studio", flavor: "desktop-host" });
     expect(heading()).toBe(copy.modeHost!.replace("{name}", "studio"));
     expect(said()).not.toMatch(/\bCloud\b/);
+  });
+});
+
+/**
+ * A MAILBOX THE SERVER IS NOT CHECKING DOES NOT READ AS HEALTHY IN THE DESKTOP WINDOW. An account
+ * on a server reads that server's word on each row (`fetching`); for 26 hours the service fetched
+ * nothing and every row said "Last checked …" and "Up to date". The row now leads with "Not
+ * checked · since …", says nothing healthy beside it and says it once, and carries one note
+ * naming who is not checking. A computer that organizes on its own gets no such word and shows
+ * nothing.
+ *
+ * Watched red at the base. Mutations that red them again: the state cell left on "Up to date", or
+ * saying "Not checked" a second time (the first case); the note's filer pointed at "cloud" (the
+ * self-hosted case); the note drawn on a paired door (the paired case).
+ */
+describe("a mailbox whose new mail is not being fetched, in the desktop window", () => {
+  const said = {
+    en: createTranslator({ locale: "en", messages: messages as never, namespace: "mailboxes" as never }) as unknown as
+      (key: string, values?: Record<string, string | number>) => string,
+    de: createTranslator({ locale: "de", messages: messagesDe as never, namespace: "mailboxes" as never }) as unknown as
+      (key: string, values?: Record<string, string | number>) => string,
+  };
+  const SINCE = new Date(Date.now() - 50 * 60_000).toISOString();
+  /** The time as the pane says it, through the pane's own formatter and register. */
+  const stamp = (): string => waterlineStamp(SINCE, new Date(), activeFormatLocale());
+  const LATE: MailboxFacts = { ...ORGANIZING, lastSyncAt: SINCE, fetching: { behind: true, since: SINCE } };
+  const text = (): string => mountPoint?.textContent ?? "";
+  /** The healthy lines' own words, whatever time follows them. */
+  const lastChecked = (locale: "en" | "de"): string => said[locale]("desktopLastChecked", { when: "" }).trim();
+  const unmountNow = async (): Promise<void> => {
+    if (root) await act(async () => { root!.unmount(); });
+    mountPoint?.remove();
+    root = null;
+    mountPoint = null;
+  };
+
+  beforeEach(() => { setActiveFormatZone("UTC"); });
+  afterEach(() => { setActiveFormatZone(null); });
+
+  it("on ohmail Cloud's door the row leads with not checked and since when, and says nothing healthy", async () => {
+    FACTS = [LATE];
+    await render({ door: "cloud", flavor: "managed" });
+    expect(text()).toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text(), "the row still says when it was last checked as if that were news").not.toContain(lastChecked("en"));
+    expect(text(), "the row still reads as healthy").not.toContain(copy.desktopStateUpToDate!);
+    expect(text()).toContain(said.en("notCheckedNoteCloud", { hasSince: "yes", since: stamp() }));
+    // Said once on the row: its line carries it, and no state word repeats it beside.
+    expect(text().split(said.en("notChecked", { hasSince: "no", since: "" })).length - 1).toBe(1);
+    expect(mountPoint!.querySelectorAll('[role="group"] [role="status"]'), "an empty state cell was drawn").toHaveLength(0);
+  });
+
+  it("with no time on record it says so without one", async () => {
+    FACTS = [{ ...LATE, fetching: { behind: true, since: null } }];
+    await render({ door: "cloud", flavor: "managed" });
+    expect(text()).toContain(said.en("notChecked", { hasSince: "no", since: "" }));
+    expect(text()).toContain(said.en("notCheckedNoteCloud", { hasSince: "no", since: "" }));
+    expect(text()).not.toContain(copy.desktopStateUpToDate!);
+  });
+
+  it("on a self-hosted server's door it names your ohmail server, never ohmail Cloud, in both languages", async () => {
+    FACTS = [LATE];
+    for (const locale of ["en", "de"] as const) {
+      await render({ door: "cloud", flavor: "selfhost" }, locale);
+      expect(text()).toContain(said[locale]("notChecked", { hasSince: "yes", since: stamp() }));
+      expect(text()).toContain(said[locale]("notCheckedNoteServer", { hasSince: "yes", since: stamp() }));
+      expect(text(), `${locale}: a self-hosted server was called Cloud`).not.toMatch(/Cloud/);
+      await unmountNow();
+    }
+  });
+
+  it("on a paired door the row says it and no note blames a service", async () => {
+    FACTS = [LATE];
+    await render({ door: "cloud", host: "studio", flavor: "desktop-host" });
+    expect(text()).toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text()).not.toContain(said.en("notCheckedNoteCloud", { hasSince: "yes", since: stamp() }));
+    expect(text()).not.toContain(said.en("notCheckedNoteServer", { hasSince: "yes", since: stamp() }));
+    expect(text()).not.toMatch(/Cloud/);
+  });
+
+  it("a mailbox with its own trouble keeps its own word, and its row gets no second explanation", async () => {
+    FACTS = [{ ...LATE, status: "error", errorCode: "auth" }];
+    await render({ door: "cloud", flavor: "managed" });
+    expect(text()).toContain(said.en("desktopStateError", { code: "auth" }));
+    expect(text()).not.toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text()).not.toContain(said.en("notCheckedNoteCloud", { hasSince: "yes", since: stamp() }));
+  });
+
+  it.each([
+    ["null: this server does not say", null],
+    ["absent: an older server", undefined],
+    ["not behind", { behind: false, since: SINCE }],
+  ] as Array<[string, MailboxFacts["fetching"] | undefined]>)("CONTROL: %s reads as it did", async (_what, fetching) => {
+    const { fetching: _drop, ...plain } = LATE;
+    FACTS = [fetching === undefined ? plain : { ...plain, fetching }];
+    await render({ door: "cloud", flavor: "managed" });
+    expect(text()).toContain(lastChecked("en"));
+    expect(text()).toContain(copy.desktopStateUpToDate!);
+    expect(text()).not.toContain(said.en("notChecked", { hasSince: "no", since: "" }));
+  });
+
+  it("CONTROL: a computer that organizes on its own gets null from its own engine and shows nothing", async () => {
+    FACTS = [{ ...ORGANIZING, fetching: null }];
+    await render({ door: "local" });
+    expect(text()).toContain(lastChecked("en"));
+    expect(text()).not.toContain(said.en("notChecked", { hasSince: "no", since: "" }));
   });
 });

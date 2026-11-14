@@ -78,6 +78,18 @@
   </screenshots>
 
   <releases>
+    <release version="1.0.12" date="2026-11-14">
+      <description>
+        <ul>
+          <li>One organizer fetches mail, also when its database connection goes silent</li>
+          <li>The apps say when new mail is not being fetched</li>
+          <li>The organizer waits out a database outage and resumes by itself</li>
+          <li>A screen reader hears which Settings section is open</li>
+          <li>ohmail says so when it is too old for its server, or its server is being updated</li>
+          <li>The iPhone app's "please update" card opens the App Store</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.0.11" date="2026-11-11">
       <description>
         <ul>
@@ -103,13 +115,6 @@
       <description>
         <ul>
           <li>A full mailbox now says it is full</li>
-        </ul>
-      </description>
-    </release>
-    <release version="1.0.7" date="2026-11-10">
-      <description>
-        <ul>
-          <li>The Screener's line for letters that claimed to be a company follows a filing at once</li>
         </ul>
       </description>
     </release>

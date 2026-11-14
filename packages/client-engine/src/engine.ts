@@ -15,7 +15,7 @@ import { CALENDAR_FALLBACK_FILENAME, calendarPartRank, isCalendarBodyPart, isCal
 import type {
   AttachmentWire, CreatedDraftRow, EngineAdapter, MutationOutcome, MutationQueued, ReadIntent, ScreenerWaitingItemWire, ScreenerWaitingWire,
   StayedWhy, UnscreenedPileWire, WithdrawSendAnswer, WithdrawSendOutcome, ScheduleFilesAnswer,
-  AutoFiledUndoWire, AutoFiledWire,
+  AutoFiledUndoWire, AutoFiledWire, PullRing,
 } from "./adapters/adapter.js";
 import { messageIdKey, mutationEffects, replySubject, sentOverlayMessage, type MutationEffect } from "./mutations.js";
 import { SHADOW_DRAIN_BOUND, shadowAgrees, shadowKeysOf, verbTargetsOf, type ShadowKey } from "./shadow.js";
@@ -3536,10 +3536,7 @@ export class OhmailEngine {
     void sink(record).catch(() => { /* the log is a courtesy */ });
   }
 
-  async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<{
-    requested: number; requestedAt: string;
-    mailboxes: Array<{ id: string; requestedAt: string }>;
-  } | null> {
+  async requestPull(opts?: { mailboxIds?: readonly string[] }): Promise<PullRing | null> {
     const ring = this.adapter.requestPull?.bind(this.adapter);
     if (!ring) return null;
     try {

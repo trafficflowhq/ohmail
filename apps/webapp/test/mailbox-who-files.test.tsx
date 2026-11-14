@@ -2,11 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { NextIntlClientProvider } from "next-intl";
+import { NextIntlClientProvider, createTranslator } from "next-intl";
 import en from "../messages/en.json";
 import de from "../messages/de.json";
 import type { MailboxDTO, SubscriptionStatus } from "../app/api-client";
 import type { MailState } from "@ohmail/app-logic/mail-state/mail-state";
+import { waterlineStamp } from "../app/shell/format";
+import { activeFormatLocale, setActiveFormatZone } from "../app/shell/locale";
 
 /**
  * SETTINGS → MAILBOXES SAYS WHO FILES THE MAILBOX. On the web the organizer is the server the page
@@ -177,6 +179,112 @@ describe.each([
     expect(orgText(el)).toContain(copyDe[`stateOrganizing${arm}`]!);
     expect(orgText(el)).not.toContain(copyDe.stateOrganizingHere!);
     expect(orgText(el)).not.toContain(`stateOrganizing${arm}`);
+  });
+});
+
+/**
+ * A MAILBOX THE SERVICE IS NOT CHECKING DOES NOT READ AS HEALTHY. For 26 hours every row said
+ * "Connected · Synced" with the time of the day before. The row now leads its state with "Not
+ * checked · since …" and carries one note naming who is not checking; a mailbox with its own
+ * trouble keeps its own word and its own press.
+ *
+ * Watched red at the base (every case read "Synced …" and no note). Mutations that red them again:
+ * the row's condition no longer asking for a connected, unblocked mailbox (the two own-trouble
+ * cases: a second explanation under the row); the note's filer pointed at "cloud" (the
+ * self-hosted cases).
+ */
+describe.each([
+  { name: "ohmail Cloud (the managed build)", selfHost: false, arm: "Cloud" },
+  { name: "a self-hosted server", selfHost: true, arm: "Server" },
+])("a mailbox whose new mail is not being fetched, on $name", ({ selfHost, arm }) => {
+  const said = {
+    en: createTranslator({ locale: "en", messages: en as never, namespace: "mailboxes" as never }) as unknown as
+      (key: string, values?: Record<string, string | number>) => string,
+    de: createTranslator({ locale: "de", messages: de as never, namespace: "mailboxes" as never }) as unknown as
+      (key: string, values?: Record<string, string | number>) => string,
+  };
+  const SINCE = new Date(Date.now() - 50 * 60_000).toISOString();
+  /** The time as the pane says it, through the pane's own formatter and register. */
+  const stamp = (): string => waterlineStamp(SINCE, new Date(), activeFormatLocale());
+  const late = (over: Partial<MailboxDTO> = {}): MailboxDTO =>
+    organizing({ lastSyncAt: SINCE, fetching: { behind: true, since: SINCE }, ...over } as Partial<MailboxDTO>);
+  /** "Synced " — the healthy line's own words, whatever time follows them. */
+  const synced = (locale: "en" | "de"): string => said[locale]("syncedAgo", { when: "" }).trim();
+
+  beforeEach(() => { build.selfHost = selfHost; setActiveFormatZone("UTC"); });
+  afterEach(() => { setActiveFormatZone(null); });
+
+  it("the row leads with not checked and since when, and no longer says synced", async () => {
+    const el = await mount("en", late());
+    const text = el.textContent ?? "";
+    expect(text).toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text, "the row still reads as healthy").not.toContain(synced("en"));
+  });
+
+  it("its note is the notice's sentence for that mailbox, naming who is not checking", async () => {
+    const el = await mount("en", late());
+    const text = el.textContent ?? "";
+    expect(text).toContain(said.en(`notCheckedNote${arm}`, { hasSince: "yes", since: stamp() }));
+    if (selfHost) expect(text, "a self-hosted server was called Cloud").not.toMatch(/Cloud/);
+    else expect(text).not.toContain(said.en("notCheckedNoteServer", { hasSince: "yes", since: stamp() }));
+  });
+
+  it("with no time on record both say so without one", async () => {
+    const el = await mount("en", late({ fetching: { behind: true, since: null } } as Partial<MailboxDTO>));
+    const text = el.textContent ?? "";
+    expect(text).toContain(said.en("notChecked", { hasSince: "no", since: "" }));
+    expect(text).toContain(said.en(`notCheckedNote${arm}`, { hasSince: "no", since: "" }));
+    expect(text).not.toContain(synced("en"));
+  });
+
+  it("it is calm and has no press of its own: the row's controls are the ones it had", async () => {
+    const calm = await mount("en", organizing());
+    const before = [...calm.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim());
+    const el = await mount("en", late());
+    expect([...el.querySelectorAll("button")].map((b) => (b.textContent ?? "").trim())).toEqual(before);
+    expect(el.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it("a mailbox with its own trouble keeps its own word and its own press, and gets no second explanation", async () => {
+    const el = await mount("en", late({ status: "error", errorCode: "auth" } as Partial<MailboxDTO>));
+    const text = el.textContent ?? "";
+    expect(text).toContain(copy.err_auth!);
+    expect(text).not.toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text).not.toContain(said.en(`notCheckedNote${arm}`, { hasSince: "yes", since: stamp() }));
+    expect(buttonExactly(el, copy.syncNow!), "the row lost its press").not.toBeNull();
+  });
+
+  it("a mailbox we are declining to sync keeps that sentence", async () => {
+    const el = await mount("en", late({
+      syncBlockedReason: "at_capacity", syncBlockedSince: SINCE,
+    } as Partial<MailboxDTO>));
+    const text = el.textContent ?? "";
+    expect(text).toContain((en.sync as unknown as Record<string, string>).blocked_at_capacity!);
+    expect(text).not.toContain(said.en("notChecked", { hasSince: "yes", since: stamp() }));
+    expect(text).not.toContain(said.en(`notCheckedNote${arm}`, { hasSince: "yes", since: stamp() }));
+  });
+
+  it.each([
+    ["null: this server does not say", null],
+    ["absent: an older server", undefined],
+    ["not behind", { behind: false, since: SINCE }],
+  ] as Array<[string, MailboxDTO["fetching"] | undefined]>)("CONTROL: %s reads as it did", async (_what, fetching) => {
+    const el = await mount("en", organizing({
+      lastSyncAt: SINCE, ...(fetching === undefined ? {} : { fetching }),
+    } as Partial<MailboxDTO>));
+    const text = el.textContent ?? "";
+    expect(text).toContain(synced("en"));
+    expect(text).not.toContain(said.en("notChecked", { hasSince: "no", since: "" }));
+  });
+
+  it("…in German too", async () => {
+    const el = await mount("de", late());
+    const text = el.textContent ?? "";
+    const when = stamp();
+    expect(text).toContain(said.de("notChecked", { hasSince: "yes", since: when }));
+    expect(text).toContain(said.de(`notCheckedNote${arm}`, { hasSince: "yes", since: when }));
+    expect(text).not.toContain(synced("de"));
+    if (selfHost) expect(text).not.toMatch(/Cloud/);
   });
 });
 

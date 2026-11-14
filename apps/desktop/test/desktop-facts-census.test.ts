@@ -159,6 +159,9 @@ describe("the desktop mailbox-facts seam", () => {
       gapLetters: 2,
       /* Its stranger count (mail 0158), beside it. */
       gapStrangers: 3,
+      /* Whether new mail is being fetched: a Cloud account's rows carry the server's answer. Unforwarded,
+         no desktop door could say that the server had stopped fetching. */
+      fetching: { behind: true, since: "2026-11-12T18:42:34.000Z" },
       organizerChecked: false,
       addressIsOwn: false,
       organizerAcceptsRequests: false,

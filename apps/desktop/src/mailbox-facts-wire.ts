@@ -151,6 +151,12 @@ interface MailboxWire {
     lastCycleAt: string | null;
   };
   /**
+   * Whether new mail is being fetched. The local engine answers `null`: its organizer is this
+   * process and keeps no heartbeat, and a desktop must never be told its own organizer is behind.
+   * A Cloud account's rows carry the server's answer.
+   */
+  fetching?: { behind: boolean; since: string | null } | null;
+  /**
    * The forwarding-detection notice's evidence pair (mail 0078): a standing quiet episode's
    * newest genuine inbound date, and this mailbox's dismissal. Absent on an engine that
    * predates the columns; forwarded by the `in`-spread below on the same rule as its
@@ -300,6 +306,7 @@ export async function readMailboxFactsVia(
     // must arrive with no key at all, so the strip falls back to the count alone rather than
     // rendering an arm with no reason in it.
     ...("filing" in m ? { filing: m.filing } : {}),
+    ...("fetching" in m ? { fetching: m.fetching } : {}),
     // THE FORWARDING-DETECTION PAIR (mail 0078), forwarded by the same `in` spread and for the
     // same reason as every optional field above: absent is an engine that predates the columns
     // and must arrive absent, so the pane renders nothing rather than asserting "no episode".

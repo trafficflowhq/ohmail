@@ -27,7 +27,7 @@ import { StoreStatementFaultError } from "@trafficflow/core/mail";
 // `test/one-pipeline.test.ts` holds this import to that subpath, and the Cloud census resolves
 // it like every other workspace edge.
 import {
-  drainPageLimit, mirrorFreshness, mirrorStale, type MirrorFreshness,
+  drainPageLimit, mirrorFreshness, mirrorStale, STALE_RESUME_MS, type MirrorFreshness,
 } from "@trafficflow/core/drain-policy";
 import type {
   ApprovalDTO, ChangeOp, DraftDTO, EntityType, MailboxDTO, MessageBodyBatchItem, MessageDTO,
@@ -407,6 +407,19 @@ export interface HostedGap { letters: number; strangers?: number }
 /** One hosted mailbox's filing figures as Cloud answered them — see {@link CloudMirror.hostedFilings}. */
 export interface HostedFiling { pendingMoves: number; filing: MailboxDTO["filing"] }
 
+/** The server's word on fetching for one hosted mailbox, or `null` where it does not say — see {@link CloudMirror.hostedFetching}. */
+export type HostedFetching = { behind: boolean; since: string | null } | null;
+
+/** The hosted `fetching` narrowed at the wire: `null`, a word with a boolean `behind`, or nothing (`undefined`). */
+function hostedFetchingOf(m: MailboxDTO): HostedFetching | undefined {
+  const f = (m as { fetching?: unknown }).fetching;
+  if (f === null) return null;
+  if (typeof f !== "object") return undefined;
+  const { behind, since } = f as { behind?: unknown; since?: unknown };
+  if (typeof behind !== "boolean") return undefined;
+  return { behind, since: typeof since === "string" ? since : null };
+}
+
 /** The hosted `filing` object narrowed at the wire: every member of the shape, or nothing. */
 function hostedFilingOf(m: MailboxDTO): HostedFiling | null {
   const f = (m as { filing?: unknown }).filing as Record<string, unknown> | null | undefined;
@@ -605,6 +618,15 @@ export interface CloudMirror {
    * answer without a well-formed `filing` (an older server).
    */
   hostedFilings(): ReadonlyMap<string, HostedFiling>;
+  /**
+   * WHETHER THE SERVER IS FETCHING NEW MAIL (`fetching` of the hosted answer), per hosted mailbox
+   * id: its word, or `null` where it does not say. This store's own read has no such word, so the
+   * hosted door's list carries this one, or the window looks healthy while its server fetches
+   * nothing. Rebuilt at every mailbox refresh; absent for an answer without a well-formed one (an
+   * older server). EMPTY once nobody can renew it: after a refresh that failed, and when the last
+   * one is older than `STALE_RESUME_MS`. A word that old says nothing about now.
+   */
+  hostedFetching(): ReadonlyMap<string, HostedFetching>;
   /**
    * The freshness contract's verdict for this mirror (INSTANT-ARCH §6.6) — the same three states
    * the client engine's `freshness()` derives, from this mirror's completion stamp ({@link
@@ -2745,6 +2767,11 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let hostedSyncs = new Map<string, string | null>();
   /** The hosted filing figures — see {@link CloudMirror.hostedFilings}. Empty until a refresh lands. */
   let hostedFilings = new Map<string, HostedFiling>();
+  /** The server's word on fetching — see {@link CloudMirror.hostedFetching}. Empty until a refresh lands. */
+  let hostedFetching = new Map<string, HostedFetching>();
+  /** When that word was last read from the server. `-Infinity` ⇒ never, or lapsed. */
+  let fetchingReadAt = Number.NEGATIVE_INFINITY;
+  const NO_FETCHING: ReadonlyMap<string, HostedFetching> = new Map();
   /** When counts were last ASKED for (not when they last changed). `-Infinity` ⇒ never. */
   let countsAskedAt = Number.NEGATIVE_INFINITY;
   /**
@@ -2813,7 +2840,8 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
   let boxesLane: Promise<unknown> = Promise.resolve();
   const refreshMailboxes = (): Promise<MailboxRefreshOutcome> => {
     const run = boxesLane.then(refreshMailboxesNow, refreshMailboxesNow);
-    boxesLane = run.catch(() => undefined);
+    // A refresh that failed renews nothing: the server's word on fetching lapses with it.
+    boxesLane = run.catch(() => { fetchingReadAt = Number.NEGATIVE_INFINITY; });
     return run;
   };
   const refreshMailboxesNow = async (): Promise<MailboxRefreshOutcome> => {
@@ -2877,6 +2905,14 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
       if (f !== null) filings.set(m.id, f);
     }
     hostedFilings = filings;
+    // The server's word on fetching, rebuilt whole: a well-formed word or `null`, nothing else.
+    const fetching = new Map<string, HostedFetching>();
+    for (const m of hosted) {
+      const f = hostedFetchingOf(m);
+      if (f !== undefined) fetching.set(m.id, f);
+    }
+    hostedFetching = fetching;
+    fetchingReadAt = now().getTime();
     hostedMailboxIds = hosted.map((m) => m.id);
     boxesAsk = Math.max(boxesAsk, ask);
     await cfg.onMailboxes?.().catch(() => undefined);
@@ -4559,6 +4595,7 @@ export function createCloudMirror(cfg: CloudMirrorConfig): CloudMirror {
     hostedGaps: () => hostedGaps,
     hostedSyncs: () => hostedSyncs,
     hostedFilings: () => hostedFilings,
+    hostedFetching: () => (now().getTime() - fetchingReadAt > STALE_RESUME_MS ? NO_FETCHING : hostedFetching),
     // THE SHARED THREE-STATE DERIVATION — literally the function `OhmailEngine.freshness()`
     // calls, over this mirror's own stamp and this process's own clock. One derivation, three
     // renderers (the web ladder, the phone's wordmark line, the desktop window over

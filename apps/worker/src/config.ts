@@ -169,9 +169,32 @@ export function resolveSharedAccountTurnMs(requested: number | undefined, heavyT
 /** Standby lock-retry backoff — a hot spare re-tries every 15 s. */
 export const DEFAULT_STANDBY_RETRY_MS = 15_000;
 /**
- * How long an instance may SERVE NOTHING before `/health` stops calling it healthy. Two states are
+ * The wait between two attempts to reach a database that is away: this base, doubled per attempt up
+ * to the cap, each wait drawn from the upper half of its step so several instances do not dial a
+ * recovering pooler together. THIRTY SECONDS at most: the worker leads again within that of the
+ * database's return, and an outage of any length costs two dials a minute.
+ */
+export const DEFAULT_DB_WAIT_BASE_MS = 5_000;
+export const DEFAULT_DB_WAIT_CAP_MS = 30_000;
+/**
+ * How long one step of first contact (the key-retirement gate's read; the lock session's dial and
+ * its statements) may take before the supervisor ends that step's sessions and tries again. The
+ * driver bounds the handshake alone (its connect timeout, 30 s): a session that completed it and was
+ * then neither answered nor closed was waited on for ever, with no retry behind it. SIXTY SECONDS,
+ * above the driver's bound, so a silent dial still fails by the driver's own word.
+ */
+export const DEFAULT_FIRST_CONTACT_DEADLINE_MS = 60_000;
+/**
+ * How long a leader that lost its lock, or gave its leadership up, may take to close what it holds
+ * before it starts over. Past it the process exits: a pass that never returns (a statement on a
+ * connection that neither answers nor closes) cannot be waited out, and a restart closes it.
+ */
+export const DEFAULT_SURRENDER_DEADLINE_MS = 120_000;
+/**
+ * How long an instance may SERVE NOTHING before `/health` stops calling it healthy. Three states are
  * measured against it (`evaluateHealth` in `health.ts`): an instance waiting for the leader lock this
- * long, and a leader with mailboxes to serve that served none this long. Before this bound both
+ * long, a leader with mailboxes to serve that served none this long, and a leader whose own database
+ * has failed this long. Before this bound the first two
  * answered 200 for ever (a wedge and a hot spare are the same snapshot; the second required a
  * quarantine on record), and an eight-minute outage went unannounced behind a green probe. TWO
  * MINUTES, load-bearing both ways: a measured deploy handover is ~5 s (so a hot spare is 23× inside
@@ -191,9 +214,14 @@ export const DEFAULT_SERVING_NOTHING_MAX_MS = 120_000;
  */
 export const MIN_SERVING_NOTHING_MAX_MS = 60_000;
 /**
+ * The ceiling on `TF_STANDBY_RETRY_MS`: the serving bound's own floor, so a spare asks for the lock at
+ * least once inside any serving bound it can be given. It is also far below what a timer holds.
+ */
+export const MAX_STANDBY_RETRY_MS = MIN_SERVING_NOTHING_MAX_MS;
+/**
  * How stale the leader's last COMPLETED cycle may go, with mailboxes connected, before `/health`
- * reports `degraded` — never unhealthy. The platform gates a deployment on this endpoint and never
- * re-probes, so a slow cycle must not refuse a deploy; what it must stop doing is hiding. The blind
+ * reports `degraded`. This bound never answers 503 ({@link DEFAULT_STUCK_CYCLE_MAX_MS} does): the
+ * platform gates a deployment on this endpoint, so a slow cycle must not refuse a deploy; what it must stop doing is hiding. The blind
  * spot it closes: `serving_nothing` requires `connected === 0`, so a leader whose mailboxes were all
  * attached but whose cycle had stopped completing read `healthy: true` for ever (measured at
  * `lagSeconds: 560` during a cold backfill). EIGHT MINUTES, both ways: a first post-takeover cycle is
@@ -201,6 +229,40 @@ export const MIN_SERVING_NOTHING_MAX_MS = 60_000;
  * and it stays below `syncLagMs` (15 min) so `/health` turns amber before the pager fires. Wall clock.
  */
 export const DEFAULT_STALE_CYCLE_MAX_MS = 480_000;
+/**
+ * How long a leader's cycle may stand still, with mailboxes connected, before `/health` answers 503
+ * `stuck_cycle` and the process exits for its host to start it again (`supervisor.ts`). The floor of
+ * `stuckCycleBoundMs` in `health.ts`, which gives a shard four of its own rotations when that is
+ * longer. TWENTY MINUTES: on 12 November 2026 every lane entered a statement the database never
+ * answered and the worker ran for 22 minutes fetching nothing. Above the stale hint (8 min), the
+ * `worker_degraded` page (10 min) and `sync_lag` (15 min), so a person is told before the process acts.
+ */
+export const DEFAULT_STUCK_CYCLE_MAX_MS = 1_200_000;
+/**
+ * The longest delay a timer holds: 2^31 - 1 ms, about 24.8 days. Node runs a longer one after 1 ms,
+ * so a bound above it would be overdue the moment it is set.
+ */
+export const MAX_TIMER_MS = 2_147_483_647;
+/** A bound as a timer can hold it. Applied where a bound is computed, so the log names the one in force. */
+export function timerMs(ms: number): number {
+  return Math.min(ms, MAX_TIMER_MS);
+}
+/**
+ * How long a takeover (the lock is won, the worker is starting) may run before the process exits and
+ * the lock goes with it. Not the stuck floor alone: a takeover waits for every mailbox's attach, each
+ * bounded by {@link ATTACH_DEADLINE_MS} and run one after another per mail host, so a mail host that
+ * hangs every dial makes an honest takeover longer than twenty minutes, and ending it there would
+ * leave nobody's mail fetched for as long as that host is down. The bound is the floor plus that
+ * worst case, so no honest takeover reaches it; one that waits on a statement its database never
+ * answers no longer holds the lock for good. The sum grows with `TF_MAX_MAILBOXES` and passes what a
+ * timer holds at 11,924 mailboxes ({@link timerMs}).
+ */
+export function takeoverDeadlineMsOf(
+  config: Pick<WorkerConfig, "takeoverDeadlineMs" | "stuckCycleMaxMs" | "maxMailboxes" | "attachDeadlineMs">,
+): number {
+  return timerMs(config.takeoverDeadlineMs ?? (config.stuckCycleMaxMs ?? DEFAULT_STUCK_CYCLE_MAX_MS)
+    + (config.maxMailboxes ?? DEFAULT_MAX_MAILBOXES) * (config.attachDeadlineMs ?? ATTACH_DEADLINE_MS));
+}
 /**
  * `POLL_INTERVAL_MS`'s default and its band. Below the floor the shard's cycle is queued
  * continuously; at or above {@link DEFAULT_STALE_CYCLE_MAX_MS} an idle deployment reads
@@ -235,6 +297,24 @@ export const DEFAULT_SYNC_BLOCK_GRACE_MS = 240_000;
 export const DEFAULT_LEASE_UNAVAILABLE_DETACH_MS = 120_000;
 /** How often the leader proves it still HOLDS its advisory lock (split-brain guard). */
 export const DEFAULT_LOCK_HEARTBEAT_MS = 10_000;
+/**
+ * How many heartbeats in a row a leader may ask for a proof of its lock and get none before it treats
+ * itself as not sure and stops leading, exactly as on a lost lock. A session that stays open while
+ * nothing answers on it (a path that drops packets) never closes and never answers "not held", so
+ * without this bound its leader believed for good while a successor took the lock. THREE: one answer
+ * may come late and one rejected check is asked again at the next heartbeat, both inside the bound;
+ * a session that cannot answer one read of `pg_locks` in thirty seconds is not carrying the cycle's
+ * statements either.
+ */
+export const LOCK_UNPROVEN_HEARTBEATS = 3;
+/**
+ * `TF_LOCK_HEARTBEAT_MS`'s band. At the top, the heartbeats a leader may go unproven still fit in the
+ * pager's window (`leaderStaleMs`, two minutes), so a leader that is not sure stops at about the time
+ * the pager says nobody leads; one pulse a heartbeat also keeps a working leader's row far inside
+ * that window. The floor keeps the proof bound a bound: at zero a leader would stand down at once.
+ */
+export const MIN_LOCK_HEARTBEAT_MS = 1_000;
+export const MAX_LOCK_HEARTBEAT_MS = DEFAULT_ALERT_THRESHOLDS.leaderStaleMs / LOCK_UNPROVEN_HEARTBEATS;
 /** First per-mailbox retry delay after a quarantine; doubles up to 16× (base 1 min → 16 min). */
 export const DEFAULT_MAILBOX_RETRY_MS = 60_000;
 /** Consecutive runtime sync failures before a mailbox is detached + quarantined. */
@@ -289,8 +369,8 @@ export interface WorkerConfig {
    *  `KekEnvIdentity` in `@trafficflow/core`. */
   kek?: KekEnvIdentity;
   /** `TF_KEK_RETIRED`: every key version at or below it left this host after a re-wrap. Absent or 0 ⇒
-   *  nothing is retired. When set, the supervisor asks the database once, before its health endpoint
-   *  answers and before the leader lock, whether a stored secret still names one of those versions,
+   *  nothing is retired. When set, the supervisor asks the database, before its health endpoint
+   *  answers 200 and before the leader lock, whether a stored secret still names one of those versions,
    *  and refuses to start while one does (`kek-retirement-gate.ts`). */
   kekRetiredThrough?: number;
   pollIntervalMs: number;
@@ -318,21 +398,37 @@ export interface WorkerConfig {
   shardIndex?: number;
   /** Health server port. 0 ⇒ an ephemeral port (tests). */
   healthPort?: number;
-  /** Standby lock-retry interval. */
+  /** Standby lock-retry interval. `loadConfig` caps it at {@link MAX_STANDBY_RETRY_MS}; a direct
+   *  config (tests) is unclamped. */
   standbyRetryMs?: number;
   /** How long an instance may serve nothing before `/health` reports 503.
    *  Default {@link DEFAULT_SERVING_NOTHING_MAX_MS}; `loadConfig` floors it at
    *  {@link MIN_SERVING_NOTHING_MAX_MS}, a direct config (tests) is unclamped. */
   servingNothingMaxMs?: number;
   /** How stale the last COMPLETED cycle may go, with mailboxes connected, before `/health`
-   *  reports `degraded` (never unhealthy). Default {@link DEFAULT_STALE_CYCLE_MAX_MS}. */
+   *  reports `degraded`. Default {@link DEFAULT_STALE_CYCLE_MAX_MS}. */
   staleCycleMaxMs?: number;
+  /** How long the cycle may stand still before `/health` answers 503 and the process exits.
+   *  Default {@link DEFAULT_STUCK_CYCLE_MAX_MS}. */
+  stuckCycleMaxMs?: number;
+  /** The wait between attempts to reach a database that is away: base and cap
+   *  ({@link DEFAULT_DB_WAIT_BASE_MS}, {@link DEFAULT_DB_WAIT_CAP_MS}). */
+  dbWaitBaseMs?: number;
+  dbWaitCapMs?: number;
+  /** One step of first contact's deadline ({@link DEFAULT_FIRST_CONTACT_DEADLINE_MS}). */
+  firstContactDeadlineMs?: number;
+  /** A takeover's bound; absent, {@link takeoverDeadlineMsOf} derives it. */
+  takeoverDeadlineMs?: number;
+  /** How long a surrendered leader may take to close what it holds ({@link DEFAULT_SURRENDER_DEADLINE_MS}). */
+  surrenderDeadlineMs?: number;
   /** How often the leader RE-READS the roster so a mailbox registered (or disabled)
    *  after startup is picked up (or dropped) without a restart. */
   rosterIntervalMs?: number;
   /** Letters one slice of the agree's sweep moves; absent is the core's bound. Test-only. */
   agreeSweepSlice?: number;
-  /** How often the leader proves it still holds its advisory lock (split-brain guard). */
+  /** How often the leader proves it still holds its advisory lock (split-brain guard); after
+   *  {@link LOCK_UNPROVEN_HEARTBEATS} of them without a proof it stops leading. `loadConfig` keeps it
+   *  inside {@link MIN_LOCK_HEARTBEAT_MS} to {@link MAX_LOCK_HEARTBEAT_MS}; a direct config is unclamped. */
   lockHeartbeatMs?: number;
   /**
    * Mail 0029: how long a mailbox this process is NOT serving may stay unexplained before the worker
@@ -477,7 +573,9 @@ export interface WorkerConfig {
    * Which process this is, in log lines and in the `worker_heartbeats` row. The platform supplies
    * `RAILWAY_REPLICA_ID`; falls back to the hostname, then to a random suffix, because an
    * unidentified instance makes "which one wrote this beat" unanswerable during a deploy —
-   * the exact window in which two instances exist.
+   * the exact window in which two instances exist. In the row it is followed by `:` and eight hex
+   * that are one takeover's own: the row is renewed and the write fence passed by that name, and
+   * this id alone is a host's, not a leadership's.
    */
   instanceId?: string;
   /** `production` / `staging` — the first word of every alert, so nobody pages on staging. */
@@ -757,6 +855,35 @@ function servingNothingMaxMsFrom(env: NodeJS.ProcessEnv): number {
       `TF_SERVING_NOTHING_MAX_MS must be >= ${MIN_SERVING_NOTHING_MAX_MS} (the deploy ` +
       `health-check timeout); a shorter bound can 503 inside the window the platform is still waiting ` +
       `for the deployment's first 200 (got ${ms})`);
+  }
+  return ms;
+}
+
+/**
+ * `TF_LOCK_HEARTBEAT_MS` inside its band ({@link MAX_LOCK_HEARTBEAT_MS}), refused by name outside it.
+ * It had no ceiling: a value above what a timer holds made the leader verify its lock every millisecond.
+ */
+function lockHeartbeatMsFrom(env: NodeJS.ProcessEnv): number {
+  const ms = optInt(env, "TF_LOCK_HEARTBEAT_MS", DEFAULT_LOCK_HEARTBEAT_MS);
+  if (ms < MIN_LOCK_HEARTBEAT_MS || ms > MAX_LOCK_HEARTBEAT_MS) {
+    throw new WorkerConfigError("TF_LOCK_HEARTBEAT_MS",
+      `TF_LOCK_HEARTBEAT_MS must be between ${MIN_LOCK_HEARTBEAT_MS} and ${MAX_LOCK_HEARTBEAT_MS}: a leader ` +
+      `stops leading after ${LOCK_UNPROVEN_HEARTBEATS} heartbeats without a proof of its lock, and those ` +
+      `must fit in the two minutes after which the pager says nobody leads (got ${ms})`);
+  }
+  return ms;
+}
+
+/**
+ * `TF_STANDBY_RETRY_MS` at or under {@link MAX_STANDBY_RETRY_MS}, refused by name above it. It had no
+ * ceiling either: above what a timer holds, a spare asked for the lock every millisecond.
+ */
+function standbyRetryMsFrom(env: NodeJS.ProcessEnv): number {
+  const ms = optInt(env, "TF_STANDBY_RETRY_MS", DEFAULT_STANDBY_RETRY_MS);
+  if (ms > MAX_STANDBY_RETRY_MS) {
+    throw new WorkerConfigError("TF_STANDBY_RETRY_MS",
+      `TF_STANDBY_RETRY_MS must be at most ${MAX_STANDBY_RETRY_MS}: a spare has to ask for the leader lock ` +
+      `at least once inside the shortest serving bound (got ${ms})`);
   }
   return ms;
 }
@@ -1141,10 +1268,10 @@ export function loadConfig(
     shards,
     shardIndex,
     healthPort: optInt(env, "PORT", DEFAULT_HEALTH_PORT),
-    standbyRetryMs: optInt(env, "TF_STANDBY_RETRY_MS", DEFAULT_STANDBY_RETRY_MS),
+    standbyRetryMs: standbyRetryMsFrom(env),
     servingNothingMaxMs: servingNothingMaxMsFrom(env),
     rosterIntervalMs,
-    lockHeartbeatMs: optInt(env, "TF_LOCK_HEARTBEAT_MS", DEFAULT_LOCK_HEARTBEAT_MS),
+    lockHeartbeatMs: lockHeartbeatMsFrom(env),
     syncBlockGraceMs,
     leaseUnavailableDetachMs,
     mailboxRetryMs: optInt(env, "TF_MAILBOX_RETRY_MS", DEFAULT_MAILBOX_RETRY_MS),

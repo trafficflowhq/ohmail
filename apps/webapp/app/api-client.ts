@@ -1471,6 +1471,13 @@ export interface MailboxDTO {
     lastCycleAt: string | null;
   };
   /**
+   * Is new mail being fetched for this mailbox: `behind` when nothing is fetching or fetching has
+   * fallen behind, `since` the last finished pass. `null` when this server does not say (a mailbox
+   * it does not fetch, or a host that keeps no such record): silence, never "up to date".
+   * Absent on a server older than the field.
+   */
+  fetching?: { behind: boolean; since: string | null } | null;
+  /**
    * Why a `disabled` mailbox is disabled, when the LEASE decided it (mail
    * 0027) — the third time this gap has bitten and the most expensive: this
    * field did not exist on the server DTO either, so a stood-down mailbox

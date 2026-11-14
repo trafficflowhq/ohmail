@@ -1,10 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { DEFAULT_ALERT_THRESHOLDS } from "@trafficflow/db/cloud";
 import {
-  evaluateHealth, anyDegradedCause, type HealthInput, type DegradedReason,
+  evaluateHealth, anyDegradedCause, stuckCycleBoundMs, type HealthInput, type DegradedReason,
 } from "../src/health.js";
 import {
-  DEFAULT_SERVING_NOTHING_MAX_MS, DEFAULT_STALE_CYCLE_MAX_MS, MIN_SERVING_NOTHING_MAX_MS,
+  ATTACH_DEADLINE_MS, DEFAULT_FIRST_CONTACT_DEADLINE_MS, DEFAULT_MAX_MAILBOXES,
+  DEFAULT_POLL_INTERVAL_MS, DEFAULT_SERVING_NOTHING_MAX_MS, DEFAULT_STALE_CYCLE_MAX_MS,
+  DEFAULT_STUCK_CYCLE_MAX_MS, MIN_SERVING_NOTHING_MAX_MS, takeoverDeadlineMsOf,
 } from "../src/config.js";
 
 /**
@@ -23,6 +25,8 @@ import {
 const t0 = 1_700_000_000_000;
 const BOUND = 120_000;
 const STALE_BOUND = 480_000;
+const STUCK_BOUND = 1_200_000;
+const POLL = 60_000;
 
 /** A leader serving two mailboxes, one second into its first good cycle. Everything healthy. */
 function base(): HealthInput {
@@ -32,13 +36,20 @@ function base(): HealthInput {
     leader: true,
     standby: false,
     takingOver: false,
+    waiting: false,
+    waitingSince: null,
     expected: 2,
     connected: 2,
     standbySince: t0 - 5_000,
     leaderSince: t0,
     lastCycleAt: t0,
+    cycleProgressAt: t0,
+    lastRotationMs: 26_000,
+    databaseFaultSince: null,
     maxMs: BOUND,
     staleCycleMaxMs: STALE_BOUND,
+    stuckCycleMaxMs: STUCK_BOUND,
+    pollIntervalMs: POLL,
     databaseFault: false,
     dutyGap: false,
     unserved: 0,
@@ -54,8 +65,13 @@ function spare(waitedMs: number): HealthInput {
     now: t0 + waitedMs,
     leader: false, standby: true, takingOver: false,
     expected: 0, connected: 0,
-    standbySince: t0, leaderSince: null, lastCycleAt: null,
+    standbySince: t0, leaderSince: null, lastCycleAt: null, cycleProgressAt: null, lastRotationMs: null,
   };
+}
+
+/** A start (or a surrendered leader) that has not reached the database for `waitedMs`. */
+function away(waitedMs: number): HealthInput {
+  return { ...spare(waitedMs), standby: false, waiting: true, waitingSince: t0 };
 }
 
 describe("evaluateHealth", () => {
@@ -110,7 +126,7 @@ describe("evaluateHealth", () => {
     // stays fresh here so this is only about the partial failure — staleness is RULE 3's.
     const v = evaluateHealth({
       ...base(), expected: 2, connected: 1, unserved: 1,
-      now: t0 + 10 * BOUND, lastCycleAt: t0 + 10 * BOUND - 1_000,
+      now: t0 + 10 * BOUND, lastCycleAt: t0 + 10 * BOUND - 1_000, cycleProgressAt: t0 + 10 * BOUND - 1_000,
     });
     expect(v).toEqual({
       healthy: true, degraded: true, degradedReason: "roster_shortfall", unhealthyReason: null,
@@ -177,12 +193,85 @@ describe("evaluateHealth", () => {
     // not a margin: the rule keys on `lastCycleAt` — a COMPLETED cycle — and never falls back
     // to `leaderSince`, so a fresh leader has no completed cycle to be stale about until its
     // first one lands.
+    // The drain is moving: a mailbox's turn ended half a minute ago, so the stuck rule is quiet too.
+    const now = t0 + 60 * 60 * 1000;
     const v = evaluateHealth({
-      ...base(), lastCycleAt: null, leaderSince: t0, now: t0 + 60 * 60 * 1000,
+      ...base(), lastCycleAt: null, leaderSince: t0, now, cycleProgressAt: now - 30_000,
     });
     expect(v).toEqual({
       healthy: true, degraded: false, degradedReason: null, unhealthyReason: null,
     });
+  });
+
+  // ── RULE 3b: THE LEADER WHOSE CYCLE STOPPED MOVING ───────────────────────────────────────
+
+  it("a connected leader whose cycle has not moved for the stuck bound is UNHEALTHY: stuck_cycle", () => {
+    // 12 November 2026: every lane entered a statement the database never answered. The process
+    // ran for 22 minutes, fetched nothing and answered 200.
+    const v = evaluateHealth({ ...base(), now: t0 + STUCK_BOUND });
+    expect(v).toEqual({
+      healthy: false, degraded: true, degradedReason: "stale_cycle", unhealthyReason: "stuck_cycle",
+    });
+    expect(evaluateHealth({ ...base(), now: t0 + STUCK_BOUND - 1 }).healthy).toBe(true);
+  });
+
+  it("before its first completed turn the stuck clock runs from the takeover", () => {
+    const fresh = { ...base(), lastCycleAt: null, cycleProgressAt: null, lastRotationMs: null };
+    expect(evaluateHealth({ ...fresh, now: t0 + STUCK_BOUND }).unhealthyReason).toBe("stuck_cycle");
+    expect(evaluateHealth({ ...fresh, now: t0 + STUCK_BOUND - 1 }).unhealthyReason).toBeNull();
+  });
+
+  it("a long rotation whose mailboxes keep finishing their turns is not stuck", () => {
+    // One turn per mailbox: a large cold shard's rotation outlasts any fixed bound while it works.
+    const now = t0 + 3 * STUCK_BOUND;
+    expect(evaluateHealth({ ...base(), now, cycleProgressAt: now - 90_000 }).unhealthyReason).toBeNull();
+  });
+
+  it("a slow shard earns a longer bound: four of its own rotations and a poll", () => {
+    const slow = { ...base(), lastRotationMs: 600_000 };
+    expect(stuckCycleBoundMs(slow)).toBe(4 * 600_000 + POLL);
+    expect(evaluateHealth({ ...slow, now: t0 + STUCK_BOUND }).unhealthyReason).toBeNull();
+    expect(evaluateHealth({ ...slow, now: t0 + 4 * 600_000 + POLL }).unhealthyReason).toBe("stuck_cycle");
+    // …and never a shorter one than the floor.
+    expect(stuckCycleBoundMs({ ...base(), lastRotationMs: 1_000 })).toBe(STUCK_BOUND);
+  });
+
+  it("a leader with nothing connected is never stuck_cycle (that is serving_nothing's state)", () => {
+    const v = evaluateHealth({ ...base(), connected: 0, unserved: 2, now: t0 + STUCK_BOUND });
+    expect(v.unhealthyReason).toBe("serving_nothing");
+  });
+
+  // ── RULE 3c: THE LEADER WHOSE DATABASE IS AWAY ───────────────────────────────────────────
+
+  it("a leader whose database has been failing past the serving bound is UNHEALTHY: database_fault", () => {
+    const failing = { ...base(), databaseFault: true, databaseFaultSince: t0 };
+    expect(evaluateHealth({ ...failing, now: t0 + BOUND })).toEqual({
+      healthy: false, degraded: true, degradedReason: "database_fault", unhealthyReason: "database_fault",
+    });
+    // A blip stays what it was: degraded, and 200.
+    expect(evaluateHealth({ ...failing, now: t0 + BOUND - 1 })).toEqual({
+      healthy: true, degraded: true, degradedReason: "database_fault", unhealthyReason: null,
+    });
+    // …and so does a fault left standing on a shard that owes no mail: no cycle of its clears it.
+    expect(evaluateHealth({ ...failing, expected: 0, connected: 0, now: t0 + 10 * BOUND }).unhealthyReason).toBeNull();
+  });
+
+  it("a stuck cycle under a database fault names the database, not the cycle", () => {
+    // The word decides what an outside watchdog does: a restart cannot bring a database back.
+    const v = evaluateHealth({
+      ...base(), now: t0 + STUCK_BOUND, databaseFault: true, databaseFaultSince: t0 + STUCK_BOUND - 1_000,
+    });
+    expect(v.unhealthyReason).toBe("database_fault");
+  });
+
+  // ── RULE 3d: THE START THAT CANNOT REACH THE DATABASE ────────────────────────────────────
+
+  it("an instance that has not reached the database is UNHEALTHY from its first answer", () => {
+    expect(evaluateHealth(away(0))).toEqual({
+      healthy: false, degraded: true, degradedReason: "waiting_for_database",
+      unhealthyReason: "waiting_for_database",
+    });
+    expect(evaluateHealth(away(26 * 60 * 60 * 1000)).unhealthyReason).toBe("waiting_for_database");
   });
 
   // ── PRECEDENCE AND THE FATAL PATH ────────────────────────────────────────────────────────
@@ -284,7 +373,7 @@ describe("evaluateHealth", () => {
     // `DegradedReason` union, and to the operator docs that read it) fails this.
     const declared: readonly DegradedReason[] = [
       "database_fault", "duty_gap", "roster_shortfall", "at_capacity", "stale_cycle",
-      "fatal", "serving_nothing", "waiting_for_lock",
+      "fatal", "serving_nothing", "waiting_for_lock", "waiting_for_database", "stuck_cycle",
     ];
     const emitted = new Set(states().map((s) => evaluateHealth(s).degradedReason));
     emitted.delete(null);
@@ -318,9 +407,10 @@ function states(): HealthInput[] {
   // rule out was reached by a combination nobody had listed.
   for (const fatal of [false, true]) {
     for (const role of [
-      { leader: true, standby: false, takingOver: false },
-      { leader: false, standby: true, takingOver: false },
-      { leader: false, standby: true, takingOver: true },
+      { leader: true, standby: false, takingOver: false, waiting: false },
+      { leader: false, standby: true, takingOver: false, waiting: false },
+      { leader: false, standby: true, takingOver: true, waiting: false },
+      { leader: false, standby: false, takingOver: false, waiting: true },
     ]) {
       for (const expected of [0, 2]) {
         for (const connected of [0, 2]) {
@@ -331,12 +421,18 @@ function states(): HealthInput[] {
                   for (const capacityDropped of [0, 1]) {
                     // null (never completed a cycle), fresh, and past the stale bound.
                     for (const lastCycleAt of [null, t0 + 10 * BOUND, t0]) {
-                      out.push({
-                        ...role, fatal, expected, connected, standDown, unserved, dutyGap,
-                        databaseFault, capacityDropped, lastCycleAt,
-                        now: t0 + 10 * BOUND, standbySince: t0, leaderSince: t0,
-                        maxMs: BOUND, staleCycleMaxMs: STALE_BOUND,
-                      });
+                      // The cycle moved a moment ago, or has not moved since the takeover.
+                      for (const cycleProgressAt of [t0 + 10 * BOUND, null]) {
+                        out.push({
+                          ...role, fatal, expected, connected, standDown, unserved, dutyGap,
+                          databaseFault, capacityDropped, lastCycleAt, cycleProgressAt,
+                          now: t0 + 10 * BOUND, standbySince: t0, leaderSince: t0,
+                          waitingSince: role.waiting ? t0 : null,
+                          databaseFaultSince: databaseFault ? t0 : null, lastRotationMs: null,
+                          maxMs: BOUND, staleCycleMaxMs: STALE_BOUND,
+                          stuckCycleMaxMs: STUCK_BOUND, pollIntervalMs: POLL,
+                        });
+                      }
                     }
                   }
                 }
@@ -353,7 +449,7 @@ function states(): HealthInput[] {
 describe("the degraded invariant (HEALTH-REASON)", () => {
   it("enumerates every constructible health state and none is degraded without a reason", () => {
     const all = states();
-    expect(all.length).toBe(3_456);           // the cross product actually ran
+    expect(all.length).toBe(9_216);           // the cross product actually ran
 
     for (const input of all) {
       const v = evaluateHealth(input);
@@ -373,8 +469,9 @@ describe("the degraded invariant (HEALTH-REASON)", () => {
         .toBe(anyDegradedCause(input) || staleCycle || v.unhealthyReason !== null);
 
       // (3) The ruling: a stand-down on its own never degrades and never 503s, however many.
-      if (!anyDegradedCause(input) && !staleCycle && !input.fatal && input.standDown >= input.expected
-          && !(input.standby && !input.takingOver)) {
+      const stuck = input.leader && input.connected > 0 && input.cycleProgressAt === null;
+      if (!anyDegradedCause(input) && !staleCycle && !stuck && !input.fatal && !input.waiting
+          && input.standDown >= input.expected && !(input.standby && !input.takingOver)) {
         expect(v.degraded, `a legitimate hand-off was called a fault: ${where}`).toBe(false);
         expect(v.healthy, `a legitimate hand-off refused a deploy: ${where}`).toBe(true);
       }
@@ -401,5 +498,32 @@ describe("evaluateHealth bounds", () => {
     expect(DEFAULT_STALE_CYCLE_MAX_MS).toBeGreaterThan(DEFAULT_SERVING_NOTHING_MAX_MS);
     expect(DEFAULT_STALE_CYCLE_MAX_MS).toBeGreaterThanOrEqual(6 * 60_000);
     expect(DEFAULT_STALE_CYCLE_MAX_MS).toBeLessThan(DEFAULT_ALERT_THRESHOLDS.syncLagMs);
+  });
+
+  it("the stuck bound is above the stale hint and the degraded page: a person is told before the process acts", () => {
+    expect(STUCK_BOUND).toBe(DEFAULT_STUCK_CYCLE_MAX_MS);      // the table above tests the shipped value
+    expect(POLL).toBe(DEFAULT_POLL_INTERVAL_MS);
+    expect(DEFAULT_STUCK_CYCLE_MAX_MS).toBeGreaterThan(DEFAULT_STALE_CYCLE_MAX_MS);
+    expect(DEFAULT_STUCK_CYCLE_MAX_MS).toBeGreaterThan(DEFAULT_ALERT_THRESHOLDS.workerDegradedMs);
+    expect(DEFAULT_STUCK_CYCLE_MAX_MS).toBeGreaterThan(DEFAULT_ALERT_THRESHOLDS.syncLagMs);
+  });
+
+  it("the shipped start bounds: first contact outlasts the driver's dial, a takeover outlasts every attach", () => {
+    // Every e2e case injects these, so only this reads what a deployed worker runs with. The
+    // driver gives a dial 30 s (postgres.js `connect_timeout`); a deadline at or below it would cut
+    // short a dial the driver is still entitled to. A takeover waits for every attach, each bounded
+    // and at worst run one after another, so its bound is the stuck floor plus all of them.
+    expect(DEFAULT_FIRST_CONTACT_DEADLINE_MS).toBeGreaterThan(30_000);
+    expect(takeoverDeadlineMsOf({})).toBe(DEFAULT_STUCK_CYCLE_MAX_MS + DEFAULT_MAX_MAILBOXES * ATTACH_DEADLINE_MS);
+    expect(takeoverDeadlineMsOf({ stuckCycleMaxMs: 1_000, maxMailboxes: 2, attachDeadlineMs: 500 })).toBe(2_000);
+    expect(takeoverDeadlineMsOf({ takeoverDeadlineMs: 700, stuckCycleMaxMs: 1_000 })).toBe(700);
+    // A timer holds 2^31 - 1 ms and runs a longer delay after 1 ms. The sum passes that at 11,924
+    // mailboxes; from there the bound is the most a timer holds, never one that is overdue at once.
+    const TIMER_MAX = 2_147_483_647;
+    expect(takeoverDeadlineMsOf({ maxMailboxes: 11_923 })).toBe(DEFAULT_STUCK_CYCLE_MAX_MS + 11_923 * ATTACH_DEADLINE_MS);
+    for (const maxMailboxes of [11_924, 12_000, 100_000, Number.MAX_SAFE_INTEGER]) {
+      expect(takeoverDeadlineMsOf({ maxMailboxes }), String(maxMailboxes)).toBe(TIMER_MAX);
+    }
+    expect(takeoverDeadlineMsOf({ takeoverDeadlineMs: 2 ** 40 })).toBe(TIMER_MAX);
   });
 });

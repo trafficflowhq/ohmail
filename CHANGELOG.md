@@ -21,6 +21,76 @@ release gathers those files into its own section below.
 Signed installers — a real Apple Developer ID and an Authenticode certificate. See
 [Roadmap](README.md#roadmap).
 
+## [1.0.12] — 2026-11-14
+
+### One organizer fetches mail, also when its database connection goes silent
+
+On ohmail Cloud and on your own server, the organizer holds a lock in the database so that only one process
+fetches and files mail. A connection that stayed open while nothing answered on it never told the organizer
+that its lock was gone. A second organizer could then take over while the first went on fetching, and the
+first could push the second aside again. An organizer that cannot confirm its lock for three of its checks
+(thirty seconds as shipped) now stops fetching, gives way, and takes the lock again by itself when it can.
+Once another organizer has taken over, the earlier one can no longer write mail or take over again without
+the lock. Stopping or restarting the organizer no longer waits on a connection that does not answer.
+
+Two settings of the organizer are checked at its start, and a value outside is refused by name:
+`TF_LOCK_HEARTBEAT_MS` must be between 1000 and 40000, `TF_STANDBY_RETRY_MS` at most 60000. In the
+`worker_heartbeats` table, `instance_id` now ends in a short suffix that is new at every takeover.
+
+### The apps say when new mail is not being fetched
+
+When ohmail Cloud or your own server answers but is not fetching mail, the apps used to look as on any
+other day: Settings showed each mailbox as synced, with the time of its last pass, and Pull new mail ended
+on "Still checking. New mail arrives on its own." They now say it, on the web, in the desktop app for an
+account on a server, and on the phone:
+
+- One calm notice where you look for new mail (the foot of the sidebar, the top of a narrow window, the
+  top of the phone's Ohbox): "New mail is late.", since when, and that nothing is lost and it arrives as
+  soon as checking runs again. After a day it says so. It has no button and cannot be dismissed, and it
+  leaves by itself when fetching runs again. Reading, writing and sending go on as ever.
+- Pull new mail answers at once: "Not checked. ohmail Cloud is not checking right now, and new mail
+  arrives by itself as soon as it does."
+- In Settings, Mailboxes, such a mailbox reads "Not checked · since …" in place of "Synced …", with a
+  line that says who is not checking it. A mailbox with trouble of its own (a refused password, a block)
+  keeps its own sentence.
+
+The sentences name ohmail Cloud only on ohmail Cloud; on a server you run they say "Your ohmail server".
+A desktop or a phone that organizes its mailbox by itself shows none of this. It needs a server that
+carries the organizer change of this release; against an older server nothing changes.
+
+### The organizer waits out a database outage and resumes by itself
+
+On ohmail Cloud and on your own server, the organizer (the process that fetches and files mail) used to
+exit when it could not reach its database. A host that had stopped restarting it left mail unfetched until
+someone started it again, also after the database was back. It now stays up, tries again until the database
+answers, and carries on from there; a connection that is accepted and then never answered is given up after
+a minute and dialled again. A lost leader lock ends the same way instead of ending the process, and
+an organizer whose cycle has stopped moving exits so that its host starts it again. A refused credential, a
+missing setting or a schema the build does not accept still stop the start at once.
+
+Its health endpoint says which of these it is in, with status 503: `waiting_for_database` (and the seconds
+it has waited), `database_fault` or `stuck_cycle`. A failed start is named there by its error class and
+code, no longer by the driver's message.
+
+The server now tells a signed-in app whether new mail is being fetched: `fetching` on each mailbox it
+fetches, also one that another install organizes, and on the answer to a pull, with the time of the last
+finished pass. The apps do not show it yet.
+
+### A screen reader hears which Settings section is open
+
+The Settings menu now marks the open section as the current one, so a screen reader says where you are
+instead of reading every entry alike. On the web, the desktop and the page a desktop serves to a phone.
+Nothing looks or behaves differently.
+
+### ohmail says so when it is too old for its server, or its server is being updated
+
+Every app now names itself and its release on each request it makes to a server (`x-ohmail-client`), and every server states the release it is a build of at `GET /hello`, which used to answer `0.0.0`. When a server tells an app that it is too old for it, or that it is being updated, the web app, the desktop app, the page a desktop serves to a phone and the phone app each show one sentence about it, in English and German, with a way to update: Reload in a browser tab, Update on the desktop, the store or the download page on the phone, and the browser. A letter or a change you made waits and goes out once the server takes it. No server sends either answer yet.
+
+### The iPhone app's "please update" card opens the App Store
+
+When a server says the iPhone app is too old for it, the card now offers the App Store listing beside the
+way into the web app. Until now only the Android app could open its store from there.
+
 ## [1.0.11] — 2026-11-11
 
 ### The phone opens a second mailbox only once the first one is removed
@@ -17494,7 +17564,8 @@ no network in any of them.
   Gatekeeper, SmartScreen and the AppImage's executable bit all need a manual
   step, and that is a real cost of a preview rather than something to gloss over.
 
-[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.11...HEAD
+[Unreleased]: https://github.com/trafficflowhq/ohmail/compare/v1.0.12...HEAD
+[1.0.12]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.12
 [1.0.11]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.11
 [1.0.10]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.10
 [1.0.9]: https://github.com/trafficflowhq/ohmail/releases/tag/v1.0.9

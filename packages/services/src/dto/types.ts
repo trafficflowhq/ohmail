@@ -5,7 +5,7 @@
 export type { EntityType, ChangeOp } from "@trafficflow/db";
 export type { MailboxDisabledReason, MailboxErrorCode, MailboxSyncBlockReason, OrganizerKind } from "@trafficflow/db";
 export type {
-  ApprovalDTO, AwayResponderDTO, ContactDTO, Cursor, DraftDTO, DraftStatus, Folder, FolderDTO, ISODateTime, KbEntryDTO,
+  ApprovalDTO, AwayResponderDTO, ContactDTO, Cursor, DraftDTO, DraftStatus, FetchingDTO, Folder, FolderDTO, ISODateTime, KbEntryDTO,
   MailboxDTO, MailboxFolderSummary, MailboxProfileDTO, MessageBodyBatchItem, MessageBodyDTO, MessageDTO, MessageStateDTO,
   NoteDTO, NoteTarget, NotifyRuleDTO, Page, RoutingDecisionDTO, RuleDTO, ScreenerItem, ScreenerSuggestionDTO,
   SenderCheckDTO, SensitivityFlags, SettingsDTO, SnapshotResponse, SnapshotWindow, SnippetDTO, SyncChange, SyncResponse,

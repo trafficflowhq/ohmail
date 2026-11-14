@@ -10,6 +10,7 @@
       "errorCode": null,
       "errorDetail": null,
       "failedAt": null,
+      "fetching": null,
       "filing": {
         "asOf": "2026-01-01T01:00:00.000Z",
         "attempts": 0,

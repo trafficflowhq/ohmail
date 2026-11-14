@@ -95,7 +95,7 @@ describe("the poll's filing aggregate beside a larger account", () => {
     }
     await c.exec("analyze mailboxes, messages, folder_state");
 
-    const svc = makeMailboxService({ installId: "install-here", lastOrganizerCycleAt: async () => null });
+    const svc = makeMailboxService({ installId: "install-here", organizerStanding: async () => ({ lastCycleAt: null, behind: false, since: null }) });
     const ctx: ServiceContext = {
       db, accountId: MINE, userId: null, now: () => new Date("2026-10-21T10:00:00.000Z"), requestId: "r",
     };

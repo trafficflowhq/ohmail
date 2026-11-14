@@ -8,6 +8,7 @@ import { acquireLeaderLock } from "../src/leader-lock.js";
 import { DEFAULT_SERVING_NOTHING_MAX_MS, type WorkerConfig } from "../src/config.js";
 import { prepareIsolatedDb, truncateAll, ISOLATED_DB_RESET_BUDGET_MS } from "./_isolateddb.js";
 import { FakeAdapterFleet } from "./_fakeadapter.js";
+import { DbDoor, surviveDriverWriteRace } from "./_dbdoor.js";
 
 /**
  * `/health` MUST NOT REPORT HEALTHY WHILE SYNCING NOTHING, against a real listener.
@@ -31,6 +32,7 @@ interface Body {
   ok: boolean; healthy: boolean; leader: boolean; standby: boolean; takingOver: boolean;
   mailboxes: number; expected: number; quarantined: number; awaitingCredentials: number;
   unhealthyReason: string | null; waitingForLockSeconds: number | null;
+  waitingForDatabaseSeconds: number | null; lastCycleAt: string | null;
   version: string; buildError: string | null;
   degraded: boolean; degradedReason: string | null;
   unserved: {
@@ -368,4 +370,93 @@ describe("/health bounds", () => {
     expect(body.body.degradedReason, "degraded with nothing to act on").not.toBeNull();
     expect(body.body.unserved.total).toBe(2);
   }, 60_000);
+
+  it("a leader whose cycle stops moving answers 503 stuck_cycle and tells its host, once", async () => {
+    // 12 November 2026: every lane sat in a statement that was never answered. The process ran,
+    // held the lock and fetched nothing for 22 minutes, and answered 200.
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db);
+    let release: () => void = () => { /* replaced */ };
+    const gate = new Promise<void>((r) => { release = r; });
+    closers.push(async () => { release(); });            // before stop(), which drains the parked turn
+
+    const fatals: unknown[] = [];
+    const sup = await runWorkerSupervised(
+      cfgFor(fleet, { stuckCycleMaxMs: 1_500, lockHeartbeatMs: 200 }), { onFatal: (err) => fatals.push(err) });
+    closers.push(() => sup.stop());
+    await waitForBody(sup.healthPort, (b) => b.mailboxes === 1 && b.lastCycleAt !== null, 10_000, "a completed cycle");
+    expect((await health(sup.healthPort)).status).toBe(200);
+
+    fleet.behave(mb.mailboxId, { syncGate: gate });      // from here every turn enters and never returns
+
+    const stuck = await waitForStatus(sup.healthPort, 503, 15_000);
+    // It still holds the lock, so it still says so: the word is what tells a restart from a wait.
+    expect(stuck).toMatchObject({ healthy: false, leader: true, mailboxes: 1, unhealthyReason: "stuck_cycle" });
+    const start = Date.now();
+    while (fatals.length === 0 && Date.now() - start < 5_000) await new Promise((r) => setTimeout(r, 25));
+    await new Promise((r) => setTimeout(r, 700));        // several watch ticks later
+    expect(fatals.map((e) => (e as Error).name)).toEqual(["StuckCycleError"]);
+    expect((await health(sup.healthPort)).body.unhealthyReason).toBe("stuck_cycle");
+  }, 60_000);
+
+  it("a mailbox that fails every turn is not a stuck cycle: nothing exits over it", async () => {
+    // The stuck rule is about a cycle that does not MOVE. A turn that fails has returned; its mailbox
+    // is the quarantine's to deal with, and a restart mends no password. An install with one mailbox
+    // and a changed password would otherwise exit at every retry.
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    const mb = await seedMailbox(db);
+    fleet.behave(mb.mailboxId, { failSync: true });
+    const fatals: unknown[] = [];
+    const sup = await runWorkerSupervised(
+      cfgFor(fleet, { stuckCycleMaxMs: 1_000, lockHeartbeatMs: 200, maxSyncFailures: 1_000 }),
+      { onFatal: (err) => fatals.push(err) });
+    closers.push(() => sup.stop());
+    await waitForBody(sup.healthPort, (b) => b.mailboxes === 1, 10_000, "the mailbox attached");
+
+    await new Promise((r) => setTimeout(r, 3_000));       // three bounds of turns that all fail
+    const after = (await health(sup.healthPort)).body;
+    expect(after).toMatchObject({ leader: true, mailboxes: 1, lastCycleAt: null });
+    expect(after.unhealthyReason).toBeNull();
+    expect(fatals).toHaveLength(0);
+  }, 60_000);
+
+  it("a leader whose database stays away past the stuck bound gives the lock up, waits, and leads again", async () => {
+    const restore = surviveDriverWriteRace();
+    closers.push(async () => { restore(); });
+    const fleet = new FakeAdapterFleet();
+    const db = makeDb(DB);
+    await seedMailbox(db);
+    const door = DbDoor.to(DB);
+    await door.up();
+    closers.push(async () => { door.down(); });
+
+    const fatals: unknown[] = [];
+    const sup = await runWorkerSupervised(cfgFor(fleet, {
+      databaseUrl: door.via(DB), servingNothingMaxMs: 600, stuckCycleMaxMs: 2_000, lockHeartbeatMs: 200,
+      dbWaitBaseMs: 100, dbWaitCapMs: 300,
+    }), { onFatal: (err) => fatals.push(err) });
+    closers.unshift(() => sup.stop());
+    await waitForBody(sup.healthPort, (b) => b.mailboxes === 1 && b.lastCycleAt !== null, 10_000, "a completed cycle");
+
+    // Every pool connection goes; the lock's own session stays, so nothing takes the lock away.
+    door.down({ keepFirst: true });
+    const failing = await waitForBody(sup.healthPort, (b) => b.unhealthyReason === "database_fault", 20_000, "503 database_fault");
+    expect(failing).toMatchObject({ healthy: false, leader: true, degradedReason: "database_fault" });
+
+    // Past the stuck bound it stops leading by itself and becomes a waiting start: no exit.
+    const waiting = await waitForBody(sup.healthPort, (b) => b.unhealthyReason === "waiting_for_database", 20_000, "the surrender");
+    expect(waiting).toMatchObject({ healthy: false, leader: false, standby: false });
+    expect(waiting.waitingForDatabaseSeconds).toBeGreaterThanOrEqual(0);
+
+    await door.up();
+    await Promise.race([
+      sup.whenLeader(),
+      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("never led again")), 45_000)),
+    ]);
+    const back = await waitForBody(sup.healthPort, (b) => b.mailboxes === 1 && b.healthy, 15_000, "serving again");
+    expect(back).toMatchObject({ leader: true, unhealthyReason: null, waitingForDatabaseSeconds: null });
+    expect(fatals).toHaveLength(0);
+  }, 120_000);
 });

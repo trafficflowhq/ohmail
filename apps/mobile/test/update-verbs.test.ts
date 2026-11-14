@@ -46,6 +46,10 @@ describe("the verbs", () => {
     expect(v[0]!.url).toBe("https://apps.apple.com/app/id1234567890");
     expect(storeUrlOf("ios", "")).toBeNull();
     expect(storeUrlOf("web")).toBeNull();
+    // The published listing: the build's own id is a real one, and the verb leads to it.
+    expect(APP_STORE_ID_SHAPE.test(APP_STORE_ID), "the published listing's id").toBe(true);
+    expect(storeUrlOf("ios")).toBe(`https://apps.apple.com/app/id${APP_STORE_ID}`);
+    expect(ids(updateVerbs({ os: "ios", distribution: "store", server: OWN }))).toEqual(["store", "browser"]);
   });
 
   it("no browser verb where the phone knows no server address, or one that is not a web address", () => {
@@ -53,7 +57,8 @@ describe("the verbs", () => {
     for (const origin of ["", "javascript:alert(1)", "ftp://x.example", "mail.example.test"]) {
       expect(ids(updateVerbs({ os: "android", distribution: "store", server: { origin, flavor: "selfhost" } })), origin).toEqual(["store"]);
     }
-    expect(updateVerbs({ os: "ios", distribution: "store", server: null })).toEqual([]);
+    expect(updateVerbs({ os: "ios", distribution: "store", server: null, appStoreId: "" })).toEqual([]);
+    expect(ids(updateVerbs({ os: "ios", distribution: "store", server: null }))).toEqual(["store"]);
   });
 
   it("a Cloud pairing opens the web app, never the API host it paired with", () => {

@@ -13,7 +13,7 @@ import { makeMailboxService, type ServiceContext } from "@trafficflow/services";
  */
 
 const NOW = new Date("2026-10-09T12:00:00.000Z");
-const svc = makeMailboxService({ installId: "install-here", lastOrganizerCycleAt: async () => null });
+const svc = makeMailboxService({ installId: "install-here", organizerStanding: async () => ({ lastCycleAt: null, behind: false, since: null }) });
 
 async function world(o: { letters: number | null; strangers: number | null; pressed?: boolean; role?: string }) {
   const db = await makeTestDb();

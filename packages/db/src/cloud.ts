@@ -110,7 +110,7 @@ export {
 
 export {
   evaluateAlerts, runAlertPass, deliver, webhookAlertSink, nodePostJson, renderAlertText,
-  writeHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
+  writeHeartbeat, claimHeartbeat, refreshHeartbeat, clearHeartbeat, humanAge,
   listStuckSends, listOpenAlerts, listLatestResolvedAlerts,
   selectOpenAlerts, selectLatestResolvedAlerts,
   newDeliveryStreak, newSinkStreak, redactEndpoint, classifyTransportError, sinkHealthOf,
@@ -129,7 +129,7 @@ export {
   type PagerVerdict, type SinkStreakReading, type ApiCronReading,
   type Alert, type AlertKind, type AlertSeverity, type AlertThresholds, type AlertSink,
   type AlertNotifyContext, type AlertPassOptions, type AlertPassResult, type EvaluateOptions,
-  type HeartbeatInput, type HeartbeatRefresh, type PostJson, type AtCapAccount,
+  type HeartbeatInput, type HeartbeatRefresh, type HeartbeatLock, type PostJson, type AtCapAccount,
   type StuckSendRow, type AlertDeliveryResult, type DeliveryStreak, type SinkEscalation,
   type AlertSinkOutcome, type SinkOutcome, type DeliveryReport, type SinkStreak,
   type SinkDegradation, type AlertSinkHealth,
@@ -356,16 +356,19 @@ export {
 } from "./attachment-staging.js";
 
 /**
- * WHEN THE ORGANIZER'S LAST PASS FINISHED — read from `worker_heartbeats` for the filing strip's
- * "the last pass finished N seconds ago" clause (mail 0097).
+ * HOW THE ORGANIZER STANDS — read from `worker_heartbeats`: when its last pass finished, for the filing
+ * strip's "the last pass finished N seconds ago" clause (mail 0097), and whether fetching is behind,
+ * for `MailboxDTO.fetching` and the pull answer.
  *
  * On THIS entry point and not the root barrel for the closure rule the root barrel's own header
  * states: `worker_heartbeats` is a Cloud table, and `packages/services/src/mailbox-service.ts` —
- * which renders the field — is inside the desktop engine's import graph. The hosted compositions
- * pass `organizerCycleReader` as `MailboxServiceDeps.lastOrganizerCycleAt`; the local tiers pass
- * nothing and the field is null, which the client renders as silence.
+ * which renders the fields — is inside the desktop engine's import graph. The hosted compositions
+ * pass `organizerStandingReader` as `MailboxServiceDeps.organizerStanding`; the local tiers pass
+ * nothing and the fields are null, which the client renders as silence.
  */
-export { readLastOrganizerCycleAt, organizerCycleReader } from "./organizer-cycle.js";
+export {
+  readOrganizerStanding, organizerStandingReader, fetchingBehind, type OrganizerStanding,
+} from "./organizer-cycle.js";
 
 /**
  * The operator's one mailbox write — clearing a quarantined mailbox's durable retry backoff so

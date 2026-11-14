@@ -198,11 +198,12 @@ describe("retiring a key version on the worker", () => {
   }, 120_000);
 
   /**
-   * THE ORDER IS THE GUARANTEE. A standby answers 200 from its first probe, so a gate asked after the
-   * health endpoint is up leaves a window in which the platform reads the deployment healthy and retires
-   * the instance it replaces. While the gate runs, nothing may answer on the health port yet.
+   * NO 200 BEFORE THE VERDICT IS THE GUARANTEE. A standby answers 200 from its first probe, so a gate
+   * that left a 200 readable while it ran would let the platform read the deployment healthy and retire
+   * the instance it replaces. The endpoint is up while the gate runs (a start that cannot reach the
+   * database has to be able to say so), and what it answers until the database has answered is 503.
    */
-  it("the gate is asked before the health endpoint answers, so no probe ever reads 200 first", async () => {
+  it("while the gate runs the health endpoint answers 503, so no probe ever reads 200 first", async () => {
     const port = await new Promise<number>((resolve) => {
       const s = createServer().listen(0, "127.0.0.1", () => {
         const p = (s.address() as AddressInfo).port;
@@ -212,17 +213,13 @@ describe("retiring a key version on the worker", () => {
     const during: string[] = [];
     const sup = await runWorkerSupervised({ ...cfgFrom(RETIRED), healthPort: port }, {
       kekRetirementGate: async (_url, through) => {
-        try {
-          const res = await fetch(`http://127.0.0.1:${port}/health`);
-          during.push(`answered ${res.status}`);
-        } catch {
-          during.push("nothing listening");
-        }
+        const res = await fetch(`http://127.0.0.1:${port}/health`);
+        during.push(`answered ${res.status} ${String(((await res.json()) as { unhealthyReason?: unknown }).unhealthyReason)}`);
         return { retiredThrough: through, total: 1, versions: [1], sites: [] };
       },
     });
     closers.push(() => sup.stop());
-    expect(during).toEqual(["nothing listening"]);
+    expect(during).toEqual(["answered 503 waiting_for_database"]);
     expect(sup.state()).toBe("failed");
     expect((await health(sup.healthPort)).status).toBe(503);
   });

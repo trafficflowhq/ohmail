@@ -53,6 +53,8 @@ export function hostedMailbox(id: string, address: string, over: Partial<Mailbox
       asOf: "2026-01-01T00:11:00.000Z",
       lastCycleAt: null,
     },
+    /* A hosted organizer that is fetching; a test about one that is behind passes it through `over`. */
+    fetching: { behind: false, since: null },
     /* ── THE ORGANIZER BLOCK, WRITTEN OUT ────────────────────────────────────────────────
      *
      * A HOSTED mailbox is organized by the deployment answering `GET /mailboxes`, so the role

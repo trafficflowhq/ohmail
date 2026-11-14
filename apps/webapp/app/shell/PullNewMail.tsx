@@ -25,7 +25,10 @@
  * The outcome is said once, and only where the mail cannot say it: new rows need no sentence. The
  * quiet scan speaks ("Checked — nothing new.", pullQuiet), the capped watch speaks (pullSlow), and
  * a rung mailbox whose server cannot be reached ends the watch with pullUnreachable, because no
- * scan can happen; a refused ring says nothing — the sync strip owns failure sentences. "Nothing new" is judged against the MIRROR — ids before the press versus
+ * scan can happen; a ring whose answer says the server is not fetching new mail at all
+ * (`fetching.behind`) starts no watch and says so at once (pullBehind, naming who is not checking),
+ * because no scan will come and the waiting line would be false for as long as that lasts;
+ * a refused ring says nothing — the sync strip owns failure sentences. "Nothing new" is judged against the MIRROR — ids before the press versus
  * after a fresh, successful post-scan drain; a new id in ANY pile counts as arrival and silences
  * the toast. One flight, two placements (rail foot, topbar; `app.css` shows one at a time): the
  * HOOK is called once in the shell and both placements share the binding — two hooks would each
@@ -37,6 +40,7 @@ import { Icon, useToast } from "@ohmail/ui";
 import { useDemoMode, useEngine } from "./engine";
 import type { MailboxProbe } from "./MailStateProvider";
 import { serverUnreachable } from "@ohmail/app-logic/mail-state/mail-state";
+import { useManagedService } from "@ohmail/app-logic/doors/managed-service";
 
 const SETTLE_POLL_MS = 2_000;
 const SETTLE_CAP_MS = 30_000;
@@ -82,6 +86,8 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
   const demo = useDemoMode();
   const toast = useToast();
   const t = useTranslations("sync");
+  /* Who checks the mailboxes behind this shell: ohmail Cloud only on the managed service. */
+  const managed = useManagedService();
   const [pulling, setPulling] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
@@ -100,6 +106,12 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
         // drain what the worker already holds so the press feels answered immediately.
         const rang = await engine.requestPull();
         void engine.syncOnce().catch(() => undefined);
+        // The server says it is not fetching: the request is stamped and nothing will scan it
+        // until fetching runs again, so there is nothing to watch. Say so now.
+        if (rang?.fetching?.behind === true) {
+          if (alive.current) toast(t(managed ? "pullBehind" : "pullBehindServer"));
+          return;
+        }
         /** Did the watch see every mailbox's own scan, or did the cap end it? */
         let settled = false;
         /** Did a rung mailbox's server turn out unreachable? Then nothing could be checked. */
@@ -155,7 +167,7 @@ export function usePullNewMail(probe?: MailboxProbe): PullBinding {
         if (alive.current) setPulling(false);
       }
     })();
-  }, [engine, probe, toast, t]);
+  }, [engine, probe, toast, t, managed]);
 
   return { available: !demo && engine.pullAvailable(), pulling, pull };
 }

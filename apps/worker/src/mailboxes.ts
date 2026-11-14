@@ -291,7 +291,9 @@ export async function loadRosterMailboxes(
   const filters: SQL[] = [ne(mailboxes.status, "disabled")];
   if (shards > 1) filters.push(shardPredicate(shards, shardIndex));
 
-  const rows = await db
+  // Tagged at its origin (`db-fault.ts`): this read is the first statement a new leader's pool sends,
+  // and a refused or reset dial here is the database being away, never a mail host.
+  const rows = await asDatabaseFault("roster.load", () => db
     .select({
       id: mailboxes.id, accountId: mailboxes.accountId,
       provider: mailboxes.provider, address: mailboxes.address, status: mailboxes.status,
@@ -318,7 +320,7 @@ export async function loadRosterMailboxes(
     })
     .from(mailboxes)
     .where(and(...filters))
-    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id));
+    .orderBy(asc(mailboxes.createdAt), asc(mailboxes.id)));
 
   const ids = [...new Set(rows.map((r) => r.accountId))];
   // THE READ ABOVE HAS RETURNED: a call begun from here on began after every clear it saw, so a
