@@ -2,7 +2,16 @@
  * THE LINE A SEND STATE SAYS, as a key of the catalogue: one derivation for the line under an editor and for the
  * notice raised when no editor shows the lane. Moved out of the web shell's `SendStatus.tsx` as it stood.
  */
+import { DRAFT_BODY_MAX_BYTES } from "@trafficflow/core/outbound-text";
 import type { SendState } from "./mail-send.js";
+
+/**
+ * What a send line's sentence takes beside its key: the draft ceiling as the sentences name it (`{size}`), said in
+ * the words for a size its caller holds.
+ */
+export function sendLineValuesOver(size: (bytes: number) => string): { size: string } {
+  return { size: size(DRAFT_BODY_MAX_BYTES) };
+}
 
 export type SendTone = "pending" | "warn" | "error";
 

@@ -24,7 +24,8 @@ import { go, parseHash } from "../../app/shell/routing";
 import { useShellCompose, type ShellCompose } from "@ohmail/app-logic/writing/shell-compose";
 import type { DraftReplyWire } from "@ohmail/app-logic/writing/draft-reply";
 import { TODAYS_COMPOSER_WORDS } from "../../app/shell/mail-send-text";
-import { todaysWriteBeside, writingOf } from "../../app/shell/todays-write";
+import { fileSize } from "@ohmail/app/mail/ground";
+import { writeBesideOf, writingOf } from "@ohmail/app-logic/writing/writing-of";
 import { TextProvider } from "@ohmail/app/text";
 import { WriteAbove, writeEntry, type WriteBeside } from "@ohmail/app/write";
 import { KeymapProvider } from "@ohmail/app/keys";
@@ -33,6 +34,8 @@ import { plainEditor } from "@ohmail/app/write/plain";
 import { act, engineOver, NOW, ROSTER, storeWith, type DraftShell } from "../_draft-shell.js";
 
 const h = React.createElement;
+/** The device's network fact, read at the press as the composer's mount reads it. */
+const ONLINE = (): boolean => window.navigator.onLine !== false;
 
 export interface Report {
   readonly message: string;
@@ -53,6 +56,8 @@ export interface WritingWorld {
   now(): ShellCompose;
   /** The open reply's letter: the shell's state beside the composition. */
   replyTo(): string | null;
+  /** What the composition asked of its host, in order: `go <place>`, `go <place> open:null`, `show <letter>`, `open-with-reply <letter>`. */
+  readonly asked: string[];
   unmount(): Promise<void>;
 }
 
@@ -111,7 +116,7 @@ function Bare({
   engine: OhmailEngine;
   scope: string;
   toast: (message: string, options?: ToastOptions) => void;
-  seen: { current: ShellCompose | null; replyTo: string | null };
+  seen: { current: ShellCompose | null; replyTo: string | null; asked: string[] };
 }) {
   const t = useTranslations();
   const subscribe = React.useCallback((cb: () => void) => engine.subscribe(cb), [engine]);
@@ -122,6 +127,17 @@ function Bare({
   seen.replyTo = replyTo;
   const drafts = reader.list<EngineDraft>("draft");
   const none = React.useCallback(() => undefined, []);
+  /* The host's three ways, each recorded as it is asked. The router's `go` moves the address, as today's shell's does. */
+  const goTo = React.useCallback((to: Parameters<typeof go>[0], how?: { readonly open: null }) => {
+    seen.asked.push(how === undefined ? `go ${to}` : `go ${to} open:null`);
+    go(to);
+  }, [seen]);
+  const showLetter = React.useCallback((letter: string) => void seen.asked.push(`show ${letter}`), [seen]);
+  /* The shell's open of a reply draft's letter, as it stands when the letter is on this view: its reply opens. */
+  const openWithReply = React.useCallback((m: EngineMessage) => {
+    seen.asked.push(`open-with-reply ${m.id}`);
+    setReplyTo(m.id);
+  }, [seen]);
   seen.current = useShellCompose({
     engine,
     reader,
@@ -129,7 +145,9 @@ function Bare({
     words: TODAYS_COMPOSER_WORDS,
     toast,
     route: { view: routeView as never },
-    go,
+    go: goTo,
+    showLetter,
+    openWithReply,
     consent: consent as never,
     facts: roster,
     mailboxes: roster.map((m) => ({ id: m.id, address: m.address })) as never,
@@ -138,12 +156,10 @@ function Bare({
     fallbackMailboxId: roster[0]!.id,
     replyTo,
     setReplyTo,
-    setReaderFor: none,
     fr: null,
     setFr: none,
     setFrDone: none,
     setFrValues: none,
-    setOhboxSel: none,
     presented: reader,
     mutateAndReport: async (m) => (await engine.mutate(m)).status === "confirmed",
     toastWithUndo: (sentence) => toast(sentence),
@@ -153,10 +169,6 @@ function Bare({
     /* A case that names no wire mounts a host with no drafter: the composer then answers no control. */
     draftReplyWire: draftWire ?? "none",
   });
-  // The shell's open of a reply draft's letter, as it stands when the letter is on this view: its reply opens.
-  seen.current.openMessageRef.current = (m, o) => {
-    if (o?.reply) setReplyTo(m.id);
-  };
   if (!view && sheet === undefined) return null;
   const options = optionsFromFacts(roster);
   const derived = writingOf(seen.current, { engine, scope, replyTo, options, consent: consent as never, drafts, noCredits, t });
@@ -165,7 +177,7 @@ function Bare({
   return h(KeymapProvider, {
     children: h(WriteAbove, {
       writing,
-      beside: { ...todaysWriteBeside(engine, scope, undefined, metered), ...(pictures ? { pictures } : {}) },
+      beside: { ...writeBesideOf(engine, scope, "strict", metered, fileSize, ONLINE), ...(pictures ? { pictures } : {}) },
       children:
         sheet === undefined
           ? h(ENTRY.Letter, { route, plan: PLAN, keysHere: true })
@@ -212,7 +224,9 @@ export async function mountWriting(
   const sendGate: DraftShell["sendGate"] = { wait: null };
   const engine = engineOver(store, sent, refuseSend, { wait: null }, [], offline, sendGate);
   const reports: Report[] = [];
-  const seen: { current: ShellCompose | null; replyTo: string | null } = { current: null, replyTo: null };
+  const seen: { current: ShellCompose | null; replyTo: string | null; asked: string[] } = {
+    current: null, replyTo: null, asked: [],
+  };
   const el = document.createElement("div");
   document.body.appendChild(el);
   const root = createRoot(el);
@@ -268,6 +282,7 @@ export async function mountWriting(
       return seen.current;
     },
     replyTo: () => seen.replyTo,
+    asked: seen.asked,
     unmount: async () => {
       await act(async () => root.unmount());
       el.remove();

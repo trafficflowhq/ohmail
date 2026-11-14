@@ -191,6 +191,26 @@ export const SEAM_AT_REST: Readonly<Record<string, unknown>> = {
   trashAvailable: () => false,
 };
 
+/** Nothing queued, in flight or kept as new, and no late answer: one object each, as an engine at rest hands back. */
+const NOTHING_QUEUED: readonly never[] = [];
+const NO_LATE_KEYS: ReadonlySet<string> = new Set();
+
+/**
+ * What the one composer reads of an engine when the mail ground mounts it with nothing being written and nothing on
+ * its way: no send queued or in flight, the outbox read and empty, no draft kept as new, no late answer, and a
+ * listener for letters that left. A test whose engine is a stand-in of its own spreads these under it where its host
+ * hands `MailGround`: the composer stands there for the frame's life, above every place.
+ */
+export const COMPOSER_AT_REST: Readonly<Record<string, unknown>> = {
+  onMessagesRemoved: () => () => undefined,
+  pendingMutations: () => NOTHING_QUEUED,
+  inFlightMutations: () => NOTHING_QUEUED,
+  keptAsNewDrafts: () => NOTHING_QUEUED,
+  outboxKnown: () => true,
+  lateResultKeys: () => NO_LATE_KEYS,
+  hasLateResults: () => false,
+};
+
 /**
  * An engine with nothing in it, of which the frame takes nothing of its own: any read throws, but the three the
  * room's press seam makes at rest. The seam stands for the frame's life wherever a test hands a ground above the panes

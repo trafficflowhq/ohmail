@@ -47,7 +47,7 @@ import { SIG_FOLLOWING } from "@ohmail/app-logic/writing/signature";
 import { useFocusFollows } from "@ohmail/app-logic/keys/focus-follows";
 import { ForwardFiles } from "../shell/ForwardFiles";
 import type { ForwardFilesPlan } from "@ohmail/app-logic/writing/forward-files";
-import { useScheduleFiles } from "../shell/schedule-files";
+import { useScheduleFiles } from "@ohmail/app-logic/writing/schedule-files";
 
 /**
  * The id the From control points `aria-describedby` at when the sender was matched to the

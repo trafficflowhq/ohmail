@@ -7,10 +7,10 @@
  * Pure, so every arm can be proven alone; health is read at the press, a later failure is said in the
  * line.
  */
-import type { MailStateKey, MailboxFacts } from "@ohmail/app-logic/mail-state/mail-state";
-import type { SyncStatus } from "@ohmail/app-logic/session/sync-scheduler";
-import { useBrowserOnline } from "@ohmail/app-logic/session/browser-online";
-import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import type { MailStateKey, MailboxFacts } from "../mail-state/mail-state.js";
+import type { SyncStatus } from "../session/sync-scheduler.js";
+import { useBrowserOnline } from "../session/browser-online.js";
+import { useStableCallback } from "../press/stable-callback.js";
 
 /**
  * The mail states a healthy connection reads as: settled, filing our own decisions, importing, or

@@ -116,7 +116,7 @@ import { DormancyRow } from "./DormancyRow";
 import {
   useComposeAutosave, reopenWouldOverwrite, type ComposeFate, type ComposeFlush,
 } from "@ohmail/app-logic/writing/compose-autosave";
-import { filesNotKeptFor } from "./schedule-files";
+import { filesNotKeptFor } from "@ohmail/app-logic/writing/schedule-files";
 import { RemoteImagesRow } from "./RemoteImagesRow";
 import { TrackingPixelsRow } from "./TrackingPixelsRow";
 import { AutoUnsubscribeRow } from "./AutoUnsubscribeRow";
@@ -177,7 +177,7 @@ import { CURSOR_HINT_MS } from "./cursor-placer";
 import type { ActedMarker } from "@ohmail/app-logic/press/after-verb";
 import "./zone-cursor.css";
 import { ShortcutSheet } from "./ShortcutSheet";
-import { useMayHandOffFor } from "./send-handoff";
+import { useMayHandOffFor } from "@ohmail/app-logic/writing/send-handoff";
 import type { HostConnection } from "@ohmail/app-logic/doors/host-connection";
 import { SendWaitsRelay } from "./UpdateLine";
 import { MailStateHost } from "@ohmail/app/mail/ground";
@@ -202,6 +202,8 @@ import { useShellVerbs } from "./shell-verbs";
 /* The global chords, the palette list and the rail. See the module. */
 import { useShellKeys, frKeyOf, TRIAGE_PILE_OF_RAIL } from "./shell-keys";
 import { useStableCallback } from "@ohmail/app-logic/press/stable-callback";
+import { readColumnHidden } from "@ohmail/app-logic/layout/narrow";
+import type { ComposerPlace } from "@ohmail/app-logic/writing/composer-types";
 /* The once-per-change line above the Ohbox, and the shape of the press that ends it. */
 import type { OrganizerNoticeTransport } from "./OrganizerNotice";
 import type { GapLettersTransport } from "./GapLettersNotice";
@@ -1323,25 +1325,41 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
   /**
    * REPLY, COMPOSE, DRAFTS AND SENDS — everything that puts words on the wire, in
    * `shell-compose.ts`. Below the open state, which is where its own first region already sat and
-   * which it reads (`setReaderFor` for the narrow open); `replyTo` stays above both, because the
+   * which it is answered from (the narrow open, the dropped selection); `replyTo` stays above both, because the
    * route transition closes the editor.
    */
   const inPlaceHost = useInPlaceHost({ view: route.view, seedOwed, partition, receipts, conversationOf });
+  /*
+   * WHAT THE COMPOSER ASKS OF ITS HOST, AS TODAY'S VIEWS ANSWER IT. It holds no setter of the open state:
+   * - A letter with a reply under it is shown only below 700px, where the reading column is `display:none` and the
+   *   reader's sheet IS the open letter; and never for a reading stream that answers the letter in place.
+   * - A send that leaves the compose form drops the Ohbox's reading selection before it goes to its list.
+   * - A reply draft opens in its own conversation, the editor riding the route transition (`openMessage`).
+   */
+  const showLetter = useStableCallback((messageId: string): void => {
+    if (readColumnHidden() && !inPlaceHost(messageId)) setReaderFor(messageId);
+  });
+  const goFromComposer = useStableCallback((to: ComposerPlace, how?: { readonly open: null }): void => {
+    if (how !== undefined) setOhboxSel(null);
+    go(to);
+  });
+  const openWithReply = useStableCallback((m: EngineMessage): void => openMessage(m, { reply: true }));
   /** May a send leave its editor at once: the connection's health read at the press (`send-handoff.ts`). */
   const mayHandOffFor = useMayHandOffFor({ stateKey: mailState.key, sync: syncStatus, hostOffline: hostConnection != null, engine, facts });
   const {
     cancelCompose, discardKeepsCompose, cancelSchedule, closeCompose, closeReply, compose, composeResumed, composeCloseRefusal,
     confirmForward, forwardAsk, composeFrom, discardDraft, notSentRows, draftRepliesHere, draftReply, draftReplyChrome, editScheduled,
     heldReplyRow, discardRefusal, sendAgain, mailSend, onComposeFields, onReplyBody, onReplySig, composeHeldBySend, composeWaitNote,
-    onReplySubject, openDraft, openForward, openMessageRef, openReply, plan, replyAll,
+    onReplySubject, openDraft, openForward, openReply, plan, replyAll,
     replyAttachments, replyBody, replyBook, replyDone, replyEnvelope, replyFromId, replyMode,
     pressSendAndDone, releaseConfirmed, replySendState, replySig, replySubjectEdit, resolveHeldSend, sendCompose, sendReply, openNotSent,
     composeElsewhere, composeSaveRefused, setReplyAttachments, setReplyEnvelope, setReplyFromId, toggleReply, writeTo, writeSupport,
     composeForwardFiles, replyForwardFiles,
   } = useShellCompose({
-    engine, reader, t, words: TODAYS_COMPOSER_WORDS, toast, draftReplyWire: draftReplyWire ?? NONE, route, go, consent, facts, mailboxes, drafts, ownAddresses,
-    fallbackMailboxId, replyTo, setReplyTo, setReaderFor, fr, setFr, setFrDone, setFrValues, inPlaceHost,
-    setOhboxSel, mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor, scope,
+    engine, reader, t, words: TODAYS_COMPOSER_WORDS, toast, draftReplyWire: draftReplyWire ?? NONE, route, go: goFromComposer,
+    showLetter, openWithReply, consent, facts, mailboxes, drafts, ownAddresses,
+    fallbackMailboxId, replyTo, setReplyTo, fr, setFr, setFrDone, setFrValues,
+    mailtoDraft, onMailtoDraftSeeded, presented, mutateAndReport, toastWithUndo, mayHandOffFor, scope,
   });
 
   /**
@@ -1365,10 +1383,6 @@ function ShellInner({ mailboxFacts, organizerNoticeTransport, gapLettersTranspor
     toggleReply, openForward, openReply, draftReply, replyAll, replyTo, screener,
   });
   const listGone = useListGoneFacts(engine, actedIds, openTrashWindow);
-
-  /* Assigned here so `openDraft`, which is declared several hundred lines above this, can open a
-     reply draft in its own conversation. See {@link openMessageRef}. */
-  openMessageRef.current = openMessage;
 
   /**
    * THE GLOBAL KEYS, THE PALETTE AND THE RAIL — the top of the graph, in `shell-keys.tsx`.

@@ -3,6 +3,7 @@
  * mutation and body ask. No test library: the states page draws the reader over it in a browser too.
  */
 import type { EngineMessage, EngineMutation, EntityReader, OhmailEngine } from "@ohmail/client-engine";
+import { COMPOSER_AT_REST } from "../../support/fake-host.js";
 
 /** A letter, every field a surface reads, the rest from `over`. */
 export function letter(id: string, over: Partial<EngineMessage> = {}): EngineMessage {
@@ -138,6 +139,8 @@ export function fakeMail(
       told.sentFolders.push(mailboxes);
       return false;
     },
+    /* What the one composer reads of an engine at rest: the ground mounts it above every place. */
+    ...COMPOSER_AT_REST,
   } as unknown as OhmailEngine;
   return {
     engine,
