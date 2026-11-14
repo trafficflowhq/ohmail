@@ -100,8 +100,8 @@ export function DoorScreen({ asked }: { asked: DoorAt | null }) {
         logSink: engineLogSink(),
         listHeld: (accountId) => now.current.conn.listHeldStandalone(accountId),
       }),
-      startSession: async (door, address, launch) => {
-        (await import("../engine/organizer-session-native")).startOrganizerSessionNative(door, address, launch);
+      startSession: async (door, _address, launch) => {
+        (await import("../engine/organizer-session-native")).startOrganizerSessionNative(door, launch);
       },
       noticeGate: () => now.current.notify.gate(),
     },

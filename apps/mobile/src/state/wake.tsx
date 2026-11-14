@@ -3,6 +3,8 @@ import {
 } from "react";
 import { useConnection } from "../net/connection";
 import { dropWakeRowOrOwe, forgetWake, registerWake, NO_DISTRIBUTOR, type WakeSession, type WakeState } from "../net/push";
+import { LiveInstanceKeeper, signedInOf } from "../notices/live-instance";
+import { noticesNative } from "../notices/notices-native";
 import { wakeShell } from "../shell/doors";
 import { nativeServerProfiles } from "./servers-native";
 import {
@@ -34,6 +36,13 @@ export interface Wake {
   choose(id: string): void;
   /** Turn it off: drop the server registration, then forget the distributor. */
   turnOff(): void;
+  /**
+   * What the shell's page says of its two switches, for the pairing it is the page of: whether a closed app is
+   * to be woken for new mail (the device's master and its new-mail switch, both on). While it says no, this
+   * pairing's registration does not stand: it is taken down at the server and at the distributor, and none is
+   * made. The chosen distributor is kept, so that both switches on make the registration again.
+   */
+  want(profileId: string, wanted: boolean): void;
 }
 
 const WakeContext = createContext<Wake | null>(null);
@@ -55,6 +64,18 @@ export function WakeProvider({ children }: { children: ReactNode }) {
      shell's page rather than a drain on this side, where no engine runs. */
   const session = conn.state.k === "live" || conn.state.k === "shell" ? conn.state.session : null;
   const shell = conn.state.k === "shell";
+
+  /**
+   * WHO IS SIGNED IN, KEPT NATIVELY. The wake's renderer runs in an app that was closed and reads one fact: which
+   * pairing is the signed-in one. It draws "New mail" only for that pairing, so a wake for a pairing the person
+   * left, switched away from or signed out of draws nothing; and what was shown for a pairing is closed the moment
+   * another, or none, is the signed-in one. The connection says who is signed in; `LiveInstanceKeeper` decides
+   * what native keeps. Here, at the root, because a sign-out or a switch must reach it whatever screen is open.
+   */
+  const keeper = useRef<LiveInstanceKeeper | null>(null);
+  useEffect(() => {
+    (keeper.current ??= new LiveInstanceKeeper(noticesNative())).see(signedInOf(conn.state));
+  }, [conn.state]);
 
   const [state, setState] = useState<WakeState>({ k: "no_distributor" });
   const [choices, setChoices] = useState<DistributorChoice[]>([]);
@@ -81,6 +102,19 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    */
   const generation = useRef(0);
   const liveSession = useRef<typeof session>(null);
+
+  /**
+   * THE REGISTRATION STANDS ONLY WHILE THE MASTER AND NEW MAIL ARE BOTH ON. The two switches are the page's
+   * (this device's stored choices), so in the shell the page says whether the wake is wanted, once it has
+   * read them and again whenever the answer changes ({@link Wake.want}). `null` is a page that has not said
+   * yet: until it has, nothing is registered for its pairing, so a phone whose switches are off is not
+   * registered for the moments a launch takes. A session that is no shell's has no page and no such switch:
+   * it registers as it always has.
+   */
+  const pageWants = useRef<boolean | null>(null);
+  const inShell = useRef(shell);
+  inShell.current = shell;
+  const mayStand = useCallback((): boolean => !inShell.current || pageWants.current === true, []);
 
   /**
    * Take a row down and, if the server refuses, OWE it — see `net/push.ts#dropWakeRowOrOwe`.
@@ -127,6 +161,14 @@ export function WakeProvider({ children }: { children: ReactNode }) {
    */
   const attempt = useCallback(async (mounted: () => boolean): Promise<void> => {
     if (!session) return;
+    // Not wanted, or not said yet: nothing is registered, whoever asked (a launch, a switch of pairing, a
+    // distributor chosen on the Servers pane). The sentence says why only once the page has said no.
+    if (!mayStand()) {
+      if (pageWants.current === false && mounted() && liveSession.current === session) {
+        setState({ k: "off", reason: "switched_off" });
+      }
+      return;
+    }
     // The generation this attempt belongs to, captured BEFORE the await. Anything that lands after
     // the session changed is a superseded completion and is dropped, state and id together.
     const mine = generation.current;
@@ -160,6 +202,15 @@ export function WakeProvider({ children }: { children: ReactNode }) {
         }
         return;
       }
+      // The page said no while this was in the air: the row just made goes down again, with its instance.
+      if (!mayStand()) {
+        if (next.k === "on") await forgetWake(session, unifiedPushDistributor(), next.id, nativeServerProfiles());
+        if (fresh()) {
+          subscriptionId.current = null;
+          setState({ k: "off", reason: "switched_off" });
+        }
+        return;
+      }
       subscriptionId.current = next.k === "on" ? next.id : null;
       setState(next);
     } catch {
@@ -180,7 +231,7 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     } finally {
       if (fresh()) setBusy(false);
     }
-  }, [session]);
+  }, [session, mayStand]);
 
   /**
    * On mount, and whenever the live session changes: read the device, then register if a
@@ -213,6 +264,8 @@ export function WakeProvider({ children }: { children: ReactNode }) {
       // be overtaken by the incoming profile's registration.
       void serialize(() => owedDrop(previous, previousId));
     }
+    // Another pairing's page has said nothing yet; what the page of the one left said is not about this one.
+    if (previous !== session) pageWants.current = null;
     liveSession.current = session;
     readDevice();
     if (!session) {
@@ -336,8 +389,34 @@ export function WakeProvider({ children }: { children: ReactNode }) {
     setState({ k: "no_distributor" });
   }, [session, readDevice, serialize]);
 
+  const want = useCallback((profileId: string, wanted: boolean): void => {
+    const on = liveSession.current;
+    // Only the page of the pairing that is live says anything here, and only a boolean is an answer.
+    if (on === null || on.profile.id !== profileId || typeof wanted !== "boolean") return;
+    if (pageWants.current === wanted) return;
+    pageWants.current = wanted;
+    // No distributor chosen: nothing is registered and nothing can be; the pane says so already.
+    if (savedDistributor() === null) return;
+    if (wanted) {
+      void serialize(() => attemptRef.current(() => true));
+      return;
+    }
+    // QUEUED like every wake mutation, and the id is read INSIDE the queue: a registration still in the air
+    // when the page said no lands first, and its row is the one that goes. The server first, then this
+    // pairing's instance at the distributor (`forgetWake`'s order). The distributor's choice stays.
+    void serialize(async () => {
+      if (liveSession.current !== on || pageWants.current !== false) return;
+      const id = subscriptionId.current;
+      subscriptionId.current = null;
+      const dropped = await forgetWake(on, unifiedPushDistributor(), id, nativeServerProfiles());
+      if (liveSession.current === on && pageWants.current === false) {
+        setState({ k: "off", reason: dropped.ok ? "switched_off" : "row_remains" });
+      }
+    });
+  }, [serialize]);
+
   return (
-    <WakeContext.Provider value={{ state, choices, chosen, busy, choose, turnOff }}>
+    <WakeContext.Provider value={{ state, choices, chosen, busy, choose, turnOff, want }}>
       {children}
     </WakeContext.Provider>
   );

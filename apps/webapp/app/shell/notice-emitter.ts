@@ -15,7 +15,7 @@
  */
 import {
   noticeFields,
-  type Notice, type NoticeFacts, type NoticeKind, type NoticeWording,
+  type Notice, type NoticeFacts, type NoticeKind, type NoticeTaken, type NoticeWording,
 } from "@ohmail/client-engine";
 import type { HostNoticeEmitter } from "@ohmail/app-logic/notices/use-notices";
 
@@ -25,8 +25,11 @@ export interface NoticePage {
   focused(): boolean;
   /** This tab is on screen, though perhaps not in front. */
   visible(): boolean;
-  /** Draw one notice through the worker's registration, over any listed with the same tag. Never throws. */
-  show(title: string, body: string, tag: string): void;
+  /**
+   * Draw one notice through the worker's registration, over any listed with the same tag, and say
+   * whether the browser took it: no registration, or a browser that refused, is `false`. Never throws.
+   */
+  show(title: string, body: string, tag: string): NoticeTaken | void;
   /** Close every notice of this origin still listed; settles once they are closed. Never rejects. */
   closeAll(): Promise<void>;
 }
@@ -91,18 +94,19 @@ export function webNoticeEmitter(page: NoticePage, wording: () => NoticeWording)
     carries: CARRIES,
     acts: [],
     ahead: "none",
-    post(notice: Notice): void {
+    post(notice: Notice): NoticeTaken {
       try {
-        if (!CARRIES.includes(notice.kind)) return;
-        if (page.focused()) return;
-        if (notice.kind === "ohbox" && !page.visible()) return;
+        if (!CARRIES.includes(notice.kind)) return false;
+        if (page.focused()) return false;
+        if (notice.kind === "ohbox" && !page.visible()) return false;
         const tag = TAGS[notice.kind];
-        if (tag === undefined) return;
+        if (tag === undefined) return false;
         const { title, body } = noticeFields(notice, wording());
-        if (title === "") return;
-        page.show(title, body, tag);
+        if (title === "") return false;
+        return page.show(title, body, tag) ?? false;
       } catch {
         /* A notice that could not be drawn takes nothing down. */
+        return false;
       }
     },
     takeBack(): void {
@@ -120,9 +124,13 @@ export const browserNoticePage: NoticePage = {
   focused: () => typeof document !== "undefined" && document.hasFocus(),
   visible: () => typeof document !== "undefined" && document.visibilityState === "visible",
   show(title, body, tag) {
-    void registration()
-      .then((reg) => reg?.showNotification(title, { body, tag }))
-      .catch(() => {});
+    return registration()
+      .then(async (reg) => {
+        if (reg === undefined) return false;
+        await reg.showNotification(title, { body, tag });
+        return true;
+      })
+      .catch(() => false);
   },
   closeAll() {
     return registration()

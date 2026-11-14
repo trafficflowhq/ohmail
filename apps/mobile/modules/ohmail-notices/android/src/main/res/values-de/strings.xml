@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The notices' words in German, one for one the catalogue's (packages/app/messages/frame.de.json,
+     frame.systemNotice); a test holds them equal. -->
+<resources>
+  <string name="ohmail_notice_channel_new_mail">Neue Mail</string>
+  <string name="ohmail_notice_channel_screener">Screener</string>
+  <string name="ohmail_notice_channel_devices">Geräte</string>
+  <string name="ohmail_notice_ohbox_title">Neue Mail</string>
+  <plurals name="ohmail_notice_ohbox_body">
+    <item quantity="one">Eine neue Nachricht für dich.</item>
+    <item quantity="other">%d neue Nachrichten für dich.</item>
+  </plurals>
+  <string name="ohmail_notice_screener_title">Screener</string>
+  <plurals name="ohmail_notice_screener_body">
+    <item quantity="one">Ein neuer Absender wartet im Screener.</item>
+    <item quantity="other">%d weitere Absender warten im Screener.</item>
+  </plurals>
+  <string name="ohmail_notice_paired_title">Gerät gekoppelt</string>
+  <string name="ohmail_notice_paired_desktop">Eine Desktop-App kann jetzt deine Mail lesen.</string>
+  <string name="ohmail_notice_paired_phone">Ein Handy kann jetzt deine Mail lesen.</string>
+  <string name="ohmail_notice_paired_browser">Ein Browser kann jetzt deine Mail lesen.</string>
+  <string name="ohmail_notice_paired_other">Ein neues Gerät kann jetzt deine Mail lesen.</string>
+  <string name="ohmail_notice_revoked_title">Gerät abgemeldet</string>
+  <string name="ohmail_notice_revoked_desktop">Eine Desktop-App wurde von deiner Mail abgemeldet.</string>
+  <string name="ohmail_notice_revoked_phone">Ein Handy wurde von deiner Mail abgemeldet.</string>
+  <string name="ohmail_notice_revoked_browser">Ein Browser wurde von deiner Mail abgemeldet.</string>
+  <string name="ohmail_notice_revoked_other">Ein Gerät wurde von deiner Mail abgemeldet.</string>
+</resources>

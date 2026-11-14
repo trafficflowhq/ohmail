@@ -5,6 +5,7 @@ import {
 } from "@trafficflow/db";
 import type { CalendarRecordKind, CalendarWindow, SettingsDTO } from "@ohmail/wire";
 import type { CalendarFeedPort, CalendarKeyset, CalendarSpanMs } from "./calendar-port.js";
+import type { DeviceNumbersPort } from "./device-numbers.js";
 import { dialect } from "@trafficflow/db/dialect";
 import { bridgeTx, type Db, type ServiceContext } from "./context.js";
 import { arrivalKeyOf } from "./arrival-key.js";
@@ -190,6 +191,11 @@ export interface GetChangesOptions {
    * change is built, sent or turned into a deletion; the cursor moves past them.
    */
   calendar?: CalendarFeedPort;
+  /**
+   * The account's named devices as the store this copy mirrors knows them ({@link withHeldDevices}).
+   * ABSENT: the settings record counts this store's own devices.
+   */
+  devices?: DeviceNumbersPort;
 }
 
 /**
@@ -219,6 +225,20 @@ async function servesCalendar(
 function withCalendarSwitch(settings: SettingsDTO | null, enabledAt: Date | null | undefined): SettingsDTO | null {
   if (settings === null || enabledAt === undefined) return settings;
   return { ...settings, calendarEnabledAt: enabledAt === null ? null : enabledAt.toISOString() };
+}
+
+/**
+ * THE DEVICES ON THE SETTINGS RECORD, where this store mirrors another's account: the three numbers
+ * that store's own record said, or none while none was read, in place of this store's count. A
+ * desktop signed in to a server counts no device of that account in its own rows; a window told
+ * the copy's count would never be told of a device paired to the account. With no port the record
+ * is as `materializeSettings` built it.
+ */
+function withHeldDevices(settings: SettingsDTO | null, port: DeviceNumbersPort | undefined, accountId: string): SettingsDTO | null {
+  if (settings === null || port === undefined) return settings;
+  const { devices: _live, devicesMade: _made, devicesRevoked: _revoked, ...rest } = settings;
+  const held = port.numbers(accountId);
+  return held === null ? rest : { ...rest, devices: held.live, devicesMade: held.made, devicesRevoked: held.revoked };
 }
 
 /**
@@ -281,6 +301,8 @@ export interface GetSnapshotOptions {
    * does not know.
    */
   calendar?: CalendarFeedPort;
+  /** The account's named devices as the store this copy mirrors knows them; as {@link GetChangesOptions.devices}. */
+  devices?: DeviceNumbersPort;
   /** With `phase: "calendar"`: the span to serve instead of the window around today. */
   span?: CalendarSpanMs;
 }
@@ -909,7 +931,9 @@ export class SyncService {
                   ? await (async () => {
                     if (!settingsMemo.has(id)) {
                       const settings = await materializeSettings(db, accountId, id);
-                      settingsMemo.set(id, withCalendarSwitch(settings, settings !== null && port ? await enabledAt() : undefined));
+                      settingsMemo.set(id, withHeldDevices(
+                        withCalendarSwitch(settings, settings !== null && port ? await enabledAt() : undefined), opts.devices, accountId,
+                      ));
                     }
                     return settingsMemo.get(id) ?? null;
                   })()
@@ -1119,9 +1143,9 @@ export class SyncService {
       // the tab held stale consent until the next settings write, however far away that was.
       // With the entity on page 1 the mirror's stamp starts at the row's own instant and the
       // client's re-ask covers the gap.
-      const settings = withCalendarSwitch(
+      const settings = withHeldDevices(withCalendarSwitch(
         await materializeSettings(db, accountId, accountId), port ? await enabledAt() : undefined,
-      );
+      ), opts.devices, accountId);
       if (settings !== null) emit("settings", accountId, settings, settings.updatedAt);
     }
 

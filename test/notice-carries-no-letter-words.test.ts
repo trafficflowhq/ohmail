@@ -20,6 +20,9 @@ import type { CalendarEventRecord, CalendarSuggestionRecord } from "@ohmail/wire
 import EN from "../apps/webapp/messages/en.json" with { type: "json" };
 import { noticeWordingOf, webNoticeEmitter } from "../apps/webapp/app/shell/notice-emitter.js";
 import { desktopNoticeEmitter } from "../apps/desktop/src/notice-emitter.js";
+import { phoneNoticeEmitter } from "../apps/mobile/web/src/notice-emitter.js";
+import { noticeKindsHere } from "../apps/mobile/src/notices/notice-door.js";
+import { pageOver, phone } from "../apps/mobile/test/helpers/notice-phone.js";
 
 /**
  * The page's words: each sentence of the catalogue as it ships, unformatted, with every value it was
@@ -50,8 +53,12 @@ interface Drawn { readonly title: string; readonly rest: readonly string[] }
 /**
  * One surface's way from a notice to its platform, over a platform that records. `carries` is its
  * emitter's own list: a kind outside it must draw nothing at all (an empty title and no other string).
+ * A way that crosses to another side (the phone's bridge) answers once what crossed has been drawn.
  */
-interface Arm { readonly name: string; readonly carries: readonly NoticeKind[]; draw(notice: Notice): Drawn }
+interface Arm { readonly name: string; readonly carries: readonly NoticeKind[]; draw(notice: Notice): Drawn | Promise<Drawn> }
+
+/** The kinds a phone that draws says it draws: Android's mail app with its poster. */
+const PHONE_DRAWS = noticeKindsHere(phone().deps);
 
 /** Every string in `value`, its keys among them. */
 function stringsOf(value: unknown, out: string[] = []): string[] {
@@ -108,6 +115,24 @@ const ARMS: readonly Arm[] = [
       return { title, rest: [...stringsOf(rest), ...(label ? stringsOf({ as: label.as }) : []), ...stringsOf(crossed.slice(1))] };
     },
   },
+  {
+    // The phone: the page's real emitter over the real bridge, the guard and the act's native end, with a
+    // poster that records what it is handed. Native writes every word a phone's notice shows, so it has no
+    // title field a letter's words could enter: every argument of every post it was handed is walked.
+    name: "android",
+    carries: (() => {
+      const emitter = phoneNoticeEmitter(pageOver(phone().deps), PHONE_DRAWS);
+      return emitter === "none" ? [] : emitter.carries;
+    })(),
+    async draw(notice) {
+      const made = phone();
+      const emitter = phoneNoticeEmitter(pageOver(made.deps), PHONE_DRAWS);
+      if (emitter === "none") return { title: "", rest: [] };
+      emitter.post(notice);
+      await new Promise((done) => setTimeout(done, 0));
+      return { title: "", rest: made.posts.flatMap((args) => args.map((arg) => String(arg))) };
+    },
+  },
 ];
 
 const AT = "2026-11-10T09:24:00.000Z";
@@ -160,7 +185,7 @@ async function mailWorld(): Promise<{ store: MemoryMirrorStore; before: NoticeSa
   const store = new MemoryMirrorStore();
   await store.load();
   await store.applyChanges([change("draft", "later", draft("later", "scheduled", null)), change("draft", "kept", draft("kept", "scheduled", null))]);
-  const before = noticeSampleOf(store, 1);
+  const before = noticeSampleOf(store, { made: 1, revoked: 0, live: 1 });
   await store.applyChanges([
     change("message", "arrived", letter("arrived", "INBOX", { name: LETTER.senderName, address: LETTER.senderAddress })),
     change("message", "waits", letter("waits", "ohmail/Screener", { name: null, address: LETTER.stranger })),
@@ -169,7 +194,7 @@ async function mailWorld(): Promise<{ store: MemoryMirrorStore; before: NoticeSa
     change("calendar_event", "shown", event("shown")),
     change("calendar_suggestion", "found", proposal("found")),
   ]);
-  return { store, before, after: noticeSampleOf(store, 2) };
+  return { store, before, after: noticeSampleOf(store, { made: 2, revoked: 0, live: 2 }) };
 }
 
 /**
@@ -212,14 +237,17 @@ describe("a notice carries no letter's words", () => {
   afterEach(() => { vi.restoreAllMocks(); });
 
   /** Every string a notice put anywhere: itself, what each surface drew, and what was logged. */
-  const everywhere = (notices: readonly Notice[]): string[] =>
-    [...stringsOf(notices), ...ARMS.flatMap((arm) => notices.flatMap((n) => { const d = arm.draw(n); return [d.title, ...d.rest]; })), ...logged];
+  const everywhere = async (notices: readonly Notice[]): Promise<string[]> => {
+    const drawn: string[] = [];
+    for (const arm of ARMS) for (const n of notices) { const d = await arm.draw(n); drawn.push(d.title, ...d.rest); }
+    return [...stringsOf(notices), ...drawn, ...logged];
+  };
   const holding = (strings: readonly string[], marker: string): string[] => strings.filter((s) => s.toLowerCase().includes(marker));
   /** Where `arm` drew `notices` wrongly, one line each: none holds the rule. */
-  const faults = (arm: Arm, notices: readonly Notice[]): string[] => {
+  const faults = async (arm: Arm, notices: readonly Notice[]): Promise<string[]> => {
     const out: string[] = [];
     for (const notice of notices) {
-      const drawn = arm.draw(notice);
+      const drawn = await arm.draw(notice);
       if (!arm.carries.includes(notice.kind)) {
         if (drawn.title !== "" || drawn.rest.length > 0) out.push(`${arm.name} drew ${notice.kind}, which it does not carry`);
         continue;
@@ -243,7 +271,7 @@ describe("a notice carries no letter's words", () => {
       { kind: "scheduled", outcome: "failed", count: 1 },
       { kind: "pairing", change: "paired", device: null },
     ]);
-    const all = everywhere(notices);
+    const all = await everywhere(notices);
     for (const marker of [...NEVER, TITLE.toLowerCase()]) expect(holding(all, marker), marker).toEqual([]);
     expect(holding(stringsOf(before).concat(stringsOf(after)), "zq"), "the sample itself holds a letter's words").toEqual([]);
   });
@@ -253,13 +281,14 @@ describe("a notice carries no letter's words", () => {
     const notices = calendarNotices(store, choicesWith(true));
     expect(notices.map((n) => n.kind)).toEqual(["cal_alert", "cal_invitation", "cal_change", "cal_change", "cal_answer", "cal_found", "cal_summary"]);
 
-    for (const marker of NEVER) expect(holding(everywhere(notices), marker), marker).toEqual([]);
-    for (const arm of ARMS) expect(faults(arm, notices)).toEqual([]);
+    const all = await everywhere(notices);
+    for (const marker of NEVER) expect(holding(all, marker), marker).toEqual([]);
+    for (const arm of ARMS) expect(await faults(arm, notices), arm.name).toEqual([]);
     // The rule bites: a surface that draws the title into its body, and one that draws what it does not carry.
     const real = ARMS[0]!;
-    const intoTheBody: Arm = { ...real, draw: (n) => { const d = real.draw(n); return { title: "", rest: [...d.rest, d.title] }; } };
-    expect(faults(intoTheBody, notices).length).toBeGreaterThan(0);
-    expect(faults({ ...real, carries: [] }, notices)).toHaveLength(notices.length);
+    const intoTheBody: Arm = { ...real, draw: async (n) => { const d = await real.draw(n); return { title: "", rest: [...d.rest, d.title] }; } };
+    expect((await faults(intoTheBody, notices)).length).toBeGreaterThan(0);
+    expect(await faults({ ...real, carries: [] }, notices)).toHaveLength(notices.length);
     // In the notice itself the title stands in its label and nowhere else.
     for (const notice of notices) {
       const { label, ...rest } = notice as Notice & { label?: unknown };
@@ -279,8 +308,36 @@ describe("a notice carries no letter's words", () => {
     // A held-back invitation makes no notice of its own; what names no event still rings.
     expect(heldBack.map((n) => n.kind)).toEqual(["cal_found", "cal_summary"]);
     for (const notices of [hidden, isPrivate, heldBack]) {
-      for (const marker of [...NEVER, TITLE.toLowerCase()]) expect(holding(everywhere(notices), marker), marker).toEqual([]);
+      const all = await everywhere(notices);
+      for (const marker of [...NEVER, TITLE.toLowerCase()]) expect(holding(all, marker), marker).toEqual([]);
     }
+  });
+
+  it("the phone: a letter's word where a closed word belongs reaches no poster, and a well-formed notice still does", async () => {
+    // The page's emitter copies a notice's own members by name, so a word put in one of them
+    // crosses the bridge. Native's guard is the last reader before the poster, and the only thing
+    // between a member's value and what a locked screen shows: it refuses the act whole.
+    const made = phone();
+    const emitter = phoneNoticeEmitter(pageOver(made.deps), PHONE_DRAWS);
+    if (emitter === "none") throw new Error("the phone draws no kind here: the case would measure nothing");
+    const crossed = async (): Promise<void> => { await new Promise((done) => setTimeout(done, 0)); };
+    const wordy = [
+      { kind: "pairing", change: "paired", device: LETTER.device },
+      { kind: "pairing", change: LETTER.subject, device: null },
+      { kind: "ohbox", count: LETTER.subject },
+      { kind: "screener", count: LETTER.senderAddress },
+    ];
+    for (const notice of wordy) emitter.post(notice as unknown as Notice);
+    await crossed();
+    expect(made.posts, "a notice that is no closed record reached the poster").toEqual([]);
+
+    // The same page, bridge and guard hand a well-formed notice on: a way that draws nothing is not what passed.
+    emitter.post({ kind: "pairing", change: "paired", device: "phone" });
+    await crossed();
+    expect(made.posts).toHaveLength(1);
+    const handed = stringsOf(made.posts);
+    expect(handed).toContain("paired");
+    for (const marker of NEVER) expect(holding(handed, marker), marker).toEqual([]);
   });
 
   it("a switch that is off, a master that is off and a surface that does not carry a kind draw nothing", async () => {

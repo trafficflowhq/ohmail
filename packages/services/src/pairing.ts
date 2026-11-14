@@ -4,6 +4,7 @@ import { type Tx } from "@trafficflow/db";
 import { accountOfUser, devices, pairingTokens, refreshTokens, sessions, users } from "@trafficflow/db";
 import { generateToken, hashToken } from "./auth/crypto.js";
 import { PAIRED_DEVICE_KINDS, holdLiveSession, lockUserRow, type PairedDeviceKind } from "./auth/session-lifecycle.js";
+import { ringDeviceMade } from "./auth/device-doorbell.js";
 import { bridgeTx, runInTransaction, type ServiceContext } from "./context.js";
 import type { OAuthTokens } from "./auth/types.js";
 import { ServiceError } from "./errors.js";
@@ -444,7 +445,7 @@ export async function redeemDevicePair(
     .where(and(...liveTokenConditions(raw, "device-pair", ctx.now())))
     .limit(1);
   if (!owner) throw pairingInvalid();
-  return runInTransaction(ctx, async (txCtx) => {
+  const paired = await runInTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: "device-pair" });
     if (!consumed || consumed.createdByUserId !== owner.userId) throw pairingInvalid();
     return auth.establishPairedDevice(txCtx, {
@@ -453,6 +454,9 @@ export async function redeemDevicePair(
       kind,
     });
   }, { fence: { accountId: owner.accountId } });
+  // The device is made and committed: the account's other clients are told (`device-doorbell.ts`).
+  await ringDeviceMade(ctx, owner.accountId);
+  return paired;
 }
 
 /** Where a handoff's mint is written down: `SessionLifecycle` implements it over its audit trail. */
@@ -551,7 +555,7 @@ export async function redeemAppHandoff(
     .where(and(...liveTokenConditions(raw, APP_HANDOFF_GRANT, ctx.now(), hashToken(input.verifier))))
     .limit(1);
   if (!owner) throw pairingInvalid();
-  return runInTransaction(ctx, async (txCtx) => {
+  const handed = await runInTransaction(ctx, async (txCtx) => {
     const consumed = await consumePairingToken(txCtx, { token: input.token, grant: APP_HANDOFF_GRANT, verifier: input.verifier });
     if (!consumed || consumed.createdByUserId !== owner.userId || consumed.handoffFromDeviceId === null) throw pairingInvalid();
     const tx = asTx(txCtx);
@@ -568,6 +572,9 @@ export async function redeemAppHandoff(
       handedOffFrom: consumed.handoffFromDeviceId,
     });
   }, { fence: { accountId: owner.accountId } });
+  // A handed-off app is a device of its own in Devices: made and committed, and told as a pairing is.
+  await ringDeviceMade(ctx, owner.accountId);
+  return handed;
 }
 
 function requireUser(ctx: ServiceContext): string {

@@ -90,6 +90,22 @@ export interface SettingsDTO {
    * and from a server that does not know the setting: a client reads both as `head`.
    */
   subjectHeading?: SubjectHeading;
+  /**
+   * THE ACCOUNT'S NAMED DEVICES, AS THREE WHOLE NUMBERS. A named device is one the Devices list shows by name:
+   * a paired phone or browser, a desktop app. Never a label, a name or an address: a notice is decided from
+   * these, and what a notice is decided from holds nothing a device chose to call itself.
+   *
+   * `devicesMade` is how many were ever made and `devicesRevoked` how many of them a person took back in
+   * Devices: both only rise, so a client that compares two readings sees every new device and every take-back,
+   * whatever else happened between them. `devices` is how many hold a sign-in now: it is what a person is
+   * shown, and nothing is decided from it (it also falls when a device signs itself out, so a sign-out followed
+   * by a pairing reads as no change).
+   *
+   * ABSENT from a server that does not count them: a client then reads the three as not told, and tells nothing.
+   */
+  devices?: number;
+  devicesMade?: number;
+  devicesRevoked?: number;
   updatedAt: ISODateTime;
 }
 

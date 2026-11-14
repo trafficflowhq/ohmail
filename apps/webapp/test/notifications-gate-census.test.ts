@@ -143,14 +143,33 @@ const TRANSPORTS = new Set([
    * than assumed, and so a SECOND draw call added to it would still have to pass the scan below.
    */
   "apps/webapp/public/sw.js",
+  /**
+   * THE PHONE'S ROAD FROM ITS PAGE TO NATIVE, the two files on the native side that spell the
+   * bridge's act for a notice. Neither is handed a notice by the caller and neither asks the gate:
+   * the page's emitter (an EMITTER below) is the one place the act is requested from.
+   *
+   *  · `bridge-kinds.ts` is the bridge's vocabulary and its guard: it lists the act among the acts
+   *    a page may ask, and reads the notice that crosses with it through closed records. A notice
+   *    that is anything but a listed kind with exactly its own members is refused whole there.
+   *  · `ShellScreen.tsx` routes a guarded act to its native end, the notice's door, which draws
+   *    only for the signed-in pairing, with the system's permission, while the app is not in front.
+   *
+   * Admitted by name, so that a third file spelling the act (a second door to the poster) fails
+   * the scan below.
+   */
+  "apps/mobile/src/shell/bridge-kinds.ts",
+  "apps/mobile/src/shell/ShellScreen.tsx",
 ]);
 
 /**
  * DRAW WHAT THE ONE CALLER HANDS THEM. One per surface, each with the surface whose kinds it may
- * carry (`noticeKindsOf`). The phone's poster joins this list when it lands.
+ * carry (`noticeKindsOf`). The phone's is its page's: it draws by asking native over the bridge,
+ * and the one file is the emitter of both phones (on the iPhone, and in the calendar's app, it is
+ * handed no kind and is no emitter at all).
  */
 const EMITTERS = new Map<string, NoticeSurface>([
   ["apps/webapp/app/shell/notice-emitter.ts", "web"],
+  ["apps/mobile/web/src/notice-emitter.ts", "android"],
   ["apps/desktop/src/notice-emitter.ts", "desktop"],
 ]);
 
@@ -175,13 +194,16 @@ const POST_CALL = new RegExp(`${["emit", "ter"].join("")}\\.${["po", "st"].join(
  *    subscriber callback and so useless as a census key;
  *  · the shell's command itself, by its name as a string: a second door that invokes it directly
  *    instead of going through the binding;
- *  · the two browser forms, page and service worker.
+ *  · the two browser forms, page and service worker;
+ *  · the phone's bridge act, by its word as a string: the page's only road to the native poster.
+ *    The word in quotes and nothing around it, so the pattern reads a line once from left to right.
  * `expo-notifications` is absent deliberately: `apps/mobile/test/privacy.test.ts` bans the module
  * outright, so the phone's notice goes through its own native renderer instead.
  */
 const DRAW_PATTERNS: [string, RegExp][] = [
   ["desktop shell notice", new RegExp(`\\b${["post", "OsNotice"].join("")}\\s*\\(`)],
   ["desktop shell command", new RegExp(`["'\`]${["noti", "fy"].join("")}["'\`]`)],
+  ["phone bridge act", new RegExp(`["'\`]${["noti", "ces"].join("")}\\.${["po", "st"].join("")}["'\`]`)],
   ["Notification constructor", new RegExp(`new\\s+${["Notifi", "cation"].join("")}\\s*\\(`)],
   ["service-worker notice", new RegExp(`\\.${["show", "Notification"].join("")}\\s*\\(`)],
 ];
@@ -210,6 +232,14 @@ describe("the scan reaches the surfaces — a census over nothing passes vacuous
     const binding = shipped.find((f) => f.path === "apps/desktop/src/native.ts")!;
     const [, command] = DRAW_PATTERNS.find(([label]) => label === "desktop shell command")!;
     expect(binding.body.split("\n").some((l) => command.test(l)), "the shell's command pattern matches nothing").toBe(true);
+  });
+
+  it("the bridge's act is named by its guard and its router — a transport that spells nothing is admitted for nothing", () => {
+    const [, act] = DRAW_PATTERNS.find(([label]) => label === "phone bridge act")!;
+    for (const path of ["apps/mobile/src/shell/bridge-kinds.ts", "apps/mobile/src/shell/ShellScreen.tsx"]) {
+      const body = shipped.find((f) => f.path === path)!.body;
+      expect(body.split("\n").some((l) => act.test(l)), `${path} is admitted as the act's transport and never spells it`).toBe(true);
+    }
   });
 
   it("the patterns actually match the emitters we know about — a pattern that matches nothing guards nothing", () => {

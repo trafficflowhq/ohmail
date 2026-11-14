@@ -24,13 +24,22 @@ export interface NoticeAhead {
   readonly acts: readonly NoticeAct[];
 }
 
+/**
+ * WHAT AN EMITTER ANSWERS FOR ONE NOTICE: `true` once the platform took it, `false` where nothing
+ * was drawn (the surface is the one being looked at, the platform refused, it could not be handed
+ * over); at once, or when the platform has answered. Never a rejection. The caller keeps what it
+ * has told of the account's devices by this answer alone, so only `true` counts: an emitter that
+ * answers nothing is read as one that drew nothing, and what it was handed is told again.
+ */
+export type NoticeTaken = boolean | Promise<boolean>;
+
 export interface NoticeEmitter {
   /** The kinds this surface draws. The pane offers a switch for these only, and the gate hands over no other. */
   readonly carries: readonly NoticeKind[];
   /** The acts its notices can carry. A notice is handed only these. */
   readonly acts: readonly NoticeAct[];
-  /** Draw one notice. Never throws: a notice that cannot be shown takes nothing down. */
-  post(notice: Notice): void;
+  /** Draw one notice, and say whether the platform took it. Never throws: a notice that cannot be shown takes nothing down. */
+  post(notice: Notice): NoticeTaken | void;
   /**
    * Take the whole list of alerts to ring later, replacing the one before; an empty list takes all
    * back. `none` where the surface cannot ring by itself: the caller then rings by its own timers

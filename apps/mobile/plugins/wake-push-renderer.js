@@ -81,6 +81,24 @@ const {
  * rather than start/stop precisely so a backgrounded app (surface mounted, `onWake` live) keeps
  * suppressing.
  *
+ * ── AND ONLY FOR THE PAIRING THAT IS SIGNED IN ────────────────────────────────────────────────
+ *
+ * The connector hands the renderer the INSTANCE a wake was delivered for: the local id of one of
+ * this phone's pairings (never an account). A phone can hold several pairings and be signed in to
+ * one; a wake for a pairing the person left, switched away from or signed out of must draw
+ * nothing, because "New mail" on a locked screen is a sentence about somebody's mailbox. The app
+ * keeps the signed-in pairing's id in one small file in its no-backup folder (written at sign-in
+ * and at a switch, removed at sign-out; `src/notices/live-instance.ts` decides, the notices' native
+ * module writes). The renderer reads that file and draws only when the wake's instance IS the kept
+ * one, by `LiveInstanceGate.mayDraw`: no file, an unreadable one, a file of another shape, an
+ * instance that is no pairing's id, or another pairing's: nothing. It fails closed: a phone that
+ * has not been opened since this check arrived draws no closed-app notice until it is opened once.
+ *
+ * The gate is one Kotlin text ({@link gateSource}), written here into the app's package and held
+ * byte-equal, but for its package line, to the copy the notices' module carries
+ * (`modules/ohmail-notices`), so the poster behind the bridge and this renderer cannot disagree
+ * about for whom a notice is drawn. It imports nothing, so it compiles and runs on any JVM.
+ *
  * ── NO NETWORK, NO LOGGING, RETURNS null ──────────────────────────────────────────────────────
  *
  * The base render opens no connection and loads no remote image, by construction. It logs
@@ -166,6 +184,72 @@ function stringsXml(strings) {
 </resources>
 `;
 }
+
+/**
+ * The file that says which pairing is signed in, in the app's no-backup folder, and its first line.
+ * The notices' module writes it; the renderer and the module read it through the one gate below.
+ */
+const LIVE_FILE = "ohmail-notices-live";
+const LIVE_HEAD = "v1";
+const GATE_CLASS = "LiveInstanceGate";
+
+/**
+ * FOR WHOM A NOTICE MAY BE DRAWN, as Kotlin that imports nothing. One text for two packages: the
+ * app's (`app.ohmail.push`, written at prebuild) and the notices' module's (`app.ohmail.notices`, a
+ * committed file a test holds equal to this). No regular expression and no parsing beyond two lines.
+ */
+const gateSource = (pkg) => `package ${pkg}
+
+/**
+ * FOR WHOM A NOTICE MAY BE DRAWN: only for the pairing kept as the signed-in one.
+ *
+ * ONE TEXT, TWO PACKAGES. apps/mobile/plugins/wake-push-renderer.js writes this file into the app
+ * at prebuild, and the notices' module carries the same text under its own package; a test holds
+ * the two equal. Change it in the plugin, never here.
+ *
+ * It imports nothing and keeps nothing: what the file says is handed in as lines, a wake's or a
+ * notice's pairing as a string. Everything that is not exactly right draws nothing.
+ */
+object ${GATE_CLASS} {
+  /** The file that says which pairing is signed in, in the app's no-backup folder. */
+  const val FILE = ${JSON.stringify(LIVE_FILE)}
+
+  /** The most characters the file may hold: two short lines. Anything longer is not read. */
+  const val MOST = 64
+
+  private const val HEAD = ${JSON.stringify(LIVE_HEAD)}
+  private const val SHORTEST = 7
+  private const val LONGEST = 31
+
+  /** A pairing's local id as the app mints it: p, then 6 to 30 of 0-9 and a-z. */
+  @JvmStatic
+  fun isInstance(text: String?): Boolean {
+    if (text == null || text.length < SHORTEST || text.length > LONGEST || text[0] != 'p') return false
+    for (i in 1 until text.length) {
+      val c = text[i]
+      if (!((c in '0'..'9') || (c in 'a'..'z'))) return false
+    }
+    return true
+  }
+
+  /** The pairing the file's lines name, or null where they name none. */
+  @JvmStatic
+  fun keptOf(lines: List<String>?): String? {
+    if (lines == null || lines.size != 2 || lines[0] != HEAD) return null
+    return if (isInstance(lines[1])) lines[1] else null
+  }
+
+  /** The lines that keep a pairing, or null for what is no pairing's id: then nothing is written. */
+  @JvmStatic
+  fun linesOf(instance: String?): List<String>? =
+    if (instance != null && isInstance(instance)) listOf(HEAD, instance) else null
+
+  /** A notice for a pairing may be drawn only while the kept one is that same pairing. */
+  @JvmStatic
+  fun mayDraw(kept: String?, instance: String?): Boolean =
+    kept != null && instance != null && isInstance(kept) && isInstance(instance) && kept == instance
+}
+`;
 
 /** The process-static interactive flag, its own tiny file so both classes reference one source. */
 const APP_STATE_SOURCE = `package ${PACKAGE}
@@ -268,6 +352,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import dev.djara.expounifiedpush.NotificationContent
 import dev.djara.expounifiedpush.PushPayloadRenderer
+import java.io.File
 
 /**
  * Draws a single fixed "New mail" notice for a wake delivered to a KILLED app, and nothing at all
@@ -295,6 +380,12 @@ import dev.djara.expounifiedpush.PushPayloadRenderer
  *     backgrounded (suppress; the surface is mounted and onWake syncs), and back to 0 once the
  *     task is swiped away and the Activity destroyed (draw).
  *
+ *  3. It draws only for the pairing that is signed in. The wake's instance is compared with the one
+ *     the app keeps in its no-backup folder, through {@link ${GATE_CLASS}}; with no kept one, an
+ *     unreadable file, or a wake for any other pairing, nothing is drawn. The instance is compared
+ *     and used as the notice's tag, so that leaving the pairing can take the notice back; it is
+ *     never shown and never logged.
+ *
  * It posts the notification itself and returns null, so the connector draws nothing of its own and
  * there is never a second notice. It logs nothing.
  */
@@ -302,18 +393,37 @@ class ${CLASS} : PushPayloadRenderer {
   override fun render(context: Context, instance: String, decrypted: String): NotificationContent? {
     // Only our own closed constant is ever acted on. No field is read out of the payload.
     if (decrypted != WAKE_PAYLOAD) return null
+    // FOR WHOM: only the pairing the app keeps as the signed-in one. A wake for a pairing that was
+    // left, switched away from or signed out of draws nothing, and so does every wake while nothing
+    // is kept.
+    if (!${GATE_CLASS}.mayDraw(keptInstance(context), instance)) return null
     // A mounted React surface means state/wake.tsx's onWake will sync this silently; only when no
     // Activity is alive (killed app, or a task swiped away in a lingering process) is there no JS to
     // hand the wake to, and only then does this draw the notice. WakeAppState.interactive is a plain
     // count of live activities — never a read of ReactHost, which would create the lazy host in a
     // killed process AND, on a task removal, outlive the surface and wrongly report JS as alive.
     if (WakeAppState.interactive) return null
-    postWakeNotification(context)
+    postWakeNotification(context, instance)
     // We drew it (or tried). null tells the connector to draw nothing itself.
     return null
   }
 
-  private fun postWakeNotification(context: Context) {
+  /**
+   * The pairing the app keeps as the signed-in one, or null: no file, one too long to be it, one
+   * that cannot be read, or one of another shape. Read at each wake, in a process that may hold
+   * nothing else of the app.
+   */
+  private fun keptInstance(context: Context): String? {
+    return try {
+      val file = File(context.applicationContext.noBackupFilesDir, ${GATE_CLASS}.FILE)
+      if (!file.isFile || file.length() > ${GATE_CLASS}.MOST) return null
+      ${GATE_CLASS}.keptOf(file.readLines(Charsets.US_ASCII))
+    } catch (t: Throwable) {
+      null
+    }
+  }
+
+  private fun postWakeNotification(context: Context, instance: String) {
     try {
       val ctx = context.applicationContext
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -346,7 +456,9 @@ class ${CLASS} : PushPayloadRenderer {
         )
       }
 
-      NotificationManagerCompat.from(ctx).notify(NOTIFICATION_ID, builder.build())
+      // Tagged with the pairing it is for, which has passed the gate: leaving that pairing takes
+      // the notice back by its tag (the notices' module). The tag is never shown.
+      NotificationManagerCompat.from(ctx).notify(instance, NOTIFICATION_ID, builder.build())
     } catch (t: Throwable) {
       // A denied POST_NOTIFICATIONS permission (API 33+) or any post failure is swallowed: there is
       // nothing to recover and nothing to log that would not risk leaking. The wake still synced the
@@ -362,7 +474,7 @@ class ${CLASS} : PushPayloadRenderer {
 }
 `;
 
-/** Write the three Kotlin sources into the generated project. */
+/** Write the four Kotlin sources into the generated project. */
 function withWakeRendererSources(config) {
   return withDangerousMod(config, [
     "android",
@@ -381,6 +493,7 @@ function withWakeRendererSources(config) {
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, `${CLASS}.kt`), rendererSource(appPackageOf(cfg)));
       fs.writeFileSync(path.join(dir, "WakeAppState.kt"), APP_STATE_SOURCE);
+      fs.writeFileSync(path.join(dir, `${GATE_CLASS}.kt`), gateSource(PACKAGE));
       fs.writeFileSync(path.join(dir, `${INITIALIZER_CLASS}.kt`), INITIALIZER_SOURCE);
 
       /* The localized notice strings, one `values` directory per language. Written here rather
@@ -455,5 +568,11 @@ module.exports.rendererSource = rendererSource;
 module.exports.RENDERER_SOURCE = rendererSource("app.ohmail");
 module.exports.APP_STATE_SOURCE = APP_STATE_SOURCE;
 module.exports.INITIALIZER_SOURCE = INITIALIZER_SOURCE;
+module.exports.LIVE_FILE = LIVE_FILE;
+module.exports.LIVE_HEAD = LIVE_HEAD;
+module.exports.GATE_CLASS = GATE_CLASS;
+module.exports.gateSource = gateSource;
+/** The gate as the app's package carries it. */
+module.exports.GATE_SOURCE = gateSource(PACKAGE);
 /** Back-compat alias: the census reads the emitted renderer Kotlin as `SOURCE`. */
 module.exports.SOURCE = rendererSource("app.ohmail");

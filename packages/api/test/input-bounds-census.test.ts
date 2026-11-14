@@ -1671,6 +1671,12 @@ const IN_SINKS: Readonly<Record<string, { origin: ArrayOrigin; count: number }>>
     origin: { subquery: "a `select users.id where account_id = …` inside the predicate — no id is materialized" },
     count: 9,
   },
+  // The settings record's three device numbers (`device-numbers.ts`): both counts go through the
+  // per-user indexes by way of the account's users.
+  "device-numbers.ts :: own": {
+    origin: { subquery: "a `select users.id where account_id = …` inside the predicate — no id is materialized" },
+    count: 2,
+  },
   "account-deletion-service.ts :: ownEmails": {
     origin: { subquery: "`select users.email where account_id = …` — the signup funnel is keyed by address, and the addresses stay in PostgreSQL: no parameter is bound per user and none is materialized here" },
     count: 2,

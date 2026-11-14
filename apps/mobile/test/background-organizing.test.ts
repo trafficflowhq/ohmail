@@ -45,6 +45,8 @@ import type { StopOrganizingOutcome } from "../src/engine/standalone-door";
 import { watchedStates } from "../src/engine/organizer-session";
 import { EN } from "../src/copy.en";
 import { DE } from "../src/copy.de";
+import { organizerNoticeBody } from "../src/engine/organizer-notice";
+import { resetLocaleRegisterForTests, setActiveLocale } from "../src/i18n/locale";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MODULE_DIR = path.join(HERE, "..", "modules", "organizer-service");
@@ -289,7 +291,7 @@ function service(over: Partial<ServiceLog> = {}): { service: BackgroundService; 
 
 const NOTICE: ServiceNotice = {
   channelName: EN.stateOrganizing,
-  body: EN.notifBody("mila@example.com"),
+  body: EN.notifBody,
   stopLabel: EN.notifStop,
   stopFailedBody: EN.notifStopFailed,
 };
@@ -557,23 +559,25 @@ describe("Android — it organizes behind a notification, and the notification i
     expect(w.live.handedBack()).toBe(false);
   });
 
-  it("the notification carries the deck's words and the mailbox's address", async () => {
+  it("the notification carries the deck's words, and no mailbox's address", async () => {
     const w = wire("android");
     await w.live.phaseChanged("background");
     const notice = w.service?.notices[0];
     expect(notice?.channelName).toBe(EN.stateOrganizing);
     expect(notice?.stopLabel).toBe(EN.notifStop);
-    expect(notice?.body).toContain("mila@example.com");
+    expect(notice?.body).toBe(EN.notifBody);
+    expect(notice?.body).not.toContain("@");
   });
 
   it("the address never reaches a diagnostic", async () => {
     /**
-     * The body is somebody's mail address. It goes from the deck to the platform and nowhere else:
-     * a log line carrying it would put a person's address in every crash report and support
-     * bundle. Asserted over EVERY line this module emitted, serialized, not over the ones a reader
-     * remembers to check.
+     * The body goes from the deck to the platform and nowhere else: a log line carrying it would put
+     * whatever it says in every crash report and support bundle. It is handed one that holds a mail
+     * address here, as an earlier build's body did, so that such a line would be seen. Asserted over
+     * EVERY line this module emitted, serialized, not over the ones a reader remembers to check.
      */
-    const w = wire("android", { engine: { handBackThrows: true } });
+    const held: ServiceNotice = { ...NOTICE, body: "Organizing mila@example.com." };
+    const w = wire("android", { engine: { handBackThrows: true }, notice: () => held });
     await w.live.phaseChanged("background");
     await w.live.phaseChanged("active");
     w.service!.restricted = true;
@@ -2146,12 +2150,25 @@ describe("the holder left, and the phone in front of the person takes its mailbo
 /* ── the copy, in both languages ──────────────────────────────────────────────────────────── */
 
 describe("the notification's words", () => {
-  it("both decks carry all four keys, and the body renders the address", () => {
+  it("both decks carry all four keys, and the body is a sentence that names no mailbox", () => {
+    // A notice is read on a locked screen by whoever stands there: the body is the app's own words, no address.
     for (const deck of [EN, DE]) {
       expect(deck.stateOrganizing.length).toBeGreaterThan(0);
       expect(deck.notifStop.length).toBeGreaterThan(0);
       expect(deck.organizerRestricted.length).toBeGreaterThan(0);
-      expect(deck.notifBody("mila@example.com")).toContain("mila@example.com");
+      expect(deck.notifBody).toMatch(/^\S+( \S+)*$/);
+      expect(deck.notifBody).not.toContain("@");
+    }
+    // Composed as the phone composes it, for the mailbox mila@example.com organizing here: the address is nowhere.
+    try {
+      for (const [language, deck] of [["en", EN], ["de", DE]] as const) {
+        setActiveLocale(language);
+        const body = organizerNoticeBody({ "mila@example.com": { unreadableReason: null } });
+        expect(body, language).toBe(deck.notifBody);
+        expect(body, language).not.toContain("mila");
+      }
+    } finally {
+      resetLocaleRegisterForTests();
     }
   });
 
@@ -2163,7 +2180,7 @@ describe("the notification's words", () => {
      * button, and the Kotlin below routes the tap to the launcher.
      */
     for (const deck of [EN, DE]) {
-      expect(deck.notifBody("mila@example.com").toLowerCase()).not.toMatch(/tap|tippen|antippen/);
+      expect(deck.notifBody.toLowerCase()).not.toMatch(/tap|tippen|antippen/);
     }
   });
 

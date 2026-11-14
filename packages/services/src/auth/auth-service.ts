@@ -62,8 +62,9 @@ import {
 } from "./origins.js";
 import { newTotpSecret, totpUri, verifyTotp } from "./totp.js";
 import {
-  PAIRED_DEVICE_KINDS, SessionLifecycle, holdLiveSession, lockUserRow, refuseCrossAccountCredential,
+  PAIRED_DEVICE_KINDS, SessionLifecycle, holdLiveSession, lockUserRow, mintsNamedDevice, refuseCrossAccountCredential,
 } from "./session-lifecycle.js";
+import { ringDeviceMade } from "./device-doorbell.js";
 
 /** Where a swallowed auth fault is named: `err` is class and code, never its message. */
 const authLog = createLogger({ service: "auth" });
@@ -1443,7 +1444,7 @@ export class AuthService extends SessionLifecycle {
     // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION. Committed apart, a revoke landing between
     // them found the code spent and no session yet, and the session written after it outlived the
     // revoke. An account erased under the claim answers what its code answers once it is gone.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const claimed = await this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       const [row] = await tx.update(loginTokens)
         .set({ consumedAt: now })
@@ -1471,6 +1472,9 @@ export class AuthService extends SessionLifecycle {
       // this route deliberately does not hand back. The route sets no cookies either.
       return { tokens: established.tokens! };
     }, { fence: { accountId: owner.accountId, onErased: () => { throw invalidDesktopCode(); } } });
+    // Every admissible kind of this claim makes the app's own device row: committed, and told.
+    await ringDeviceMade(ctx, owner.accountId);
+    return claimed;
   }
 
   // ── Signing a desktop in by confirming in the browser ───────────────────────
@@ -1695,7 +1699,7 @@ export class AuthService extends SessionLifecycle {
     // THE BURN DECIDES a confirmed row, and every other answer is read off the row after it missed:
     // pending, used, denied, expired (the same `approvalRefusal` the unconfirmed arm above asks). The
     // concurrent loser reads `approval_used`.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const answer = await this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       const [spent] = await tx.update(loginTokens)
         .set({ consumedAt: now })
@@ -1728,6 +1732,9 @@ export class AuthService extends SessionLifecycle {
       });
       return { tokens: established.tokens! };
     }, { fence: { accountId: owner.accountId } });
+    // Only the answer that carries the pair made a device; a poll that still waits made none.
+    if ("tokens" in answer) await ringDeviceMade(ctx, owner.accountId);
+    return answer;
   }
 
   // ── WebAuthn (primary 2FA) ──────────────────────────────────────────────────
@@ -1782,7 +1789,7 @@ export class AuthService extends SessionLifecycle {
     // ONE transaction for "the factor lands ⇄ the enrollment session is retired".
     // Autocommitting them separately left a window in which the passkey existed and
     // the password-only session was still live (or vice versa).
-    return this.inTransaction(ctx, async (tctx) => {
+    const enrolled = await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
       const [row] = await db.insert(webauthnCredentials).values({
         userId, accountId: accountOfUser(userId), credentialId: reg.credentialId, publicKey: reg.publicKey,
@@ -1793,6 +1800,9 @@ export class AuthService extends SessionLifecycle {
       const session = await this.exchangeEnrollmentSession(tctx, userId, "webauthn", o.client);
       return { credentialId: row!.id, twofaEnrolled, ...(session ? { session } : {}) };
     }, { fence: { accountId: ctx.accountId } });
+    // A desktop's enrollment exchanged its session for a full one, which made the app's device row.
+    if (enrolled.session !== undefined && mintsNamedDevice(o.client ?? "web")) await ringDeviceMade(ctx, ctx.accountId);
+    return enrolled;
   }
 
   async webauthnAssertOptions(ctx: ServiceContext, b: { loginToken: string }): Promise<{ options: unknown }> {
@@ -1914,7 +1924,7 @@ export class AuthService extends SessionLifecycle {
     // ONE transaction: activation, the single-use `lastConsumedStep` advance and the
     // enrollment-session exchange are the same privilege change. `FOR UPDATE` on the
     // secret row also serializes two concurrent activations of the same secret.
-    return this.inTransaction(ctx, async (tctx) => {
+    const activated = await this.inTransaction(ctx, async (tctx) => {
       const db = asTx(tctx);
       const row = (await db.select().from(totpSecrets)
         .where(eq(totpSecrets.userId, userId)).limit(1).for("update"))[0];
@@ -1930,6 +1940,11 @@ export class AuthService extends SessionLifecycle {
       const session = await this.exchangeEnrollmentSession(tctx, userId, "totp", o.client);
       return { twofaEnrolled, ...(session ? { session } : {}) };
     }, { fence: { accountId: ctx.accountId } });
+    // As for a passkey: a desktop's enrollment exchange made the app's device row.
+    if ("session" in activated && activated.session !== undefined && mintsNamedDevice(o.client ?? "web")) {
+      await ringDeviceMade(ctx, ctx.accountId);
+    }
+    return activated;
   }
 
   /**
@@ -2046,12 +2061,15 @@ export class AuthService extends SessionLifecycle {
     // ({@link firstStepFence}). A TOTP code was just verified, here. `now` is the factor's real
     // time. `kind` is the caller's declaration or `"web"` — either way it derives the cookie window
     // (see the header), so the declaration reaches the device row and nothing else.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const verified = await this.inTransaction(ctx, async (txCtx) => {
       await this.consumeLoginToken(asTx(txCtx), lt.id, txCtx.now());
       const est = await this.establish(txCtx, user, { method: "totp", kind, twofaAt: ctx.now() });
       await this.throttleRefund(asTx(txCtx), `${THROTTLE_PREFIX.factorDay}${user.id}`, this.factorDayPolicy());
       return est;
     }, { fence: firstStepFence(user.accountId) });
+    // A desktop that declared itself got a device row of its own; a browser's sign-in made none.
+    if (mintsNamedDevice(kind)) await ringDeviceMade(ctx, user.accountId);
+    return verified;
   }
 
   // ONE TRANSACTION: factor removal is a compromise ceremony, so it takes the credential-change
@@ -2771,7 +2789,7 @@ export class AuthService extends SessionLifecycle {
     // THE BURN AND THE SESSION IT BUYS, ONE TRANSACTION, `claimDesktopLink`'s reason: committed
     // apart, a revoke landing between them found the code spent and no session yet. An account
     // erased under the exchange answers what its code answers once it is gone.
-    return this.inTransaction(ctx, async (txCtx) => {
+    const tokens = await this.inTransaction(ctx, async (txCtx) => {
       const tx = asTx(txCtx);
       // Single-use, and the predicate is the enforcement. The `row.consumedAt` check
       // twenty lines up is a READ; without repeating the condition in the write, two token
@@ -2806,6 +2824,9 @@ export class AuthService extends SessionLifecycle {
         onErased: () => { throw new ServiceError("invalid_grant", 400, "invalid or expired authorization code"); },
       },
     });
+    // The exchange signs a desktop app in, and that sign-in made the app's device row.
+    await ringDeviceMade(ctx, owner.accountId);
+    return tokens;
   }
 
   // ── The audit read (the lifecycle's device list/revoke moved to the base class) ──

@@ -5,7 +5,7 @@
  * took it) and how many unsent letters the page holds; the page answers each at once.
  */
 import type { BackSignal, FoldReading, KeyboardReading, LinkIn, LinkedDraft, SafeInsets, Signal, WakeSignal } from "@ohmail/app/host";
-import { parseMailto, type NoticePermission } from "./engine-package";
+import { parseMailto, type MailNotice, type NOTICE_COUNT_MAX, type NoticePermission } from "./engine-package";
 import type * as Wire from "../../src/shell/bridge-kinds";
 import type { ShellConfig } from "../../src/shell/bridge-kinds";
 import type { Bridge } from "./bridge";
@@ -20,6 +20,9 @@ type Holds<T extends readonly true[]> = T;
 export type BridgeShapesAreTheContracts = Holds<[
   Same<Wire.FoldReading, FoldReading>, Same<Wire.SafeInsets, SafeInsets>, Same<Wire.KeyboardReading, KeyboardReading>,
   Same<Wire.LinkedDraft, LinkedDraft>, Same<Wire.NoticePermission, NoticePermission>,
+  // A notice crosses as the shared kinds have it, a count bounded as theirs is; the phone carries no scheduled send.
+  Same<Wire.BridgeNotice, Exclude<MailNotice, { readonly kind: "scheduled" }>>,
+  Same<typeof Wire.NOTICE_COUNT_MAX, typeof NOTICE_COUNT_MAX>,
 ]>;
 
 /** The sync loop's "online" source, from native's network facts: each listener is told when the phone comes back online. */

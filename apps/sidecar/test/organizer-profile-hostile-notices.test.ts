@@ -365,8 +365,8 @@ describe("what this device rings and shows stays its own", () => {
   const MAIL = { master: false, ohbox: true, screener: true, scheduled: true, pairing: true };
   const CALENDAR = { cal_alert: false, cal_invitation: true, cal_change: true, cal_answer: false, cal_found: false, cal_summary: false, showTitles: false, widgetTitles: false };
   const WHERE = { ohcalPhone: false };
-  const quiet: NoticeSample = { ohboxUnread: 0, screenerWaiting: 0, sends: new Map(), devices: 1 };
-  const busy: NoticeSample = { ohboxUnread: 2, screenerWaiting: 1, sends: new Map(), devices: 2 };
+  const quiet: NoticeSample = { ohboxUnread: 0, screenerWaiting: 0, sends: new Map(), devices: { made: 1, revoked: 0, live: 1 } };
+  const busy: NoticeSample = { ohboxUnread: 2, screenerWaiting: 1, sends: new Map(), devices: { made: 2, revoked: 0, live: 2 } };
 
   it("a copy that turns the pairing notice off and titles on changes no choice and draws no word of its own", async () => {
     const w = await world();

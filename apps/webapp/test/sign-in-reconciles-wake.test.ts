@@ -193,6 +193,56 @@ describe("reconcileWakeRegistration", () => {
     expect(JSON.parse(state!.body).enabled).toBe(false);
   });
 
+  it("the registration stands only while the master and new mail are both on: either off takes it down at the server and in the browser, both on makes it again", async () => {
+    const { reconcileWakeRegistration, NOTIFY_STATE_URL } =
+      await import("../app/shell/notification-settings");
+    // A browser that holds its subscription as a browser does: made by a subscribe, gone after an unsubscribe.
+    let held: { endpoint: string } | null = null;
+    const pushManager = {
+      getSubscription: () => Promise.resolve(held),
+      subscribe: () => Promise.resolve(held = {
+        endpoint: "https://push.example/ep/new",
+        getKey: (n: string) => new Uint8Array(n === "auth" ? 16 : 65).fill(3).buffer,
+        unsubscribe: () => { held = null; return Promise.resolve(true); },
+      } as { endpoint: string }),
+    };
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true, value: { register: () => Promise.resolve({ pushManager }) },
+    });
+    const switches = (over: object): void =>
+      window.localStorage.setItem(CHANNELS_KEY, JSON.stringify({ ...JSON.parse(ALL_ON), ...over }));
+    const armed = (): boolean => JSON.parse([...cachePuts].reverse().find((p) => p.url === NOTIFY_STATE_URL)!.body).enabled;
+
+    switches({});
+    expect(await reconcileWakeRegistration("New mail.")).toBe("subscribed");
+    expect(held, "no subscription in the browser").not.toBeNull();
+    expect(subscribed).toHaveLength(1);
+
+    let made = 1;
+    for (const off of [{ ohbox: false }, { master: false }]) {
+      switches(off);
+      expect(await reconcileWakeRegistration("New mail."), JSON.stringify(off)).toBe("unsubscribed");
+      expect(held, `${JSON.stringify(off)}: the browser still holds its subscription`).toBeNull();
+      expect(unsubscribed.at(-1), `${JSON.stringify(off)}: the server's row was left standing`).toBe("row-new");
+      expect(window.localStorage.getItem(ID_KEY)).toBeNull();
+      expect(armed(), "the worker may still draw").toBe(false);
+
+      switches({});
+      expect(await reconcileWakeRegistration("New mail.")).toBe("subscribed");
+      expect(held).not.toBeNull();
+      expect(subscribed).toHaveLength(made += 1);
+      expect(armed()).toBe(true);
+    }
+
+    // The three other switches are no part of it: a closed browser is started for new mail alone.
+    const removed = unsubscribed.length;
+    switches({ screener: false, scheduled: false, pairing: false });
+    await reconcileWakeRegistration("New mail.");
+    expect(held, "a switch that is not new mail took the registration down").not.toBeNull();
+    expect(unsubscribed).toHaveLength(removed);
+    expect(armed()).toBe(true);
+  });
+
   it("a DENIED permission is not talked round by a boot", async () => {
     // `subscriptionWanted` needs all three, and the OS answer is the one we may never overrule.
     const { reconcileWakeRegistration } = await import("../app/shell/notification-settings");
