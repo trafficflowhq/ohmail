@@ -53,7 +53,9 @@
     "linkDesktop",
     "resume",
     "accessLock",
-    "subscribed"
+    "subscribed",
+    "stepUp",
+    "deleteAccount"
   ],
   "desktop": ["host", "aiProvider", "ohmarchy", "desktopScreener", "desktopDoor"],
   "site": [

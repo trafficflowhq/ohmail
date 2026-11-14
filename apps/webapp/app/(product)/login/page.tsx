@@ -1,4 +1,4 @@
-import { LoginScreen } from "./LoginScreen";
+import { SignInRoute } from "./SignInRoute";
 import { continuationOf } from "./continuation";
 import { publicSignupEnabled } from "../../signup-mode";
 
@@ -13,5 +13,5 @@ export default async function LoginPage(
   props: { searchParams?: Promise<Record<string, string | string[] | undefined>> },
 ) {
   const searchParams = await props.searchParams;
-  return <LoginScreen publicSignup={publicSignupEnabled()} next={continuationOf(searchParams?.next)} />;
+  return <SignInRoute publicSignup={publicSignupEnabled()} next={continuationOf(searchParams?.next)} />;
 }

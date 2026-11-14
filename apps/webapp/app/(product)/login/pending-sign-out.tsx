@@ -12,7 +12,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@ohmail/ui";
 import { readOwnerMarker } from "@ohmail/app-logic/storage/owner-cookie";
 import type { SignOutTrouble } from "../../sign-out-trouble";
 import { finishPendingSignOut, pendingSignOutSettled, type Finish } from "./finish-sign-out";
@@ -90,25 +89,4 @@ export function usePendingSignOut(): PendingSignOut {
   }, [ladder, say]);
 
   return { finish, settle, again, said, signingOut };
-}
-
-/** How the pending sign-out ended, when it did not finish, and Sign out to ask again. Nothing otherwise. */
-export function PendingSignOutSaid({ pending, busy }: { pending: PendingSignOut; busy: boolean }) {
-  const ta = useTranslations("account");
-  if (pending.said === null) return null;
-  return (
-    <div className="join-error-note">
-      <p className="join-error" role="alert">
-        {pending.said.key === "signOutServerRefused"
-          ? ta(pending.said.key, { reason: pending.said.reason })
-          : ta(pending.said.key)}
-      </p>
-      <Button
-        variant="ghost" type="button" className="join-error-use"
-        onClick={pending.again} disabled={busy || pending.signingOut}
-      >
-        {pending.signingOut ? ta("signOutBusy") : ta("signOut")}
-      </Button>
-    </div>
-  );
 }

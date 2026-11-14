@@ -58,7 +58,7 @@ describe("isDemoRequested — repeated parameters cannot turn the demo off", () 
 
   it("the parameter name is the one the gate links to", () => {
     expect(DEMO_PARAM).toBe("demo");
-    expect(read("../app/(product)/mailbox/page.tsx")).toContain(`/?${DEMO_PARAM}=1`);
+    expect(read("../app/(product)/NoPageRoute.tsx")).toContain(`/?${DEMO_PARAM}=1`);
   });
 });
 

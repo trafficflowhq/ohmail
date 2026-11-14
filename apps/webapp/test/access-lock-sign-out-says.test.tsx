@@ -50,10 +50,10 @@ afterEach(async () => {
 });
 
 async function pressSignOut(): Promise<string[]> {
-  const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+  const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
-      locale: "en", messages, children: h(ThemeProvider, { children: h(AccessLock, { facts: { reason: "payment_required" } }) }),
+      locale: "en", messages, children: h(ThemeProvider, { children: h(WallRoute, { facts: { reason: "payment_required" } }) }),
     }));
   });
   const out = [...host.querySelectorAll("button")].filter((b) => b.textContent === "Sign out");

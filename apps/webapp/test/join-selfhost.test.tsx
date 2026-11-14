@@ -88,7 +88,7 @@ afterEach(async () => {
 });
 
 async function mountJoin(publicSignup = false): Promise<HTMLElement> {
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -130,7 +130,7 @@ describe("the self-host /join journey", () => {
     const c = await mountJoin();
 
     expect(c.textContent).toContain("Save your recovery codes");
-    const check = c.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+    const check = c.querySelector<HTMLElement>('input[type="checkbox"], [role="switch"]')!;
     await act(async () => {
       check.click();
       await Promise.resolve();
@@ -187,7 +187,8 @@ describe("the self-host /join journey", () => {
     answers["/api/mailboxes"] = { status: 200, body: { items: [] } };
     const c = await mountJoin();
 
-    const railLabels = [...c.querySelectorAll(".join-rail-label")].map((el) => el.textContent);
+    const stations = [...c.querySelectorAll("ol, ul")].find((l) => l.getAttribute("aria-label") === messages.join.progress);
+    const railLabels = [...(stations?.querySelectorAll("li") ?? [])].map((el) => el.textContent);
     expect(railLabels).not.toContain("Plan");
     expect(railLabels).toContain("Mailbox");
   });

@@ -84,13 +84,13 @@ async function advance(ms: number): Promise<void> {
 }
 
 async function mountResume(): Promise<HTMLElement> {
-  const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+  const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", children: h(ResumeScreen, { initialOwner: "acct_A" }),
+      locale: "en", messages, timeZone: "UTC", children: h(ResumeRoute, { initialOwner: "acct_A" }),
     }));
   });
   await flush();
@@ -98,14 +98,15 @@ async function mountResume(): Promise<HTMLElement> {
 }
 
 const text = (el: HTMLElement): string => el.textContent ?? "";
-const mark = (el: HTMLElement): string | null => el.querySelector(".gate-card .wordmark")?.textContent ?? null;
+/** The page's own landmark, and what it paints: its small "oh." mark from the first frame. */
+const mark = (el: HTMLElement): string | null => el.querySelector("main")?.textContent?.slice(0, 2) ?? null;
 
 describe("the splash paints its card while the refresh door is out", () => {
   it("a door that never answers: the wordmark card at once, the waiting line after the grace", async () => {
     const el = await mountResume();
     expect(refreshes, "the splash never asked the refresh door").toBe(1);
-    expect(mark(el), "the splash painted nothing while it waited").toBe("ohmail");
-    expect(el.querySelector('.gate[aria-busy="true"]'), "the wait is not marked busy").not.toBeNull();
+    expect(mark(el), "the splash painted nothing while it waited").toBe("oh");
+    expect(el.querySelector('[aria-busy="true"]'), "the wait is not marked busy").not.toBeNull();
     expect(R.workingBody, "the catalogue has no waiting line").toBe("Checking your sign-in…");
     // Below the grace, the card alone: a sentence that flashes is worse than a quiet card.
     await advance(LOADING_GRACE_MS - 50);
@@ -114,19 +115,19 @@ describe("the splash paints its card while the refresh door is out", () => {
     expect(text(el), "a long wait never says what it waits for").toContain(R.workingBody);
     // Still waiting, still saying so, and nothing navigated.
     await advance(20_000);
-    expect(mark(el)).toBe("ohmail");
+    expect(mark(el)).toBe("oh");
     expect(text(el)).toContain(R.workingBody);
     expect(replaced).toEqual([]);
     expect(reloads).toBe(0);
   });
 
   it("the server renders the card: the first paint is never empty", async () => {
-    const { ResumeScreen } = await import("../app/(product)/resume/ResumeScreen.js");
+    const { ResumeRoute } = await import("../app/(product)/resume/ResumeRoute.js");
     const html = renderToString(h(NextIntlClientProvider, {
-      locale: "en", messages, timeZone: "UTC", children: h(ResumeScreen, { initialOwner: "acct_A" }),
+      locale: "en", messages, timeZone: "UTC", children: h(ResumeRoute, { initialOwner: "acct_A" }),
     }));
-    expect(html, "the document the edge sends paints nothing").toMatch(/class="gate-card"/);
-    expect(html).toContain("<em>oh</em>mail");
+    expect(html, "the document the edge sends paints nothing").toMatch(/<main\b/);
+    expect(html.replace(/<[^>]*>/g, ""), "the page's mark is not in the first paint").toBe("oh");
     expect(html, "the waiting line is said before the grace").not.toContain(R.workingBody);
   });
 
@@ -137,7 +138,7 @@ describe("the splash paints its card while the refresh door is out", () => {
 
 describe("the splash never finishes a sign-out", () => {
   it("ResumeScreen names neither the reserved marker nor the sign-out", () => {
-    const src = scan.withoutComments(readFileSync(resolve("apps/webapp/app/(product)/resume/ResumeScreen.tsx"), "utf8"));
+    const src = scan.withoutComments(readFileSync(resolve("apps/webapp/app/(product)/resume/use-resume-door.ts"), "utf8"));
     const specifiers = [...src.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*)["'`]([^"'`]+)["'`]/g)].map((m) => m[1]!);
     expect(specifiers.length, "the reader found no imports, so it reads nothing").toBeGreaterThan(3);
     expect(specifiers.filter((s) => /sign-out/.test(s)), "the splash loads the sign-out").toEqual([]);

@@ -65,7 +65,7 @@ const submit = async (el: HTMLElement): Promise<void> => {
 };
 
 async function signIn(): Promise<void> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);

@@ -684,7 +684,7 @@ apps/webapp/test/loaders-do-not-rotate.test.ts	source-text	reads source as text 
 apps/webapp/test/locale-account.test.tsx	source-text	reads source as text (ts, tsx)	layer 2	account	
 apps/webapp/test/locale-catalog.test.ts	data	reads data files (json, reads, threadMeta)	none	removals	
 apps/webapp/test/locale-shim-parity.test.ts	source-text	reads source as text (ts)	layer 2	removals	
-apps/webapp/test/login-card-centred-geometry.test.tsx	source-text	reads source as text (css)	stylelint:declaration-property-value-allowed-list	doors	
+apps/webapp/test/login-card-centred-geometry.test.tsx	source-text	the sign-in card centred in its window under the shipped sheets, at two widths and two text sizes	none	doors	gone:apps/webapp/app/(product)/login/LoginScreen.tsx
 apps/webapp/test/mail-render-rules-parity.test.ts	source-text	reads source as text (mjs, tsx)	layer 2	removals	
 apps/webapp/test/mail-send-states.test.ts	source-text	reads source as text (ts, tsx)	layer 2	write	
 apps/webapp/test/mail-state.test.ts	source-text	reads source as text (ts)	layer 2	removals	
@@ -1041,6 +1041,8 @@ packages/api/test/step-up-doors-census.test.ts	source-text	reads source as text 
 packages/app-logic/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/borders.test.ts	artifact	through test/support/borders-census.ts: lists its own source folder and reads what the bundler builds from it	layer 5	lift-a	
 packages/app/test/catalogue-aggregate.test.ts	data	reads data files (json): the place catalogues and the two assembled ones	none	frame	
+packages/app/test/doors/own-classes.test.tsx	source-text	reads source as text (css): the classes today's sheets style, against every class the doors draw	layer 2	removals	
+packages/app/test/doors/under-todays-sheets.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium against the doors' own	layer 2	removals	
 packages/app/test/frame/notice-bar-in-a-browser.test.tsx	source-text	reads source as text (css): every sheet the product page loads, laid out in Chromium	layer 2	frame	
 packages/app/test/frame/own-classes.test.tsx	source-text	reads source as text (css): the classes the kit's and today's sheets style	stylelint:selector-disallowed-list	frame	
 packages/app/test/frame/rooms-in-a-browser.test.tsx	source-text	through test/support/browser-page.ts: every sheet the product page loads, laid out in Chromium	layer 2	frame	

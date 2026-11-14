@@ -73,7 +73,7 @@ async function setupMailboxStep() {
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;

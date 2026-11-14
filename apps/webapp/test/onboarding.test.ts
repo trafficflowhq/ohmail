@@ -169,7 +169,10 @@ describe("the presets cannot be a downgrade or a dead end", () => {
 describe("refusals are the server's sentence, never a client copy of it", () => {
   const client = read("../app/api-client.ts");
   // The wizard, with its mailbox step (moved to its own file).
-  const join = read("../app/(product)/join/JoinScreen.tsx") + read("../app/(product)/join/MailboxStep.tsx");
+  const join = read("../app/(product)/join/JoinRoute.tsx") + read("../app/(product)/join/use-join-door.ts")
+    + read("../app/(product)/join/MailboxStep.tsx")
+    + ["JoinPage", "AccountSteps", "FactorSteps", "PlanSteps", "parts"]
+      .map((part) => read(`../../../packages/app/src/doors/join/${part}.tsx`)).join("");
 
   /**
    * EVERY webapp source file, not two of them.

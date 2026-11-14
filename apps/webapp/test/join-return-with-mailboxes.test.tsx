@@ -93,7 +93,7 @@ afterEach(async () => {
 });
 
 async function mountReturn(props: Record<string, unknown> = { billingReturn: "success" }): Promise<HTMLElement> {
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);

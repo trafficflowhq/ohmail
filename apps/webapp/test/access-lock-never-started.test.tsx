@@ -68,26 +68,33 @@ afterEach(async () => {
 });
 
 async function mount(f: AccessRefusedFacts, messages: typeof en = en): Promise<void> {
-  const { AccessLock } = await import("../app/(product)/mailbox/AccessLock");
+  const { WallRoute } = await import("../app/(product)/mailbox/WallRoute");
   await act(async () => {
     root.render(h(NextIntlClientProvider, {
-      locale: messages === de ? "de" : "en", messages, children: h(ThemeProvider, { children: h(AccessLock, { facts: f }) }),
+      locale: messages === de ? "de" : "en", messages, children: h(ThemeProvider, { children: h(WallRoute, { facts: f }) }),
     }));
   });
   for (let i = 0; i < 6; i += 1) await act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
 const text = (): string => host.textContent ?? "";
+/** A headline as the page draws it: its closing full stop is the page's dot. */
+const stop = (sentence: string): string => sentence.replace(/\.$/, "");
 const buttons = (): string[] => [...host.querySelectorAll("button")].map((b) => b.textContent ?? "");
+/** The page's sentence: its line, as the design draws it, not a heading. */
+const sentence = (): string => host.querySelector("main p")?.textContent ?? "";
+/** The wall's ways out stand as rows on a sheet: each press says its name, then what it does. */
+const way = (name: string): boolean => buttons().some((b) => b.startsWith(name));
 
 describe("an account that never started its trial", () => {
   it("is offered the trial: 14 days free, no card, Start your trial, Sign out — nothing about stopping or erasure", async () => {
     await mount(facts(NEVER_STARTED));
-    expect(host.querySelector("h1")?.textContent).toBe(en.accessLock.neverStartedTitle);
-    expect(text()).toContain(en.accessLock.neverStartedLead);
+    expect(sentence()).toBe(stop(en.accessLock.neverStartedTitle));
+    expect(text()).toContain(en.accessLock.neverLine);
+    expect(text()).toContain(en.accessLock.neverNote);
     expect(buttons()).toContain(en.accessLock.startTrial);
     expect(buttons()).toContain(en.accessLock.signOut);
-    for (const gone of [en.accessLock.title, en.accessLock.stopped, en.accessLock.mailboxUntouched,
+    for (const gone of [en.accessLock.title, en.accessLock.stoppedUntouched, en.accessLock.mailboxUntouched,
       en.accessLock.erasureUnknown, en.accessLock.moveOut, en.accessLock.subscribeHint]) {
       expect(text(), gone).not.toContain(gone);
     }
@@ -104,32 +111,32 @@ describe("an account that never started its trial", () => {
 
   it("German", async () => {
     await mount(facts(NEVER_STARTED), de);
-    expect(host.querySelector("h1")?.textContent).toBe(de.accessLock.neverStartedTitle);
-    expect(text()).toContain("14 Tage gratis, ohne Karte.");
-    expect(text()).not.toContain(de.accessLock.stopped);
+    expect(sentence()).toBe(stop(de.accessLock.neverStartedTitle));
+    expect(text()).toContain(de.accessLock.neverLine);
+    expect(text()).not.toContain(de.accessLock.stoppedUntouched);
   });
 });
 
 describe("every other closure keeps its screen (the controls)", () => {
   it("a trial that ended: its date, ohmail stopped, the way to take everything along", async () => {
     await mount(facts({ ...NEVER_STARTED, closedReason: "trial_ended", closedAt: "2026-10-18T14:25:41.000Z", erasureAt: "2026-11-17T14:25:41.000Z" }));
-    expect(host.querySelector("h1")?.textContent).toContain("Your trial ended on");
-    expect(text()).toContain(en.accessLock.stopped);
-    expect(buttons()).toContain(en.accessLock.moveOut);
+    expect(sentence()).toContain("Your trial ended on");
+    expect(text()).toContain(en.accessLock.stoppedUntouched);
+    expect(way(en.accessLock.moveOut)).toBe(true);
     expect(buttons()).toContain(en.accessLock.subscribe);
   });
 
   it("a closure the service could not attribute keeps its erasure clock, so it is not a fresh account", async () => {
     await mount(facts({ ...NEVER_STARTED, erasureAt: "2026-11-17T14:25:41.000Z" }));
-    expect(host.querySelector("h1")?.textContent).toBe(en.accessLock.title);
-    expect(text()).toContain(en.accessLock.stopped);
+    expect(sentence()).toBe(stop(en.accessLock.title));
+    expect(text()).toContain(en.accessLock.stoppedUntouched);
     await mount(facts({ ...NEVER_STARTED, closedAt: "2026-10-18T14:25:41.000Z" }));
-    expect(host.querySelector("h1")?.textContent).toBe(en.accessLock.title);
+    expect(sentence()).toBe(stop(en.accessLock.title));
   });
 
   it("an account that once paid is never offered a first trial", async () => {
     await mount(facts({ ...NEVER_STARTED, formerlyPaid: true }));
-    expect(host.querySelector("h1")?.textContent).toBe(en.accessLock.title);
+    expect(sentence()).toBe(stop(en.accessLock.title));
     expect(buttons()).toContain(en.accessLock.subscribe);
   });
 });

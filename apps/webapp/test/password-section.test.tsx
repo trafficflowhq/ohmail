@@ -245,13 +245,13 @@ describe("changing the password", () => {
 describe("where the pane is reached", () => {
 
   it("the wall opens it by a press, and takes no password before the press", async () => {
-    const { AccessLock } = await import("../app/(product)/mailbox/AccessLock.js");
-    const c = await mountNode(h(AccessLock, {
+    const { WallRoute } = await import("../app/(product)/mailbox/WallRoute.js");
+    const c = await mountNode(h(WallRoute, {
       facts: { reason: "payment_required" as const, manageUrl: "https://manage.example/t" },
     }));
     expect(c.querySelectorAll("input[type=password]")).toHaveLength(0);
-    // The wall's three actions are unchanged; the door stands beside the way out.
-    expect([...c.querySelectorAll(".wall-act")].map((b) => b.textContent))
+    // The wall's ways out are unchanged; the door stands beside the way out, not among them.
+    expect([...c.querySelectorAll("li")].map((li) => li.querySelector("button")?.textContent))
       .not.toContain(en.accessLock.changePassword);
 
     await click(buttonByText(c, en.accessLock.changePassword));

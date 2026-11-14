@@ -390,11 +390,11 @@ function walk(dir: string, out: string[] = []): string[] {
  */
 const PINNED: Record<string, { gate: "generation" | "unmount" | "reversible" | "the login itself"; act: string }> = {
   "(product)/mailbox/StepUpPrompt.tsx": { gate: "generation", act: "runs the verb its host parked: an erase, a mailbox write, a desktop link, a device verb" },
-  "(product)/login/LoginScreen.tsx": { gate: "the login itself", act: "signs in" },
+  "(product)/login/use-sign-in-door.ts": { gate: "the login itself", act: "signs in" },
 };
 
 /** Where the mechanism lives: one hook, and the prompt every confirm parks behind calls it. */
-const HOOK = `${APP}/(product)/ceremony-generation.ts`;
+const HOOK = `${process.cwd()}/packages/app/src/doors/step-up/ceremony-generation.ts`;
 
 describe("The census of post-verify acts in apps/webapp/app", () => {
   /**
@@ -445,7 +445,7 @@ describe("The census of post-verify acts in apps/webapp/app", () => {
     );
     const ungated = files.filter((f) => PINNED[f]!.gate !== "generation");
     expect(ungated, "the sign-in is the one act that IS the ceremony").toEqual([
-      "(product)/login/LoginScreen.tsx",
+      "(product)/login/use-sign-in-door.ts",
     ]);
 
     // ONE mechanism, in one module: the counter, the comparison and the spend live here and

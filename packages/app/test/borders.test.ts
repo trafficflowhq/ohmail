@@ -8,6 +8,9 @@ import { readBorders, readPlanted, type Borders } from "../../../test/support/bo
 const BORDERS: Borders = {
   folder: "packages/app",
   mayImport: ["@ohmail/ui", "@ohmail/tokens", "@ohmail/app-logic"],
+  /* No page of this package is a Next page: a link is the kit's plain anchor, which the browser follows as a
+     document load (a way out of a door may cross into the website's zone), never the framework's link. */
+  neverLibraries: ["next"],
 };
 
 describe("app's borders, read off its bundle", () => {
@@ -21,6 +24,11 @@ describe("app's borders, read off its bundle", () => {
   it("refuses a value of the client engine", async () => {
     const { refused } = await readPlanted(BORDERS, 'export { createEngine } from "@ohmail/client-engine";\n');
     expect(refused.some((input) => input.startsWith("packages/client-engine/src/"))).toBe(true);
+  });
+
+  it("refuses the framework's link", async () => {
+    const { refused } = await readPlanted(BORDERS, 'export { default as Link } from "next/link";\n');
+    expect(refused.some((input) => input.includes("node_modules/next/"))).toBe(true);
   });
 
   it("refuses a file of the web app", async () => {

@@ -67,7 +67,8 @@ const CONFLICT_CLAIMS: Array<[string, RegExp]> = [
  * messages carry the same claims and are scanned by `test/claims-match-the-tree.docs.test.ts`. */
 const FILES = [
   "apps/webapp/app/api-client.ts",
-  "apps/webapp/app/(product)/join/JoinScreen.tsx",
+  "apps/webapp/app/(product)/join/JoinRoute.tsx",
+  "apps/webapp/app/(product)/join/use-join-door.ts",
   "apps/webapp/app/(product)/join/MailboxStep.tsx",
 ] as const;
 

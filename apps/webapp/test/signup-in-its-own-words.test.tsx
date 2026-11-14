@@ -75,8 +75,8 @@ async function render(messages: Messages, screen: "join" | "verify") {
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
   const node = screen === "join"
-    ? React.createElement((await import("../app/(product)/join/JoinScreen.js")).JoinScreen, { initialCode: "", publicSignup: true })
-    : React.createElement((await import("../app/(product)/verify-email/VerifyEmailScreen.js")).VerifyEmailScreen, { initialToken: "tok" });
+    ? React.createElement((await import("../app/(product)/join/JoinRoute.js")).JoinRoute, { initialCode: "", publicSignup: true })
+    : React.createElement((await import("../app/(product)/verify-email/VerifyRoute.js")).VerifyRoute, { initialToken: "tok" });
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -93,19 +93,30 @@ async function render(messages: Messages, screen: "join" | "verify") {
   });
   await settle();
   unmount = async () => { await act(async () => root.unmount()); host.remove(); };
-  const type = async (id: string, value: string) => {
-    const input = host.querySelector<HTMLInputElement>(`#${id}`);
-    expect(input, `#${id} is not on screen`).toBeTruthy();
+  /** A blank by its id (the join's card), or by the name its label gives it (a door's page). */
+  const blank = (key: string | { label: string }): HTMLInputElement | null => {
+    if (typeof key === "string") return host.querySelector<HTMLInputElement>(`#${key}`);
+    const label = [...host.querySelectorAll("label")].find((l) => l.textContent === key.label);
+    return label ? (document.getElementById(label.htmlFor) as HTMLInputElement | null) : null;
+  };
+  const type = async (key: string | { label: string }, value: string) => {
+    const input = blank(key);
+    expect(input, `${JSON.stringify(key)} is not on screen`).toBeTruthy();
     Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
     await act(async () => { input!.dispatchEvent(new Event("input", { bubbles: true })); });
   };
+  /** A button by its words; a door's ink button carries its key after them. */
   const press = async (label: string) => {
-    const button = [...host.querySelectorAll("button")].find((b) => b.textContent === label);
+    const buttons = [...host.querySelectorAll("button")];
+    const button = buttons.find((b) => b.textContent === label) ?? buttons.find((b) => b.textContent?.startsWith(label));
     expect(button, `no "${label}" button`).toBeTruthy();
     await act(async () => { button!.click(); });
     await settle();
   };
-  const alertText = () => [...host.querySelectorAll('[role="alert"], .join-error')].map((el) => el.textContent ?? "").join(" | ");
+  /* What the screen says of a refusal: its alerts, and what describes its blanks (a door's field says its own). */
+  const described = () => [...host.querySelectorAll("[aria-describedby]")].flatMap((el) =>
+    (el.getAttribute("aria-describedby") ?? "").split(/\s+/).map((id) => (id ? host.querySelector(`[id="${id}"]`) : null)));
+  const alertText = () => [...host.querySelectorAll('[role="alert"], .join-error'), ...described()].map((el) => el?.textContent ?? "").join(" | ");
   return { host, type, press, alertText };
 }
 
@@ -192,7 +203,7 @@ describe("the verify page's refusals, in the screen's words", () => {
       it(`${messages === de ? "de" : "en"}: ${what}`, async () => {
         answers["/auth/verify-email"] = answer;
         const ui = await render(messages, "verify");
-        await ui.type("verify-pw", "a-long-signup-password");
+        await ui.type({ label: messages.verify.passwordLabel }, "a-long-signup-password");
         await ui.press(messages.verify.confirm);
         expect(ui.alertText()).toContain(sentence(messages));
         if (messages === de) expect(ui.alertText()).not.toContain((answer.body as { error: { message: string } }).error.message);

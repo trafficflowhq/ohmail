@@ -117,7 +117,16 @@ const sessionAs = (accountId: string, email: string) => ({
   user: { ...session(accountId).user, email },
   scope: "full",
 });
-const accountLine = (el: HTMLElement): string => el.querySelector('[data-testid="approve-account"]')?.textContent ?? "";
+/** The fact that names the account the confirm binds, as the page says it (a tag of its line); "" while there is none. */
+const ACCOUNT_LINE = messages.approve.signsIn.split("{email}")[0]!;
+const accountFact = (el: HTMLElement): Element | undefined =>
+  [...el.querySelectorAll("span")].find((s) => (s.textContent ?? "").startsWith(ACCOUNT_LINE));
+const accountLine = (el: HTMLElement): string => accountFact(el)?.textContent ?? "";
+/** The page's done sentence: its closing full stop is the page's dot, drawn, not written. */
+const DONE = messages.approve.doneTitle.replace(/\.$/, "");
+/** The one step-up dialog over the page, and its code's field. */
+const dialog = (el: HTMLElement): Element | null => el.querySelector('[role="dialog"]');
+const codeField = (el: HTMLElement): HTMLInputElement | null => el.querySelector<HTMLInputElement>('[role="dialog"] input');
 /** An answer the case releases when it chooses: the settle is caught while it is in flight. */
 function held<T>(): { promise: Promise<T>; release: (v: T) => void } {
   let release!: (v: T) => void;
@@ -167,13 +176,13 @@ async function waitFor(predicate: () => boolean, what: string, timeout = 3000): 
 }
 
 async function mount(request = ID, locale: "en" | "de" = "en"): Promise<HTMLDivElement> {
-  const { ApproveScreen } = await import("../app/(product)/approve/ApproveScreen.js");
+  const { ApproveRoute } = await import("../app/(product)/approve/ApproveRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(h(NextIntlClientProvider, {
-      locale, messages: locale === "de" ? de : messages, timeZone: "UTC", children: h(ApproveScreen, { request }),
+      locale, messages: locale === "de" ? de : messages, timeZone: "UTC", children: h(ApproveRoute, { request }),
     }));
   });
   return host;
@@ -189,8 +198,8 @@ const press = async (b: HTMLButtonElement): Promise<void> => { await act(async (
 describe("the page names the account the confirm signs in to", () => {
   it("shows this browser's own signed-in address beside the computer, as Settings does", async () => {
     const el = await mount();
-    await waitFor(() => el.querySelector('[data-testid="approve-account"]') !== null, "the account line");
-    expect(el.querySelector('[data-testid="approve-account"]')!.textContent).toBe("Confirm signs it in to m@example.test.");
+    await waitFor(() => accountLine(el) !== "", "the account line");
+    expect(accountLine(el)).toBe(messages.approve.signsIn.replace("{email}", "m@example.test"));
   });
 });
 
@@ -198,11 +207,12 @@ describe("the page names the computer and asks once", () => {
   it("shows the label, the platform and the network class — no address — and one press confirms", async () => {
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
-    expect(el.textContent).toContain("Sign in ohmail on this computer?");
+    // The sentence names the computer; its platform and where it asked from are the line's facts.
+    expect(el.textContent).toContain(messages.approve.titleOn.replace("<name>{computer}</name>.", "studio-mac"));
     expect(el.textContent).toContain("Linux");
-    expect(el.textContent).toContain("Requested just now from 203.0.x.x.");
+    expect(el.textContent).toContain("Requested just now from 203.0.x.x");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done");
+    await waitFor(() => el.textContent!.includes(DONE), "done");
     expect(confirmCalls).toBe(1);
     expect(replaced).toEqual([]);
   });
@@ -218,19 +228,22 @@ describe("the page names the computer and asks once", () => {
 });
 
 describe("the page says when the computer asked from another network", () => {
-  const networkLine = (el: HTMLElement): Element | null => el.querySelector('[data-testid="approve-network"]');
+  /** The page's own warning (the dialog's refusals are its own). */
+  const networkLine = (el: HTMLElement): Element | null =>
+    [...el.querySelectorAll('[role="alert"]')].find((a) => a.closest('[role="dialog"]') === null) ?? null;
+  const follows = (a: Node, b: Node): boolean => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
 
-  it("a request from another network shows the line between the facts and the account line", async () => {
+  it("a request from another network is said as the page's warning, read before the facts and before Confirm", async () => {
     readAnswers = [() => Promise.resolve(facts({ network: "different" }))];
     const el = await mount();
-    await waitFor(() => el.querySelector('[data-testid="approve-account"]') !== null, "the account line");
+    await waitFor(() => accountLine(el) !== "", "the account line");
     const line = networkLine(el);
     expect(line, "no line for a request from another network").not.toBeNull();
     // True of every `different`: another address (over IPv6, another /64), or the other address family.
     expect(line!.textContent).toBe("This request came from a different network address than this browser.");
-    expect(line!.getAttribute("role")).toBe("note");
-    expect(line!.previousElementSibling?.tagName).toBe("UL");
-    expect(line!.nextElementSibling?.getAttribute("data-testid")).toBe("approve-account");
+    const account = accountFact(el)!;
+    expect(follows(line!, account), "the warning comes after the account line").toBe(true);
+    expect(follows(line!, button(el, "Confirm")), "the warning comes after Confirm").toBe(true);
   });
 
   it("says it in German on a German page", async () => {
@@ -246,7 +259,7 @@ describe("the page says when the computer asked from another network", () => {
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.querySelector('[data-testid="step-up-prompt"]') !== null, "the inline prompt");
+    await waitFor(() => dialog(el) !== null, "the inline prompt");
     expect(networkLine(el)?.textContent).toBe(messages.approve.otherNetwork);
   });
 
@@ -266,7 +279,7 @@ describe("the page says when the computer asked from another network", () => {
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done");
+    await waitFor(() => el.textContent!.includes(DONE), "done");
     expect(confirmCalls).toBe(1);
   });
 });
@@ -282,7 +295,7 @@ describe("the hosted build's page", () => {
       root!.render(h(NextIntlClientProvider, { locale: "en", messages, timeZone: "UTC", children: page }));
     });
     await waitFor(() => host!.textContent!.includes("studio-mac"), "the request");
-    expect(host!.textContent).toContain(messages.approve.title);
+    expect(host!.textContent).toContain(messages.approve.titleOn.replace("<name>{computer}</name>.", "studio-mac"));
     expect(host!.textContent).not.toContain(messages.approve.notOffered);
     expect(button(host!, "Confirm")).toBeTruthy();
   });
@@ -294,13 +307,13 @@ describe("a stale factor is asked for inline and the confirm retried", () => {
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.querySelector('[data-testid="step-up-prompt"]') !== null, "the inline prompt");
+    await waitFor(() => dialog(el) !== null, "the inline prompt");
     expect(el.querySelector('input[type="password"]'), "a password was asked for").toBeNull();
-    const input = el.querySelector<HTMLInputElement>("#stepup-code")!;
+    const input = codeField(el)!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setter.call(input, "123456"); input.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => { input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done after the factor");
+    await waitFor(() => el.textContent!.includes(DONE), "done after the factor");
     expect(stepUpTotpCalls).toBe(1);
     expect(confirmCalls).toBe(2);
     expect(replaced).toEqual([]);
@@ -313,10 +326,10 @@ describe("a stale factor is asked for inline and the confirm retried", () => {
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.querySelector('[data-testid="step-up-prompt"]') !== null, "the inline prompt");
+    await waitFor(() => dialog(el) !== null, "the inline prompt");
     const passkey = [...el.querySelectorAll("button")].find((b) => /passkey/i.test(b.textContent ?? ""))!;
     await press(passkey);
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done after the passkey");
+    await waitFor(() => el.textContent!.includes(DONE), "done after the passkey");
     expect(stepUpPasskeyCalls).toBe(1);
     expect(confirmCalls).toBe(2);
   });
@@ -372,7 +385,7 @@ describe("the ways a request ends, and the ways the server says wait", () => {
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request after a busy read");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done after a busy confirm");
+    await waitFor(() => el.textContent!.includes(DONE), "done after a busy confirm");
     expect(confirmCalls).toBe(2);
   });
 
@@ -400,7 +413,7 @@ describe("the ways a request ends, and the ways the server says wait", () => {
   it("an already-confirmed request reads as done", async () => {
     readAnswers = [() => Promise.resolve(facts({ approved: true }))];
     const el = await mount();
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done");
+    await waitFor(() => el.textContent!.includes(DONE), "done");
   });
 
   it("no request in the URL says where the page opens from", async () => {
@@ -446,7 +459,7 @@ describe("the page settles whose browser this is before it asks for the request"
     });
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac")
-      && el.querySelector('[data-testid="approve-account"]') !== null, "the request and the account line");
+      && accountLine(el) !== "", "the request and the account line");
     expect(el.textContent).not.toMatch(LOST);
     expect(replaced).toEqual([]);
   });
@@ -464,7 +477,7 @@ describe("the page settles whose browser this is before it asks for the request"
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.textContent!.includes("Done — look at your computer."), "done");
+    await waitFor(() => el.textContent!.includes(DONE), "done");
     expect(sent).toContain(`POST ${READ}/confirm`);
     expect(replaced).toEqual([]);
   });
@@ -534,7 +547,7 @@ describe("the page settles whose browser this is before it asks for the request"
     });
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac")
-      && el.querySelector('[data-testid="approve-account"]') !== null, "the request and the account line");
+      && accountLine(el) !== "", "the request and the account line");
     // Another tab signed out: the server ended the session and cleared the jar, marker included.
     signedIn = false;
     document.cookie = "tf_owner=; path=/; max-age=0";
@@ -620,7 +633,7 @@ describe("the page settles whose browser this is before it asks for the request"
     });
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac")
-      && el.querySelector('[data-testid="approve-account"]') !== null, "the request and the account line");
+      && accountLine(el) !== "", "the request and the account line");
     signedIn = false;
     document.cookie = "tf_owner=; path=/; max-age=0";
     await press(button(el, "Not me"));
@@ -794,7 +807,7 @@ describe("the page settles whose browser this is before it asks for the request"
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
     await waitFor(() => stage === "after" && reads().length >= 2
-      && el.querySelector('[data-testid="step-up-prompt"]') === null
+      && dialog(el) === null
       && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Confirm")), "the page settled again");
     expect(el.textContent).not.toMatch(LOST);
     expect(sent.filter((s) => s.endsWith("/confirm")), "the parked confirm ran by itself").toHaveLength(1);
@@ -817,13 +830,13 @@ describe("the page settles whose browser this is before it asks for the request"
     const el = await mount();
     await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
     await press(button(el, "Confirm"));
-    await waitFor(() => el.querySelector("#stepup-code") !== null, "the inline prompt's code field");
+    await waitFor(() => codeField(el) !== null, "the inline prompt's code field");
     document.cookie = "tf_owner=; path=/; max-age=0";
-    const input = el.querySelector<HTMLInputElement>("#stepup-code")!;
+    const input = codeField(el)!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     await act(async () => { setter.call(input, "123456"); input.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => { input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
-    await waitFor(() => el.querySelector('[data-testid="step-up-prompt"]') === null
+    await waitFor(() => dialog(el) === null
       && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Confirm")), "the page settled again");
     expect(el.textContent).not.toMatch(LOST);
     expect(sent, "the factor went out with no account named").not.toContain("POST /api/auth/step-up/totp");
@@ -921,14 +934,14 @@ async function inflight(opts: { resettleAs: string; factorHeader: string | null 
   const el = await mount();
   await waitFor(() => el.textContent!.includes("studio-mac"), "the request");
   await press(button(el, "Confirm"));
-  await waitFor(() => el.querySelector("#stepup-code") !== null, "the prompt's code field");
-  const input = el.querySelector<HTMLInputElement>("#stepup-code")!;
+  await waitFor(() => codeField(el) !== null, "the prompt's code field");
+  const input = codeField(el)!;
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
   await act(async () => { setter.call(input, "123456"); input.dispatchEvent(new Event("input", { bubbles: true })); });
   await act(async () => { input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })); });
   await waitFor(() => sent.includes(`POST ${STEP_UP}`), "the factor on the wire");
   promptRead.release();
-  await waitFor(() => el.querySelector('[data-testid="step-up-prompt"]') === null
+  await waitFor(() => dialog(el) === null
     && [...el.querySelectorAll("button")].some((b) => (b.textContent ?? "").trim().startsWith("Confirm"))
     && accountLine(el) !== "", "the page settled again, naming its account");
   const atResettle = { confirms, line: accountLine(el), binding: JSON.stringify(binding()) };
@@ -938,7 +951,7 @@ async function inflight(opts: { resettleAs: string; factorHeader: string | null 
     atResettle,
     confirmsAfterFactor: confirms,
     confirmBinding,
-    done: el.textContent!.includes(messages.approve.doneTitle),
+    done: el.textContent!.includes(DONE),
     bindingAfter: JSON.stringify(binding()),
     sentTail: sent.slice(-6),
   };

@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as shell from "./fixtures/cloud-confirm-shell";
+import en from "../messages/en.json";
 
 /**
  * THE WAKE STREAM THROUGH THE REAL `CloudShell`, on the warm path every reload takes (a remembered
@@ -31,6 +32,10 @@ class FakeEventSource {
 }
 
 const OWNER = shell.ACCOUNT;
+/** The wall stands: its sentence, which names the closure it says (`accessLock.trialEnded`, its date as a reader reads it). */
+const wallStands = (): boolean =>
+  [...document.body.querySelectorAll("main p")].some((p) => p.textContent?.startsWith(en.accessLock.trialEnded.split("{date}")[0]!));
+
 const CLOSED = {
   metered: true, access: "refused", canAddMailbox: false, mailboxes: 0, aiEnabled: false,
   lifecycle: {
@@ -103,7 +108,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     await shell.act(async () => { first.refuse(); });
     // Past the client's stale-refusal window after the first paint's open verdict (60 s).
     await shell.tick(75_000);
-    expect(document.body.querySelector(".wall-card"), `the poll's 402 did not raise the wall: ${asked.join(" ")}`).not.toBeNull();
+    expect(wallStands(), `the poll's 402 did not raise the wall: ${asked.join(" ")}`).toBe(true);
     expect(first.closed, "the dead stream was left open under the wall").toBe(true);
     await shell.tick(2 * 60_000);
     expect(FakeEventSource.made, "a stream was dialled while the account was refused").toHaveLength(1);
@@ -113,7 +118,7 @@ describe("the wall replaces the mail shell, so the lift streams again", () => {
     await shell.tick(RETURN_DEBOUNCE_MS);
     await shell.act(async () => { window.dispatchEvent(new Event("focus")); });
     await shell.tick(5_000);
-    expect(document.body.querySelector(".wall-card"), "the wall stood over an open verdict").toBeNull();
+    expect(wallStands(), "the wall stood over an open verdict").toBe(false);
     expect(document.body.querySelector(".today")).not.toBeNull();
     expect(FakeEventSource.made, "the lift dialled no new stream").toHaveLength(2);
     expect(FakeEventSource.made[1]!.closed).toBe(false);

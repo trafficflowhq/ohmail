@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   JOIN_INVITE_KEY, LOGIN_INVITE_KEY, signupPosture, type SignupPosture,
-} from "../app/invite-posture.js";
+} from "@ohmail/app/doors";
 
 /**
  * **WHAT THIS DEPLOYMENT ASKS FOR IS ONE FACT, AND THE APP SAYS IT ONCE PER SURFACE.**
@@ -142,9 +142,9 @@ describe("and nothing else in these namespaces asserts a posture", () => {
 });
 
 describe("both screens render the claim their posture makes true", () => {
-  const login = read("../app/(product)/login/LoginScreen.tsx");
+  const login = read("../app/(product)/login/SignInRoute.tsx") + read("../../../packages/app/src/doors/sign-in/SignInPage.tsx");
   const loginPage = read("../app/(product)/login/page.tsx");
-  const join = read("../app/(product)/join/JoinScreen.tsx");
+  const join = read("../app/(product)/join/JoinRoute.tsx") + read("../../../packages/app/src/doors/join/AccountSteps.tsx");
 
   it("the login page reads the flag on the SERVER and hands it down", () => {
     // Same seam as `/join/page.tsx`: the screen is a client component and may not read the

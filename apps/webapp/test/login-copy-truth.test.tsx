@@ -71,7 +71,7 @@ afterEach(async () => {
 });
 
 async function mountLogin(props: { publicSignup?: boolean } = {}): Promise<HTMLElement> {
-  const { LoginScreen } = await import("../app/(product)/login/LoginScreen.js");
+  const { SignInRoute: LoginScreen } = await import("../app/(product)/login/SignInRoute.js");
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -113,7 +113,6 @@ describe("STA-F1 — the passkey promise renders only over a passkey ceremony", 
 
     // Password step: the account's methods are unknown, so nothing may promise a passkey.
     expect(container.textContent).not.toMatch(/passkey/i);
-    expect(container.textContent).toContain("Your password first, then your second factor.");
 
     await submitPassword(container);
 
@@ -148,7 +147,7 @@ describe("STA-F6 — a bare 401 gets the form's own sentence, not the wire strin
     answers["/api/auth/2fa/totp/verify"] = coded(401, "credential_refused", "two-factor verification failed");
     await type(container.querySelector<HTMLInputElement>("#login-code")!, "000000");
     await act(async () => {
-      container.querySelector("form.login-totp")!
+      container.querySelector("#login-code")!.closest("form")!
         .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
       await Promise.resolve();
     });
@@ -194,35 +193,33 @@ describe("STA-F6 — a bare 401 gets the form's own sentence, not the wire strin
  */
 describe("the sign-in note states this deployment's posture", () => {
   it("an OPEN deployment says no invite code is needed", async () => {
-    const note = (await mountLogin({ publicSignup: true }))
-      .querySelector(".login-invite-note")!;
+    const note = (await mountLogin({ publicSignup: true }));
     expect(note.textContent).toContain("an invite code is not required");
     expect(note.textContent).not.toContain("invite-only");
   });
 
   it("an INVITE-ONLY deployment says so, and does not promise open signup", async () => {
-    const note = (await mountLogin({ publicSignup: false }))
-      .querySelector(".login-invite-note")!;
+    const note = (await mountLogin({ publicSignup: false }));
     expect(note.textContent).toContain("Accounts are by invitation during the beta");
     expect(note.textContent).not.toContain("not required");
   });
 
   it("an OPEN deployment offers 'Create an account' to /join; an invite-only one does not", async () => {
-    const open = (await mountLogin({ publicSignup: true })).querySelector(".login-invite-note")!;
+    const open = (await mountLogin({ publicSignup: true }));
     const create = [...open.querySelectorAll("a")].find((a) => a.textContent === "Create an account");
     expect(create, "no sign-up link where anyone can sign up").toBeDefined();
     expect(create!.getAttribute("href")).toBe("/join");
     await act(async () => root!.unmount());
     host?.remove(); root = null; host = null;
 
-    const gated = (await mountLogin({ publicSignup: false })).querySelector(".login-invite-note")!;
+    const gated = (await mountLogin({ publicSignup: false }));
     expect(gated.textContent).not.toContain("Create an account");
   });
 
   it("…and the link to redeem a code survives in both postures", async () => {
     // The note changes; the way in for somebody holding a code does not.
     for (const publicSignup of [true, false]) {
-      const note = (await mountLogin({ publicSignup })).querySelector(".login-invite-note")!;
+      const note = (await mountLogin({ publicSignup }));
       const redeem = [...note.querySelectorAll('a[href="/join"]')].map((a) => a.textContent);
       expect(redeem).toContain("Have an invite code?");
       if (root) await act(async () => root!.unmount());

@@ -54,7 +54,7 @@ async function atTheMailboxStep(flavor: "managed" | "selfhost") {
   const React = await import("react");
   const { createRoot } = await import("react-dom/client");
   const { NextIntlClientProvider } = await import("next-intl");
-  const { JoinScreen } = await import("../app/(product)/join/JoinScreen.js");
+  const { JoinRoute: JoinScreen } = await import("../app/(product)/join/JoinRoute.js");
   (globalThis as unknown as { React: unknown }).React = React;
   (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
@@ -101,6 +101,17 @@ const subjectFor = (preset: string, reason: string) =>
   en.join.mailboxHelpSubject.replace("{preset}", preset).replace("{reason}", reason);
 
 describe("the mailbox step's exits", () => {
+  it("today's form stands in the door's stage behind a root of today's design, so its tiles keep today's ground", async () => {
+    const ui = await atTheMailboxStep("managed");
+    const tile = ui.host.querySelector<HTMLElement>('[role="radio"]');
+    expect(tile, "no provider tile").not.toBeNull();
+    const todays = tile!.closest(".today");
+    expect(todays, "the form stands in the stage with no root of today's design").not.toBeNull();
+    expect(todays!.tagName, "the mail's own root is the one div.today").toBe("SECTION");
+    expect(todays!.closest(".oh-root"), "today's root stands outside the door's stage").not.toBeNull();
+    expect(todays!.querySelector(".oh-root"), "a part of the new design under today's root").toBeNull();
+  });
+
   it("Do this later opens the app with the setup marked as offered", async () => {
     const ui = await atTheMailboxStep("managed");
     expect(ui.link(en.join.later)?.getAttribute("href")).toBe("/?setup=later");

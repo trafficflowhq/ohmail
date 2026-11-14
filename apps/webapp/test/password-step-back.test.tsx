@@ -228,11 +228,15 @@ async function landTheFactor(): Promise<void> {
   await settle();
 }
 
+/** The code field of today's prompt, or of the one dialog where a page stands on it. */
+const codeField = (el: HTMLElement): HTMLInputElement | null =>
+  el.querySelector<HTMLInputElement>('#stepup-code, [role="dialog"] input');
+
 /** At the prompt a closed window opened: send the code and leave it in flight. */
 async function factorInFlight(el: HTMLElement): Promise<void> {
-  await waitFor(() => el.querySelector("#stepup-code") != null, "the step-up prompt");
-  await typeInto(el.querySelector("#stepup-code"), "123456");
-  await submit(el.querySelector("#stepup-code")!.closest("form"));
+  await waitFor(() => codeField(el) != null, "the step-up prompt");
+  await typeInto(codeField(el), "123456");
+  await submit(codeField(el)!.closest("form"));
   await waitFor(() => rig.settle != null, "the factor to be in flight");
 }
 
@@ -311,10 +315,18 @@ describe("AccountSection: Cancel during the step-up of the erase", () => {
   }, 20000);
 });
 
-describe("LinkDesktopScreen: Cancel during the step-up of the mint", () => {
+describe("LinkDesktopRoute: Cancel during the step-up of the mint", () => {
+  /** The dialog's own Cancel, by its label (its key hint aside). */
+  const cancelOf = (el: HTMLElement): HTMLButtonElement => {
+    const found = [...el.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].filter((b) =>
+      [...b.childNodes].filter((n) => n.nodeName !== "KBD").map((n) => n.textContent ?? "").join("").trim() === en.stepUp.cancel);
+    expect(found, "exactly one Cancel in the dialog").toHaveLength(1);
+    return found[0]!;
+  };
+
   async function toTheFactorInFlight(): Promise<HTMLElement> {
-    const { LinkDesktopScreen } = await import("../app/(product)/link-desktop/LinkDesktopScreen.js");
-    const el = await render(h(LinkDesktopScreen, {}));
+    const { LinkDesktopRoute } = await import("../app/(product)/link-desktop/LinkDesktopRoute.js");
+    const el = await render(h(LinkDesktopRoute, {}));
     await click(byText(el, link.mint!)!);
     await factorInFlight(el);
     return el;
@@ -322,12 +334,12 @@ describe("LinkDesktopScreen: Cancel during the step-up of the mint", () => {
 
   it("Cancel stays pressable, and a factor landing after it mints nothing", async () => {
     const el = await toTheFactorInFlight();
-    const cancel = buttonNamed(el, dev.cancel!);
+    const cancel = cancelOf(el);
     expect(cancel.disabled, "a person who changes their mind during the check must be able to").toBe(false);
     await click(cancel);
     await landTheFactor();
     expect(rig.calls, "the parked mint ran after Cancel").not.toContain("auth.desktopLink");
-    expect(el.querySelector("#stepup-code"), "the landing factor reopened the prompt").toBeNull();
+    expect(codeField(el), "the landing factor reopened the prompt").toBeNull();
     expect(el.textContent).toContain(link.cancelledNothingMinted);
   }, 20000);
 
