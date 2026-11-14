@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  FixturesAdapter,
   HttpAdapter,
   MemoryMirrorStore,
   MutationRejectedError,
@@ -15,6 +14,7 @@ import {
   type EngineMutation,
   type FetchLike,
 } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { classifyRefusal, UPDATE_ANSWER_CODES } from "../src/adapters/refusal-shape.js";
 
 /**

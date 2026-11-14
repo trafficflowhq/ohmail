@@ -43,7 +43,7 @@ function registry() {
   };
   /** A lock another tab holds for good: its rows are never adopted here. */
   const holdForever = (name: string): void => { void api.request(name, { mode: "exclusive" }, () => new Promise<void>(() => undefined)); };
-  return { api, holdForever, setHold: (h: boolean) => { hold = h; }, release: () => { for (const g of gates.splice(0)) g(); } };
+  return { api, held, holdForever, setHold: (h: boolean) => { hold = h; }, release: () => { for (const g of gates.splice(0)) g(); } };
 }
 
 type Ledger = "sent" | "pending" | "withdrawn" | "failed";
@@ -128,8 +128,9 @@ const lockOf = (factory: IDBFactory, owner: string): string => {
   disk.close();
   return name;
 };
-type Owed = Map<string, { attempts?: number; nextAt?: number }>;
-const owedOf = (e: OhmailEngine): Owed => (e as unknown as { owedWithdraws: Owed }).owedWithdraws;
+/** The owed Cancel as its row on the store says it: the failures counted and the next ask's time. */
+const owedOf = (store: MirrorStore): { attempts?: number; nextAt?: number } =>
+  store.entries<Row & { attempts?: number; nextAt?: number }>(OUTBOX_TYPE).map((e) => e.entity).find((r) => r.withdrawOwed === true)!;
 
 describe("Cancel across a build seam (H1)", () => {
   beforeAll(() => { (globalThis as { IDBKeyRange?: unknown }).IDBKeyRange ??= FakeKeyRange; });
@@ -205,16 +206,17 @@ describe("REVIEW-026 probes as regression cases", () => {
   });
 
   it("in_flight, then the send fails: the ending is the send's failure, so Send is offered again", async () => {
+    let at = Date.now();
     const srv = server();
     const store = new MemoryMirrorStore();
-    const engine = new OhmailEngine({ adapter: srv.adapter as never, store } as never);
+    const engine = new OhmailEngine({ adapter: srv.adapter as never, store, now: () => new Date(at) } as never);
     await engine.start().catch(() => undefined);
     srv.net.holdPending = true;
     const res = await engine.mutate(SEND);
     srv.net.holdPending = false;
     const said = await engine.withdrawQueued(res.key);
     srv.ledger.set(res.key, "failed");
-    owedOf(engine).forEach((p) => { p.nextAt = 0; });
+    at += 2 * 60 * 60 * 1000; // past the backoff: the next ask is due
 
     const late: MutationResult[] = await engine.flushPending();
     const ended = late.find((r) => r.key === res.key);
@@ -289,22 +291,23 @@ describe("an owed Cancel's limits (LOW 5) and its log (LOW 6)", () => {
 
   /** A delivered send whose answer was lost: wired, so a Cancel the server cannot answer is owed. */
   async function wiredSend(srv: ReturnType<typeof server>, extra: Record<string, unknown> = {}) {
-    const engine = new OhmailEngine({ adapter: srv.adapter as never, store: new MemoryMirrorStore(), now, ...extra } as never);
+    const store = new MemoryMirrorStore();
+    const engine = new OhmailEngine({ adapter: srv.adapter as never, store, now, ...extra } as never);
     await engine.start().catch(() => undefined);
     srv.net.loseAnswer = true;
     const res = await engine.mutate(SEND);
     srv.net.loseAnswer = false;
-    return { engine, res };
+    return { engine, res, store };
   }
 
   it("a server's refusal counts and backs off, never shorter than its Retry-After", async () => {
     const srv = server();
-    const { engine, res } = await wiredSend(srv);
+    const { engine, res, store } = await wiredSend(srv);
     let asked = 0;
     srv.adapter.withdrawSend = async () => { asked += 1; return { outcome: "unreachable", answered: true, retryAfterMs: 120_000 }; };
 
     expect(await engine.withdrawQueued(res.key)).toBe("unknown");
-    const owed = [...owedOf(engine).values()][0]!;
+    const owed = owedOf(store);
     expect({ attempts: owed.attempts, waits: (owed.nextAt ?? 0) - clock }).toEqual({ attempts: 1, waits: 120_000 });
     clock += 60_000;
     await engine.flushPending();
@@ -316,12 +319,12 @@ describe("an owed Cancel's limits (LOW 5) and its log (LOW 6)", () => {
 
   it("a server's week-long Retry-After waits the outbox's hour, no longer", async () => {
     const srv = server();
-    const { engine, res } = await wiredSend(srv);
+    const { engine, res, store } = await wiredSend(srv);
     let asked = 0;
     srv.adapter.withdrawSend = async () => { asked += 1; return { outcome: "unreachable", answered: true, retryAfterMs: 7 * 24 * 3_600_000 }; };
 
     await engine.withdrawQueued(res.key);
-    const owed = [...owedOf(engine).values()][0]!;
+    const owed = owedOf(store);
     expect((owed.nextAt ?? 0) - clock, "the composer held for as long as a server asked").toBe(OUTBOX_BACKOFF_CAP_MS);
     clock += OUTBOX_BACKOFF_CAP_MS + 1;
     await engine.flushPending();
@@ -330,7 +333,7 @@ describe("an owed Cancel's limits (LOW 5) and its log (LOW 6)", () => {
 
   it("past the ceiling the Cancel ends unconfirmed in the strip, never withdrawn", async () => {
     const srv = server();
-    const { engine, res } = await wiredSend(srv);
+    const { engine, res, store } = await wiredSend(srv);
     srv.adapter.withdrawSend = async () => ({ outcome: "unsupported" });
     await engine.withdrawQueued(res.key);
     let ended: MutationResult | undefined;
@@ -344,11 +347,11 @@ describe("an owed Cancel's limits (LOW 5) and its log (LOW 6)", () => {
 
   it("no connection at all does not count and is asked again on the next flush", async () => {
     const srv = server();
-    const { engine, res } = await wiredSend(srv);
+    const { engine, res, store } = await wiredSend(srv);
     let asked = 0;
     srv.adapter.withdrawSend = async () => { asked += 1; return { outcome: "unreachable" }; };
     await engine.withdrawQueued(res.key);
-    const owed = [...owedOf(engine).values()][0]!;
+    const owed = owedOf(store);
     expect({ attempts: owed.attempts ?? 0, nextAt: owed.nextAt }).toEqual({ attempts: 0, nextAt: undefined });
     await engine.flushPending();
     expect(asked).toBe(2);
@@ -375,7 +378,7 @@ describe("an owed Cancel's limits (LOW 5) and its log (LOW 6)", () => {
     const store = new IndexedDbMirrorStore({ owner: OWNER, factory });
     const engine = new OhmailEngine({ adapter: srv.adapter as never, store, locks: reg.api, now, onWithdrawUnsupported: () => { said += 1; } } as never);
     await engine.start().catch(() => undefined);
-    await until(() => (engine as unknown as { ownerName: string | null }).ownerName !== null, "the owning engine's lock");
+    await until(() => reg.held.size === 1, "the owning engine's lock");
     srv.net.offline = true;
     const neverSent = await engine.mutate(SEND);
     const another = await engine.mutate({ ...SEND, body: "A second note." } as never);

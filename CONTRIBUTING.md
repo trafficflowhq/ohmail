@@ -118,10 +118,11 @@ them yet: a change never adds to what breaks one.
   | `packages/tokens` | nothing |
   | `packages/ui` | `tokens` |
   | `packages/wire` | nothing; it exports types only |
-  | `packages/db-mail`, `packages/fixtures` | nothing |
+  | `packages/db-mail` | nothing |
   | `packages/db` | `db-mail`, `wire` |
   | `packages/core` | `db`, `wire` |
-  | `packages/client-engine` | `core`, `fixtures`, `wire` |
+  | `packages/client-engine` | `core`, `wire` |
+  | `packages/testing` | `client-engine`; tests import it, and the web's demo until that is removed |
   | `packages/app-logic` | `client-engine`, `core` |
   | `packages/app` | `ui`, `tokens`, `app-logic`; of `client-engine`, types only |
   | `packages/services` | `core`, `db`, `wire` |
@@ -366,7 +367,7 @@ client and exists nowhere else.
 There is one real exception, and you should know about it before you spend a
 weekend on a patch. These trees are **shared with the Cloud web client**:
 
-- `packages/tokens`, `packages/ui`, `packages/fixtures`
+- `packages/tokens`, `packages/ui`, `packages/testing`
 - `packages/client-engine`
 - `apps/webapp/app/{shell,views}`
 

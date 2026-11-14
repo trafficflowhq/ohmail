@@ -4,9 +4,10 @@ import * as React from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import {
-  DEMO_NOW, FixturesAdapter, OhmailEngine,
+  OhmailEngine,
   type ServerAddressOpts, type ServerAddressWire,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 import { useAddressView, messagesWith, type AddressView } from "../app/shell/address-view";
 
 // React only accepts `act` in an environment that declares itself one; without this every

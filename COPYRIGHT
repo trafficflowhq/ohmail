@@ -185,7 +185,7 @@ a library whose files get vendored into other projects, a small one for an
 application nobody copies a single file out of.
 
 The one specific to ohmail: several of the trees published here —
-packages/tokens, packages/ui, packages/fixtures, packages/client-engine and
+packages/tokens, packages/ui, packages/testing, packages/client-engine and
 apps/webapp/app — are the *same files* the hosted ohmail Cloud web client is
 built from. TrafficFlow GmbH holds the copyright on all of it and licenses it
 both ways: AGPL-3.0 in this repository, under its own terms in the Cloud

@@ -8,7 +8,7 @@
  * (`compose-from.ts`). Send used to be `aria-disabled` with demo copy shown to real customers; it is now a real
  * compose over the SAME send path the reply uses — one `mail_send` mutation, one Idempotency-Key, one double-send
  * lock (`mail-send.ts`). `AppShell` owns the fields so a half-written message survives leaving the view; no import
- * from `@ohmail/fixtures` — `test/demo-zero-network.test.ts` forbids one anywhere under `app/`.
+ * from `@ohmail/testing` — `test/demo-zero-network.test.ts` forbids one anywhere under `app/`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";

@@ -199,7 +199,8 @@ describe("Send later on a letter with files says what it can do before the pick"
   }> {
     const { ComposeView } = await import("../app/views/ComposeView.js");
     const { EMPTY_COMPOSE, composePlan } = await import("../app/shell/compose.js");
-    const { FixturesAdapter, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const { ToastHost } = await import("@ohmail/ui");
     const { KeymapProvider } = await import("../app/shell/keymap.js");
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -279,7 +280,8 @@ describe("Send later on a letter with files says what it can do before the pick"
     // The probe's form: onFields re-renders, so a committed read reaches the form as it does live.
     const { ComposeView } = await import("../app/views/ComposeView.js");
     const { EMPTY_COMPOSE, composePlan } = await import("../app/shell/compose.js");
-    const { FixturesAdapter, MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { MemoryMirrorStore, OhmailEngine } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const { ToastHost } = await import("@ohmail/ui");
     const { KeymapProvider } = await import("../app/shell/keymap.js");
     (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;

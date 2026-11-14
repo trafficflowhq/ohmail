@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { managedDomain } from "../../../test/support/fixture-credentials.js";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   MemoryMirrorStore,
   OhmailEngine,
   OPTIMISTIC_SENT_TTL_MS,
@@ -19,6 +17,7 @@ import {
   type SyncChange,
   type SyncParams,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * ═══ SENT MAIL LIVES IN THE OHBOX, AND IT IS THERE THE MOMENT YOU PRESS SEND ═════════════

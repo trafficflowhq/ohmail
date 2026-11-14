@@ -139,7 +139,7 @@
       "packages/api/test/mark-seen-statements.test.ts",
       "packages/api/test/search-date-bounds.test.ts",
       "packages/api/test/sync-unchanged-poll-writes-nothing.test.ts",
-      "packages/client-engine/test/draft-formatting-cleared-sends.test.ts",
+      "packages/testing/test/draft-formatting-cleared-sends.test.ts",
       "packages/db/test/dialect.test.ts",
       "packages/db/test/idempotency-mailbox-scope.test.ts",
       "packages/db/test/idempotency-pending-dialect.test.ts",

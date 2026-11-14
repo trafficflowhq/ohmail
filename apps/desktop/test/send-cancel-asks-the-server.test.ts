@@ -12,7 +12,7 @@ import {
   OUTBOX_ABANDONED_TYPE, OUTBOX_MAX_SERVER_FAILURES, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
   type EngineLocks, type EngineMutation, type MirrorStore, type MutationResult,
 } from "@ohmail/client-engine";
-import { HostOutboxStore } from "../../../apps/desktop/src/host-client/outbox-store.js";
+import { HostOutboxStore } from "../src/host-client/outbox-store.js";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
 async function until(cond: () => boolean, what: string): Promise<void> {
@@ -93,17 +93,26 @@ const SEND = {
   to: [{ name: "Ada", address: "ada@fake.test" }],
 } as unknown as EngineMutation;
 
-type Tab = { store: MirrorStore; engine: OhmailEngine; name: () => string | null };
-async function openIdb(factory: IDBFactory, locks: EngineLocks | null, srv: ReturnType<typeof server>): Promise<Tab> {
-  const store = new IndexedDbMirrorStore({ owner: "acct-cancel", factory });
+type Tab = { store: MirrorStore; engine: OhmailEngine };
+async function openIdb(
+  factory: IDBFactory, locks: EngineLocks | null, srv: ReturnType<typeof server>,
+  store: IndexedDbMirrorStore = new IndexedDbMirrorStore({ owner: "acct-cancel", factory }),
+): Promise<Tab> {
   const engine = new OhmailEngine({ adapter: srv.adapter as never, store, locks } as never);
   await engine.start().catch(() => undefined);
-  return { store, engine, name: () => (engine as unknown as { ownerName: string | null }).ownerName };
+  return { store, engine };
 }
-async function openMemory(srv: ReturnType<typeof server>, store: MirrorStore = new MemoryMirrorStore()): Promise<Tab> {
-  const engine = new OhmailEngine({ adapter: srv.adapter as never, store } as never);
+async function openMemory(srv: ReturnType<typeof server>, now?: () => Date): Promise<Tab> {
+  const store = new MemoryMirrorStore();
+  const engine = new OhmailEngine({ adapter: srv.adapter as never, store, ...(now ? { now } : {}) } as never);
   await engine.start().catch(() => undefined);
-  return { store, engine, name: () => null };
+  return { store, engine };
+}
+/** The paired page's store fallen back to memory: every claim on the disk row is answered `gone`. */
+class ClaimFindsNothing extends IndexedDbMirrorStore {
+  override async decideOutboxRow(...a: Parameters<IndexedDbMirrorStore["decideOutboxRow"]>) {
+    return a[1].kind === "claim" ? "gone" as const : super.decideOutboxRow(...a);
+  }
 }
 type Row = { key: string; owner?: string; withdrawn?: boolean; sending?: string; wired?: boolean; withdrawOwed?: boolean };
 const rows = (t: Tab) => t.store.entries<Row>(OUTBOX_TYPE).map((e) => e.entity);
@@ -223,8 +232,9 @@ describe("a send whose answer was lost: Cancel asks the server", () => {
   });
 
   it("in_flight: on its way, the row stays owed, and the drive re-asks the WITHDRAW until it settles — never the send", async () => {
+    let now = Date.now();
     const srv = server();
-    const A = await openMemory(srv);
+    const A = await openMemory(srv, () => new Date(now));
     srv.net.holdPending = true;
     const res = await A.engine.mutate(SEND);
     srv.net.holdPending = false;
@@ -232,8 +242,7 @@ describe("a send whose answer was lost: Cancel asks the server", () => {
     const owed = rows(A).map((r) => [r.withdrawn, r.withdrawOwed]);
     const sendsBefore = srv.sends.length;
     // Past the backoff: the next ask is due.
-    for (const r of rows(A)) (r as { nextAt?: number }).nextAt = 0;
-    (A.engine as unknown as { owedWithdraws: Map<string, { nextAt?: number }> }).owedWithdraws.forEach((p) => { p.nextAt = 0; });
+    now += 2 * 60 * 60 * 1000;
     srv.ledger.set(res.key, "sent");
     const late = await A.engine.flushPending();
     expect({ outcome, owed, asked: srv.withdraws.length, sends: srv.sends.length - sendsBefore, ended: late.find((r) => r.key === res.key)?.status, deliveries: srv.deliveries.length })
@@ -265,11 +274,7 @@ describe("a send whose answer was lost: Cancel asks the server", () => {
 
   it("a claim that finds its shared row gone still sends knowing it left: the Cancel the server cannot answer is unknown", async () => {
     const factory = new IDBFactory(); const reg = registry(); const srv = server();
-    const A = await openIdb(factory, reg.api, srv);
-    // The paired page's store fallen back to memory answers every disk decision `gone`.
-    const st = A.store as unknown as { decideOutboxRow: (id: string, act: { kind: string }) => Promise<string> };
-    const real = st.decideOutboxRow.bind(A.store);
-    st.decideOutboxRow = async (id, act) => (act.kind === "claim" ? "gone" : real(id, act));
+    const A = await openIdb(factory, reg.api, srv, new ClaimFindsNothing({ owner: "acct-cancel", factory }));
     srv.net.loseAnswer = true;
     const res = await A.engine.mutate(SEND);
     srv.net.loseAnswer = false;

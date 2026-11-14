@@ -7,7 +7,7 @@ import { it } from "vitest";
  * THE PRIVACY GUARD'S REAL ENTRIES, READ ONLY WHERE A RUN NAMES THEM. They live in one private file
  * outside every checkout, and a run names it by an absolute path in OHMAIL_GUARD_LIST; nothing else
  * turns PRIVATE MODE on. Every reader of the guard asks here and hands the text to `guardFrom` in
- * `@ohmail/fixtures`. Unset, the run is in PUBLIC MODE: the readers get the synthetic set and each
+ * `@ohmail/testing`. Unset, the run is in PUBLIC MODE: the readers get the synthetic set and each
  * PRIVATE MODE arm is skipped with that reason in its title. Set, the value must be an absolute path
  * outside this checkout to a readable file with an entry, or every reader refuses by the variable's
  * name, never by its value. In the private repository (the checkout holding the publisher) an unset

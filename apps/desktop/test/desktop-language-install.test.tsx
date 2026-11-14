@@ -2,7 +2,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { FixturesAdapter, MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { MemoryMirrorStore, OhmailEngine } from "@ohmail/client-engine";
+import { FixturesAdapter } from "@ohmail/testing/adapter";
 import { ThemeProvider, ToastHost } from "@ohmail/ui";
 import { LOCALE_STORAGE_KEY, readStoredLocale, type AppLocale } from "../../webapp/app/shell/locale";
 import type { ConsentTransport } from "../../webapp/app/shell/consent-state";

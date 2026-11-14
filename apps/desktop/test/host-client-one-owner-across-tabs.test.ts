@@ -8,10 +8,10 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { IDBFactory, IDBKeyRange as FakeKeyRange } from "fake-indexeddb";
 import {
   MutationRejectedError, OhmailEngine, OUTBOX_TYPE, OUTBOX_WITHDRAWN_CODE,
-  type EngineLocks, type EngineMutation, type MutationResult,
+  type EngineLocks, type EngineMutation, type MutationResult, type NoticeChannel,
 } from "@ohmail/client-engine";
 
-import { HostOutboxStore } from "../../../apps/desktop/src/host-client/outbox-store.js";
+import { HostOutboxStore } from "../src/host-client/outbox-store.js";
 
 const tick = (ms = 5): Promise<void> => new Promise<void>((r) => { setTimeout(r, ms); });
 async function until(cond: () => boolean, what: string): Promise<void> {
@@ -76,12 +76,37 @@ const SEND = {
   to: [{ name: "Ada", address: "ada@fake.test" }],
 } as unknown as EngineMutation;
 
-type Tab = { store: HostOutboxStore; engine: OhmailEngine; name: () => string | null };
+type Tab = { store: HostOutboxStore; engine: OhmailEngine; name: () => string | null; silence: () => void };
+/** One window's notice channel; `silence()` is the channel going dead: the window neither says nor hears. */
+function channel() {
+  let real: BroadcastChannel | null = null;
+  let dead = false;
+  const open = (name: string): NoticeChannel => {
+    const ch = new BroadcastChannel(name);
+    (ch as { unref?: () => void }).unref?.();
+    real = ch;
+    const face: NoticeChannel = { postMessage: (d) => { if (!dead) ch.postMessage(d); }, close: () => ch.close(), onmessage: null };
+    ch.onmessage = (ev) => { if (!dead) face.onmessage?.({ data: ev.data }); };
+    return face;
+  };
+  return { open, silence: () => { dead = true; real?.close(); } };
+}
+/** The registry as one window asks it, and the name that window's lock was granted under. */
+function grantOf(locks: EngineLocks | null) {
+  let granted: string | null = null;
+  const api: EngineLocks | null = locks === null ? null : {
+    request: (name, o, cb) => locks.request(name, o, (l) => { granted = name; return cb(l); }),
+    query: () => locks.query(),
+  };
+  return { api, name: () => granted };
+}
 async function tab(factory: IDBFactory, locks: EngineLocks | null, h: ReturnType<typeof host>): Promise<Tab> {
-  const store = new HostOutboxStore({ scope: "pair-1", live: () => true, factory });
-  const engine = new OhmailEngine({ adapter: h.adapter as never, store, locks } as never);
+  const said = channel();
+  const lock = grantOf(locks);
+  const store = new HostOutboxStore({ scope: "pair-1", live: () => true, factory, notices: said.open });
+  const engine = new OhmailEngine({ adapter: h.adapter as never, store, locks: lock.api } as never);
   await engine.start().catch(() => undefined);
-  return { store, engine, name: () => (engine as unknown as { ownerName: string | null }).ownerName };
+  return { store, engine, name: lock.name, silence: said.silence };
 }
 const rows = (t: Tab) => t.store.entries<{ key: string; owner?: string }>(OUTBOX_TYPE).map((e) => e.entity);
 
@@ -127,8 +152,7 @@ describe("the paired page's tabs: one owner per queued send", () => {
       const res = await A.engine.mutate(SEND);
       expect(rows(A).map((r) => r.owner)).toEqual([A.name()]);
       await until(() => rows(B).some((r) => r.key === res.key), "B reads it");
-      if (arm === "silent") (A.engine as unknown as { notices: unknown }).notices = null;
-      if (arm === "silent") (A.store as unknown as { bus: { close: () => void } }).bus.close();
+      if (arm === "silent") A.silence();
       // The notice carries the SERVER's answer, so the answering arm asks with the network back; the
       // silent arm cancels offline, and its owed mark is what A's claim meets.
       if (arm === "withdrawn") h.net.offline = false;

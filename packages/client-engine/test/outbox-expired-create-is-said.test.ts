@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import {
-  DEMO_NOW,
-  FixturesAdapter,
   IndexedDbMirrorStore,
   OUTBOX_ABANDONED_TYPE,
   OUTBOX_TYPE,
@@ -10,6 +8,7 @@ import {
   type EngineAdapter,
   type EngineMutation,
 } from "@ohmail/client-engine";
+import { DEMO_NOW, FixturesAdapter } from "@ohmail/testing/adapter";
 
 /**
  * OUTBOX-DAY-OLD-UNKEYED-CREATE-DROPPED-AT-RESTORE. A new-draft or rule create restored more

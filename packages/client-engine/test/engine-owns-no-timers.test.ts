@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../scripts/lib/source-scan.mjs";
+import { engineSource } from "./helpers/engine-source.js";
 
 /* @reads: packages/app-logic/src/session/sync-scheduler.ts apps/mobile/src/net/drain.ts
    The two cadences that poll what waits, read by path so a landing selects this file when they move. */
@@ -14,7 +15,6 @@ import { lineOf, withoutComments, withoutCommentsAndLiterals } from "../../../sc
  * deadlines on one request each (the replay's, the hold's ceiling, the drain's belt), each cleared
  * when its race settles. Planted fixtures prove both directions.
  */
-const ENGINE = fileURLToPath(new URL("../src/engine.ts", import.meta.url));
 const CADENCES = ["../../../packages/app-logic/src/session/sync-scheduler.ts", "../../../apps/mobile/src/net/drain.ts"]
   .map((rel) => fileURLToPath(new URL(rel, import.meta.url)));
 /** Admitted timers, by the text on their line: why each cannot outlive its own await. */
@@ -44,8 +44,8 @@ describe("the engine owns no timers", () => {
     expect(refused("// a setTimeout( in a comment\nconst s = \"setInterval(\";")).toEqual([]);
   });
 
-  it("engine.ts holds no timer but the admitted ones, and every admitted one still exists", () => {
-    const found = timersIn(readFileSync(ENGINE, "utf8"));
+  it("the engine holds no timer but the admitted ones, and every admitted one still exists", () => {
+    const found = timersIn(engineSource());
     expect(found.filter((l) => !(l in ADMITTED))).toEqual([]);
     expect(Object.keys(ADMITTED).filter((k) => !found.includes(k)), "an admitted timer is gone: drop its row").toEqual([]);
   });

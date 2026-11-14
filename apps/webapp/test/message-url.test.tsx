@@ -153,7 +153,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
   });
 
   it("restoring arms NO read — a reload is a leave-and-revisit, and the waterline already committed", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
@@ -200,7 +200,7 @@ describe("the bar claims the reading, and the reading survives a reload", () => 
    * never claimed, and the twin below holds it open.
    */
   it("Back walks out of a stream reading: the card the URL claimed collapses, and writes nothing", async () => {
-    const { FixturesAdapter } = await import("@ohmail/client-engine");
+    const { FixturesAdapter } = await import("@ohmail/testing/adapter");
     const seen: Array<Record<string, unknown>> = [];
     const real = FixturesAdapter.prototype.mutate;
     vi.spyOn(FixturesAdapter.prototype, "mutate").mockImplementation(function (
