@@ -22,9 +22,10 @@
  * announces itself is a state a person must be told about rather than shown a spinner for.
  */
 
-import { originNeedsPin, parsePairLink, type PairLink } from "@ohmail/client-engine";
+import { originNeedsPin, parsePairLink, updateAnswerOf, type PairLink } from "@ohmail/client-engine";
 
 import { refusalCopy } from "../../webapp/app/shell/server-refusal";
+import { updateAnswerSentence } from "../../webapp/app/shell/update-answer";
 import { BUILD_PLATFORM } from "./platform.js";
 import { hostLabelOf } from "./host-label.js";
 import { LOCAL_SERVER_CALL_DEADLINE_MS } from "./local-server-deadline.js";
@@ -2225,6 +2226,10 @@ async function refused(
       error?: { message?: string; code?: string; details?: unknown };
     };
     const code = parsed.error?.code ?? null;
+    /* A SERVER'S ANSWER ABOUT THIS APP (too old for it, or being updated), handed on by the engine:
+       the one sentence the update line says, in the window's language, never the server's words. */
+    const answer = updateAnswerOf(res.status, code);
+    if (answer !== null) return { problem: updateAnswerSentence(answer), code, details: null, suggestion: null };
     /* The probe can say more than its own sentence does — see {@link probeTlsRefusal}, which is
        also what the self-hosted door reads, so the two cannot diverge. The engine's sentence is
        English; the catalogue says it in the window's language. */

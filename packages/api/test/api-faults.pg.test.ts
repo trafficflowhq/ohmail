@@ -136,6 +136,46 @@ describe.skipIf(!PG_UP)("api_faults on real Postgres", () => {
     expect(asText).not.toContain("deliberate fault");
   });
 
+  // ── THE CLIENT'S NAME IS A COUNT ON THE HELLO LINE, NEVER A STORED FACT ──────────────────
+
+  it("a failing request naming its client leaves that name on no line of its own and in no table", async () => {
+    await db.delete(apiFaults);
+    const { createLogger } = await import("@trafficflow/core");
+    const lines: Array<Record<string, unknown>> = [];
+    const logger = createLogger({ service: "api", level: "info", sink: (l) => lines.push(JSON.parse(l) as Record<string, unknown>) });
+    const res = await post({ ...depsOn(true, true), logger }, {
+      authorization: `Bearer ${SECRET}`, "x-ohmail-client": "web/9.9.9",
+    });
+    expect(res.status).toBe(500);
+
+    // The log: the failure line is what it was. The pair rides `hello_served` alone (`client-identity.test.ts`).
+    const failure = lines.find((l) => l.event === "request_unhandled");
+    expect(failure, "the failing request wrote no line").toBeDefined();
+    expect(JSON.stringify(lines)).not.toContain("9.9.9");
+
+    // The row: its eight columns and none of them the client's.
+    const [row] = await db.select().from(apiFaults);
+    expect(Object.keys(row!).sort()).toEqual(
+      ["arm", "at", "errorClass", "id", "method", "requestId", "route", "status"].sort(),
+    );
+    expect(JSON.stringify(row)).not.toContain("9.9.9");
+
+    // And no table: every text-like column of every table in the schema, read for the release.
+    const columns = (await db.execute(sql`
+      select table_name, column_name from information_schema.columns
+      where table_schema = 'public' and data_type in ('text', 'character varying', 'jsonb', 'json')
+    `)) as unknown as Array<{ table_name: string; column_name: string }>;
+    expect(columns.length, "the scan found no text columns to read").toBeGreaterThan(100);
+    const holding: string[] = [];
+    for (const { table_name: table, column_name: column } of columns) {
+      const hit = (await db.execute(
+        sql.raw(`select 1 from "${table}" where "${column}"::text like '%9.9.9%' limit 1`),
+      )) as unknown as unknown[];
+      if (hit.length > 0) holding.push(`${table}.${column}`);
+    }
+    expect(holding, "a table stores the client's release").toEqual([]);
+  });
+
   // ── THE CONTROLS: WHO MAY REACH IT ───────────────────────────────────────────────────────
 
   it("is NOT reachable anonymously — no credential is 401 and nothing is recorded", async () => {

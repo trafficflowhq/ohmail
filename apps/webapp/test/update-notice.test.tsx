@@ -15,6 +15,8 @@ import {
   sendWaits,
   setSendWaits,
 } from "../app/shell/app-update";
+import de from "../messages/de.json";
+import { noticeServerAnswered, noticeUpdateAnswer, hearUpdateAnswer } from "../app/shell/update-answer";
 import type { SendLineItem, SendPhase } from "../app/shell/mail-send";
 import { SendWaitsRelay, sendWaitsOf, UpdateDot, UpdateLine } from "../app/shell/UpdateLine";
 
@@ -236,6 +238,107 @@ describe("the update line", () => {
     announceUpdate({ kind: "reload", act: () => {} });
     const el = await mount(h(UpdateLine));
     expect(el.textContent).toContain(copy.lineReload);
+  });
+});
+
+describe("a server's own answer on the update line", () => {
+  const reload = vi.fn();
+  const remedy = { verb: "reload" as const, act: reload };
+  const copyIn = (cat: unknown): Record<string, string> => (cat as { update: Record<string, string> }).update;
+
+  it("TOO OLD in a tab: one whole sentence, Reload, and pressing it does what the host armed", async () => {
+    reload.mockClear();
+    const el = await mount(h(UpdateLine));
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    expect(el.textContent).toContain("This ohmail is too old for its server.");
+    expect(verb()!.textContent).toBe("Reload");
+    await click(verb());
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("TOO OLD on the desktop says Update, in both languages, and a German tab says Neu laden", async () => {
+    const update = vi.fn();
+    await mount(h(UpdateLine));
+    await act(async () => noticeUpdateAnswer("tooOld", { verb: "update", act: update }));
+    expect(verb()!.textContent).toBe(copyIn(en).lineUpdateAction);
+    await click(verb());
+    expect(update).toHaveBeenCalledTimes(1);
+    await act(async () => root!.unmount());
+    host!.remove();
+    resetUpdateStoreForTests();
+
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(h(NextIntlClientProvider, { locale: "de", messages: de as never, children: h(UpdateLine) }));
+    });
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    expect(host.textContent).toContain("Dieses ohmail ist zu alt für seinen Server.");
+    expect(verb()!.textContent).toBe("Neu laden");
+    await act(async () => announceUpdate(null));
+    await act(async () => noticeUpdateAnswer("tooOld", { verb: "update", act: update }));
+    expect(verb()!.textContent).toBe("Aktualisieren");
+  });
+
+  it("BEING UPDATED: the sentence and no verb, and the next answer from the server lifts it", async () => {
+    const el = await mount(h(UpdateLine));
+    await act(async () => noticeUpdateAnswer("serverUpdating"));
+    expect(el.textContent).toContain("ohmail is being updated and will be back shortly.");
+    expect(verb(), "a verb on a line with nothing to press").toBeNull();
+    await act(async () => hearUpdateAnswer(new Response("{}", { status: 200 })));
+    expect(el.innerHTML).toBe("");
+  });
+
+  it("is never held by a send that waits: pressing Reload is not what loses a letter", async () => {
+    await mount(h(UpdateLine));
+    await act(async () => setSendWaits(true));
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    expect(verb()!.getAttribute("aria-disabled")).toBeNull();
+    reload.mockClear();
+    await click(verb());
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("LATER keeps it away for the run: a line re-armed by the next failing request stays down", async () => {
+    await mount(h(UpdateLine));
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    await click(later());
+    expect(currentUpdateOffer()).toBeNull();
+    for (let i = 0; i < 3; i++) await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    expect(currentUpdateOffer(), "Later was defeated by the next failing request").toBeNull();
+    // "Being updated" is its own key: Later on one does not silence the other.
+    await act(async () => noticeUpdateAnswer("serverUpdating"));
+    expect(currentUpdateOffer()?.kind).toBe("serverUpdating");
+  });
+
+  it("an ordinary answer lifts nothing but a \"being updated\" line; nothing lifts \"too old\" but the update", async () => {
+    await mount(h(UpdateLine));
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    noticeServerAnswered();
+    await act(async () => hearUpdateAnswer(new Response("{}", { status: 200 })));
+    expect(currentUpdateOffer()?.kind).toBe("tooOld");
+  });
+
+  it("an edge's 503 and a stray 426 are not these answers: status and code together", async () => {
+    await mount(h(UpdateLine));
+    await act(async () => hearUpdateAnswer(new Response("Service Unavailable", { status: 503 }), remedy));
+    await act(async () => hearUpdateAnswer(new Response(JSON.stringify({ error: { code: "db_busy" } }), { status: 503 }), remedy));
+    await act(async () => hearUpdateAnswer(new Response("Upgrade Required", { status: 426 }), remedy));
+    await act(async () => hearUpdateAnswer(new Response(JSON.stringify({ error: { code: "server_updating" } }), { status: 426 }), remedy));
+    expect(currentUpdateOffer()).toBeNull();
+  });
+
+  it("PRECEDENCE: too old replaces a reload offer; a ready or downloading update stands; being updated yields to anything saying something", async () => {
+    await mount(h(UpdateLine));
+    await act(async () => announceUpdate({ kind: "reload", version: "bbbb2222", act: () => {} }));
+    await act(async () => noticeUpdateAnswer("serverUpdating"));
+    expect(currentUpdateOffer()?.kind, "being updated replaced a standing offer").toBe("reload");
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    expect(currentUpdateOffer()?.kind).toBe("tooOld");
+    await act(async () => announceUpdate({ kind: "ready", version: "2.0.0", act: () => {}, key: "ready:2.0.0" }));
+    await act(async () => noticeUpdateAnswer("tooOld", remedy));
+    expect(currentUpdateOffer()?.kind, "an update that is ready was replaced by the sentence about needing one").toBe("ready");
   });
 });
 

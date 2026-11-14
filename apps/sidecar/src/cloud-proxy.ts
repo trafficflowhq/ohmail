@@ -66,7 +66,11 @@ export interface WriteThroughProxy {
  * Hop-by-hop / re-authored headers that must not be relayed to Cloud. The search lane is this
  * engine's own (`search-lanes.ts`, spelled out here so this module stays off the services graph).
  */
-const STRIP_HEADERS = ["authorization", "host", "content-length", "connection", "x-ohmail-search-lane", "x-ohmail-echo"];
+const STRIP_HEADERS = [
+  "authorization", "host", "content-length", "connection", "x-ohmail-search-lane", "x-ohmail-echo",
+  // The window's own name: the engine names itself on the way out (`cloud-auth.ts`), once.
+  "x-ohmail-client",
+];
 
 /**
  * THE ANSWER SPEAKS THIS INSTALL'S SEQUENCE. The hosted `X-Sync-Seq` counts the hosted change log;

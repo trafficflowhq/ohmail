@@ -32,6 +32,12 @@ export const ALLOWED_FIELDS: readonly string[] = [
   // ── identity and correlation (what makes a line greppable at all) ──
   "accountId", "mailboxId", "requestId", "instanceId", "environment", "version",
   "shard", "shards", "route", "method", "status", "code", "host",
+  // Which client asks and which composition answers, on the API's `hello_served` line and no other:
+  // `clientKind` and `clientRelease` are `x-ohmail-client` parsed to a closed set of kinds and a release
+  // of three small numbers or `dev` (`packages/api/src/client-identity.ts`), so the builds in use can be
+  // counted. `flavor` is the composition's own word: managed, selfhost, local or desktop-host. None of
+  // the three carries a raw header value, an address or an id.
+  "clientKind", "clientRelease", "flavor",
   // `messageId` is the `messages.id` ROW UUID a per-message worker line names when it acts on one
   // row — NOT the `Message-ID` HEADER, which carries a domain and reads like an address and is not
   // logged anywhere. A row id is the same shape and the same non-secret as `accountId` and

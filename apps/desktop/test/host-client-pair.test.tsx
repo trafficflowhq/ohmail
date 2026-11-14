@@ -36,7 +36,7 @@ const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Prom
     dispatchEvent() { return false; },
   })) as never;
 
-interface Sent { url: string; body: Record<string, unknown> | null }
+interface Sent { url: string; body: Record<string, unknown> | null; named: string | null }
 let sent: Sent[];
 let answer: (url: string) => Response;
 
@@ -49,6 +49,7 @@ beforeEach(() => {
     sent.push({
       url: String(url),
       body: typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null,
+      named: new Headers(init?.headers).get("x-ohmail-client"),
     });
     return answer(String(url));
   }) as typeof fetch;
@@ -94,6 +95,8 @@ describe("the fragment discipline", () => {
     // One request, to the redeem, with the token in the JSON body and NOWHERE in a URL.
     expect(sent).toHaveLength(1);
     expect(sent[0]!.url).toBe("/pair/redeem");
+    // The redeem is a bare fetch, before any session: it names the page itself.
+    expect(sent[0]!.named).toBe("paired-page/dev");
     expect(sent[0]!.body).toEqual({ grant: "device-pair", token: TOKEN, kind: "web" });
     for (const s of sent) expect(s.url).not.toContain(TOKEN);
 

@@ -8,7 +8,7 @@
  * measured before the burn ({@link resolveApiBase}, `net/server-base.ts`);
  * {@link resolveAccountId} takes the server's word — a door naming no account is refused.
  */
-import { isSessionRefusal, originNeedsPin, type OhmailEngine, type ScheduleFilesAnswer, type SqlMirrorStore } from "@ohmail/client-engine";
+import { clientHeaders, isSessionRefusal, originNeedsPin, type OhmailEngine, type ScheduleFilesAnswer, type SqlMirrorStore } from "@ohmail/client-engine";
 import {
   FORWARD_PARTS_HELLO_MS,
   bootEngine,
@@ -32,6 +32,7 @@ import type { BearerManagerRN, FetchLike, RefreshVault, SessionDeath, SignOutOut
 import { bearers as processBearers, type BearerRegistry } from "./bearer-registry";
 import { deathRefusal } from "./session-death";
 import { withAccessLock } from "./access-lock";
+import { withUpdateAnswer } from "./update-answer";
 import { forgetAccessFeed } from "./account";
 import { networkNow } from "./network-door";
 import {
@@ -440,6 +441,11 @@ export interface PairingEnv {
   /** Override the transport (tests). Absent, RN's global fetch. */
   fetchImpl?: FetchLike;
   /**
+   * The app's release (`app.json`'s version), named to every server in `x-ohmail-client`. Read by the
+   * composition and handed in, so this module imports nothing native. Absent reads `dev`.
+   */
+  clientRelease?: string;
+  /**
    * The kind this phone declares in the redeem body, so the server's device list and its
    * staleness attribution say WHICH install a row is ("mobile-android", not "Web"). Composed by
    * the provider from {@link mobileDeviceKind}(Platform.OS). Absent means the field is omitted
@@ -521,6 +527,20 @@ function diedOutcome(died: SessionDeath, removesCopy: boolean): ConnectOutcome {
 }
 
 const bareFetch = (): FetchLike => globalThis.fetch.bind(globalThis) as FetchLike;
+
+/**
+ * THE FETCH THE PRE-SESSION ASKS GO OUT ON — the hello, the pairing probe, the redeem, the sign-out
+ * debts: no manager holds a credential yet, so each names this phone (`x-ohmail-client`) itself, here
+ * and nowhere else. A manager's own asks are named by the manager (`bearer.ts`).
+ */
+export function pairingFetch(env: Pick<PairingEnv, "fetchImpl" | "clientRelease">): FetchLike {
+  const inner = env.fetchImpl ?? bareFetch();
+  const named = clientHeaders("phone", env.clientRelease);
+  return (url, init) => {
+    const asked = (init ?? {}) as { headers?: Record<string, string> };
+    return inner(url, { ...asked, headers: { ...(asked.headers ?? {}), ...named } });
+  };
+}
 
 /**
  * The BearerManager's persistence, bound to one profile's slot in the keystore — the ONLY caller
@@ -620,7 +640,7 @@ export async function probePairing(
   env: PairingEnv,
   input: { origin: string; pin?: string | null },
 ): Promise<ProbeOutcome> {
-  const fetchImpl = env.fetchImpl ?? bareFetch();
+  const fetchImpl = pairingFetch(env);
   const origin = normalizeOrigin(input.origin);
   if (!/^https?:\/\/\S+$/.test(origin)) {
     return { kind: "refused", reason: refuse("pairBadAddress", input.origin) };
@@ -787,7 +807,7 @@ export async function pairWithServer(
   env: PairingEnv,
   input: { admission: PairAdmission; token: string },
 ): Promise<PairOutcome> {
-  const fetchImpl = env.fetchImpl ?? bareFetch();
+  const fetchImpl = pairingFetch(env);
   const { origin, pin, apiBase } = input.admission;
   const negotiatedFlavor = input.admission.flavor;
   const token = input.token.trim();
@@ -969,6 +989,7 @@ export async function pairWithServer(
     accountId: identity.accountId,
     vault: vaultFor(env.profiles, profile),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
+    ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   });
   const connected = await buildSession(env, profile);
   if (connected.kind === "refused") return { kind: "refused", reason: connected.reason };
@@ -1019,6 +1040,7 @@ export async function signOutProfile(env: PairingEnv, profile: ServerProfile): P
       oweSignOut: (t) => oweSignOutTo(env.profiles, profile, t),
     },
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
+    ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   }));
   try {
     // A manager that already died holds nothing to revoke with — the same answer as a cleared row.
@@ -1319,7 +1341,7 @@ export function drainPendingSignOuts(
 async function drainSignOutsNow(
   env: PairingEnv, opts: { origin?: string; atLaunch?: boolean }, until: number | null,
 ): Promise<number> {
-  const fetchImpl = env.fetchImpl ?? bareFetch();
+  const fetchImpl = pairingFetch(env);
   let owed: PendingSignOut[];
   let live: ServerProfile[];
   try {
@@ -1445,6 +1467,7 @@ export async function drainPendingWakeDrops(env: PairingEnv): Promise<string[]> 
        */
       vault: vaultFor(env.profiles, profile),
       ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
+      ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
     }));
     return bearer.paired() ? { bearer, profile } : null;
   };
@@ -1578,7 +1601,7 @@ async function buildSession(
    */
   let apiBase = profile.apiBase;
   if (apiBase === null && profile.flavor === "selfhost") {
-    const measured = await resolveApiBase(env.fetchImpl ?? bareFetch(), profile.origin);
+    const measured = await resolveApiBase(pairingFetch(env), profile.origin);
     if (measured.kind === "base") {
       apiBase = measured.base;
       /* Persisted, so the next launch is wire-free again. A refusal from the keystore is not worth
@@ -1596,6 +1619,7 @@ async function buildSession(
     accountId: profile.accountId,
     vault: vaultFor(env.profiles, profile),
     ...(env.fetchImpl ? { fetchImpl: env.fetchImpl } : {}),
+    ...(env.clientRelease ? { clientRelease: env.clientRelease } : {}),
   }));
   // A CREDENTIAL-LESS BEARER IS REFUSED HERE, STRUCTURALLY — not left to the caller's guard.
   // `connectProfile` already refuses a `refreshToken: null` row, but the property must hold
@@ -1620,7 +1644,7 @@ async function buildSession(
    * plane and no gate to refuse it, so it is not wrapped and cannot raise a wall — the property
    * `access-lock.ts` states, held by construction rather than by a check.
    */
-  const paired = withAccessLock(bearer.fetch);
+  const paired = withUpdateAnswer(withAccessLock(bearer.fetch), profile.origin);
   const boot = await bootEngine(env.engineDeps, {
     origin: profile.origin,
     // WHERE THIS SERVER'S `/sync` FAMILY ANSWERS — measured at pairing time and stored on the

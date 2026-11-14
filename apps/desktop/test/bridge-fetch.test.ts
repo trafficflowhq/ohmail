@@ -4,7 +4,7 @@ import { HttpAdapter } from "@ohmail/client-engine";
 import {
   BRIDGE_DEADLINE_MS, bridgeFetch, bridgeTransportReading, createEngineAdapter, engineConfigure, engineLogout, engineRetry,
   engineStartOver, engineStatus, engineSwitchCommit, engineSwitchRestore, engineUnlockRetry, invokeShell,
-  LARGE_BODY_FROM_BYTES, STAGED_UPLOAD_DEADLINE_MS, WINDOW_SEARCH_PHASES_PATH,
+  LARGE_BODY_FROM_BYTES, onUpdateAnswer, STAGED_UPLOAD_DEADLINE_MS, WINDOW_SEARCH_PHASES_PATH, type UpdateHearing,
 } from "../src/bridge-fetch.js";
 import { installOfflineGuard } from "../src/offline-guard.js";
 
@@ -85,6 +85,54 @@ describe("the transport a raw answer crossed by", () => {
   });
 });
 
+describe("a server's update answer, heard at the window's door", () => {
+  const body = (code: string): string => JSON.stringify({ error: { code, message: code, retryable: true } });
+  const heardFor = async (status: number, text: string): Promise<{ heard: UpdateHearing[]; res: Response }> => {
+    const heard: UpdateHearing[] = [];
+    const off = onUpdateAnswer((h) => heard.push(h));
+    shellAnswering(() => encode(status, text));
+    const res = await bridgeFetch("/mailboxes");
+    off();
+    return { heard, res };
+  };
+
+  it("426 client_too_old and 503 server_updating are heard, and the answer still reaches its caller whole", async () => {
+    const old = await heardFor(426, body("client_too_old"));
+    expect(old.heard).toEqual(["tooOld"]);
+    expect(old.res.status).toBe(426);
+    expect(((await old.res.json()) as { error: { code: string } }).error.code).toBe("client_too_old");
+    expect((await heardFor(503, body("server_updating"))).heard).toEqual(["serverUpdating"]);
+  });
+
+  it("only by status and code together: an edge's 503, a db_busy, a bare 426 and a mismatched pair are not heard", async () => {
+    for (const [status, text] of [
+      [503, "Service Unavailable"], [503, body("db_busy")], [503, body("offline_read_only")], [426, "Upgrade Required"],
+      [426, body("server_updating")], [503, body("client_too_old")], [500, body("client_too_old")],
+    ] as const) {
+      expect((await heardFor(status, text)).heard, `${status} ${text.slice(0, 30)}`).toEqual([]);
+    }
+  });
+
+  it("an ordinary answer is told as answered, and its body is never parsed for it", async () => {
+    expect((await heardFor(200, "not json at all")).heard).toEqual(["answered"]);
+    expect((await heardFor(204, "")).heard).toEqual(["answered"]);
+  });
+
+  it("the sink is the last writer's, a sink that throws costs the answer nothing, and off means silence", async () => {
+    const first: UpdateHearing[] = [];
+    const second: UpdateHearing[] = [];
+    const offFirst = onUpdateAnswer((h) => first.push(h));
+    const offSecond = onUpdateAnswer((h) => { second.push(h); throw new Error("a surface fell over"); });
+    shellAnswering(() => encode(426, body("client_too_old")));
+    expect((await bridgeFetch("/x")).status).toBe(426);
+    expect([first, second]).toEqual([[], ["tooOld"]]);
+    offFirst();
+    offSecond();
+    await bridgeFetch("/x");
+    expect(second).toEqual(["tooOld"]);
+  });
+});
+
 describe("the bridge", () => {
   it("sends the request the client composed, and nothing it did not", async () => {
     const asked = shellAnswering(() => encode(200, "{}"));
@@ -104,12 +152,35 @@ describe("the bridge", () => {
     expect(sent.headers).toEqual([
       ["content-type", "application/json"],
       ["idempotency-key", "k-1"],
+      // The window names itself; a test build has no release baked in, so it says `dev`.
+      ["x-ohmail-client", "desktop-window/dev"],
     ]);
     // Bytes, so a body is a body whether or not it happens to be text.
     expect(sent.body).toEqual([...new TextEncoder().encode('{"name":"work"}')]);
     // THE CREDENTIAL IS NOT HERE, and that is the point of the whole arrangement: the shell adds
     // the engine's authorization on its own side, so the page holds nothing it could leak.
     expect(JSON.stringify(sent)).not.toMatch(/authorization/i);
+  });
+
+  it("names the window on every request, once, whatever the caller set under that name", async () => {
+    const asked = shellAnswering(() => encode(200, "{}"));
+    await bridgeFetch("/health");
+    await bridgeFetch("/mailboxes", { headers: new Headers({ "X-Ohmail-Client": "web/9.9.9", accept: "application/json" }) });
+    await bridgeFetch("/sync", { headers: [["x-ohmail-client", "phone/1.0.0"]] });
+    for (const a of asked) {
+      const named = (a.payload!.headers as [string, string][]).filter(([n]) => n.toLowerCase() === "x-ohmail-client");
+      expect(named, String(a.payload!.url)).toEqual([["x-ohmail-client", "desktop-window/dev"]]);
+    }
+  });
+
+  it("the engine's own adapter reaches the shell with the name too: its door is the bridge, not an option", async () => {
+    const asked = shellAnswering(() => encode(200, JSON.stringify({ product: "ohmail", features: { forwardParts: true } })));
+    const adapter = createEngineAdapter();
+    await adapter.forwardPartsAnnounced?.();
+    expect(asked.length).toBeGreaterThan(0);
+    for (const a of asked) {
+      expect(a.payload!.headers, String(a.payload!.url)).toContainEqual(["x-ohmail-client", "desktop-window/dev"]);
+    }
   });
 
   it("a LARGE text body crosses as its own text, and a large byte body as base64 — never a number array", async () => {

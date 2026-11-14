@@ -10,10 +10,12 @@
  */
 import type { ConnectionState } from "../net/connection";
 import type { AccessRefusedFacts } from "../net/access-lock";
+import type { UpdateAnswerFacts } from "../net/update-answer";
 import type { BootMigrating } from "../ui/boot-migrating";
 
 export type GateVerdict =
   | { to: "boot" }
+  | { to: "update"; answer: UpdateAnswerFacts["answer"]; origin: string }
   | { to: "wall"; facts: AccessRefusedFacts }
   | { to: "welcome" }
   | { to: "connecting"; origin: string; migrating?: BootMigrating }
@@ -31,7 +33,16 @@ export function gateFor(
    * "no wall", so nothing that does not pass it changes.
    */
   lock: AccessRefusedFacts | null = null,
+  /**
+   * What the update-answer sink is holding, or `null`: the server said this app is too old for it, or that
+   * it is being updated. FOURTH ARGUMENT for the wall's reason, and AHEAD of it: an app too old to speak to
+   * its server cannot read that server's account verdict, so the sentence about the app comes first. Only a
+   * LIVE session can be answered so. Absent (every existing caller) reads as "no answer", so nothing that
+   * does not pass it changes.
+   */
+  update: UpdateAnswerFacts | null = null,
 ): GateVerdict {
+  if (state.k === "live" && update !== null) return { to: "update", answer: update.answer, origin: update.origin };
   /* AHEAD OF `mail` AND BEHIND EVERYTHING ELSE. A wall over a boot instant would be a screen
      about an account before the keystore has said which one; a wall over `welcome` would be one
      about an account this phone is not paired with. Only a LIVE session can be refused. */

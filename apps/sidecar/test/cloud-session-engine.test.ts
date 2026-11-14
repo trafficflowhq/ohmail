@@ -48,6 +48,8 @@ interface Host {
   fetchImpl: typeof fetch;
   /** Every request this host saw, by path. */
   seen: string[];
+  /** Who each of those requests said it was (`x-ohmail-client`), in the same order. */
+  named: Array<string | null>;
   /** Once true, the launch access token is stale and the next pull asks for a renewal. */
   expired: boolean;
   /** Every event the engine booted against this host logged. */
@@ -56,10 +58,11 @@ interface Host {
 
 /** A hosted API whose refresh door answers `refresh()`. */
 function host(refresh: () => Response): Host {
-  const h: Host = { seen: [], expired: false, logged: [], fetchImpl: undefined as unknown as typeof fetch };
+  const h: Host = { seen: [], named: [], expired: false, logged: [], fetchImpl: undefined as unknown as typeof fetch };
   h.fetchImpl = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     h.seen.push(url.pathname);
+    h.named.push(new Headers(init?.headers).get("x-ohmail-client"));
     const send = (v: unknown): Response =>
       new Response(JSON.stringify(v), { status: 200, headers: { "content-type": "application/json" } });
     if (url.pathname === "/auth/refresh") return refresh();
@@ -76,13 +79,14 @@ function host(refresh: () => Response): Host {
       cursor: Buffer.from("1").toString("base64url"), hasMore: false, serverTime: new Date().toISOString(),
     });
     if (url.pathname === "/messages/bodies") return send({ items: [], nextCursor: null });
+    if (url.pathname === "/hello") return send({ product: "ohmail", flavor: "managed", apiVersion: "1.2.3" });
     return new Response("not found", { status: 404 });
   }) as unknown as typeof fetch;
   return h;
 }
 
 function boot(dataDir: string, h: Host, over: {
-  keks?: Record<number, Buffer>; address?: string; tokens?: boolean; machine?: string | null;
+  keks?: Record<number, Buffer>; address?: string; tokens?: boolean; machine?: string | null; release?: string;
 } = {}): Promise<CloudSidecar> {
   if (closing) return Promise.reject(new Error("boot after teardown began"));
   const run = (async () => {
@@ -93,6 +97,7 @@ function boot(dataDir: string, h: Host, over: {
       ...(over.tokens === false ? {} : { tokens: { accessToken: "access-1", refreshToken: "refresh-1" } }),
       keks: over.keks ?? ring(),
       ...(over.machine !== undefined ? { machineBinding: over.machine } : {}),
+      ...(over.release ? { engineRelease: over.release } : {}),
       fetchImpl: h.fetchImpl,
       log: (event) => { h.logged.push(event); },
       pollIntervalMs: 40,
@@ -264,6 +269,54 @@ describe("a refusal heard by an earlier run", () => {
     await refusedRun(dataDir, keks);
     const other = await relaunch(dataDir, keks, "someone-else@ohmail.test");
     expect(await health(other)).toMatchObject({ signedIn: false, sessionExpired: false, session: null });
+  });
+});
+
+/**
+ * WHO THE SERVER HEARS FROM. A server counts the builds in use by its `GET /hello`, which a phone
+ * asks at each session start and the web at each load. A desktop's engine asked it only on the
+ * sign-in screen, so a signed-in desktop was never counted: it says hello once per launch, at the
+ * first pull the server answers. Every request names the engine and its release, a sign-in's too.
+ */
+describe("who the server hears from", () => {
+  const hellos = (h: Host): number => h.seen.filter((p) => p === "/hello").length;
+  const pulls = (h: Host): number => h.seen.filter((p) => p === "/sync").length;
+  async function untilHost(what: string, done: () => boolean): Promise<void> {
+    const deadline = Date.now() + 20_000;
+    while (!done()) {
+      if (Date.now() > deadline) throw new Error(what);
+      await new Promise((r) => setTimeout(r, 25));
+    }
+  }
+
+  it("a launch says hello once, however many pulls follow, and names the engine on every request", { timeout: 40_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-hello-");
+    dirs.push(dataDir);
+    const h = host(html403);
+    await boot(dataDir, h, { release: "1.2.3" });
+    await untilHost("the launch never said hello", () => hellos(h) > 0);
+    const before = pulls(h);
+    await untilHost("the mirror stopped pulling", () => pulls(h) >= before + 3);
+    expect(hellos(h), "one launch, one hello").toBe(1);
+    expect([...new Set(h.named)], h.seen.join(" ")).toEqual(["desktop-engine/1.2.3"]);
+  });
+
+  it("a launch with no session asks nothing; the sign-in names the engine, and its session says hello once", { timeout: 60_000 }, async () => {
+    const dataDir = await cloudDir("ohmail-session-hello-signin-");
+    dirs.push(dataDir);
+    const h = host(html403);
+    const sidecar = await boot(dataDir, h, { tokens: false, release: "1.2.3" });
+    expect((await health(sidecar)).signedIn).toBe(false);
+    expect(h.seen, "a signed-out launch dialled the server").toEqual([]);
+
+    const signIn = await call(sidecar, "POST", "/cloud/signin", { email: "me@ohmail.test", password: "pw", totp: "123456" });
+    expect(signIn.status, await signIn.clone().text()).toBe(200);
+    await untilHost("the new session never said hello", () => hellos(h) > 0);
+    const before = pulls(h);
+    await untilHost("the mirror stopped pulling", () => pulls(h) >= before + 3);
+    expect(hellos(h)).toBe(1);
+    expect(h.seen.slice(0, 3)).toEqual(["/auth/login", "/auth/2fa/totp/verify", "/auth/session"]);
+    expect([...new Set(h.named)], h.seen.join(" ")).toEqual(["desktop-engine/1.2.3"]);
   });
 });
 

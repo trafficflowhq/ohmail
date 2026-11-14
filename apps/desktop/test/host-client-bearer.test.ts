@@ -6,6 +6,8 @@ import {
   PAIR_SCOPE_STORAGE_KEY, REFRESH_ATTEMPT_DB, REFRESH_ATTEMPT_STORAGE_KEY, REFRESH_STORAGE_KEY, type BearerTokens,
 } from "../src/host-client/bearer.js";
 
+import { currentUpdateOffer, resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
+
 /* The engine's own devDependency, reached through its package: the desktop does not carry one. */
 const { IDBFactory: FakeIDBFactory, IDBDatabase: FakeIDBDatabase } = createRequire(
   new URL("../../../packages/client-engine/package.json", import.meta.url),
@@ -101,11 +103,63 @@ describe("adoption and the stamp", () => {
     expect(wire.seen[0]!.headers.authorization).toBe("Bearer access-1");
   });
 
+  it("names the page on every request it makes — the stamp, the renewal and the sign-out — once each", async () => {
+    const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
+    const wire = scripted([
+      () => json(401, { error: { code: "unauthorized" } }),
+      () => json(200, { tokens: ROTATED }),
+      () => json(200, { items: [] }),
+      () => json(200, {}),
+    ]);
+    const bearer = new BearerManager({ storage, fetchImpl: wire.fetch });
+    // A caller that set the name itself is replaced, never doubled.
+    await bearer.fetch("/mailboxes", { headers: { "X-Ohmail-Client": "web/9.9.9" } });
+    await bearer.signOut();
+    expect(wire.seen.map((s) => s.url)).toEqual(["/mailboxes", "/auth/refresh", "/mailboxes", "/auth/logout"]);
+    for (const s of wire.seen) expect(s.headers["x-ohmail-client"], s.url).toBe("paired-page/dev");
+  });
+
   it("a cold page load finds the refresh token in storage and is paired without an access token", () => {
     const storage = memoryStorage({ [REFRESH_STORAGE_KEY]: "refresh-1" });
     const bearer = new BearerManager({ storage, fetchImpl: scripted([]).fetch });
     expect(bearer.paired()).toBe(true);
     expect(bearer.headers()).toEqual({}); // no access yet — the first 401 buys one
+  });
+});
+
+describe("the computer this page is served from says the page is too old, or is being updated", () => {
+  const envelope = (status: number, code: string): Response => json(status, { error: { code, message: code, retryable: true } });
+
+  it("426 client_too_old arms the one update line with Reload, the answer reaches its caller whole, and a 2xx never lifts it", async () => {
+    resetUpdateStoreForTests();
+    const wire = scripted([() => envelope(426, "client_too_old"), () => json(200, { ok: true })]);
+    const bearer = new BearerManager({ storage: memoryStorage(), fetchImpl: wire.fetch });
+    bearer.adopt(PAIR);
+    const res = await bearer.fetch("/mailboxes");
+    expect(res.status).toBe(426);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("client_too_old");
+    expect(currentUpdateOffer()).toMatchObject({ kind: "tooOld", verb: "reload" });
+    await bearer.fetch("/mailboxes");
+    expect(currentUpdateOffer()?.kind).toBe("tooOld");
+    resetUpdateStoreForTests();
+  });
+
+  it("503 server_updating says so with no verb until the next answer lifts it; an edge's 503 says nothing", async () => {
+    resetUpdateStoreForTests();
+    const wire = scripted([
+      () => new Response("Service Unavailable", { status: 503 }),
+      () => envelope(503, "server_updating"),
+      () => json(200, {}),
+    ]);
+    const bearer = new BearerManager({ storage: memoryStorage(), fetchImpl: wire.fetch });
+    bearer.adopt(PAIR);
+    await bearer.fetch("/sync");
+    expect(currentUpdateOffer()).toBeNull();
+    await bearer.fetch("/sync");
+    expect(currentUpdateOffer()).toMatchObject({ kind: "serverUpdating" });
+    expect(currentUpdateOffer()?.act).toBeUndefined();
+    await bearer.fetch("/sync");
+    expect(currentUpdateOffer()).toBeNull();
   });
 });
 
