@@ -132,7 +132,7 @@ describe("the one derivation", () => {
  */
 describe("nowhere else composes the phone's words", () => {
   const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "apps/webapp/app/letter-body", "packages/app-logic/src", "apps/desktop/src"];
+  const ROOTS = ["apps/webapp/app/shell", "apps/webapp/app/views", "packages/letter-body/src", "packages/app-logic/src", "apps/desktop/src"];
   const DERIVATION = "packages/app-logic/src/reading/reader-holder.ts";
 
   const walk = (dir: string, out: string[] = []): string[] => {

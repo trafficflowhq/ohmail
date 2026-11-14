@@ -1,0 +1,101 @@
+/* A few rows of figures: what a row counts at the left with its dot, its figures at one edge under their column's
+   name; the row that sums them is heavier. Under a finger the names' row gives way, what a row counts takes a line
+   of its own, and every figure stands under its column's name. */
+@layer oh {
+  .oh-figuretable {
+    /* How many columns of figures it has is handed by the part. */
+    --oh-figuretable-n: 1;
+    --oh-figuretable-column: 6em;
+    --oh-figuretable-dot: 10px;
+
+    display: grid;
+    padding: var(--s1) 0 var(--s2);
+  }
+
+  .oh-figuretable-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) repeat(var(--oh-figuretable-n), var(--oh-figuretable-column));
+    gap: var(--s3);
+    align-items: center;
+    min-height: var(--h-m);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .oh-figuretable-figure {
+    color: var(--ink2);
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .oh-figuretable-name {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    color: var(--ink);
+    font-weight: var(--w-mid);
+  }
+
+  .oh-figuretable-name > .oh-tagdot {
+    --oh-tagdot-size: var(--oh-figuretable-dot);
+    --oh-tagdot-gap: 0 var(--s2) 0 0;
+  }
+
+  .oh-figuretable-word {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .oh-figuretable-row[data-head] {
+    min-height: var(--h-s);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-figuretable-row[data-head] > .oh-figuretable-name {
+    color: var(--ink2);
+    font-weight: var(--w-bold);
+  }
+
+  .oh-figuretable-row[data-sum] > .oh-figuretable-figure,
+  .oh-figuretable-row[data-sum] > .oh-figuretable-name {
+    color: var(--ink);
+    font-weight: var(--w-bold);
+  }
+
+  :root[data-touch="1"] .oh-figuretable-row[data-head] {
+    display: none;
+  }
+
+  :root[data-touch="1"] .oh-figuretable-row {
+    grid-template-columns: repeat(var(--oh-figuretable-n), minmax(0, 1fr));
+    row-gap: var(--s1);
+    padding: var(--s2) 0;
+  }
+
+  :root[data-touch="1"] .oh-figuretable-name {
+    grid-column: 1 / -1;
+    grid-row: 1;
+  }
+
+  :root[data-touch="1"] .oh-figuretable-word {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  :root[data-touch="1"] .oh-figuretable-figure {
+    grid-row: 2;
+    text-align: left;
+  }
+
+  :root[data-touch="1"] .oh-figuretable-figure[data-column]::before {
+    content: attr(data-column);
+    display: block;
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    font-weight: var(--w-text);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}

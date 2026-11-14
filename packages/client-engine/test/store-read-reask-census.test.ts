@@ -17,6 +17,7 @@ import { withoutComments } from "../../../scripts/lib/source-scan.mjs";
 const ROOTS: Array<[string, URL]> = [
   ["apps/webapp/app", new URL("../../../apps/webapp/app/", import.meta.url)],
   ["packages/app-logic/src", new URL("../../app-logic/src/", import.meta.url)],
+  ["packages/letter-body/src", new URL("../../letter-body/src/", import.meta.url)],
   ["apps/mobile/src", new URL("../../../apps/mobile/src/", import.meta.url)],
   ["apps/mobile/app", new URL("../../../apps/mobile/app/", import.meta.url)],
 ];

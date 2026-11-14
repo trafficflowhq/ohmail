@@ -1,0 +1,11 @@
+/* Devices' own placement. The name's blank keeps the step a blank standing on a sheet has. The pairing link printed
+   for typing breaks anywhere, since a link has no word to break at, and one press selects it whole. It draws no
+   look. Own classes: `account-`. */
+.account-device-name {
+  padding: var(--s2) 0;
+}
+
+.account-device-link {
+  overflow-wrap: anywhere;
+  user-select: all;
+}

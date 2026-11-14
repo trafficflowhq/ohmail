@@ -30,8 +30,12 @@ export interface DeviceNotifications {
 }
 
 export type Pointer = "fine" | "coarse";
-/** One member today. `phone-touch` widens it; the layout plan's switch is exhaustive, so a new member is a compile error. */
-export type Posture = "flat";
+/**
+ * How the window stands. `book`: a fold upright across its middle, as an unfolded phone holds it, each side wide
+ * enough for a column (`postureWindow` composes it from the host's fold). Every other pose is laid `flat`, by width.
+ * The layout plan's switch is exhaustive, so a new member is a compile error.
+ */
+export type Posture = "flat" | "book";
 /** The window the app stands in, as the frame lays itself out by it. */
 export interface WindowFacts {
   readonly width: number;

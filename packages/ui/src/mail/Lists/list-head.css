@@ -42,6 +42,26 @@
     padding: var(--s1) 0 var(--s2);
   }
 
+  /* How many the list holds: small and steady beside the tools, whole on its line. */
+  .oh-listhead-count {
+    padding: 0 var(--s1);
+    font-size: var(--t-meta);
+    font-weight: var(--w-bold);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  /* A quiet line under the name: a person's address. It breaks inside the head before it leaves it. */
+  .oh-listhead-meta {
+    color: var(--ink2);
+    font-size: var(--t-meta);
+    overflow-wrap: anywhere;
+  }
+
+  .oh-listhead-meta:not(:last-child) {
+    margin-bottom: var(--s2);
+  }
+
   /* A place inside a tree: its name is content and breaks onto a second line before it is cut. */
   .oh-listhead[data-way] > .oh-listhead-title {
     --oh-listhead-descent: 0.08em;

@@ -280,7 +280,7 @@ describe("holderAnswered reads the door's look", () => {
  */
 describe("census: every organize press carries the verb it means", () => {
   const REPO = join(__dirname, "..", "..", "..");
-  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app"];
+  const ROOTS = ["apps/webapp/app", "packages/app-logic/src", "packages/letter-body/src", "apps/desktop/src", "apps/paired-page/src", "apps/mobile/src", "apps/mobile/app"];
   const walk = (dir: string, out: string[] = []): string[] => {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name === "dist" || name === "build" || name === ".next") continue;

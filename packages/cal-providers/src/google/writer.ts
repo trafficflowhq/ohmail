@@ -63,7 +63,10 @@ const refused = (reason: ProviderRefusal | WriteRefusal, wait: number | null = n
   reason,
   retryAfterMs: wait,
 });
+/** Done, as found: a write's own request was not what made it so (a refused precondition and a compare, an object already so). */
 const answered = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items });
+/** Done by the write's own request: what waits behind it may be re-based onto `items`. */
+const wrote = (items: readonly ChangeItem[]): WriteAnswer => ({ ok: true, items, written: true });
 
 /** An id as one segment of a path, or `null` for one no write names (empty, a dot path, past Google's ceiling, half a character). */
 function segment(id: string): string | null {
@@ -98,8 +101,9 @@ function timeJson(t: EventTime, series: boolean): Json | null {
  * The fields of a draft or a change as Google's event, field by field from the typed values: nothing
  * of a person's is spread into it. `field_unwritable`: a field Google would not keep as written (a
  * clock time with no zone, a pasted call link, which Google keeps nowhere its reading returns it).
+ * The repeat proof writes its cases with it, so that what is proven is what this writer sends.
  */
-function bodyOf(f: EventChange, series: boolean): Json | "field_unwritable" {
+export function bodyOf(f: EventChange, series: boolean): Json | "field_unwritable" {
   const body: Json = {};
   if (f.summary !== undefined) body.summary = f.summary;
   if (f.description !== undefined) body.description = f.description ?? "";
@@ -293,10 +297,12 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       }
       if (made.status !== 200) return refusalOf(made, "not_found");
       const held = itemOf(made);
-      return held === null ? refused("unreadable") : answered(held.item === null ? [] : [held.item]);
+      return held === null ? refused("unreadable") : wrote(held.item === null ? [] : [held.item]);
     },
 
     async change(c, cal, target, change, signal) {
+      // One day of a series is not written by this writer yet, and is never written as the series whole.
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const events = eventsOf(cal);
       const id = segment(target.id);
       if (events === null || id === null) return refused("not_found");
@@ -311,10 +317,12 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if (res.status === 412) return afterStale(signedIn.token, events, id, change, signal);
       if (res.status !== 200) return refusalOf(res, "event_gone");
       const held = itemOf(res);
-      return held === null ? refused("unreadable") : answered(held.item === null ? [] : [held.item]);
+      return held === null ? refused("unreadable") : wrote(held.item === null ? [] : [held.item]);
     },
 
     async remove(c, cal, target, signal) {
+      // One day of a series is not written by this writer yet, and is never written as the series whole.
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const events = eventsOf(cal);
       const id = segment(target.id);
       if (events === null || id === null) return refused("not_found");
@@ -325,13 +333,15 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       const res = await send(signedIn.token, "DELETE", `${events}/${id}?${NOTIFY}`, null, signal, pre);
       if ("ok" in res) return res;
       // Gone already is what a removal wants.
-      if (res.status === 200 || res.status === 204 || res.status === 404 || res.status === 410)
-        return answered([{ kind: "gone", id: target.id }]);
+      if (res.status === 200 || res.status === 204) return wrote([{ kind: "gone", id: target.id }]);
+      if (res.status === 404 || res.status === 410) return answered([{ kind: "gone", id: target.id }]);
       if (res.status === 412) return afterStale(signedIn.token, events, id, null, signal);
       return refusalOf(res, "event_gone");
     },
 
     async answer(c, cal, target, req: { readonly as: string; readonly reply: WriteReply }, signal) {
+      // One day of a series is not written by this writer yet, and is never written as the series whole.
+      if (target.occurrence !== null) return refused("repeat_unsupported");
       const events = eventsOf(cal);
       const id = segment(target.id);
       if (events === null || id === null) return refused("not_found");
@@ -364,7 +374,17 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       }
       if (res.status !== 200) return refusalOf(res, "event_gone");
       const after = itemOf(res);
-      return after === null ? refused("unreadable") : answered(after.item === null ? [] : [after.item]);
+      return after === null ? refused("unreadable") : wrote(after.item === null ? [] : [after.item]);
+    },
+
+    // A series ended before one of its days is not written by this writer yet.
+    async endSeries() {
+      return refused("repeat_unsupported");
+    },
+
+    // Nor the days of a series from one of them on, as a series of their own.
+    async continueSeries() {
+      return refused("repeat_unsupported");
     },
 
     async moveEvent(c, from, to, target, signal) {
@@ -384,7 +404,7 @@ export function makeWriter(deps: AdapterDeps): CalendarWriter {
       if ("ok" in res) return res;
       if (res.status !== 200) return refusalOf(res, "event_gone");
       const held = itemOf(res);
-      return held === null ? refused("unreadable") : answered(held.item === null ? [] : [held.item]);
+      return held === null ? refused("unreadable") : wrote(held.item === null ? [] : [held.item]);
     },
   };
 }

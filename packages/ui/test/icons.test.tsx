@@ -31,9 +31,13 @@ function isDrawing(svg: string): boolean {
 const names = Object.keys(icons) as IconName[];
 
 describe("the icon set", () => {
-  it("has the sheet's 82 icons, each under a plain name with the words it is found by", () => {
-    expect(names).toHaveLength(82);
+  it("has the sheet's 85 icons, each under a plain name with the words it is found by", () => {
+    expect(names).toHaveLength(85);
     expect(names.filter((name) => !/^[a-z][a-z0-9-]*$/.test(name) || !/^[a-z0-9 ,.-]*$/i.test(icons[name].words))).toEqual([]);
+  });
+
+  it("holds a mark for each kind of place a field can offer: a house, a road, a town", () => {
+    expect(["place", "house", "road", "town", "history"].filter((name) => !(name in icons))).toEqual([]);
   });
 
   it("is drawn at the sizes the component takes, on the grid the data names", () => {

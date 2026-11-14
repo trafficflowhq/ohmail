@@ -29,7 +29,8 @@ export function TodaysNotice(): ReactNode {
     const feeding = { body: "today", rail: null, panes: { kind: "wide", Wide: Feeding } } as const;
     const places = Object.fromEntries(PLACE_IDS.map((id) => [id, { ...feeding, id }])) as unknown as FramePlaces;
     const frame = {
-      places, stages: { firstRun: NONE }, recover: NONE, address: fragmentAddress(window), window: browserWindowFacts(window),
+      places, stages: { firstRun: NONE }, above: NONE, recover: NONE, address: fragmentAddress(window),
+      window: browserWindowFacts(window),
       appearance: createFeed({ face: "paper", scheme: "light" } as const),
     };
     /* A contract that reaches nothing (the demo's): the notice is all this mounts. */

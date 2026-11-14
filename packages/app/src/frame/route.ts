@@ -64,7 +64,8 @@ const PILES: ReadonlyMap<string, PlaceId> = new Map([
   ["resurface", "resurface"],
 ]);
 const SEGMENTS: ReadonlySet<string> = new Set(["screened", "spam"]);
-const PANES: ReadonlySet<string> = new Set([
+/** Settings' sections the route knows (`#/settings/<pane>`). */
+export const PANES: ReadonlySet<string> = new Set([
   "general",
   "notifications",
   "mailboxes",

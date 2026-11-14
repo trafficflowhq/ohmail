@@ -150,6 +150,27 @@ export const editor: KitSubject[] = [
       />,
     ),
   ),
+  /* The same new message with a rich editor in it: the kit draws the words for a text not yet written. */
+  sheet("Composer/placeholder", ".oh-composer", (look) =>
+    column(
+      look,
+      <Composer
+        fill
+        placeholder="Write, or a few words to draft from"
+        {...letter(look, {
+          children: text(""),
+          head: (
+            <Recipients
+              from={from("Draft")}
+              lines={[{ id: "to", label: "To", people: [], typed: "" }]}
+              more={MORE}
+              subject={subject("")}
+            />
+          ),
+        })}
+      />,
+    ),
+  ),
   sheet("Composer/reply", ".oh-composer", (look) => (
     <Composer
       {...letter(look, {

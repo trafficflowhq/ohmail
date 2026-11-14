@@ -106,6 +106,8 @@ export function pairedHost(engine: Engine, facts: PairedFacts, has: PairedSuppli
       help: NONE,
       places: has.frame.places,
       stages: has.frame.stages,
+      reader: NONE,
+      above: has.frame.above,
       calendar: has.frame.calendar,
     },
     device: {

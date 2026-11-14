@@ -90,6 +90,8 @@ describe("the design's values are written once", () => {
    of their own, which the first test's rule is not about, and read the design's tokens, which this file
    holds. The web's census of token reads leaves these folders to it. */
 const KIT = ["packages/ui/src/base", "packages/ui/src/mail", "packages/ui/src/calendar"];
+/** A stylesheet outside the kit that is a view of the new design too: the letter's body on the reader's sheet. */
+const SHEET_LOOKS = ["packages/letter-body/src/message-body-sheet.css"];
 /** The looks a token is asked in: each face in each scheme. */
 const LOOKS = ["paper", "ohmarchy"].flatMap((face) => ["light", "dark"].map((scheme) => ({ face, scheme })));
 type Look = (typeof LOOKS)[number];
@@ -155,7 +157,7 @@ describe("the kit's stylesheets read the design's tokens", () => {
   const inLook = new Map(LOOKS.map((look) => [look, new Set(Object.entries(cascade(blocks, look)).filter(([, v]) => v !== "initial").map(([name]) => name))]));
   const moving = new Set([...Object.keys(motion.slick), ...Object.keys(motion.calendar?.slick ?? {}), "m-time"]);
   const design = new Set([...blocks.flatMap((block) => Object.keys(block.decls)), ...moving]);
-  const files = KIT.flatMap((dir) => walk(join(root, dir)));
+  const files = [...KIT.flatMap((dir) => walk(join(root, dir))), ...SHEET_LOOKS];
   const sheets = files.filter((file) => file.endsWith(".css"));
   const text = (file: string) => readFileSync(join(root, file), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
   /* What the kit sets itself: a property one of its stylesheets declares, or one its code names whole in a string. */

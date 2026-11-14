@@ -329,6 +329,11 @@
     height: 1lh;
   }
 
+  /* Under a finger the address gives way beside a label whatever the room: the labels are what the row says first. */
+  :root[data-touch="1"] .oh-row-address[data-whole] {
+    display: none;
+  }
+
   /* Beside labels the name is cut only once no label is left: it keeps no share of the line back for the address. */
   .oh-row-first:has(> .oh-row-labels) > .oh-row-who {
     flex: 0 1 auto;

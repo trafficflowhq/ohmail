@@ -1,5 +1,5 @@
 import type { ReactElement, ReactNode } from "react";
-import { Button } from "../../../../src/base/index.js";
+import { Button, Seg, Slot } from "../../../../src/base/index.js";
 import {
   AccountRow,
   Doorbell,
@@ -7,6 +7,7 @@ import {
   ListHead,
   ListLine,
   ListTail,
+  MonthRail,
   MovePicker,
   ReadSquares,
   Row,
@@ -273,6 +274,29 @@ const bell = <Doorbell count="6" label="6 waiting, Screener" keyHint="g s" />;
 const listMenu = <Button kind="quiet" icon="more" label="List" />;
 
 export const lists: KitSubject[] = [
+  /* The way through History's time: years and the months of the year on show with a pointer, years alone under a finger. */
+  {
+    key: "MonthRail/rest",
+    place: "block",
+    on: "sheet",
+    target: ".oh-monthrail-steps",
+    render: (look) => {
+      const year = (y: number) => ({ id: String(y), label: String(y), year: true });
+      const months = ["Nov", "Oct", "Sep", "Aug", "Jul", "Jun", "May", "Apr", "Mar", "Feb", "Jan"];
+      const touch = look.device !== "desktop";
+      return (
+        <MonthRail
+          label={touch ? "Year" : "Month"}
+          current={touch ? "2026" : "Nov"}
+          entries={
+            touch
+              ? [2026, 2025, 2024, 2023].map(year)
+              : [year(2026), ...months.map((m) => ({ id: m, label: m })), year(2025), year(2024), year(2023)]
+          }
+        />
+      );
+    },
+  },
   rows("Row/unread", talk),
   rows("Row/read", techCheck),
   rows("Row/hover", newTime, { act: force(".oh-row", "hover") }),
@@ -326,11 +350,45 @@ export const lists: KitSubject[] = [
     />,
   ),
   inList("ListHead/ink", <ListHead title="History" aside={listMenu} />),
+  /* A person's own place: the address under the name, then the direction, each segment's number part of its words. */
+  inList(
+    "ListHead/meta",
+    <ListHead
+      title={W.PETRA.name}
+      meta={W.PETRA.address}
+      aside={<Button kind="quiet" icon="x" label="Close" />}
+      below={
+        <Seg
+          label="Direction"
+          value="from"
+          options={[
+            { value: "any", label: "All 2" },
+            { value: "from", label: "From them 2" },
+            { value: "to", label: "To them 0" },
+          ]}
+        />
+      }
+    />,
+  ),
+  inList("ListHead/count", <ListHead title="Drafts" count="1 draft" aside={listMenu} />),
 
   { key: "Doorbell/rest", render: () => bell },
   { key: "Doorbell/pressed", render: () => bell, ...moving(force("> *", "active")) },
   { key: "Doorbell/focus", render: () => bell, act: force("> *", "focus", "focus-visible") },
 
+  /* Search's results: the order as the group's own control, at the heading's end. */
+  {
+    key: "GroupHeading/aside",
+    place: "block",
+    width: 420,
+    on: "sheet",
+    target: ".oh-groupheading",
+    render: () => (
+      <GroupHeading count="8" aside={<Slot>Best match</Slot>}>
+        Results
+      </GroupHeading>
+    ),
+  },
   {
     key: "GroupHeading/hot",
     place: "window",

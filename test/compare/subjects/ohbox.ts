@@ -4,6 +4,7 @@
  * people and letters. Each key is the reference's own address, read by the page as it stands. What the reading
  * column draws is the reader's, declared in `declared.json` until the reader draws it.
  */
+import { holdTouchState } from "../../../packages/app/test/states/touch-hold.js";
 import type { Subject } from "../subject.js";
 
 /** The states this screen builds: the list's own, the default people face, and the named state in its seven links. */
@@ -23,6 +24,9 @@ const KEYS = [
   "hold=1&open=ben-kiln&scheme=dark&screen=ohbox",
   "face=ohmarchy&hold=1&open=ben-kiln&scheme=dark&screen=ohbox",
   "device=phone&screen=ohbox",
+  "device=phone&screen=ohbox&show=swipe-read",
+  "device=phone&screen=ohbox&show=swipe-later",
+  "device=phone&screen=ohbox&show=pulldown",
 ];
 
 const ORIGIN = "http://ohbox.states.invalid";
@@ -42,5 +46,7 @@ export const subjects: Subject[] = KEYS.map((key) => ({
     await p.goto(`${ORIGIN}/?${key}`);
     /* The reference's Done stands on Petra's row under the pointer. */
     if (key.includes("show=rowdone")) await p.hover('[role="option"][data-id="petra-talk"]');
+    /* A touch state is a finger held down on the phone's list. */
+    await holdTouchState(p, key);
   },
 }));

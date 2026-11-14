@@ -12,6 +12,8 @@ export interface FoldFolder {
   count?: string;
   label?: string;
   current?: boolean;
+  /** A row is being dragged and this folder takes it; `over` while the pointer is on it. */
+  drop?: "ready" | "over";
   /** It has folders in it: whether they stand, and the name of the control that opens and shuts them. */
   branch?: { expanded: boolean; label: string };
 }
@@ -32,10 +34,12 @@ export interface FolderFoldProps {
   none?: string;
   onOpen?: (id: string) => void;
   onBranch?: (id: string) => void;
+  /** A folder's own menu was asked for (a right click, the menu key): which folder, and where the pointer is. */
+  onMenu?: (id: string, at: { x: number; y: number }) => void;
 }
 
 /** All the folders the shelf does not show, opened and shut in place in the sidebar. */
-export function FolderFold({ label, find, groups, none, onOpen, onBranch }: FolderFoldProps) {
+export function FolderFold({ label, find, groups, none, onOpen, onBranch, onMenu }: FolderFoldProps) {
   const first = groups.flatMap((group) => group.folders)[0];
   const keys = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
@@ -97,7 +101,9 @@ export function FolderFold({ label, find, groups, none, onOpen, onBranch }: Fold
                   label={folder.label}
                   title={folder.name}
                   current={folder.current}
+                  drop={folder.drop}
                   onPress={() => onOpen?.(folder.id)}
+                  onMenu={onMenu ? (at) => onMenu(folder.id, at) : undefined}
                 >
                   {folder.name}
                 </RailEntry>

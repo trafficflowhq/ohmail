@@ -7,7 +7,9 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq, sql } from "drizzle-orm";
-import type { CalendarProvider, Connection, WriteAnswer } from "@ohmail/cal-providers";
+import {
+  BENCH_CALDAV_PLACE, PROVEN_REPEATS, proofPlaceOf, type CalendarProvider, type Connection, type ProvenRepeats, type WriteAnswer,
+} from "@ohmail/cal-providers";
 import { calCalendars, calConnections, calEvents, calSettings, calWrites } from "@trafficflow/db";
 import { calendarPool, passDb, type ConnectionKey } from "../src/calendar/index.js";
 import { calendarSyncPass } from "../src/calendar/sync-pass.js";
@@ -18,6 +20,8 @@ import {
 } from "./_calendar-world.js";
 
 const never = new AbortController().signal;
+/** A CalDAV account's server: not the bench's, where the repeat proof was run. */
+const DAV_URL = "https://dav.studio.example.test/dav/";
 
 describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => {
   let w: World;
@@ -35,9 +39,9 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     credential: { kind: "bearer", accessToken: async () => ({ ok: true, token: `token-${tag}` }) },
   });
 
-  /** An account with its calendar on, a Google connection, one calendar, and one event the provider holds at version 1. */
-  async function account() {
-    const seeded = await seedConnection(w, { provider: "google", credential: null });
+  /** An account with its calendar on, a connection (Google's unless named), one calendar, and one event the provider holds at version 1. */
+  async function account(word: "google" | "caldav" = "google") {
+    const seeded = await seedConnection(w, { provider: word, credential: null, serverUrl: word === "caldav" ? DAV_URL : null });
     const [cal] = await w.db.insert(calCalendars).values({
       accountId: seeded.accountId, connectionId: seeded.connectionId, providerId: `cal-${seeded.accountId.slice(0, 6)}`, name: "Studio", access: "owner",
     }).returning({ id: calCalendars.id });
@@ -61,12 +65,15 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
   const update = (a: Account, title: string, base = a.base, after?: string) =>
     ({ kind: "calendar_event_update", eventId: a.eventId, base, ...(after === undefined ? {} : { after }), scope: { kind: "record" }, change: { title } });
 
-  const provider = (writer: CalendarProvider["writer"]): CalendarProvider =>
-    ({ reader: scriptedReader("google", { readings: new Map() }), writer, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
+  const provider = (writer: CalendarProvider["writer"], word: "google" | "caldav" = "google"): CalendarProvider =>
+    ({ reader: scriptedReader(word, { readings: new Map() }), writer, http: { request: async () => ({ arrived: false, reason: "unknown" }) } });
 
-  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal } = {}) =>
-    calendarWriteDrain({ clock: { now: o.clock ?? (() => Date.now()) }, zones: ZONES, log: capturedLog().log, ...(o.turnMs === undefined ? {} : { turnMs: o.turnMs }) })({
-      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer), connection: connection(o.tag ?? a.accountId), signal: o.signal ?? never,
+  const run = (a: Account, writer: CalendarProvider["writer"], o: { tag?: string; clock?: () => number; turnMs?: number; signal?: AbortSignal; word?: "google" | "caldav"; proven?: ProvenRepeats } = {}) =>
+    calendarWriteDrain({
+      clock: { now: o.clock ?? (() => Date.now()) }, zones: ZONES, log: capturedLog().log, ...(o.turnMs === undefined ? {} : { turnMs: o.turnMs }),
+      ...(o.proven === undefined ? {} : { proven: o.proven }),
+    })({
+      db: passDb(calendarPool(w.db), a.accountId), key: a.key, provider: provider(writer, o.word), connection: connection(o.tag ?? a.accountId), signal: o.signal ?? never,
     });
 
   const rows = (a: Account) => w.db.select({
@@ -434,6 +441,63 @@ describe.skipIf(!AVAILABLE)("the drain of the writes owed to a provider", () => 
     const titles = async () => (await w.db.select({ title: calEvents.title }).from(calEvents).where(eq(calEvents.accountId, t.accountId)).orderBy(asc(calEvents.title))).map((e) => e.title);
     // What the person dismisses then goes with its delete: the door's own proof (`calendar-writes.pg.test.ts` in the services).
     expect(await titles()).toEqual(["Glaze firing", "Theirs"]);
+  });
+
+  it("sends a new series only in a shape its provider was proven to keep, from a start the rule names, and refuses every other, sending nothing", async () => {
+    const zoned = (value: string) => ({ kind: "zoned", value, zone: "Europe/Zurich" });
+    const series = (a: Account, title: string, repeat: string, start: unknown = zoned("20261123T090000"), end: unknown = zoned("20261123T100000")) => ({
+      kind: "calendar_event_create", eventId: randomUUID(), calendarId: a.calendarId,
+      event: { title, start, end, notes: null, place: null, callLink: null, busy: true, private: false, repeat, invitees: [], alarms: [] },
+    });
+    const dav = await account("caldav");
+    const acts: [string, unknown][] = [
+      ["weekly on its Monday", series(dav, "weekly on its Monday", "FREQ=WEEKLY;BYDAY=MO")],
+      ["weekly on Tuesdays, from a Monday", series(dav, "weekly on Tuesdays, from a Monday", "FREQ=WEEKLY;BYDAY=TU")],
+      ["daily at a time the zone skips in March", series(dav, "daily at a time the zone skips in March", "FREQ=DAILY", zoned("20261123T023000"), zoned("20261123T033000"))],
+      ["ended on a day, from a clock time", series(dav, "ended on a day, from a clock time", "FREQ=DAILY;UNTIL=20261130")],
+      ["in UTC", series(dav, "in UTC", "FREQ=WEEKLY", { kind: "instant", value: "20261123T080000Z" }, { kind: "instant", value: "20261123T090000Z" })],
+      ["hourly", series(dav, "hourly", "FREQ=HOURLY;COUNT=3")],
+    ];
+    for (const [key, act] of acts) await press(dav.accountId, key, act);
+    // The shipped table proves nothing at this account's server, which is not the bench's: nothing leaves, each with its word.
+    const unproven = scriptedWriter("caldav");
+    await run(dav, unproven, { word: "caldav" });
+    expect([unproven.calls, Object.values(Object.fromEntries((await rows(dav)).map((r) => [r.key, `${r.state} ${r.refusal}`])))]).toEqual([[], acts.map(() => "refused repeat_unsupported")]);
+    await w.db.update(calWrites).set({ state: "pending", refusal: null, attempts: 0, nextAttemptAt: null }).where(eq(calWrites.accountId, dav.accountId));
+    // This account's server taken as the bench's own, where the proof was run: its row is the bench's.
+    const writer = scriptedWriter("caldav");
+    await run(dav, writer, { word: "caldav", proven: { [proofPlaceOf("caldav", DAV_URL)!]: PROVEN_REPEATS[BENCH_CALDAV_PLACE]! } });
+    expect(writer.calls.map((c) => [c.kind, c.draft?.summary, c.draft?.rule === null ? null : "a rule"])).toEqual([["create", "weekly on its Monday", "a rule"]]);
+    expect(Object.fromEntries((await rows(dav)).map((r) => [r.key, [r.state, r.refusal]]))).toEqual({
+      "weekly on its Monday": ["applied", null],
+      "weekly on Tuesdays, from a Monday": ["refused", "repeat_unsupported"],
+      "daily at a time the zone skips in March": ["refused", "repeat_unsupported"],
+      "ended on a day, from a clock time": ["refused", "repeat_unsupported"],
+      "in UTC": ["refused", "repeat_unsupported"],
+      hourly: ["refused", "repeat_unsupported"],
+    });
+    // Google's row is empty until its proof is run at the test account: the same series is refused there, and nothing leaves.
+    const google = await account("google");
+    await press(google.accountId, "google-weekly", series(google, "weekly on its Monday", "FREQ=WEEKLY;BYDAY=MO"));
+    const quiet = scriptedWriter("google");
+    await run(google, quiet);
+    expect([quiet.calls.length, (await rows(google)).map((r) => [r.state, r.refusal])]).toEqual([0, [["refused", "repeat_unsupported"]]]);
+  });
+
+  it("writes nothing of a whole series at a provider whose proven row holds none of its shapes: each act on it is refused with its word", async () => {
+    const google = await account("google");
+    const [row] = await w.db.insert(calEvents).values({
+      accountId: google.accountId, calendarId: google.calendarId, providerId: "evt-series", versionTag: '"s1"', uid: "series@google.example", title: "Weekly kiln",
+      startKind: "zoned", startLocal: "20261123T090000", startZone: "Europe/Zurich", endKind: "zoned", endLocal: "20261123T100000", endZone: "Europe/Zurich",
+      startsAt: new Date("2026-11-23T08:00:00Z"), endsAt: null, repeatRule: "FREQ=WEEKLY;BYDAY=MO",
+    }).returning({ id: calEvents.id, updatedAt: calEvents.updatedAt });
+    const on = { eventId: row!.id, base: row!.updatedAt.toISOString() };
+    await press(google.accountId, "retitle", { kind: "calendar_event_update", ...on, scope: { kind: "record" }, change: { title: "Weekly kiln, glazes" } });
+    await press(google.accountId, "remove", { kind: "calendar_event_delete", ...on, scope: { kind: "record" } });
+    const quiet = scriptedWriter("google");
+    await run(google, quiet);
+    expect(quiet.calls.length).toBe(0);
+    expect((await rows(google)).map((r) => [r.key, r.state, r.refusal])).toEqual([["retitle", "refused", "repeat_unsupported"], ["remove", "refused", "repeat_unsupported"]]);
   });
 
   it("is where a turn sends its writes: after the sign-in, before the reading, and never with the calendar off", async () => {

@@ -5,6 +5,7 @@ export { Frame } from "./Frame.js";
 export {
   useConnectionFeed,
   useFrame,
+  useKeptPane,
   useLinkedDraft,
   useNotice,
   useRailModel,
@@ -19,6 +20,16 @@ export { layoutPlan } from "./layout-plan.js";
 export { attributesOf, ROOT_ATTRIBUTES } from "./root-attributes.js";
 export { ADDRESS, fragmentOf, routeOf } from "./route.js";
 export { Scoped } from "./scope.js";
+export {
+  useOwnAddresses,
+  usePress,
+  usePressWhereOn,
+  useResurfaceTime,
+  useRoomHandOver,
+  useRoomHolds,
+  type ResurfaceTime,
+  type RoomHolds,
+} from "./room.js";
 export { useSignal } from "./feeds.js";
 export {
   CALENDAR_HOME,

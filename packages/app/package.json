@@ -10,6 +10,36 @@
       "node": "./dist/calendar/index.js",
       "default": "./src/calendar/index.ts"
     },
+    "./calmail": {
+      "types": "./src/calmail/index.ts",
+      "ohmail-source": "./src/calmail/index.ts",
+      "node": "./dist/calmail/index.js",
+      "default": "./src/calmail/index.ts"
+    },
+    "./calsettings": {
+      "types": "./src/calsettings/index.ts",
+      "ohmail-source": "./src/calsettings/index.ts",
+      "node": "./dist/calsettings/index.js",
+      "default": "./src/calsettings/index.ts"
+    },
+    "./calsetup": {
+      "types": "./src/calsetup/index.ts",
+      "ohmail-source": "./src/calsetup/index.ts",
+      "node": "./dist/calsetup/index.js",
+      "default": "./src/calsetup/index.ts"
+    },
+    "./frommail": {
+      "types": "./src/frommail/index.ts",
+      "ohmail-source": "./src/frommail/index.ts",
+      "node": "./dist/frommail/index.js",
+      "default": "./src/frommail/index.ts"
+    },
+    "./invitations": {
+      "types": "./src/invitations/index.ts",
+      "ohmail-source": "./src/invitations/index.ts",
+      "node": "./dist/invitations/index.js",
+      "default": "./src/invitations/index.ts"
+    },
     "./host": {
       "types": "./src/host/index.ts",
       "ohmail-source": "./src/host/index.ts",
@@ -58,6 +88,150 @@
       "node": "./dist/frame/route.js",
       "default": "./src/frame/route.ts"
     },
+    "./settings": {
+      "types": "./src/settings/index.ts",
+      "ohmail-source": "./src/settings/index.ts",
+      "node": "./dist/settings/index.js",
+      "default": "./src/settings/index.ts"
+    },
+    "./settings/contract": {
+      "types": "./src/settings/contract.ts",
+      "ohmail-source": "./src/settings/contract.ts",
+      "node": "./dist/settings/contract.js",
+      "default": "./src/settings/contract.ts"
+    },
+    "./settings/general": {
+      "types": "./src/settings/general/index.ts",
+      "ohmail-source": "./src/settings/general/index.ts",
+      "node": "./dist/settings/general/index.js",
+      "default": "./src/settings/general/index.ts"
+    },
+    "./settings/notifications": {
+      "types": "./src/settings/notifications/index.ts",
+      "ohmail-source": "./src/settings/notifications/index.ts",
+      "node": "./dist/settings/notifications/index.js",
+      "default": "./src/settings/notifications/index.ts"
+    },
+    "./settings/screener": {
+      "types": "./src/settings/screener/index.ts",
+      "ohmail-source": "./src/settings/screener/index.ts",
+      "node": "./dist/settings/screener/index.js",
+      "default": "./src/settings/screener/index.ts"
+    },
+    "./settings/ai": {
+      "types": "./src/settings/ai/index.ts",
+      "ohmail-source": "./src/settings/ai/index.ts",
+      "node": "./dist/settings/ai/index.js",
+      "default": "./src/settings/ai/index.ts"
+    },
+    "./settings/away": {
+      "types": "./src/settings/away/index.ts",
+      "ohmail-source": "./src/settings/away/index.ts",
+      "node": "./dist/settings/away/index.js",
+      "default": "./src/settings/away/index.ts"
+    },
+    "./settings/rules": {
+      "types": "./src/settings/rules/index.ts",
+      "ohmail-source": "./src/settings/rules/index.ts",
+      "node": "./dist/settings/rules/index.js",
+      "default": "./src/settings/rules/index.ts"
+    },
+    "./settings/tags": {
+      "types": "./src/settings/tags/index.ts",
+      "ohmail-source": "./src/settings/tags/index.ts",
+      "node": "./dist/settings/tags/index.js",
+      "default": "./src/settings/tags/index.ts"
+    },
+    "./settings/folders": {
+      "types": "./src/settings/folders/index.ts",
+      "ohmail-source": "./src/settings/folders/index.ts",
+      "node": "./dist/settings/folders/index.js",
+      "default": "./src/settings/folders/index.ts"
+    },
+    "./settings/signatures": {
+      "types": "./src/settings/signatures/index.ts",
+      "ohmail-source": "./src/settings/signatures/index.ts",
+      "node": "./dist/settings/signatures/index.js",
+      "default": "./src/settings/signatures/index.ts"
+    },
+    "./settings/about": {
+      "types": "./src/settings/about/index.ts",
+      "ohmail-source": "./src/settings/about/index.ts",
+      "node": "./dist/settings/about/index.js",
+      "default": "./src/settings/about/index.ts"
+    },
+    "./settings/help": {
+      "types": "./src/settings/help/index.ts",
+      "ohmail-source": "./src/settings/help/index.ts",
+      "node": "./dist/settings/help/index.js",
+      "default": "./src/settings/help/index.ts"
+    },
+    "./account": {
+      "types": "./src/account/index.ts",
+      "ohmail-source": "./src/account/index.ts",
+      "node": "./dist/account/index.js",
+      "default": "./src/account/index.ts"
+    },
+    "./account/contract": {
+      "types": "./src/account/contract.ts",
+      "ohmail-source": "./src/account/contract.ts",
+      "node": "./dist/account/contract.js",
+      "default": "./src/account/contract.ts"
+    },
+    "./account/bodies": {
+      "types": "./src/account/bodies.ts",
+      "ohmail-source": "./src/account/bodies.ts",
+      "node": "./dist/account/bodies.js",
+      "default": "./src/account/bodies.ts"
+    },
+    "./account/devices": {
+      "types": "./src/account/devices/index.ts",
+      "ohmail-source": "./src/account/devices/index.ts",
+      "node": "./dist/account/devices/index.js",
+      "default": "./src/account/devices/index.ts"
+    },
+    "./account/subscription": {
+      "types": "./src/account/subscription/index.ts",
+      "ohmail-source": "./src/account/subscription/index.ts",
+      "node": "./dist/account/subscription/index.js",
+      "default": "./src/account/subscription/index.ts"
+    },
+    "./account/storage": {
+      "types": "./src/account/storage/index.ts",
+      "ohmail-source": "./src/account/storage/index.ts",
+      "node": "./dist/account/storage/index.js",
+      "default": "./src/account/storage/index.ts"
+    },
+    "./account/invites": {
+      "types": "./src/account/invites/index.ts",
+      "ohmail-source": "./src/account/invites/index.ts",
+      "node": "./dist/account/invites/index.js",
+      "default": "./src/account/invites/index.ts"
+    },
+    "./account/security": {
+      "types": "./src/account/security/index.ts",
+      "ohmail-source": "./src/account/security/index.ts",
+      "node": "./dist/account/security/index.js",
+      "default": "./src/account/security/index.ts"
+    },
+    "./account/account": {
+      "types": "./src/account/account/index.ts",
+      "ohmail-source": "./src/account/account/index.ts",
+      "node": "./dist/account/account/index.js",
+      "default": "./src/account/account/index.ts"
+    },
+    "./account/password": {
+      "types": "./src/account/account/password-entry.ts",
+      "ohmail-source": "./src/account/account/password-entry.ts",
+      "node": "./dist/account/account/password-entry.js",
+      "default": "./src/account/account/password-entry.ts"
+    },
+    "./account/way-out": {
+      "types": "./src/account/way-out/index.ts",
+      "ohmail-source": "./src/account/way-out/index.ts",
+      "node": "./dist/account/way-out/index.js",
+      "default": "./src/account/way-out/index.ts"
+    },
     "./host/browser": {
       "types": "./src/host/browser/index.ts",
       "ohmail-source": "./src/host/browser/index.ts",
@@ -69,6 +243,18 @@
       "ohmail-source": "./src/text/fill.ts",
       "node": "./dist/text/fill.js",
       "default": "./src/text/fill.ts"
+    },
+    "./reader": {
+      "types": "./src/reader/index.ts",
+      "ohmail-source": "./src/reader/index.ts",
+      "node": "./dist/reader/index.js",
+      "default": "./src/reader/index.ts"
+    },
+    "./reader/body": {
+      "types": "./src/reader/body/index.ts",
+      "ohmail-source": "./src/reader/body/index.ts",
+      "node": "./dist/reader/body/index.js",
+      "default": "./src/reader/body/index.ts"
     },
     "./text": {
       "types": "./src/text/index.ts",
@@ -178,6 +364,12 @@
       "node": "./dist/doors/wall/index.js",
       "default": "./src/doors/wall/index.ts"
     },
+    "./touch": {
+      "types": "./src/touch/index.ts",
+      "ohmail-source": "./src/touch/index.ts",
+      "node": "./dist/touch/index.js",
+      "default": "./src/touch/index.ts"
+    },
     "./ohbox": {
       "types": "./src/ohbox/index.ts",
       "ohmail-source": "./src/ohbox/index.ts",
@@ -189,6 +381,7 @@
     "react": "19.2.3",
     "@ohmail/client-engine": "*",
     "@ohmail/app-logic": "*",
+    "@ohmail/letter-body": "*",
     "@ohmail/tokens": "*",
     "@ohmail/ui": "*",
     "use-intl": "3.26.5"

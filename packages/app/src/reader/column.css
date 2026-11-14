@@ -1,0 +1,44 @@
+/* The reading column's own placement. The sheets, their width and their look are the kit's (`Sheet kind="reading"`). */
+
+/* The column fills what the frame gives it, so the reading sheet stands the column's whole height and its panel at
+   the column's foot, however short the letter. */
+.rd-column {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+/* The way to Trash under the gone letter's sentence stands a step below it. */
+.rd-gone-way {
+  margin-top: var(--s4);
+}
+
+/* The panel's wrapper is an item of the kit's foot: it may shrink to the foot, so the panel folds its verbs to the
+   reading width instead of running past it. */
+.rd-stop {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The Resurface menu's time: one line, the word and the field, before the answers it qualifies. */
+.rd-resurface-at {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s3);
+  padding: var(--s1) var(--s3) var(--s2);
+  color: var(--ink2);
+  font-size: var(--t-meta);
+}
+.rd-resurface-time {
+  height: var(--h-s);
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-row);
+  background: var(--soft-sheet);
+  color: var(--ink);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}

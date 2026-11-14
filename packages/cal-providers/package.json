@@ -28,6 +28,18 @@
       "node": "./dist/limits.js",
       "default": "./src/limits.ts"
     },
+    "./repeat-shapes": {
+      "types": "./src/repeat-shapes.ts",
+      "ohmail-source": "./src/repeat-shapes.ts",
+      "node": "./dist/repeat-shapes.js",
+      "default": "./src/repeat-shapes.ts"
+    },
+    "./series": {
+      "types": "./src/series.ts",
+      "ohmail-source": "./src/series.ts",
+      "node": "./dist/series.js",
+      "default": "./src/series.ts"
+    },
     "./request": {
       "types": "./src/request/index.ts",
       "ohmail-source": "./src/request/index.ts",

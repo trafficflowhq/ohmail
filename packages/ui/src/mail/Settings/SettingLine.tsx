@@ -16,6 +16,8 @@ export interface SettingLineProps {
   info?: ReactNode;
   /** The setting's value as text, at the right. */
   value?: string;
+  /** A figure that ends the line, after its value: a plan's price. */
+  figure?: string;
   /** On or off, at once: the line draws its switch, and a press anywhere on the line turns it. */
   toggle?: { on: boolean; onChange?: (on: boolean) => void };
   /** A press anywhere on the line beside its control: what the control does (a slot opens its menu). */
@@ -41,7 +43,7 @@ const CONTROL = "button, a, input, select, textarea, label, .oh-over";
  * height is the rhythm. To a screen reader it is a group named by its label alone.
  */
 export function SettingLine(props: SettingLineProps) {
-  const { label, icon, lead, tag, info, value, toggle, onPress, off, sub, narrow, children } = props;
+  const { label, icon, lead, tag, info, value, figure, toggle, onPress, off, sub, narrow, children } = props;
   const labelId = useId();
   const pressable = Boolean(toggle || onPress);
   const press = pressable
@@ -76,6 +78,7 @@ export function SettingLine(props: SettingLineProps) {
       </span>
       <span className="oh-settingline-value">
         {value ? <span className="oh-settingline-text">{value}</span> : null}
+        {figure ? <b className="oh-settingline-figure">{figure}</b> : null}
         {children}
         {toggle ? <Switch label={label} on={toggle.on} onChange={toggle.onChange} disabled={off} /> : null}
       </span>

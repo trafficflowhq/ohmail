@@ -196,6 +196,16 @@ export default defineConfig({
       { find: "@ohmail/client-engine", replacement: r("./packages/client-engine/src/index.ts") },
       // Behaviour without a screen. A folder's door first, then a file by its own name (the files moved
       // out of the web app's shell are imported one by one, as they were).
+      // The letter's body: its door and its three leaves, each by its own file, the leaves ABOVE the door.
+      { find: "@ohmail/letter-body/links", replacement: r("./packages/letter-body/src/rendered-links.ts") },
+      { find: "@ohmail/letter-body/cache", replacement: r("./packages/letter-body/src/mail-doc-cache.ts") },
+      { find: "@ohmail/letter-body/words", replacement: r("./packages/letter-body/src/words.ts") },
+      { find: /^@ohmail\/letter-body$/, replacement: r("./packages/letter-body/src/index.ts") },
+      // The calendar's doors that are folders, above the file rule that would read them as files.
+      { find: "@ohmail/app-logic/calendar/beside", replacement: r("./packages/app-logic/src/calendar/beside/index.ts") },
+      { find: "@ohmail/app-logic/calendar/found", replacement: r("./packages/app-logic/src/calendar/found/index.ts") },
+      { find: "@ohmail/app-logic/calendar/invitations", replacement: r("./packages/app-logic/src/calendar/invitations/index.ts") },
+      { find: "@ohmail/app-logic/calendar/setup", replacement: r("./packages/app-logic/src/calendar/setup/index.ts") },
       { find: /^@ohmail\/app-logic\/([a-z-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1/index.ts` },
       { find: /^@ohmail\/app-logic\/([a-z-]+\/[A-Za-z0-9-]+)$/, replacement: `${r("./packages/app-logic/src")}/$1.ts` },
       // The browser shells' device answers, ABOVE the contract's door (the prefix-match reason above).
@@ -209,6 +219,8 @@ export default defineConfig({
       { find: "@ohmail/app/text/fill", replacement: r("./packages/app/src/text/fill.ts") },
       { find: "@ohmail/app/frame/boot", replacement: r("./packages/app/src/frame/boot-stamp.ts") },
       { find: "@ohmail/app/text", replacement: r("./packages/app/src/text/index.ts") },
+      // What the letter's body takes of the kit, without its base sheets, ABOVE the bare name too.
+      { find: "@ohmail/ui/body-parts", replacement: r("./packages/ui/src/body-parts.ts") },
       // The body page bound as a leaf, ABOVE the bare name (the prefix-match reason above): the phone links it.
       { find: "@ohmail/ui/long-text", replacement: r("./packages/ui/src/format/long-text.ts") },
       // The squares' window as a leaf, for the same reason: the phone's MarkSquare links it.

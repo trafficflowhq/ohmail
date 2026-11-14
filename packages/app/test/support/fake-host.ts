@@ -23,9 +23,11 @@ import {
   type HostConnectionState,
   type FeatureEntry,
   type FeatureName,
+  type HostReads,
   type HostSession,
   type HostWires,
   type None,
+  type ReaderEntry,
   type Signal,
 } from "../../src/host/index.js";
 import {
@@ -82,6 +84,12 @@ export interface FakeHostInput {
   readonly appearance?: MovableSignal<Appearance>;
   readonly hostConnection?: Signal<HostConnectionState | null>;
   readonly features?: Partial<Record<FeatureName, FeatureEntry | None>>;
+  /** The reading column; absent, `none`. */
+  readonly reader?: ReaderEntry | None;
+  /** What the host stands above every pane; absent, `none`. */
+  readonly above?: FrameHost["features"]["above"];
+  /** The account's mailbox facts; absent, `none`. */
+  readonly mailboxes?: HostReads["mailboxes"];
 }
 
 /** What the test holds besides the host: the window, the address and the look it can move. */
@@ -107,7 +115,7 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       signOut: NONE,
       recover: input.recover ?? NONE,
     },
-    reads: { mailboxes: NONE, copyAge: NONE, access: NONE },
+    reads: { mailboxes: input.mailboxes ?? NONE, copyAge: NONE, access: NONE },
     wires: {
       ...(Object.fromEntries(WIRES.map((key) => [key, NONE])) as unknown as HostWires),
       ...input.wires,
@@ -118,6 +126,8 @@ export function fakeHost(input: FakeHostInput): FakeHost {
       ...input.features,
       places: { ...NO_PLACES, ...input.places },
       stages: { ...NO_STAGES, ...input.stages },
+      reader: input.reader ?? NONE,
+      above: input.above ?? NONE,
       calendar: input.calendar ?? NONE,
     },
     device: {

@@ -62,6 +62,8 @@ export interface FrameInner {
   readonly railOpen: readonly [boolean, Dispatch<SetStateAction<boolean>>];
   /** The parts whose selection's bar stands now, by their own id. */
   readonly bars: Feed<readonly string[]>;
+  /** The parts of the shell that say the kept body must be on screen now, by their own id. */
+  readonly keeps: Feed<readonly string[]>;
 }
 
 export const FrameContext = createContext<FrameInner | null>(null);
@@ -122,6 +124,20 @@ export function useSelectionBar(shown: boolean): void {
     bars.set([...bars.read().filter((bar) => bar !== id), id]);
     return () => bars.set(bars.read().filter((bar) => bar !== id));
   }, [bars, id, shown]);
+}
+
+/**
+ * A part of the shell says the kept body must be on screen now, over whatever place the address names. While any part
+ * says so, the frame shows the kept pane and renders no pane of the place.
+ */
+export function useKeptPane(shown: boolean): void {
+  const keeps = useInner().keeps;
+  const id = useId();
+  useLayoutEffect(() => {
+    if (!shown) return;
+    keeps.set([...keeps.read().filter((part) => part !== id), id]);
+    return () => keeps.set(keeps.read().filter((part) => part !== id));
+  }, [keeps, id, shown]);
 }
 
 /** Whether the whole rail stands over the app: today's views read it as they read their own state. */

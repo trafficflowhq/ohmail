@@ -337,6 +337,7 @@ function standaloneDoorNeverAsks(): { exempt: Set<string>; holds: Record<string,
   for (const root of [
     path.resolve(HERE, "../../webapp/app"),
     path.resolve(HERE, "../../../packages/app-logic/src"),
+    path.resolve(HERE, "../../../packages/letter-body/src"),
     path.resolve(HERE, "../../desktop/src"),
   ]) {
     for (const file of fs.readdirSync(root, { recursive: true, withFileTypes: true })) {

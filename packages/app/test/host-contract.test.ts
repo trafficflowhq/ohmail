@@ -10,6 +10,8 @@ const noFeature: HostFeatures = {
   ...(Object.fromEntries(FEATURE_NAMES.map((name) => [name, NONE])) as Omit<HostFeatures, "places" | "stages" | "calendar">),
   places: NO_PLACES,
   stages: NO_STAGES,
+  reader: NONE,
+  above: NONE,
   calendar: NONE,
 };
 const still = <T,>(value: T): Signal<T> => ({ read: () => value, subscribe: () => () => undefined });

@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { fileURLToPath, URL as NodeURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-/* @reads: apps/webapp/app/letter-body/MessageBody.tsx apps/webapp/app/letter-body/BodyText.tsx packages/core/src/privacy/tracker-blocker.ts packages/client-engine/src/mail-render-rules.ts packages/core/src/html-text.ts
+/* @reads: packages/letter-body/src/MessageBody.tsx packages/letter-body/src/BodyText.tsx packages/core/src/privacy/tracker-blocker.ts packages/client-engine/src/mail-render-rules.ts packages/core/src/html-text.ts
    Read by a path built at runtime or reached through a package barrel, so no landing pass
    selects this file when one of them moves — the shape `reads-list.mjs` exists for. */
 
@@ -43,7 +43,7 @@ import {
   MAX_HTML_CHARS,
   neutraliseCss as webNeutraliseCss,
   sanitizeMailHtml,
-} from "../app/letter-body/MessageBody";
+} from "../../../packages/letter-body/src/MessageBody";
 import {
   BEACON_PATH as SERVER_BEACON_PATH,
   detectTrackers,
@@ -52,7 +52,7 @@ import {
 } from "@trafficflow/core/mail";
 
 const SRC = readFileSync(
-  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "app/letter-body/MessageBody.tsx"),
+  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "../../packages/letter-body/src/MessageBody.tsx"),
   "utf8",
 );
 
@@ -63,7 +63,7 @@ const SRC = readFileSync(
  * the re-export is asserted beside it — two declarations would be the drift this file exists for.
  */
 const BODY_TEXT_SRC = readFileSync(
-  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "app/letter-body/BodyText.tsx"),
+  join(fileURLToPath(new NodeURL(import.meta.url)), "..", "..", "../../packages/letter-body/src/BodyText.tsx"),
   "utf8",
 );
 

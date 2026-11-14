@@ -62,7 +62,18 @@
   }
 
   :root[data-touch="1"] .oh-slot {
+    --oh-slot-layer-own: 1;
+
     position: relative;
+  }
+
+  /* A slot's own box answers for itself: the room for a finger of a slot on the line over or under it lies
+     beneath it. */
+  :root[data-touch="1"] .oh-slot::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: var(--oh-slot-layer-own);
   }
   /* A finger's room: as high as the smallest control, the word's own width and a little more. */
   :root[data-touch="1"] .oh-slot::after {
