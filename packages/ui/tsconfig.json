@@ -3,8 +3,9 @@
   "compilerOptions": {
     "outDir": "dist", "rootDir": "src",
     "jsx": "react-jsx",
+    "resolveJsonModule": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src"],
+  "include": ["src", "src/icons/icons.json"],
   "references": [{ "path": "../tokens" }, { "path": "../fixtures" }]
 }

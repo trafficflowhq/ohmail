@@ -1,0 +1,6 @@
+/* The face draws the icon: its line comes from the tokens, never from the drawing. */
+.oh-icon {
+  stroke-width: var(--ico-w);
+  stroke-linecap: var(--ico-cap);
+  stroke-linejoin: var(--ico-join);
+}
