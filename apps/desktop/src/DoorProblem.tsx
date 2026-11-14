@@ -17,8 +17,23 @@
 import { Button } from "@ohmail/ui";
 
 import { useRefusalAtThePress } from "../../webapp/app/shell/refusal-at-the-press";
+import { updateAnswerSentence, updateVerbLabel } from "../../webapp/app/shell/update-answer";
+import { useUpdateOffer } from "../../webapp/app/shell/UpdateLine";
 import { DOOR_COPY } from "./door-copy.js";
 import type { HostSuggestion } from "./doors.js";
+
+/**
+ * THE VERB THAT ASKS THE UPDATER, FOR A DOOR — while a server's "this app is too old" answer stands
+ * and this refusal is that sentence. The update line says it in the rail, and a door has no rail: a
+ * person signing in or pairing would read the sentence with nothing to press. It is the one offer
+ * the line reads (`app-update.ts`), so the verb is the line's own. UNDER ITS OWN SENTENCE ONLY: the
+ * offer stands for the whole run, and a later refusal about something else must not carry it.
+ */
+function useUpdateRemedy(problem: string | null): { label: string; act: () => void } | null {
+  const offer = useUpdateOffer();
+  if (offer?.kind !== "tooOld" || !offer.act || problem !== updateAnswerSentence("tooOld")) return null;
+  return { label: updateVerbLabel(offer.verb === "update" ? "update" : "reload"), act: offer.act };
+}
 
 export function DoorProblem({
   problem,
@@ -36,6 +51,7 @@ export function DoorProblem({
 }): React.JSX.Element | null {
   /* Brought into view and focused as it appears, wherever the card draws it. */
   const said = useRefusalAtThePress<HTMLParagraphElement>(problem);
+  const remedy = useUpdateRemedy(problem);
   if (!problem) return null;
   const offer = suggestion && onUse ? suggestion : null;
   return (
@@ -52,7 +68,25 @@ export function DoorProblem({
             ? DOOR_COPY.useSuggestedSmtpHost(offer.host)
             : DOOR_COPY.useSuggestedImapHost(offer.host)}
         </Button>
+      ) : remedy ? (
+        <Button variant="ghost" type="button" className="join-error-use" onClick={remedy.act}>{remedy.label}</Button>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * A HOSTED DOOR'S REFUSAL — the sentence as the hosted and the paired door have always drawn it, a
+ * bare paragraph, and {@link DoorProblem}'s block only where the updater's verb stands under it.
+ */
+export function HostedDoorProblem({ problem }: { problem: string | null }): React.JSX.Element | null {
+  const remedy = useUpdateRemedy(problem);
+  if (!problem) return null;
+  if (remedy === null) return <p className="join-error">{problem}</p>;
+  return (
+    <div className="join-error-note">
+      <p className="join-error">{problem}</p>
+      <Button variant="ghost" type="button" className="join-error-use" onClick={remedy.act}>{remedy.label}</Button>
     </div>
   );
 }

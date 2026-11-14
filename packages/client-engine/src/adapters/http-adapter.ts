@@ -39,7 +39,7 @@ import { retryAfterMsOf, retryingRead } from "./retrying-read.js";
 import { OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE } from "./refusal-shape.js";
 import type { WindowSyncFailure } from "../window-sync-failure.js";
 import type { WindowSearchPhases } from "../search-phases.js";
-import { classifyRefusal, type RefusalKind } from "./refusal-shape.js";
+import { classifyRefusal, UPDATE_ANSWER_CODES, type RefusalKind, type UpdateAnswerCode } from "./refusal-shape.js";
 import { sessionEndedResponse } from "../session-gate.js";
 import { sendFingerprint } from "../send-fingerprint.js";
 import { responseBlob } from "../bytes-blob.js";
@@ -2568,6 +2568,18 @@ export class HttpAdapter implements EngineAdapter {
         return null;
       };
       let echoed = await writeTheRow();
+      /**
+       * A SAVE THAT MET AN UPDATE ANSWER (this app is too old for the server, or the server is being
+       * updated) SAYS NOTHING OF THE ROW, THE BCC OR THE FROM. The guards below would word it as
+       * theirs and end the press; it waits under its key instead and saves first again, which is
+       * the resumed road just below. The key was never shown to `/send`.
+       */
+      const met = refusal as MutationRejectedError | null;
+      if (ended === "unanswered" && met !== null && UPDATE_ANSWER_CODES.has(met.code as UpdateAnswerCode)) {
+        throw new MutationRejectedError(met.message, {
+          code: met.code, status: met.status, retryable: true, retryAfterMs: met.retryAfterMs,
+        });
+      }
       /**
        * A RESUME'S SAVE THAT WAS NOT ANSWERED SENDS NOTHING, AND KEEPS ITS KEY. The row holds the
        * earlier words or the newer ones and this press cannot tell which: sending would deliver the

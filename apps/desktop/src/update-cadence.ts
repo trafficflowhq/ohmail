@@ -18,6 +18,12 @@
  * found is said HERE, in ohmail's own window, as one quiet line at the rail's foot
  * (`app/shell/UpdateLine.tsx`): ready, downloading, or failed. It also tells the shell when a
  * send waits or a draft holds files, which holds every install until they are gone.
+ *
+ * THE SHELL'S REPORT IS NOT THE ONLY SOURCE OF A LINE. A server's own answer, "this app is too old for
+ * this server" or "the server is being updated", reaches the window by its own door (`bridge-fetch.ts`,
+ * told to the line by `DesktopGate.tsx`) and stands on the same line. A report with no line of its
+ * own therefore never withdraws it; a line the report does have (ready, downloading, failed) still
+ * replaces it, because the update is the fix.
  */
 import {
   announceUpdate,
@@ -25,6 +31,7 @@ import {
   askDue,
   currentUpdateOffer,
   flushBeforeRestart,
+  isUpdateAnswerKind,
   periodElapsed,
   putAwayThisRun,
   readAskMemory,
@@ -264,6 +271,12 @@ export function startUpdateCadence(options: UpdateCadenceOptions = {}): () => vo
     announceVersion(report.version);
     const line = lineOf(report);
     if (line === null) {
+      /* A SERVER'S OWN ANSWER ("too old", "being updated") is not this report's to withdraw: the
+         shell's report says nothing about it, and a report with no line is not a retraction. A line
+         the report does have (ready, downloading, failed) still replaces it, because the update
+         is the fix. */
+      const standing = currentUpdateOffer();
+      if (standing !== null && isUpdateAnswerKind(standing.kind)) return;
       announceUpdate(null);
       return;
     }

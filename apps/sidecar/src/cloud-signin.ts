@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import type { CloudTokens } from "./cloud-auth.js";
+import { namingFetch } from "./client-name.js";
 import type { Diagnostic } from "./log.js";
 
 /**
@@ -69,6 +70,11 @@ export interface CloudSignInOptions {
   baseUrl: string;
   /** Injected for tests; production dials the real hosted API. */
   fetchImpl?: typeof fetch;
+  /**
+   * The release this engine is a build of. Every request below names the engine with it
+   * (`client-name.ts`), as a session's requests do; absent, the name says `dev`.
+   */
+  clientRelease?: string;
   log?: Diagnostic;
   /**
    * The kind this install declares on both sign-in paths: `kind` beside the code on
@@ -100,6 +106,32 @@ export interface CloudSignInOptions {
 /** The previous family as a body field, or nothing. */
 const previousOf = (opts: CloudSignInOptions): { previousSession?: string } =>
   (opts.previousSession ? { previousSession: opts.previousSession } : {});
+
+/** The one transport every request in this file leaves by: it names the engine. */
+const dial = (opts: CloudSignInOptions): typeof fetch => namingFetch(opts.fetchImpl ?? fetch, opts.clientRelease);
+
+/** The one status no route of ohmail answers a sign-in with; see {@link notServed}. */
+const NOT_SERVED_STATUS = 426;
+/** What a code in ohmail's envelope looks like, and how long a sentence handed to the window may be. */
+const ENVELOPE_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const HANDED_SENTENCE_MAX = 300;
+
+/**
+ * AN ANSWER ABOUT THIS APP, NOT ABOUT THE SIGN-IN. A server with no use for this release says so to
+ * every request, whatever was asked: that status, with its own code and sentence in ohmail's
+ * envelope. It is handed to the window as it came, so the window says there what it says for that
+ * answer anywhere else; folded into "the hosted service answered HTTP 426" a person read a fault.
+ * The same status without the envelope is some other machine's, and stays the general refusal;
+ * what is handed on is a code's shape and a sentence's length, never whatever the body held.
+ * No server of this release answers so.
+ */
+function notServed(res: Response, body: unknown): CloudSignInError | null {
+  if (res.status !== NOT_SERVED_STATUS) return null;
+  const said = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error;
+  const code = trimmed(said?.code);
+  if (!ENVELOPE_CODE.test(code)) return null;
+  return new CloudSignInError(code, NOT_SERVED_STATUS, trimmed(said?.message).slice(0, HANDED_SENTENCE_MAX) || code);
+}
 
 /**
  * A PKCE pair: the secret this process keeps, and the commitment it is willing to publish.
@@ -208,7 +240,7 @@ const trimmed = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
  * blip. Cheap (once per sign-in) and deliberately NOT on the launch path.
  */
 export async function cloudIdentity(opts: CloudSignInOptions, tokens: CloudTokens): Promise<string> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = dial(opts);
   const base = opts.baseUrl.replace(/\/+$/, "");
   const unconfirmed = (): CloudSignInError =>
     new CloudSignInError(
@@ -254,7 +286,7 @@ export async function cloudSignIn(
   opts: CloudSignInOptions,
   req: CloudSignInRequest,
 ): Promise<CloudTokens> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = dial(opts);
   const base = opts.baseUrl.replace(/\/+$/, "");
   const email = trimmed(req.email);
   const password = typeof req.password === "string" ? req.password : "";
@@ -301,6 +333,8 @@ export async function cloudSignIn(
     const body = await readJson(res);
     if (!res.ok) {
       opts.log?.("cloud_signin_refused", { status: res.status, reason: "the hosted service refused the code" });
+      const unserved = notServed(res, body);
+      if (unserved) throw unserved;
       // 429 is kept as 429 rather than folded into the refusal: "too many tries, wait a bit" and
       // "that code is not valid" are different things to do next, and a person who has just
       // retyped a code four times is precisely the person who needs to be told which.
@@ -343,6 +377,8 @@ export async function cloudSignIn(
   const loginBody = await readJson(loginRes);
   if (!loginRes.ok) {
     opts.log?.("cloud_signin_refused", { status: loginRes.status, reason: "the hosted service refused the login" });
+    const unserved = notServed(loginRes, loginBody);
+    if (unserved) throw unserved;
     // The throttle's two refusals keep their own sentence: "wait" is what to do next, not "retype".
     if (loginRes.status === 429) {
       throw new CloudSignInError(
@@ -398,6 +434,8 @@ export async function cloudSignIn(
   const verifyBody = await readJson(verifyRes);
   if (!verifyRes.ok) {
     opts.log?.("cloud_signin_refused", { status: verifyRes.status, reason: "the hosted service refused the code" });
+    const unserved = notServed(verifyRes, verifyBody);
+    if (unserved) throw unserved;
     throw new CloudSignInError(
       verifyRes.status === 401 || verifyRes.status === 400 ? "invalid_code" : "hosted_refused",
       verifyRes.status === 401 || verifyRes.status === 400 ? 401 : 502,
@@ -446,7 +484,7 @@ export async function redeemPairingToken(
   opts: PairRedeemOptions,
   token: string,
 ): Promise<PairRedeemResult> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = dial(opts);
   const base = opts.baseUrl.replace(/\/+$/, "");
   const code = trimmed(token);
   if (!code) {
@@ -484,6 +522,8 @@ export async function redeemPairingToken(
     // The STATUS and nothing else. Which code was presented and whose account refused it are the
     // identifying facts the sidecar log census keeps off the line.
     opts.log?.("cloud_pair_redeem_refused", { status: res.status, reason: "the paired computer refused the code" });
+    const unserved = notServed(res, body);
+    if (unserved) throw unserved;
     /* 409 IS ITS OWN ANSWER AND NOT A BAD CODE. The host refuses a credential belonging to
        another account with `session_conflict`, and telling somebody to ask for a fresh code would
        send them round a loop that cannot end. */
@@ -582,7 +622,7 @@ const notOffered = (): CloudSignInError => new CloudSignInError(
 export async function requestDesktopApproval(
   opts: ApprovalRequestOptions, challenge: string,
 ): Promise<ApprovalStart> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = dial(opts);
   const base = opts.baseUrl.replace(/\/+$/, "");
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => { setTimeout(r, ms); }));
   const body = JSON.stringify({
@@ -607,6 +647,8 @@ export async function requestDesktopApproval(
     }
     const answer = await readJson(res);
     if (res.status === 404) throw notOffered();
+    const unserved = notServed(res, answer);
+    if (unserved) throw unserved;
     if (res.status === 429) {
       throw new CloudSignInError(
         "rate_limited", 429, "too many attempts from this connection; give it a few minutes and try again",
@@ -634,7 +676,7 @@ const APPROVAL_REFUSALS: Readonly<Record<string, string>> = {
 export async function pollDesktopApproval(
   opts: CloudSignInOptions, approvalId: string,
 ): Promise<ApprovalPoll> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  const fetchImpl = dial(opts);
   const base = opts.baseUrl.replace(/\/+$/, "");
   const verifier = trimmed(opts.verifier);
   if (!verifier || !APPROVAL_ID.test(approvalId)) {
@@ -666,6 +708,8 @@ export async function pollDesktopApproval(
     return { status: "approved", tokens };
   }
   if (res.status === 404) throw notOffered();
+  const unserved = notServed(res, answer);
+  if (unserved) throw unserved;
   if (res.status === 429) {
     throw new CloudSignInError(
       "rate_limited", 429, "too many attempts from this connection; give it a few minutes and try again",

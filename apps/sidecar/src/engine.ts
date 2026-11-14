@@ -1748,7 +1748,7 @@ export function drainFailureKeepsTheLogin(err: unknown): boolean {
 
 declare const __OHMAIL_ENGINE_VERSION__: string | undefined;
 /** The app version both engine bundlers bake in (`define`); undefined where the engine runs unbundled. */
-const BAKED_ENGINE_VERSION: string | undefined =
+export const BAKED_ENGINE_VERSION: string | undefined =
   typeof __OHMAIL_ENGINE_VERSION__ === "string" ? __OHMAIL_ENGINE_VERSION__ : undefined;
 
 /**
@@ -2699,6 +2699,8 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
        */
       hello: {
         flavor: "local",
+        // The release this engine is a build of: the version the bundler baked in, else `0.0.0`.
+        apiVersion: BAKED_ENGINE_VERSION ?? API_VERSION,
         needsSetup: false,
         auth: { password: false, totp: false, webauthn: false, publicSignup: false },
         features: {
@@ -3411,6 +3413,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
       },
       hello: {
         flavor: "desktop-host",
+        apiVersion: BAKED_ENGINE_VERSION ?? API_VERSION,
         // No setup ceremony exists on this door: the world was created at first boot, and a
         // device becomes a session through the pairing redeem, never through a setup page.
         needsSetup: false,
@@ -10323,6 +10326,7 @@ export async function createSidecar(config: SidecarConfig): Promise<Sidecar> {
             return answerCloudProbe(req, {
               dataDir: config.dataDir,
               ...(config.operatorCaFile ? { operatorCaFile: config.operatorCaFile } : {}),
+              ...(BAKED_ENGINE_VERSION ? { clientRelease: BAKED_ENGINE_VERSION } : {}),
               log,
               configured: null,
             });

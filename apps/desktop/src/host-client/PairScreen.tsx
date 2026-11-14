@@ -16,7 +16,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Icon } from "@ohmail/ui";
-import type { BearerManager, BearerTokens, SignOutOutcome } from "./bearer.js";
+import { PAIRED_PAGE_CLIENT, type BearerManager, type BearerTokens, type SignOutOutcome } from "./bearer.js";
 
 /** What this page knows, in order of discovery. `reading` is the mount tick before the hash. */
 type Phase =
@@ -94,7 +94,7 @@ export function PairScreen({
       try {
         const res = await fetch("/pair/redeem", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "application/json", ...PAIRED_PAGE_CLIENT },
           body: JSON.stringify({ grant: "device-pair", token, kind: "web", ...(previousSession ? { previousSession } : {}) }),
         });
         return { ok: res.ok, answer: (await res.json()) as RedeemAnswer };

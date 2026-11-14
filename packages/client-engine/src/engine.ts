@@ -52,7 +52,8 @@ import { asSendAndDoneIntent, type SendAndDonePlan } from "./send-and-done.js";
 import { countNotify } from "./client-vitals.js";
 import { sendFingerprint } from "./send-fingerprint.js";
 import {
-  OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE, UNJUDGED_WRITE_CODES, type UnjudgedWriteCode,
+  keepsWrite, OUTBOX_WITHDRAWN_CODE, STAGING_UNREACHABLE_CODE, UNJUDGED_WRITE_CODES, UPDATE_ANSWER_CODES,
+  type UpdateAnswerCode,
 } from "./adapters/refusal-shape.js";
 import { ObjectUrlLedger } from "./object-urls.js";
 import { REASK_MAX, wireFailed } from "./wire-reask.js";
@@ -2315,6 +2316,9 @@ const MODELLED_WAIT_CODES = new Set([
   // (`409 not_signed_in`). Counting either would abandon a person's work for an outage or a
   // sign-out, which is the loss the `network` carve-out exists to prevent.
   ...UNJUDGED_WRITE_CODES,
+  // "This app is too old for this server" and "the server is being updated": answers about the app
+  // and the server, never about the verb. It waits for the update, however long that takes.
+  ...UPDATE_ANSWER_CODES,
   // The response to an unreadable answer on a 2xx (`readJsonOrAmbiguous`): the server acted and
   // we cannot read what it said. Ambiguity is not evidence that the verb is bad.
   "unreadable_response",
@@ -9398,8 +9402,9 @@ export class OhmailEngine {
       const rejection = err instanceof MutationRejectedError
         ? err
         : new MutationRejectedError(String(err), { retryable: false });
-      // THE BELT: a hand-built rejection carrying an unjudged code is still kept, never dropped.
-      if (rejection.retryable || UNJUDGED_WRITE_CODES.has((rejection.code ?? "") as UnjudgedWriteCode)) {
+      // THE BELT: a hand-built rejection carrying an unjudged code or an update answer's is still
+      // kept, never dropped.
+      if (rejection.retryable || keepsWrite(rejection.code)) {
         /* THE READ A PERSON'S PRESS TOOK LETTERS FROM while it was on the wire goes again without
            them: a read answered 500, or dropped after the server took it, must not land over a later
            Mark unread. */
@@ -9441,13 +9446,16 @@ export class OhmailEngine {
 
         /**
          * `Math.min` on the cap and on the named interval both: a proxy is free to send a `Retry-After` of a week,
-         * and a queue that honours it has stopped being a queue.
+         * and a queue that honours it has stopped being a queue. An update answer that named no
+         * interval waits the base one: the server answers the same way until the app is updated, and
+         * a drive that asked it every time would be a loop. It is this client's own pacing, so the
+         * first drive of the updated app is free to ask at once.
          */
         const wait = rejection.retryAfterMs !== null
           ? Math.min(rejection.retryAfterMs, OUTBOX_BACKOFF_CAP_MS)
           : counts
             ? Math.min(OUTBOX_BACKOFF_BASE_MS * 2 ** Math.max(0, attempts - 1), OUTBOX_BACKOFF_CAP_MS)
-            : null;
+            : UPDATE_ANSWER_CODES.has(rejection.code as UpdateAnswerCode) ? OUTBOX_BACKOFF_BASE_MS : null;
 
         // Keep the overlay (the user's intent stands) + queue for a retry with
         // the SAME Idempotency-Key — the server dedupes a half-landed attempt.

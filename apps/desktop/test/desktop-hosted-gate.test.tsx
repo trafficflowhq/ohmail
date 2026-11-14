@@ -9,6 +9,7 @@ import path from "node:path";
 
 import { DesktopGate } from "../src/DesktopGate.js";
 import type { EngineStatus } from "../src/bridge-fetch.js";
+import { resetUpdateStoreForTests } from "../../webapp/app/shell/app-update.js";
 import messages from "../../webapp/messages/en.json";
 
 /**
@@ -90,8 +91,14 @@ function fakeShell(initial: EngineStatus): {
   healthStatus(code: number): void;
   healthAsks(): number;
   signins(): number;
+  /** What `POST /cloud/signin` answers from now on; a signed-in 200 until told otherwise. */
+  signinAnswers(status: number, body: string): void;
+  /** How many times the window asked the shell's updater (`update_press`). */
+  updatePresses(): number;
 } {
   let status = initial;
+  let signin = { status: 200, body: '{"status":"signed_in"}' };
+  let updatePresses = 0;
   let health: { signedIn?: boolean; sessionExpired?: boolean } = { signedIn: true };
   let healthCode = 200;
   let healthAsks = 0;
@@ -106,6 +113,7 @@ function fakeShell(initial: EngineStatus): {
     },
     invoke: async (command, payload) => {
       if (command === "engine_status") return status;
+      if (command === "update_press") { updatePresses++; return null; }
       if (command === "mailto_claim") return null;
       if (command === "plugin:event|listen") return null;
       if (command === "engine_request") {
@@ -116,7 +124,7 @@ function fakeShell(initial: EngineStatus): {
         }
         if (url === "/cloud/signin") {
           signins++;
-          return encode(200, '{"status":"signed_in"}');
+          return encode(signin.status, signin.body);
         }
         if (url.startsWith("/sync/snapshot")) return encode(200, EMPTY_SNAPSHOT);
         if (url.startsWith("/mailboxes")) return encode(200, JSON.stringify({ items: [] }));
@@ -132,6 +140,8 @@ function fakeShell(initial: EngineStatus): {
     healthStatus: (code) => { healthCode = code; },
     healthAsks: () => healthAsks,
     signins: () => signins,
+    signinAnswers: (code, body) => { signin = { status: code, body }; },
+    updatePresses: () => updatePresses,
   };
 }
 
@@ -204,6 +214,7 @@ afterEach(async () => {
   delete host.__TAURI_INTERNALS__;
   window.location.hash = "";
   localStorage.clear();
+  resetUpdateStoreForTests();
 });
 
 beforeEach(() => {
@@ -312,6 +323,66 @@ describe("the hosted auth gate", () => {
     expect(mounted(el)).toBe(true);
     // The mount rode a FRESH answer — the stale latch mounts with zero new asks.
     expect(shell.healthAsks(), "mounted without re-asking the engine").toBeGreaterThan(asksBeforeSignIn);
+  });
+});
+
+/**
+ * A SERVER WITH NO USE FOR THIS RELEASE SAYS SO TO A SIGN-IN TOO, and the engine hands its answer on
+ * (`426`, its code). There is no rail on the sign-in surface, so the one sentence stands where the
+ * form's refusals stand, in the window's own words, with the verb that asks the updater under it.
+ */
+describe("a sign-in that meets a server too new for this app", () => {
+  const tooOld = JSON.stringify({ error: { code: "client_too_old", message: "the server's own words", retryable: true } });
+  const updateVerb = (el: HTMLElement): HTMLButtonElement | undefined =>
+    [...el.querySelectorAll("button")].find((b) => (b.textContent ?? "").trim() === "Update");
+
+  it("says the one sentence on the sign-in surface, with Update, and pressing it asks the updater", async () => {
+    const shell = fakeShell(CLOUD_SERVING);
+    shell.health({ signedIn: false });
+    shell.signinAnswers(426, tooOld);
+    const el = await render();
+    expect(updateVerb(el), "the verb stood before any server had answered").toBeUndefined();
+
+    await signIn(el);
+    await settle();
+    expect(shell.signins()).toBe(1);
+    expect(signInSurface(el)).toBe(true);
+    const said = el.querySelector(".join-error")?.textContent ?? "";
+    expect(said).toBe("This ohmail is too old for its server.");
+    expect(el.textContent ?? "", "the server's sentence reached the screen").not.toContain("the server's own words");
+
+    const verb = updateVerb(el);
+    expect(verb, "the sentence stood with nothing to press").toBeDefined();
+    await act(async () => { verb!.dispatchEvent(new MouseEvent("click", { bubbles: true })); });
+    expect(shell.updatePresses()).toBe(1);
+  });
+
+  it("the verb stands under its own sentence only: a later refusal about something else carries none", async () => {
+    const shell = fakeShell(CLOUD_SERVING);
+    shell.health({ signedIn: false });
+    shell.signinAnswers(426, tooOld);
+    const el = await render();
+    await signIn(el);
+    await settle();
+    expect(updateVerb(el)).toBeDefined();
+
+    shell.signinAnswers(429, JSON.stringify({ error: { code: "rate_limited", message: "too many attempts; give it a few minutes" } }));
+    await signIn(el);
+    await settle();
+    expect(el.querySelector(".join-error")?.textContent).toBe("too many attempts; give it a few minutes");
+    expect(updateVerb(el), "the updater's verb stood under another refusal").toBeUndefined();
+  });
+
+  it("CONTROL: an ordinary refusal keeps its own sentence and offers no Update", async () => {
+    const shell = fakeShell(CLOUD_SERVING);
+    shell.health({ signedIn: false });
+    shell.signinAnswers(401, JSON.stringify({ error: { code: "invalid_credentials", message: "that address and password were not accepted" } }));
+    const el = await render();
+    await signIn(el);
+    await settle();
+    expect(el.querySelector(".join-error")?.textContent).toBe("that address and password were not accepted");
+    expect(updateVerb(el)).toBeUndefined();
+    expect(shell.updatePresses()).toBe(0);
   });
 });
 

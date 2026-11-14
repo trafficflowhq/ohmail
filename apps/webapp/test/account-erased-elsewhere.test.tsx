@@ -20,6 +20,7 @@ import en from "../messages/en.json";
 (globalThis as unknown as { React: unknown }).React = React;
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 process.env.NEXT_PUBLIC_API_BASE = "/api";
+process.env.NEXT_PUBLIC_APP_VERSION = "1.2.3";
 const h = React.createElement;
 const act = (React as unknown as { act: (cb: () => Promise<void> | void) => Promise<void> }).act;
 
@@ -43,7 +44,7 @@ const expireJar = (): void => {
 interface Rig {
   read: () => Response;
   refresh: () => Response;
-  asked: Array<{ what: string; declared: string | null }>;
+  asked: Array<{ what: string; declared: string | null; named: string | null }>;
 }
 const rig: Rig = { read: () => envelope(401, "unauthorized", null), refresh: () => envelope(401, "refresh_revoked", null), asked: [] };
 
@@ -65,7 +66,8 @@ beforeEach(() => {
   originalFetch = globalThis.fetch;
   globalThis.fetch = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
-    rig.asked.push({ what: `${init?.method ?? "GET"} ${url}`, declared: new Headers(init?.headers).get("x-ohmail-accepts") });
+    const sent = new Headers(init?.headers);
+    rig.asked.push({ what: `${init?.method ?? "GET"} ${url}`, declared: sent.get("x-ohmail-accepts"), named: sent.get("x-ohmail-client") });
     if (url.endsWith("/auth/refresh")) return rig.refresh();
     return rig.read();
   }) as typeof globalThis.fetch;
@@ -152,6 +154,21 @@ async function settle(test: () => boolean | Promise<boolean>, what: string): Pro
 async function codeOfThrow(p: Promise<unknown>): Promise<string> {
   try { await p; return "resolved"; } catch (e) { return `${(e as { status?: number }).status} ${(e as { code?: string }).code}`; }
 }
+
+describe("the web names itself on every request it makes: its kind and the release it was built from", () => {
+  it("the API client, the refresh it triggers and the engine's adapter each send it, once", async () => {
+    const { client } = await signedIn(X);
+    rig.read = () => envelope(401, "unauthorized", null);
+    rig.refresh = () => envelope(401, "refresh_revoked", null);
+    await client.api("/sync?limit=50", { headers: { "x-ohmail-client": "phone/9.9.9" } }).catch(() => undefined);
+    const { createEngine } = await import("../app/shell/engine-config.js");
+    const engine = createEngine(false, { NEXT_PUBLIC_API_BASE: "/api" }, null);
+    await engine.syncOnce().catch(() => undefined);
+    expect(rig.asked.some((a) => a.what === "POST /auth/refresh"), "the refresh door was never asked").toBe(true);
+    expect(rig.asked.some((a) => a.what.startsWith("GET /api/sync")), "no read was made").toBe(true);
+    for (const a of rig.asked) expect(a.named, a.what).toBe("web/1.2.3");
+  });
+});
 
 describe("the erased answer wipes this browser's copy of that account", () => {
   it("a declared read answering 410 naming the account: latched, mirror and keys gone, other tabs told", async () => {

@@ -717,9 +717,9 @@ export interface HelloConfig {
    */
   flavor: "managed" | "selfhost" | "local" | "desktop-host";
   /**
-   * The wire-contract version of the API surface. Defaults to {@link API_VERSION} — every
-   * composition compiles the same route table, so the default is the truth unless a host has a
-   * reason to say otherwise.
+   * The release this server is a build of — `1.0.12`, what a client compares itself with. Each
+   * composition states its own at its root; `0.0.0` ({@link API_VERSION}) only where none did.
+   * Not the wire-contract version: nothing here versions the routes.
    */
   apiVersion?: string;
   /**

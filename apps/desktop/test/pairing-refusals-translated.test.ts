@@ -7,7 +7,7 @@ import ts from "typescript";
 import { DEFAULT_LOCALE, fillFrom, setActiveCatalog } from "../../webapp/app/shell/locale";
 import { DOOR_COPY } from "../src/door-copy.js";
 import { HOST_REFUSAL_KINDS } from "../src/doors.js";
-import { sentenceForKind } from "../src/DoorChooser.js";
+import { refusalSentence, sentenceForKind } from "../src/DoorChooser.js";
 
 /**
  * EVERY REFUSAL THE PAIRING'S REDEEM CAN ANSWER IS A SENTENCE IN BOTH CATALOGUES. The card maps the
@@ -107,6 +107,15 @@ describe("the pairing's refusals are sentences in both catalogues", () => {
     german();
     expect(sentenceForKind("rate_limited", HOST))
       .toBe("Von hier kamen zu viele Kopplungsversuche bei kestrel an. Warte ein paar Minuten und versuche es dann erneut.");
+  });
+
+  it("the other computer's answer that this app is too old for it is the update line's sentence, not its own words", () => {
+    const tooOld = { kind: "client_too_old", message: "the other computer's own words", status: 426 };
+    expect(refusalSentence(tooOld, HOST)).toBe("This ohmail is too old for its server.");
+    // Status and code together: the same word under another status keeps the engine's sentence.
+    expect(refusalSentence({ ...tooOld, status: 409 }, HOST)).toBe("the other computer's own words");
+    german();
+    expect(refusalSentence(tooOld, HOST)).toBe("Dieses ohmail ist zu alt für seinen Server.");
   });
 
   it("the readers take the shapes they exist for, driven", () => {

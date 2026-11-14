@@ -10,6 +10,8 @@ import {
   type StorePolicy,
 } from "@ohmail/client-engine";
 import { ERASED_DECLARATION, erasedAwareFetch } from "./account-erased";
+import { clientDeclaration } from "./client-declaration";
+import { RELOAD_REMEDY, updateAwareFetch } from "./update-answer";
 import { createSyncGate, registerSyncGate, type WakeStreamLike } from "./sync-scheduler";
 import { sessionFetch, sessionMayAsk } from "./session-truth";
 import { webLane, type ResumeLane } from "./resume-lane";
@@ -300,8 +302,8 @@ export function createEngine(
         new HttpAdapter({
           baseUrl: apiBase, stageAttachments: true, mayAsk: sessionMayAsk,
           uploadAdmits: (url) => stagingAdmits(url, uploadSource, globalThis.location?.origin ?? ""),
-          headers: () => ({ ...ERASED_DECLARATION }),
-          fetch: erasedAwareFetch(sessionFetch, sessionEndedResponse),
+          headers: () => ({ ...ERASED_DECLARATION, ...clientDeclaration() }),
+          fetch: updateAwareFetch(erasedAwareFetch(sessionFetch, sessionEndedResponse), RELOAD_REMEDY),
           syncDeadlines: { answerMs: SYNC_ANSWER_TIMEOUT_MS, bodyMs: SYNC_BODY_TIMEOUT_MS },
           // A forward naming its kept files asks /hello first: an older server would send them all.
           forwardPartsCheck: true,

@@ -734,6 +734,9 @@ export function buildDeps(req: Request, cfg: HostConfig): ApiDeps {
     // negotiation cannot disagree with what the routes actually do.
     hello: {
       flavor: "managed",
+      // The release this build is of: `next.config.mjs` inlines it from the root manifest. Absent
+      // only where no build ran (a test), which `/hello` then answers as `0.0.0`.
+      ...(process.env.OHMAIL_RELEASE ? { apiVersion: process.env.OHMAIL_RELEASE } : {}),
       // The account lifecycle lives on this service permanently: there is no first-account
       // ceremony to run, whatever the user count says.
       needsSetup: false,

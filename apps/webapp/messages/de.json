@@ -4493,6 +4493,9 @@
     "lineReloadAfterSendTitle": "Neu laden, sobald deine Nachricht gesendet ist",
     "lineReloadAfterFilesTitle": "Neu laden, wenn die Dateien deines Entwurfs gesendet oder entfernt sind",
     "lineLater": "Später",
+    "lineTooOld": "Dieses ohmail ist zu alt für seinen Server.",
+    "lineServerUpdating": "ohmail wird gerade aktualisiert und ist gleich wieder da.",
+    "lineUpdateAction": "Aktualisieren",
     "lineVersion": "ohmail {version}"
   },
   "desktopScreener": {

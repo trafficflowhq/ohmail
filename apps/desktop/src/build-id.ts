@@ -6,6 +6,12 @@
  * to the version alone — which is also the honest answer for a build made from a checkout.
  */
 
+/* Declared here as well as in `build-flags.d.ts`: this module is reached from the paired page and the
+   window's bridge, which the web app's own typecheck also walks without that file. Module scope, so the
+   two declarations never meet. */
+declare const __OHMAIL_VERSION__: string | undefined;
+declare const __OHMAIL_BUILD_SHA__: string | undefined;
+
 /** `git log --oneline` prints nine characters here, so nine is what identifies a commit. */
 const SHORT = 9;
 

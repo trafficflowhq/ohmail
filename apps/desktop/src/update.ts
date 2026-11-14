@@ -8,7 +8,9 @@
  * the flow's value, `updatePress` does what the menu item does, `updatePoll` starts the launch
  * check's request without a press's dialogs; and two take one bool, `updateSetAuto` (Settings'
  * install switch) and `updateHold` (a send waits, or a draft holds files), each able to delay an
- * install, never to cause one. No "install" verb; no feed, version or file names.
+ * install, never to cause one. No "install" verb; no feed, version or file names. The one press the
+ * window hands the update line, for a server that says this app is too old for it
+ * (`DesktopGate.tsx`), is `updatePress` itself: the shell's own check or restart, nothing named.
  */
 
 /*

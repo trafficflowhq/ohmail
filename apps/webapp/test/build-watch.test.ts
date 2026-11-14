@@ -2,6 +2,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  announceUpdate,
   currentUpdateOffer,
   offerKey,
   readAskMemory,
@@ -115,6 +116,16 @@ describe("the build watch", () => {
     expect(offer?.version).toBe(THEIRS);
     expect(offerKey(offer!)).toBe(`reload:${THEIRS}`);
     expect(Object.keys(readAskMemory())).toEqual([`reload:${THEIRS}`]);
+    stop();
+  });
+
+  it("never replaces a server's own answer: \"too old\" is the more exact sentence for the same remedy", async () => {
+    vi.useFakeTimers();
+    announceUpdate({ kind: "tooOld", key: "answer:tooOld", verb: "reload", act: () => {} });
+    const clock = { at: START };
+    const stop = startBuildWatch({ token: OURS, fetchImpl: feed(THEIRS).impl, now: () => clock.at, reload: vi.fn() });
+    await tick(clock, BUILD_POLL_MS);
+    expect(currentUpdateOffer()?.kind).toBe("tooOld");
     stop();
   });
 

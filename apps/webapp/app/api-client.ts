@@ -32,6 +32,9 @@ import { activeTranslator } from "./shell/locale";
 import type { ProbeSending } from "./shell/onboarding";
 import { SERVER_REFUSAL_CODES, refusalCopy } from "./shell/server-refusal";
 import { webLane, type LaneTicket } from "./shell/resume-lane";
+import { clientDeclaration } from "./shell/client-declaration";
+import { RELOAD_REMEDY, noticeServerAnswered, noticeUpdateAnswer, updateAnswerSentence } from "./shell/update-answer";
+import { updateAnswerOf } from "@ohmail/client-engine";
 
 /**
  * A SENTENCE THIS CLIENT WRITES ITSELF, in the reader's language: the `session` catalogue's
@@ -1009,8 +1012,9 @@ async function attempt<T>(
     throw new ApiError(0, "api_unconfigured", said("refusedUnconfigured", "This build is not connected to an ohmail server."));
   }
   const method = opts.method ?? "GET";
-  // Every ask declares it understands `410 account_erased` — see `shell/account-erased.ts`.
-  const headers: Record<string, string> = { ...ERASED_DECLARATION, ...opts.headers };
+  // Every ask declares it understands `410 account_erased` — see `shell/account-erased.ts` — and
+  // names this build (`shell/client-declaration.ts`).
+  const headers: Record<string, string> = { ...ERASED_DECLARATION, ...opts.headers, ...clientDeclaration() };
   if (opts.body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET") {
     const csrf = csrfToken();
@@ -1039,6 +1043,8 @@ async function attempt<T>(
   // BEFORE the 204 shortcut: the sign-out door and the refresh's cookie branch both answer
   // empty, and an early return would skip the one thing this function is here to read.
   if (seen) seen.account = res.headers.get(OWNER_HEADER);
+  // The same server answered: a "being updated" line has done its work.
+  if (res.ok) noticeServerAnswered();
 
   if (res.status === 204) return undefined as T;
 
@@ -1059,6 +1065,20 @@ async function attempt<T>(
     const retryAfterMs = retryAfterMsOf(res);
     if (res.status === ACCESS_REFUSED_STATUS && env?.code === ACCESS_REFUSED_CODE) {
       notifyAccessRefused(env.details);
+    }
+    // THIS APP IS TOO OLD FOR ITS SERVER, or the server is being updated (status and code together):
+    // the one update line says so, and the error carries the same sentence for a surface that
+    // renders `err.message`, saying nothing about the act.
+    const updateAnswer = updateAnswerOf(res.status, env?.code);
+    if (updateAnswer !== null) {
+      noticeUpdateAnswer(updateAnswer, RELOAD_REMEDY);
+      throw new ApiError(
+        res.status,
+        env!.code!,
+        updateAnswerSentence(updateAnswer),
+        env?.details,
+        { coded: true, retryable: true, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
+      );
     }
     throw new ApiError(
       res.status,

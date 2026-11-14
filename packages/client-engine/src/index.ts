@@ -43,6 +43,25 @@ export {
   type RefreshAnswer,
 } from "./refresh-answer.js";
 
+/** The two update answers and the header a client names itself in: one reading, one spelling, every host. */
+export {
+  CLIENT_TOO_OLD_CODE,
+  CLIENT_TOO_OLD_STATUS,
+  readUpdateAnswer,
+  SERVER_UPDATING_CODE,
+  SERVER_UPDATING_STATUS,
+  updateAnswerOf,
+  type UpdateAnswer,
+} from "./update-answer.js";
+export {
+  CLIENT_HEADER,
+  CLIENT_KINDS,
+  CLIENT_RELEASE_UNSTATED,
+  clientHeaders,
+  clientHeaderValue,
+  type ClientKind,
+} from "./client-header.js";
+
 /**
  * A DEAD SESSION STOPS ASKING, and heals on a schedule. Barrel rather than a leaf for
  * `press-verdict`'s reason: the two hosts that need it already compile the engine, and the
